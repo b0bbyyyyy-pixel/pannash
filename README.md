@@ -1,5 +1,5 @@
 # Pannash
-
+Hello
 A minimalist anti-CRM sales tool for individual salespeople.
 
 ## Core Vision
