@@ -84,10 +84,66 @@ export default async function DashboardPage() {
             Logged in as: {user.email}
           </p>
           <div className="border-t pt-6">
-            <h3 className="text-xl font-semibold mb-4">Next steps</h3>
-            <p className="text-gray-600">
-              Coming soon: Upload your leads CSV, connect your email/phone, and start gentle outreach.
-            </p>
+            <h3 className="text-xl font-semibold mb-4">Quick Actions</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+              <Link 
+                href="/leads"
+                className="p-6 border-2 border-blue-200 rounded-lg hover:border-blue-400 hover:bg-blue-50 transition-all"
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-lg font-semibold text-gray-900 mb-2">
+                      📊 Upload Leads
+                    </h4>
+                    <p className="text-gray-600 text-sm">
+                      Import your leads from CSV (Name, Company, Email, Phone, Notes)
+                    </p>
+                  </div>
+                  <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </div>
+              </Link>
+              
+              <div className="p-6 border-2 border-gray-200 rounded-lg opacity-50">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-lg font-semibold text-gray-900 mb-2">
+                      📧 Connect Email
+                    </h4>
+                    <p className="text-gray-600 text-sm">
+                      Coming soon: Connect Gmail/Outlook for outreach
+                    </p>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="p-6 border-2 border-gray-200 rounded-lg opacity-50">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-lg font-semibold text-gray-900 mb-2">
+                      📱 Connect Phone
+                    </h4>
+                    <p className="text-gray-600 text-sm">
+                      Coming soon: Add Twilio for SMS follow-ups
+                    </p>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="p-6 border-2 border-gray-200 rounded-lg opacity-50">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-lg font-semibold text-gray-900 mb-2">
+                      🤖 AI Templates
+                    </h4>
+                    <p className="text-gray-600 text-sm">
+                      Coming soon: Generate personalized outreach templates
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
