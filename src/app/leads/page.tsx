@@ -49,7 +49,7 @@ export default function LeadsUploadPage() {
         notes: row.Notes || row.notes || '',
       }));
 
-      const { error } = await supabase.from('leads').insert(leads);
+      const { error } = await supabase.from('Leads').insert(leads);
 
       setUploading(false);
 
