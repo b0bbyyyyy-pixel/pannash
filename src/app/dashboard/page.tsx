@@ -2,6 +2,7 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
+import Link from 'next/link';
 import StartOutreachButton from './StartOutreachButton';
 import TestEmailButton from './TestEmailButton';
 import SMTPConnectionForm from './SMTPConnectionForm';
@@ -36,7 +37,7 @@ export default async function DashboardPage() {
 
   // Fetch the user's leads
   const { data: leads, error: leadsError } = await supabase
-    .from('Leads')
+    .from('leads')
     .select('id, name, company, email, phone, notes')
     .eq('user_id', user.id)
     .order('created_at', { ascending: false });
@@ -167,8 +168,30 @@ export default async function DashboardPage() {
       <nav className="bg-white border-b shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16 items-center">
-            <div className="flex-shrink-0">
-              <h1 className="text-xl font-bold text-gray-900">Pannash</h1>
+            <div className="flex items-center gap-8">
+              <Link href="/dashboard" className="text-xl font-bold text-blue-600">
+                Pannash
+              </Link>
+              <div className="flex gap-4">
+                <Link
+                  href="/dashboard"
+                  className="text-blue-600 font-medium"
+                >
+                  Dashboard
+                </Link>
+                <Link
+                  href="/leads"
+                  className="text-gray-600 hover:text-gray-900 font-medium"
+                >
+                  Leads
+                </Link>
+                <Link
+                  href="/campaigns"
+                  className="text-gray-600 hover:text-gray-900 font-medium"
+                >
+                  Campaigns
+                </Link>
+              </div>
             </div>
             <div>
               <form
@@ -219,8 +242,8 @@ export default async function DashboardPage() {
         {/* Quick Actions */}
         <div className="bg-white rounded-lg shadow p-8 mb-8">
           <h3 className="text-2xl font-bold mb-6">Quick Actions</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <a
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <Link
               href="/leads"
               className="block p-6 border-2 border-blue-200 rounded-lg hover:border-blue-400 hover:bg-blue-50 transition-all"
             >
@@ -237,29 +260,45 @@ export default async function DashboardPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
               </div>
-            </a>
+            </Link>
 
-            {/* Coming soon placeholders */}
-            <div className="p-6 border-2 border-gray-200 rounded-lg opacity-50">
+            <Link
+              href="/campaigns"
+              className="block p-6 border-2 border-green-200 rounded-lg hover:border-green-400 hover:bg-green-50 transition-all"
+            >
               <div className="flex items-center justify-between">
                 <div>
                   <h4 className="text-lg font-semibold text-gray-900 mb-2">
-                    📧 Connect Email
+                    📧 View Campaigns
                   </h4>
-                  <p className="text-gray-600 text-sm">Coming soon</p>
+                  <p className="text-gray-600 text-sm">
+                    Manage your outreach campaigns
+                  </p>
                 </div>
+                <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
               </div>
-            </div>
-            <div className="p-6 border-2 border-gray-200 rounded-lg opacity-50">
+            </Link>
+
+            <Link
+              href="/campaigns/new"
+              className="block p-6 border-2 border-purple-200 rounded-lg hover:border-purple-400 hover:bg-purple-50 transition-all"
+            >
               <div className="flex items-center justify-between">
                 <div>
                   <h4 className="text-lg font-semibold text-gray-900 mb-2">
-                    📱 Connect Phone
+                    ✨ Create Campaign
                   </h4>
-                  <p className="text-gray-600 text-sm">Coming soon</p>
+                  <p className="text-gray-600 text-sm">
+                    Start a new outreach campaign
+                  </p>
                 </div>
+                <svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
               </div>
-            </div>
+            </Link>
           </div>
         </div>
 
@@ -341,7 +380,7 @@ export default async function DashboardPage() {
                               }
                             );
 
-                            await supabaseAction.from('Leads').delete().eq('id', lead.id);
+                            await supabaseAction.from('leads').delete().eq('id', lead.id);
                             redirect('/dashboard');
                           }}
                         >
