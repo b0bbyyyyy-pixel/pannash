@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { createServerClient } from '@supabase/ssr';
 import Link from 'next/link';
 import { revalidatePath } from 'next/cache';
+import DeleteCampaignButton from './DeleteCampaignButton';
 
 export default async function CampaignDetailPage({
   params,
@@ -246,20 +247,10 @@ export default async function CampaignDetailPage({
                   </button>
                 </form>
               )}
-              <form action={deleteCampaign}>
-                <input type="hidden" name="campaign_id" value={campaign.id} />
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 font-medium"
-                  onClick={(e) => {
-                    if (!confirm('Are you sure you want to delete this campaign?')) {
-                      e.preventDefault();
-                    }
-                  }}
-                >
-                  Delete
-                </button>
-              </form>
+              <DeleteCampaignButton
+                campaignId={campaign.id}
+                onDelete={deleteCampaign}
+              />
             </div>
           </div>
 
