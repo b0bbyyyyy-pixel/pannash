@@ -280,7 +280,14 @@ export default async function DashboardPage() {
         <StartOutreachButton />
 
         {/* Test Email Button */}
-        <TestEmailButton userEmail={user.email || ''} />
+        <TestEmailButton
+          connectionInfo={{
+            hasGmail: !!gmailConnection,
+            hasOutlook: !!outlookConnection,
+            gmailEmail: gmailConnection?.email,
+            outlookEmail: outlookConnection?.from_email,
+          }}
+        />
 
         {/* Leads Table */}
         <div className="bg-white rounded-lg shadow p-8">
