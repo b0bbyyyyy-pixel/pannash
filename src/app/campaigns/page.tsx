@@ -13,11 +13,11 @@ export default async function CampaignsPage() {
         get(name) {
           return cookieStore.get(name)?.value;
         },
-        set(name, value, options) {
-          cookieStore.set({ name, value, ...options });
+        set() {
+          // No-op: cookies are read-only in Server Components
         },
-        remove(name, options) {
-          cookieStore.set({ name, value: '', ...options });
+        remove() {
+          // No-op: cookies are read-only in Server Components
         },
       },
     }

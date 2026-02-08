@@ -15,11 +15,11 @@ export default async function NewCampaignPage() {
         get(name) {
           return cookieStore.get(name)?.value;
         },
-        set(name, value, options) {
-          cookieStore.set({ name, value, ...options });
+        set() {
+          // No-op: cookies are read-only in Server Components
         },
-        remove(name, options) {
-          cookieStore.set({ name, value: '', ...options });
+        remove() {
+          // No-op: cookies are read-only in Server Components
         },
       },
     }
@@ -49,11 +49,11 @@ export default async function NewCampaignPage() {
           get(name) {
             return cookieStore.get(name)?.value;
           },
-          set(name, value, options) {
-            cookieStore.set({ name, value, ...options });
+          set() {
+            // No-op: cookies can only be read in Server Actions
           },
-          remove(name, options) {
-            cookieStore.set({ name, value: '', ...options });
+          remove() {
+            // No-op: cookies can only be read in Server Actions
           },
         },
       }
@@ -106,6 +106,39 @@ export default async function NewCampaignPage() {
 
       if (leadsError) {
         console.error('Error adding leads to campaign:', leadsError);
+      }
+
+      // If status is 'active', automatically populate the queue
+      if (status === 'active') {
+        // Import queue utilities dynamically
+        const { generateScheduledTimes } = await import('@/lib/queue');
+        
+        // Generate scheduled times for all leads
+        const scheduledTimes = generateScheduledTimes(selectedLeads.length);
+
+        // Create queue items
+        const queueItems = selectedLeads.map((leadId, index) => ({
+          campaign_id: campaign.id,
+          lead_id: leadId,
+          scheduled_for: scheduledTimes[index],
+          status: 'pending' as const,
+          attempts: 0,
+        }));
+
+        const { error: queueError } = await supabase
+          .from('email_queue')
+          .insert(queueItems);
+
+        if (queueError) {
+          console.error('Error populating queue:', queueError);
+        }
+
+        // Update campaign_leads status to 'queued'
+        await supabase
+          .from('campaign_leads')
+          .update({ status: 'queued' })
+          .eq('campaign_id', campaign.id)
+          .eq('status', 'pending');
       }
     }
 

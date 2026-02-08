@@ -4,6 +4,10 @@ import { createServerClient } from '@supabase/ssr';
 import Link from 'next/link';
 import { revalidatePath } from 'next/cache';
 import DeleteCampaignButton from './DeleteCampaignButton';
+import ActivateButton from './ActivateButton';
+import RequeueButton from './RequeueButton';
+import ProcessQueueButton from './ProcessQueueButton';
+import AutoProcessor from './AutoProcessor';
 
 export default async function CampaignDetailPage({
   params,
@@ -20,11 +24,11 @@ export default async function CampaignDetailPage({
         get(name) {
           return cookieStore.get(name)?.value;
         },
-        set(name, value, options) {
-          cookieStore.set({ name, value, ...options });
+        set() {
+          // No-op: cookies are read-only in Server Components
         },
-        remove(name, options) {
-          cookieStore.set({ name, value: '', ...options });
+        remove() {
+          // No-op: cookies are read-only in Server Components
         },
       },
     }
@@ -58,6 +62,17 @@ export default async function CampaignDetailPage({
     console.error('Error fetching campaign leads:', leadsError);
   }
 
+  // Fetch email queue
+  const { data: queueItems, error: queueError } = await supabase
+    .from('email_queue')
+    .select('*, leads(name, email)')
+    .eq('campaign_id', id)
+    .order('scheduled_for', { ascending: true });
+
+  if (queueError) {
+    console.error('Error fetching queue:', queueError);
+  }
+
   // Server Action: Update campaign status
   async function updateStatus(formData: FormData) {
     'use server';
@@ -70,11 +85,11 @@ export default async function CampaignDetailPage({
           get(name) {
             return cookieStore.get(name)?.value;
           },
-          set(name, value, options) {
-            cookieStore.set({ name, value, ...options });
+          set() {
+            // No-op: cookies can only be read in Server Actions
           },
-          remove(name, options) {
-            cookieStore.set({ name, value: '', ...options });
+          remove() {
+            // No-op: cookies can only be read in Server Actions
           },
         },
       }
@@ -107,11 +122,11 @@ export default async function CampaignDetailPage({
           get(name) {
             return cookieStore.get(name)?.value;
           },
-          set(name, value, options) {
-            cookieStore.set({ name, value, ...options });
+          set() {
+            // No-op: cookies can only be read in Server Actions
           },
-          remove(name, options) {
-            cookieStore.set({ name, value: '', ...options });
+          remove() {
+            // No-op: cookies can only be read in Server Actions
           },
         },
       }
@@ -140,6 +155,11 @@ export default async function CampaignDetailPage({
     bounced: campaignLeads?.filter(cl => cl.status === 'bounced').length || 0,
     failed: campaignLeads?.filter(cl => cl.status === 'failed').length || 0,
   };
+
+  // Check if campaign is active but has no queue items (needs re-queuing)
+  const needsRequeue = campaign.status === 'active' && 
+    (!queueItems || queueItems.length === 0) && 
+    statusCounts.pending > 0;
 
   return (
     <main className="min-h-screen bg-gray-50">
@@ -212,28 +232,24 @@ export default async function CampaignDetailPage({
             </div>
             <div className="flex gap-2">
               {campaign.status === 'draft' && (
-                <form action={updateStatus}>
-                  <input type="hidden" name="campaign_id" value={campaign.id} />
-                  <input type="hidden" name="status" value="active" />
-                  <button
-                    type="submit"
-                    className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 font-medium"
-                  >
-                    Activate
-                  </button>
-                </form>
+                <ActivateButton campaignId={campaign.id} />
               )}
               {campaign.status === 'active' && (
-                <form action={updateStatus}>
-                  <input type="hidden" name="campaign_id" value={campaign.id} />
-                  <input type="hidden" name="status" value="paused" />
-                  <button
-                    type="submit"
-                    className="px-4 py-2 bg-yellow-600 text-white rounded-md hover:bg-yellow-700 font-medium"
-                  >
-                    Pause
-                  </button>
-                </form>
+                <>
+                  {needsRequeue && (
+                    <RequeueButton campaignId={campaign.id} />
+                  )}
+                  <form action={updateStatus}>
+                    <input type="hidden" name="campaign_id" value={campaign.id} />
+                    <input type="hidden" name="status" value="paused" />
+                    <button
+                      type="submit"
+                      className="px-4 py-2 bg-yellow-600 text-white rounded-md hover:bg-yellow-700 font-medium"
+                    >
+                      Pause
+                    </button>
+                  </form>
+                </>
               )}
               {campaign.status === 'paused' && (
                 <form action={updateStatus}>
@@ -254,6 +270,31 @@ export default async function CampaignDetailPage({
             </div>
           </div>
 
+          {/* Warning if campaign is active but no queue */}
+          {needsRequeue && (
+            <div className="border-t border-gray-200 pt-6 pb-4">
+              <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4">
+                <div className="flex items-start">
+                  <div className="flex-shrink-0">
+                    <svg className="h-5 w-5 text-yellow-400" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                  <div className="ml-3">
+                    <h3 className="text-sm font-medium text-yellow-800">
+                      Campaign is active but emails aren't queued
+                    </h3>
+                    <div className="mt-2 text-sm text-yellow-700">
+                      <p>
+                        Click <strong>"Re-queue Emails"</strong> above to schedule all {statusCounts.pending} pending leads for sending.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Email Template Preview */}
           <div className="border-t border-gray-200 pt-6">
             <h3 className="text-lg font-bold mb-2">Email Template</h3>
@@ -273,6 +314,21 @@ export default async function CampaignDetailPage({
             </div>
           </div>
         </div>
+
+        {/* Process Queue Button - Only show if campaign is active and has queue */}
+        {campaign.status === 'active' && queueItems && queueItems.length > 0 && (
+          <div className="bg-white rounded-lg shadow p-6 mb-8">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-xl font-bold mb-2">Manual Send (Optional)</h3>
+                <p className="text-sm text-gray-600">
+                  Emails send automatically every minute. Click to send immediately instead of waiting.
+                </p>
+              </div>
+              <ProcessQueueButton />
+            </div>
+          </div>
+        )}
 
         {/* Campaign Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
@@ -295,6 +351,73 @@ export default async function CampaignDetailPage({
             <p className="text-3xl font-bold text-purple-600">{statusCounts.replied}</p>
           </div>
         </div>
+
+        {/* Email Queue (if campaign is active) */}
+        {campaign.status === 'active' && queueItems && queueItems.length > 0 && (
+          <div className="bg-white rounded-lg shadow overflow-hidden mb-8">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-xl font-bold">Email Queue Schedule</h3>
+              <p className="text-sm text-gray-600 mt-1">
+                Next {queueItems.filter(q => q.status === 'pending').length} emails to send
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Lead
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Scheduled For
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Status
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {queueItems.slice(0, 10).map((item: any) => (
+                    <tr key={item.id}>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                        {item.leads?.name || 'Unknown'}
+                        <div className="text-xs text-gray-500">{item.leads?.email}</div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                        {new Date(item.scheduled_for).toLocaleString()}
+                        <div className="text-xs text-gray-500">
+                          {new Date(item.scheduled_for) > new Date() 
+                            ? `In ${Math.round((new Date(item.scheduled_for).getTime() - new Date().getTime()) / 1000 / 60)} minutes`
+                            : 'Ready to send'}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span
+                          className={`px-2 py-1 text-xs font-medium rounded-full ${
+                            item.status === 'sent'
+                              ? 'bg-green-100 text-green-800'
+                              : item.status === 'sending'
+                              ? 'bg-blue-100 text-blue-800'
+                              : item.status === 'failed'
+                              ? 'bg-red-100 text-red-800'
+                              : 'bg-gray-100 text-gray-800'
+                          }`}
+                        >
+                          {item.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {queueItems.length > 10 && (
+              <div className="px-6 py-3 bg-gray-50 text-sm text-gray-600 text-center">
+                Showing 10 of {queueItems.length} queued emails
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Leads Table */}
         <div className="bg-white rounded-lg shadow overflow-hidden">
@@ -371,6 +494,9 @@ export default async function CampaignDetailPage({
           )}
         </div>
       </div>
+
+      {/* Auto-processor: automatically sends emails on schedule */}
+      <AutoProcessor enabled={campaign.status === 'active' && queueItems && queueItems.length > 0} />
     </main>
   );
 }

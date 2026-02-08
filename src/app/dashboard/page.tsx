@@ -7,6 +7,8 @@ import StartOutreachButton from './StartOutreachButton';
 import TestEmailButton from './TestEmailButton';
 import SMTPConnectionForm from './SMTPConnectionForm';
 import GmailConnectButton from './GmailConnectButton';
+import ProcessQueueButton from './ProcessQueueButton';
+import AutoProcessor from './AutoProcessor';
 
 export default async function DashboardPage() {
   const cookieStore = await cookies();
@@ -328,6 +330,9 @@ export default async function DashboardPage() {
           }}
         />
 
+        {/* Process Queue Button (for testing) */}
+        <ProcessQueueButton />
+
         {/* Leads Table */}
         <div className="bg-white rounded-lg shadow p-8">
           <h3 className="text-2xl font-bold mb-6">Your Leads</h3>
@@ -404,6 +409,9 @@ export default async function DashboardPage() {
           )}
         </div>
       </div>
+
+      {/* Auto-processor: automatically sends queued emails every minute */}
+      <AutoProcessor />
     </main>
   );
 }
