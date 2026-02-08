@@ -1,8 +1,11 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
+import { revalidatePath } from 'next/cache';
 import StartOutreachButton from './StartOutreachButton';
 import TestEmailButton from './TestEmailButton';
+import SMTPConnectionForm from './SMTPConnectionForm';
+import GmailConnectButton from './GmailConnectButton';
 
 export default async function DashboardPage() {
   const cookieStore = await cookies();
@@ -40,6 +43,123 @@ export default async function DashboardPage() {
 
   if (leadsError) {
     console.error('Leads fetch error:', leadsError);
+  }
+
+  // Fetch email connections (both Gmail OAuth and Outlook SMTP)
+  const { data: emailConnections } = await supabase
+    .from('email_connections')
+    .select('provider, smtp_host, smtp_port, smtp_username, from_email, from_name, email')
+    .eq('user_id', user.id);
+
+  const outlookConnection = emailConnections?.find(c => c.provider === 'outlook') || null;
+  const gmailConnection = emailConnections?.find(c => c.provider === 'gmail') || null;
+
+  // Server Action: Save SMTP credentials
+  async function saveSMTP(formData: FormData) {
+    'use server';
+    const cookieStore = await cookies();
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          get(name: string) {
+            return cookieStore.get(name)?.value;
+          },
+          set() {},
+          remove() {},
+        },
+      }
+    );
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Unauthorized');
+
+    const smtpHost = formData.get('smtp_host') as string;
+    const smtpPort = parseInt(formData.get('smtp_port') as string);
+    const smtpUsername = formData.get('smtp_username') as string;
+    const smtpPassword = formData.get('smtp_password') as string;
+    const fromName = formData.get('from_name') as string;
+
+    const { error } = await supabase.from('email_connections').upsert({
+      user_id: user.id,
+      provider: 'outlook',
+      smtp_host: smtpHost,
+      smtp_port: smtpPort,
+      smtp_username: smtpUsername,
+      smtp_password: smtpPassword,
+      from_email: smtpUsername,
+      from_name: fromName || null,
+      updated_at: new Date().toISOString(),
+    });
+
+    if (error) throw new Error(error.message);
+
+    revalidatePath('/dashboard');
+  }
+
+  // Server Action: Disconnect SMTP
+  async function disconnectSMTP() {
+    'use server';
+    const cookieStore = await cookies();
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          get(name: string) {
+            return cookieStore.get(name)?.value;
+          },
+          set() {},
+          remove() {},
+        },
+      }
+    );
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Unauthorized');
+
+    const { error } = await supabase
+      .from('email_connections')
+      .delete()
+      .eq('user_id', user.id)
+      .eq('provider', 'outlook');
+
+    if (error) throw new Error(error.message);
+
+    revalidatePath('/dashboard');
+  }
+
+  // Server Action: Disconnect Gmail
+  async function disconnectGmail() {
+    'use server';
+    const cookieStore = await cookies();
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          get(name: string) {
+            return cookieStore.get(name)?.value;
+          },
+          set() {},
+          remove() {},
+        },
+      }
+    );
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Unauthorized');
+
+    const { error } = await supabase
+      .from('email_connections')
+      .delete()
+      .eq('user_id', user.id)
+      .eq('provider', 'gmail');
+
+    if (error) throw new Error(error.message);
+
+    revalidatePath('/dashboard');
   }
 
   return (
@@ -142,6 +262,19 @@ export default async function DashboardPage() {
             </div>
           </div>
         </div>
+
+        {/* Email Connection Section - Gmail OAuth */}
+        <GmailConnectButton
+          connection={gmailConnection}
+          onDisconnect={disconnectGmail}
+        />
+
+        {/* Email Connection Section - Outlook SMTP */}
+        <SMTPConnectionForm
+          connection={outlookConnection}
+          onSave={saveSMTP}
+          onDisconnect={disconnectSMTP}
+        />
 
         {/* Start Outreach Section */}
         <StartOutreachButton />
