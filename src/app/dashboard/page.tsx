@@ -2,6 +2,7 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import StartOutreachButton from './StartOutreachButton';
+import TestEmailButton from './TestEmailButton';
 
 export default async function DashboardPage() {
   const cookieStore = await cookies();
@@ -33,7 +34,7 @@ export default async function DashboardPage() {
   // Fetch the user's leads
   const { data: leads, error: leadsError } = await supabase
     .from('Leads')
-    .select('id, name, company, email, phone, notes') // ← added 'id' for delete
+    .select('id, name, company, email, phone, notes')
     .eq('user_id', user.id)
     .order('created_at', { ascending: false });
 
@@ -141,8 +142,13 @@ export default async function DashboardPage() {
             </div>
           </div>
         </div>
+
         {/* Start Outreach Section */}
         <StartOutreachButton />
+
+        {/* Test Email Button */}
+        <TestEmailButton userEmail={user.email || ''} />
+
         {/* Leads Table */}
         <div className="bg-white rounded-lg shadow p-8">
           <h3 className="text-2xl font-bold mb-6">Your Leads</h3>
@@ -196,7 +202,6 @@ export default async function DashboardPage() {
                             );
 
                             await supabaseAction.from('Leads').delete().eq('id', lead.id);
-                            // Revalidate or redirect to refresh page
                             redirect('/dashboard');
                           }}
                         >
