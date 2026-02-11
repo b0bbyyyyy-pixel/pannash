@@ -43,28 +43,63 @@ export function getNextBusinessHour(date: Date): Date {
  * Generate scheduled times for a batch of emails
  * @param count - Number of emails to schedule
  * @param startTime - Optional start time (defaults to next business hour)
+ * @param spreadThroughoutDay - If true, evenly distribute emails from 9 AM - 6 PM
  * @returns Array of ISO timestamp strings
  */
-export function generateScheduledTimes(count: number, startTime?: Date): string[] {
+export function generateScheduledTimes(
+  count: number, 
+  startTime?: Date,
+  spreadThroughoutDay?: boolean
+): string[] {
   const times: string[] = [];
   let currentTime = startTime ? new Date(startTime) : getNextBusinessHour(new Date());
 
-  for (let i = 0; i < count; i++) {
-    // Ensure we're in business hours
-    if (!isBusinessHours(currentTime)) {
-      currentTime = getNextBusinessHour(currentTime);
+  if (spreadThroughoutDay) {
+    // Spread emails evenly throughout business hours (9 AM - 6 PM = 9 hours = 540 minutes)
+    const businessMinutes = 9 * 60; // 540 minutes
+    const avgMinutesBetween = businessMinutes / count;
+    
+    for (let i = 0; i < count; i++) {
+      // Ensure we're in business hours
+      if (!isBusinessHours(currentTime)) {
+        currentTime = getNextBusinessHour(currentTime);
+      }
+
+      times.push(currentTime.toISOString());
+
+      // Add spread delay with ±20% randomization
+      const variance = avgMinutesBetween * 0.2; // 20% variance
+      const randomOffset = (Math.random() * 2 - 1) * variance; // -20% to +20%
+      const minutesDelay = avgMinutesBetween + randomOffset;
+      const secondsDelay = minutesDelay * 60;
+      
+      currentTime = new Date(currentTime.getTime() + secondsDelay * 1000);
+
+      // If we've gone past 6 PM, jump to 9 AM next day
+      if (currentTime.getHours() >= 18) {
+        currentTime.setDate(currentTime.getDate() + 1);
+        currentTime.setHours(9, 0, 0, 0);
+      }
     }
+  } else {
+    // Original random delay logic
+    for (let i = 0; i < count; i++) {
+      // Ensure we're in business hours
+      if (!isBusinessHours(currentTime)) {
+        currentTime = getNextBusinessHour(currentTime);
+      }
 
-    times.push(currentTime.toISOString());
+      times.push(currentTime.toISOString());
 
-    // Add random delay for next email
-    const delaySeconds = getRandomDelay();
-    currentTime = new Date(currentTime.getTime() + delaySeconds * 1000);
+      // Add random delay for next email
+      const delaySeconds = getRandomDelay();
+      currentTime = new Date(currentTime.getTime() + delaySeconds * 1000);
 
-    // If we've gone past 6 PM, jump to 9 AM next day
-    if (currentTime.getHours() >= 18) {
-      currentTime.setDate(currentTime.getDate() + 1);
-      currentTime.setHours(9, 0, 0, 0);
+      // If we've gone past 6 PM, jump to 9 AM next day
+      if (currentTime.getHours() >= 18) {
+        currentTime.setDate(currentTime.getDate() + 1);
+        currentTime.setHours(9, 0, 0, 0);
+      }
     }
   }
 

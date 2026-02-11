@@ -1,109 +1,115 @@
-'use client';
+import { createServerClient } from '@supabase/ssr';
+import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
+import Navbar from '@/components/Navbar';
+import UploadForm from './UploadForm';
 
-import { useState } from 'react';
-import { supabase } from '@/lib/supabase';
-import Papa from 'papaparse';
-import Link from 'next/link';
-
-export default function LeadsUploadPage() {
-  const [file, setFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files?.[0]) {
-      setFile(e.target.files[0]);
+export default async function LeadsPage() {
+  const cookieStore = await cookies();
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return cookieStore.get(name)?.value;
+        },
+        set() {},
+        remove() {},
+      },
     }
-  };
+  );
 
-  const handleUpload = async () => {
-    if (!file) return;
-    setUploading(true);
-    setError(null);
-    setSuccess(false);
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) redirect('/auth');
 
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const csv = event.target?.result as string;
-      const parsed = Papa.parse(csv, { header: true, skipEmptyLines: true });
-
-      if (parsed.errors.length > 0) {
-        setError('Invalid CSV format');
-        setUploading(false);
-        return;
-      }
-
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        setError('Not logged in');
-        setUploading(false);
-        return;
-      }
-
-      const leads = parsed.data.map((row: any) => ({
-        user_id: user.id,
-        name: row.Name || row.name || '',
-        company: row.Company || row.company || '',
-        email: row.Email || row.email || '',
-        phone: row.Phone || row.phone || '',
-        notes: row.Notes || row.notes || '',
-      }));
-
-      const { error } = await supabase.from('leads').insert(leads);
-
-      setUploading(false);
-
-      if (error) {
-        setError(error.message);
-      } else {
-        setSuccess(true);
-      }
-    };
-
-    reader.readAsText(file);
-  };
+  // Fetch user's leads
+  const { data: leads } = await supabase
+    .from('leads')
+    .select('*')
+    .eq('user_id', user.id)
+    .order('created_at', { ascending: false });
 
   return (
-    <main className="min-h-screen bg-gray-50 py-12">
-      <div className="max-w-4xl mx-auto px-4">
-        {/* Back button at the top */}
+    <div className="min-h-screen bg-[#fdfdfd]">
+      <Navbar userName={user.email?.split('@')[0] || 'User'} />
+      
+      <main className="max-w-[1400px] mx-auto px-8 pt-24 pb-12">
         <div className="mb-8">
-          <Link
-            href="/dashboard"
-            className="inline-flex items-center px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 transition"
-          >
-            ← Back to Dashboard
-          </Link>
+          <h1 className="text-4xl font-bold text-gray-900 mb-2">
+            Leads
+          </h1>
+          <p className="text-gray-600">
+            Upload and manage your contact list
+          </p>
         </div>
 
-        <h1 className="text-3xl font-bold mb-8">Upload Your Leads</h1>
-
-        <div className="bg-white p-8 rounded-lg shadow">
-          <input
-            type="file"
-            accept=".csv"
-            onChange={handleFileChange}
-            className="mb-4 block w-full text-sm text-gray-500
-              file:mr-4 file:py-2 file:px-4
-              file:rounded-full file:border-0
-              file:text-sm file:font-semibold
-              file:bg-blue-50 file:text-blue-700
-              hover:file:bg-blue-100"
-          />
-
-          <button
-            onClick={handleUpload}
-            disabled={!file || uploading}
-            className="mt-4 px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-          >
-            {uploading ? 'Uploading...' : 'Upload CSV'}
-          </button>
-
-          {error && <p className="mt-4 text-red-600">{error}</p>}
-          {success && <p className="mt-4 text-green-600">Leads uploaded successfully!</p>}
+        {/* Upload Section */}
+        <div className="bg-white border border-gray-200 rounded-lg p-8 mb-8">
+          <UploadForm />
         </div>
-      </div>
-    </main>
+
+        {/* Leads Table */}
+        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+          {!leads || leads.length === 0 ? (
+            <div className="p-12 text-center text-gray-500">
+              <p className="text-lg mb-2">No leads yet</p>
+              <p className="text-sm">Upload a CSV file to get started</p>
+            </div>
+          ) : (
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Name
+                  </th>
+                  <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Email
+                  </th>
+                  <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Phone
+                  </th>
+                  <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Company
+                  </th>
+                  <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Status
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {leads.map((lead) => (
+                  <tr key={lead.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                      {lead.name}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                      {lead.email}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                      {lead.phone || '—'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                      {lead.company || '—'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className="inline-flex px-3 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-800">
+                        {lead.status || 'new'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {leads && leads.length > 0 && (
+          <div className="mt-4 text-center text-sm text-gray-500">
+            {leads.length} total leads
+          </div>
+        )}
+      </main>
+    </div>
   );
 }
