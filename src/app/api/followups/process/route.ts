@@ -4,11 +4,14 @@ import { cookies } from 'next/headers';
 import { google } from 'googleapis';
 import nodemailer from 'nodemailer';
 import { Resend } from 'resend';
-import { replaceTemplateVariables } from '@/lib/queue';
-import { addEmailTracking, convertToHtml, generateTrackingId } from '@/lib/email-tracking';
+import { addEmailTracking, convertToHtml } from '@/lib/email-tracking';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
+/**
+ * Process and send scheduled follow-ups
+ * Similar to queue processor but for follow-ups
+ */
 export async function POST(req: NextRequest) {
   try {
     const cookieStore = await cookies();
@@ -17,91 +20,71 @@ export async function POST(req: NextRequest) {
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
       {
         cookies: {
-          get(name) {
+          get(name: string) {
             return cookieStore.get(name)?.value;
           },
-          set(name, value, options) {
-            cookieStore.set({ name, value, ...options });
-          },
-          remove(name, options) {
-            cookieStore.set({ name, value: '', ...options });
-          },
+          set() {},
+          remove() {},
         },
       }
     );
 
-    // Get current user (for auth)
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Fetch pending emails that are ready to send (scheduled_for <= now)
+    // Fetch scheduled follow-ups that are ready to send
     const now = new Date().toISOString();
-    const { data: queueItems, error: queueError } = await supabase
-      .from('email_queue')
+    const { data: followUps, error: followUpsError } = await supabase
+      .from('follow_ups')
       .select(`
         *,
-        campaigns(user_id, subject, email_body),
-        leads(name, company, email, phone, notes)
+        campaigns(user_id),
+        leads(name, company, email, phone)
       `)
-      .eq('status', 'pending')
+      .eq('campaigns.user_id', user.id)
+      .eq('status', 'scheduled')
       .lte('scheduled_for', now)
-      .limit(10); // Process 10 at a time
+      .limit(5); // Process 5 follow-ups at a time
 
-    if (queueError) {
-      console.error('Queue fetch error:', queueError);
-      return NextResponse.json({ error: queueError.message }, { status: 500 });
+    if (followUpsError) {
+      console.error('Follow-ups fetch error:', followUpsError);
+      return NextResponse.json({ error: followUpsError.message }, { status: 500 });
     }
 
-    if (!queueItems || queueItems.length === 0) {
-      return NextResponse.json({ message: 'No emails to send', processed: 0 });
+    if (!followUps || followUps.length === 0) {
+      return NextResponse.json({ 
+        message: 'No follow-ups to send', 
+        processed: 0 
+      });
     }
+
+    // Get user's email connections
+    const { data: connections } = await supabase
+      .from('email_connections')
+      .select('*')
+      .eq('user_id', user.id);
+
+    const gmailConnection = connections?.find((c) => c.provider === 'gmail');
+    const outlookConnection = connections?.find((c) => c.provider === 'outlook');
 
     let successCount = 0;
-    let failureCount = 0;
+    let failCount = 0;
 
-    // Process each email
-    for (const item of queueItems) {
+    for (const followUp of followUps) {
       try {
-        // Check user owns this campaign
-        if ((item.campaigns as any).user_id !== user.id) {
-          continue; // Skip if not owner
-        }
-
-        // Mark as sending
-        await supabase
-          .from('email_queue')
-          .update({ status: 'sending', updated_at: new Date().toISOString() })
-          .eq('id', item.id);
-
-        // Get user's email connections
-        const { data: connections } = await supabase
-          .from('email_connections')
-          .select('*')
-          .eq('user_id', user.id);
-
-        const gmailConnection = connections?.find((c) => c.provider === 'gmail');
-        const outlookConnection = connections?.find((c) => c.provider === 'outlook');
-
-        // Prepare email content
-        const lead = item.leads as any;
-        const campaign = item.campaigns as any;
+        const lead = followUp.leads as any;
         
-        const subject = replaceTemplateVariables(campaign.subject, lead);
-        let body = replaceTemplateVariables(campaign.email_body, lead);
-        
-        // Add email tracking (pixel + link tracking)
+        // Add tracking
         const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
-        body = addEmailTracking(body, item.campaign_lead_id, baseUrl);
-        
-        // Convert to HTML for tracking pixel support
-        const htmlBody = convertToHtml(body);
+        const trackedBody = addEmailTracking(followUp.body, followUp.campaign_lead_id, baseUrl);
+        const htmlBody = convertToHtml(trackedBody);
 
         let success = false;
         let errorMessage = '';
 
-        // Try sending via Gmail OAuth
+        // Try Gmail first
         if (gmailConnection) {
           try {
             const oauth2Client = new google.auth.OAuth2(
@@ -122,7 +105,7 @@ export async function POST(req: NextRequest) {
 
             const message = [
               `To: ${lead.email}`,
-              `Subject: ${subject}`,
+              `Subject: ${followUp.subject}`,
               `Content-Type: text/html; charset=utf-8`,
               ``,
               htmlBody,
@@ -142,14 +125,14 @@ export async function POST(req: NextRequest) {
             });
 
             success = true;
-            console.log(`Sent via Gmail to ${lead.email}`);
+            console.log(`[Follow-up] Sent via Gmail to ${lead.email}`);
           } catch (err: any) {
             console.error('Gmail send error:', err);
             errorMessage = err.message;
           }
         }
 
-        // Try Outlook SMTP if Gmail failed or not configured
+        // Try Outlook SMTP if Gmail failed
         if (!success && outlookConnection) {
           try {
             const transporter = nodemailer.createTransport({
@@ -165,90 +148,72 @@ export async function POST(req: NextRequest) {
             await transporter.sendMail({
               from: `${outlookConnection.from_name || 'Pannash'} <${outlookConnection.from_email}>`,
               to: lead.email,
-              subject: subject,
+              subject: followUp.subject,
               html: htmlBody,
             });
 
             success = true;
-            console.log(`Sent via Outlook SMTP to ${lead.email}`);
+            console.log(`[Follow-up] Sent via Outlook to ${lead.email}`);
           } catch (err: any) {
             console.error('Outlook send error:', err);
             errorMessage = err.message;
           }
         }
 
-        // Fallback to Resend if both failed
+        // Fallback to Resend
         if (!success) {
           try {
             await resend.emails.send({
               from: 'Pannash <onboarding@resend.dev>',
               to: lead.email,
-              subject: subject,
+              subject: followUp.subject,
               html: htmlBody,
             });
 
             success = true;
-            console.log(`Sent via Resend to ${lead.email}`);
+            console.log(`[Follow-up] Sent via Resend to ${lead.email}`);
           } catch (err: any) {
             console.error('Resend send error:', err);
             errorMessage = err.message;
           }
         }
 
-        // Update queue and campaign_leads status
+        // Update follow-up status
         if (success) {
           await supabase
-            .from('email_queue')
-            .update({ status: 'sent', updated_at: new Date().toISOString() })
-            .eq('id', item.id);
-
-          await supabase
-            .from('campaign_leads')
-            .update({
-              status: 'sent',
-              sent_at: new Date().toISOString(),
+            .from('follow_ups')
+            .update({ 
+              status: 'sent', 
+              sent_at: new Date().toISOString() 
             })
-            .eq('campaign_id', item.campaign_id)
-            .eq('lead_id', item.lead_id);
+            .eq('id', followUp.id);
 
           successCount++;
         } else {
-          // Mark as failed
           await supabase
-            .from('email_queue')
-            .update({
+            .from('follow_ups')
+            .update({ 
               status: 'failed',
-              last_error: errorMessage,
-              attempts: item.attempts + 1,
-              updated_at: new Date().toISOString(),
+              error_message: errorMessage 
             })
-            .eq('id', item.id);
+            .eq('id', followUp.id);
 
-          await supabase
-            .from('campaign_leads')
-            .update({
-              status: 'failed',
-              error_message: errorMessage,
-            })
-            .eq('campaign_id', item.campaign_id)
-            .eq('lead_id', item.lead_id);
-
-          failureCount++;
+          failCount++;
         }
       } catch (err: any) {
-        console.error('Error processing queue item:', err);
-        failureCount++;
+        console.error(`Error processing follow-up ${followUp.id}:`, err);
+        failCount++;
       }
     }
 
     return NextResponse.json({
-      message: 'Queue processed',
-      processed: successCount + failureCount,
+      message: `Processed ${followUps.length} follow-ups: ${successCount} sent, ${failCount} failed`,
+      processed: followUps.length,
       success: successCount,
-      failed: failureCount,
+      failed: failCount,
     });
   } catch (err: any) {
-    console.error('Queue processor error:', err);
+    console.error('Follow-up processing error:', err);
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }

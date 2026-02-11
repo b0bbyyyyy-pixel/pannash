@@ -9,6 +9,8 @@ import SMTPConnectionForm from './SMTPConnectionForm';
 import GmailConnectButton from './GmailConnectButton';
 import ProcessQueueButton from './ProcessQueueButton';
 import AutoProcessor from './AutoProcessor';
+import AutoHotDetector from './AutoHotDetector';
+import AutoFollowupProcessor from './AutoFollowupProcessor';
 
 export default async function DashboardPage() {
   const cookieStore = await cookies();
@@ -192,6 +194,18 @@ export default async function DashboardPage() {
                   className="text-gray-600 hover:text-gray-900 font-medium"
                 >
                   Campaigns
+                </Link>
+                <Link
+                  href="/followups"
+                  className="text-blue-600 hover:text-blue-700 font-medium"
+                >
+                  📧 Follow-ups
+                </Link>
+                <Link
+                  href="/hot-leads"
+                  className="text-orange-600 hover:text-orange-700 font-medium"
+                >
+                  🔥 Hot Leads
                 </Link>
               </div>
             </div>
@@ -412,6 +426,12 @@ export default async function DashboardPage() {
 
       {/* Auto-processor: automatically sends queued emails every minute */}
       <AutoProcessor />
+      
+      {/* Auto hot lead detector: checks for hot leads every 5 minutes */}
+      <AutoHotDetector />
+      
+      {/* Auto follow-up processor: generates and sends follow-ups automatically */}
+      <AutoFollowupProcessor />
     </main>
   );
 }

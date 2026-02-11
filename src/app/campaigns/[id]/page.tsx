@@ -8,6 +8,7 @@ import ActivateButton from './ActivateButton';
 import RequeueButton from './RequeueButton';
 import ProcessQueueButton from './ProcessQueueButton';
 import AutoProcessor from './AutoProcessor';
+import EngagementStats from './EngagementStats';
 
 export default async function CampaignDetailPage({
   params,
@@ -188,6 +189,12 @@ export default async function CampaignDetailPage({
                 className="text-blue-600 font-medium"
               >
                 Campaigns
+              </Link>
+              <Link
+                href="/hot-leads"
+                className="text-orange-600 hover:text-orange-700 font-medium"
+              >
+                🔥 Hot Leads
               </Link>
             </div>
           </div>
@@ -453,8 +460,9 @@ export default async function CampaignDetailPage({
                 <tbody className="bg-white divide-y divide-gray-200">
                   {campaignLeads.map((cl: any) => (
                     <tr key={cl.id}>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                        {cl.leads?.name || 'N/A'}
+                      <td className="px-6 py-4 text-sm font-medium text-gray-900">
+                        <div>{cl.leads?.name || 'N/A'}</div>
+                        <EngagementStats campaignLeadId={cl.id} />
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                         {cl.leads?.email || 'N/A'}
