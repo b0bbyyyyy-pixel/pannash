@@ -38,10 +38,17 @@ export default async function NewCampaignPage() {
 
   const hasEmailConnection = connections && connections.length > 0;
 
+  // Fetch user's lead lists
+  const { data: leadLists } = await supabase
+    .from('lead_lists')
+    .select('*')
+    .eq('user_id', user.id)
+    .order('created_at', { ascending: false });
+
   // Fetch user's leads to select from
   const { data: leads } = await supabase
     .from('leads')
-    .select('*')
+    .select('*, lead_lists(name)')
     .eq('user_id', user.id)
     .order('created_at', { ascending: false });
 
@@ -304,7 +311,7 @@ export default async function NewCampaignPage() {
                 </Link>
               </div>
             ) : (
-              <LeadSelector leads={leads} />
+              <LeadSelector leads={leads} leadLists={leadLists || []} />
             )}
           </div>
 

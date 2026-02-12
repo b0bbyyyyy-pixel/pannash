@@ -5,9 +5,12 @@ import { createBrowserClient } from '@supabase/ssr';
 import Papa from 'papaparse';
 import { useRouter } from 'next/navigation';
 
-export default function UploadForm() {
+interface UploadFormProps {
+  selectedListId?: string;
+}
+
+export default function UploadForm({ selectedListId }: UploadFormProps) {
   const [file, setFile] = useState<File | null>(null);
-  const [listName, setListName] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const router = useRouter();
@@ -51,6 +54,7 @@ export default function UploadForm() {
           company: row.Company || row.company || null,
           notes: row.Notes || row.notes || null,
           status: 'new',
+          list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
         }));
 
         const { error } = await supabase.from('leads').insert(leads);
@@ -76,19 +80,6 @@ export default function UploadForm() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Leads Name (optional)
-        </label>
-        <input
-          type="text"
-          value={listName}
-          onChange={(e) => setListName(e.target.value)}
-          placeholder="Q1 2026 Prospects"
-          className="w-full px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
-        />
-      </div>
-
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-2">
           CSV File
