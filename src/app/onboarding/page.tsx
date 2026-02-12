@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import GmailButton from './GmailButton';
 import SMTPForm from './SMTPForm';
+import SkipButton from './SkipButton';
 
 export default async function OnboardingPage() {
   const cookieStore = await cookies();
@@ -109,12 +110,7 @@ export default async function OnboardingPage() {
 
           {/* Skip Button */}
           <div className="text-center">
-            <a
-              href="/dashboard"
-              className="text-sm text-gray-500 hover:text-gray-700 underline"
-            >
-              Skip for now
-            </a>
+            <SkipButton />
           </div>
         </div>
       </div>

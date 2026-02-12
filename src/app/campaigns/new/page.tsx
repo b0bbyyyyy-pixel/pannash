@@ -30,6 +30,14 @@ export default async function NewCampaignPage() {
     redirect('/auth');
   }
 
+  // Check if user has email connection
+  const { data: connections } = await supabase
+    .from('email_connections')
+    .select('*')
+    .eq('user_id', user.id);
+
+  const hasEmailConnection = connections && connections.length > 0;
+
   // Fetch user's leads to select from
   const { data: leads } = await supabase
     .from('leads')
@@ -192,6 +200,28 @@ export default async function NewCampaignPage() {
             Create a new outreach campaign with AI-refined messaging
           </p>
         </div>
+
+        {/* Email Connection Warning */}
+        {!hasEmailConnection && (
+          <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-medium text-yellow-900 mb-1">
+                  ⚠️ No Email Connected
+                </div>
+                <div className="text-sm text-yellow-700">
+                  You need to connect an email account before you can send campaigns
+                </div>
+              </div>
+              <Link
+                href="/settings/connections"
+                className="px-4 py-2 bg-yellow-600 text-white rounded-lg text-sm font-medium hover:bg-yellow-700 transition-colors"
+              >
+                Connect Email
+              </Link>
+            </div>
+          </div>
+        )}
 
         <form action={createCampaign} className="space-y-8">
           {/* Campaign Name */}

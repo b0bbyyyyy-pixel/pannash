@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import Navbar from '@/components/Navbar';
 import LeadsTable from './LeadsTable';
+import OnboardingCheck from './OnboardingCheck';
 
 export default async function DashboardPage() {
   const cookieStore = await cookies();
@@ -24,15 +25,13 @@ export default async function DashboardPage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/auth');
 
-  // Check if user has email connection - if not, redirect to onboarding
+  // Check if user has email connection
   const { data: connections } = await supabase
     .from('email_connections')
     .select('*')
     .eq('user_id', user.id);
 
-  if (!connections || connections.length === 0) {
-    redirect('/onboarding');
-  }
+  const hasEmailConnection = !!(connections && connections.length > 0);
 
   // Get user's main/active campaign
   const { data: activeCampaign } = await supabase
@@ -128,6 +127,9 @@ export default async function DashboardPage() {
       <Navbar userName={user.email?.split('@')[0] || 'User'} />
       
       <main className="max-w-[1400px] mx-auto px-8 pt-24 pb-12">
+        {/* Check onboarding status and show warning if needed */}
+        <OnboardingCheck hasEmailConnection={hasEmailConnection} />
+        
         {!campaign ? (
           // No campaign state
           <div className="text-center py-32">
