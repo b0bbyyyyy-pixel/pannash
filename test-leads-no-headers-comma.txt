@@ -1,0 +1,3 @@
+Sarah Connor,sarah@cyberdyne.com,555-1111,Cyberdyne Systems,VIP client
+Kyle Reese,kyle@resistance.org,555-2222,The Resistance,Urgent follow-up needed
+John Connor,john@future.net,555-3333,Future Tech,Decision maker
