@@ -1,23 +1,96 @@
+@import url('https://fonts.googleapis.com/css2?family=Barlow:ital,wght@0,400;0,500;0,700;1,400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,700;1,400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  /* ALD-inspired color system */
+  --ald-background: #FFFFFF;
+  --ald-offwhite: #F5F5F5;
+  --ald-text-primary: #000000;
+  --ald-text-secondary: #4A4A4A;
+  --ald-accent-navy: #001F3F;
+  --ald-accent-green: #8A9A5B;
+  --ald-accent-burgundy: #722F37;
+  --ald-border: #E0E0E0;
+  
+  /* Legacy support */
+  --background: #FFFFFF;
+  --foreground: #000000;
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  font-family: 'Barlow', sans-serif;
+  background-color: var(--ald-background);
+  color: var(--ald-text-primary);
+  margin: 0;
+  padding: 0;
+  line-height: 1.6;
+  font-size: 16px;
+}
+
+/* Typography */
+.logo, .brand {
+  font-family: 'Crimson Text', serif;
+  font-size: 2.5rem;
+  color: var(--ald-accent-navy);
+  font-weight: 700;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Crimson Text', serif;
+  font-weight: 400;
+  color: var(--ald-text-primary);
+  line-height: 1.2;
+}
+
+h1 { font-size: 2.5rem; }
+h2 { font-size: 2rem; }
+h3 { font-size: 1.5rem; }
+h4 { font-size: 1.25rem; }
+
+/* Custom components */
+@layer components {
+  .btn-primary {
+    @apply bg-[#001F3F] text-[#F5F5F5] px-6 py-3 rounded font-medium transition-colors duration-300;
+  }
+  
+  .btn-primary:hover {
+    @apply bg-[#8A9A5B];
+  }
+  
+  .btn-secondary {
+    @apply bg-[#722F37] text-white px-6 py-3 rounded font-medium transition-colors duration-300;
+  }
+  
+  .btn-secondary:hover {
+    @apply bg-[#8A9A5B];
+  }
+  
+  .card-ald {
+    @apply bg-[#F5F5F5] p-6 rounded-lg shadow-sm;
+  }
+  
+  .link-ald {
+    @apply text-[#722F37] no-underline transition-all duration-200;
+  }
+  
+  .link-ald:hover {
+    @apply underline;
+  }
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+  body { font-size: 14px; }
+  .logo, .brand { font-size: 1.75rem; }
+  h1 { font-size: 2rem; }
+  h2 { font-size: 1.5rem; }
+  h3 { font-size: 1.2rem; }
+  h4 { font-size: 1.1rem; }
 }
 
 @layer utilities {

@@ -81,17 +81,18 @@ export default function AuthPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#fdfdfd] flex items-center justify-center px-4">
-      <div className="w-full max-w-sm">
+    <div className="min-h-screen bg-[#F5F5F5] flex items-center justify-center px-4">
+      <div className="w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-12">
-          <h1 className="text-3xl font-bold text-gray-900">
-            pannash.io
+          <h1 className="font-serif text-5xl font-bold text-[#001F3F] mb-2">
+            Gostwrk.io
           </h1>
+          <p className="text-[#4A4A4A] text-sm">AI-powered outreach, simplified</p>
         </div>
 
         {/* Mode Toggle */}
-        <div className="flex space-x-2 mb-6 bg-white border border-gray-200 rounded-lg p-1">
+        <div className="flex space-x-2 mb-8 bg-white border border-[#E0E0E0] rounded p-1 shadow-sm">
           <button
             type="button"
             onClick={() => {
@@ -99,10 +100,10 @@ export default function AuthPage() {
               setError('');
               setSuccess('');
             }}
-            className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+            className={`flex-1 px-4 py-2.5 rounded text-sm font-medium transition-all ${
               mode === 'signin'
-                ? 'bg-black text-white'
-                : 'text-gray-600 hover:text-gray-900'
+                ? 'bg-[#001F3F] text-[#F5F5F5]'
+                : 'text-[#4A4A4A] hover:text-[#000000]'
             }`}
           >
             Sign In
@@ -114,10 +115,10 @@ export default function AuthPage() {
               setError('');
               setSuccess('');
             }}
-            className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+            className={`flex-1 px-4 py-2.5 rounded text-sm font-medium transition-all ${
               mode === 'signup'
-                ? 'bg-black text-white'
-                : 'text-gray-600 hover:text-gray-900'
+                ? 'bg-[#001F3F] text-[#F5F5F5]'
+                : 'text-[#4A4A4A] hover:text-[#000000]'
             }`}
           >
             Sign Up
@@ -125,7 +126,7 @@ export default function AuthPage() {
         </div>
 
         {/* Form */}
-        <form onSubmit={handleAuth} className="space-y-6">
+        <form onSubmit={handleAuth} className="space-y-5 bg-white p-8 rounded shadow-sm border border-[#E0E0E0]">
           <div>
             <input
               type="email"
@@ -133,7 +134,7 @@ export default function AuthPage() {
               onChange={(e) => setEmail(e.target.value)}
               placeholder="Email"
               required
-              className="w-full px-4 py-3 bg-white border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent transition-all"
+              className="w-full px-4 py-3.5 bg-[#F5F5F5] border border-[#E0E0E0] rounded text-[#000000] placeholder-[#4A4A4A] focus:outline-none focus:ring-2 focus:ring-[#001F3F] focus:border-transparent transition-all"
             />
           </div>
 
@@ -145,23 +146,23 @@ export default function AuthPage() {
               placeholder="Password"
               required
               minLength={6}
-              className="w-full px-4 py-3 bg-white border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent transition-all"
+              className="w-full px-4 py-3.5 bg-[#F5F5F5] border border-[#E0E0E0] rounded text-[#000000] placeholder-[#4A4A4A] focus:outline-none focus:ring-2 focus:ring-[#001F3F] focus:border-transparent transition-all"
             />
             {mode === 'signup' && (
-              <p className="mt-2 text-xs text-gray-500">
+              <p className="mt-2 text-xs text-[#4A4A4A]">
                 Must be at least 6 characters
               </p>
             )}
           </div>
 
           {error && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700 text-center">
+            <div className="p-3.5 bg-red-50 border border-red-200 rounded text-sm text-red-700 text-center">
               {error}
             </div>
           )}
 
           {success && (
-            <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700 text-center">
+            <div className="p-3.5 bg-green-50 border border-green-200 rounded text-sm text-green-700 text-center">
               {success}
             </div>
           )}
@@ -169,7 +170,7 @@ export default function AuthPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full px-4 py-3 bg-black text-white rounded-lg font-medium hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="w-full px-4 py-3.5 bg-[#001F3F] text-[#F5F5F5] rounded font-medium hover:bg-[#8A9A5B] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {loading 
               ? (mode === 'signup' ? 'Creating Account...' : 'Signing In...') 

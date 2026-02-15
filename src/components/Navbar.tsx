@@ -15,22 +15,22 @@ export default function Navbar({ userName }: NavbarProps) {
   const isActive = (path: string) => pathname === path || pathname?.startsWith(path + '/');
 
   return (
-    <nav className="fixed top-0 left-0 right-0 bg-[#fdfdfd] border-b border-gray-200 z-50">
+    <nav className="fixed top-0 left-0 right-0 bg-white border-b border-[#E0E0E0] z-50">
       <div className="max-w-[1400px] mx-auto px-8">
-        <div className="flex items-center justify-between h-16">
-          {/* Logo */}
-          <Link href="/dashboard" className="text-xl font-bold text-gray-900">
-            pannash.io
+        <div className="flex items-center justify-between h-20">
+          {/* Logo - Crimson Text */}
+          <Link href="/campaigns" className="font-serif text-3xl font-bold text-[#001F3F] hover:text-[#8A9A5B] transition-colors">
+            Gostwrk.io
           </Link>
 
           {/* Center Links */}
-          <div className="flex items-center space-x-8">
+          <div className="flex items-center space-x-10">
             <Link
               href="/campaigns"
               className={`text-sm font-medium transition-colors ${
                 isActive('/campaigns')
-                  ? 'text-gray-900'
-                  : 'text-gray-600 hover:text-gray-900'
+                  ? 'text-[#000000] border-b-2 border-[#001F3F] pb-1'
+                  : 'text-[#4A4A4A] hover:text-[#722F37]'
               }`}
             >
               Campaigns
@@ -39,8 +39,8 @@ export default function Navbar({ userName }: NavbarProps) {
               href="/leads"
               className={`text-sm font-medium transition-colors ${
                 isActive('/leads')
-                  ? 'text-gray-900'
-                  : 'text-gray-600 hover:text-gray-900'
+                  ? 'text-[#000000] border-b-2 border-[#001F3F] pb-1'
+                  : 'text-[#4A4A4A] hover:text-[#722F37]'
               }`}
             >
               Leads
@@ -49,8 +49,8 @@ export default function Navbar({ userName }: NavbarProps) {
               href="/brains"
               className={`text-sm font-medium transition-colors ${
                 isActive('/brains')
-                  ? 'text-gray-900'
-                  : 'text-gray-600 hover:text-gray-900'
+                  ? 'text-[#000000] border-b-2 border-[#001F3F] pb-1'
+                  : 'text-[#4A4A4A] hover:text-[#722F37]'
               }`}
             >
               Brains
@@ -61,13 +61,13 @@ export default function Navbar({ userName }: NavbarProps) {
           <div className="relative">
             <button
               onClick={() => setShowDropdown(!showDropdown)}
-              className="flex items-center space-x-3 text-sm focus:outline-none"
+              className="flex items-center space-x-3 text-sm focus:outline-none hover:opacity-80 transition-opacity"
             >
-              <span className="font-medium text-gray-900 capitalize">
+              <span className="font-medium text-[#000000] capitalize">
                 {userName}
               </span>
               <svg
-                className="w-5 h-5 text-gray-600"
+                className="w-5 h-5 text-[#4A4A4A]"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -89,40 +89,40 @@ export default function Navbar({ userName }: NavbarProps) {
 
             {/* Dropdown Menu */}
             {showDropdown && (
-              <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg py-1">
+              <div className="absolute right-0 mt-2 w-56 bg-white border border-[#E0E0E0] rounded shadow-lg py-1">
                 <Link
                   href="/settings/billing"
-                  className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                  className="block px-4 py-2.5 text-sm text-[#4A4A4A] hover:bg-[#F5F5F5] hover:text-[#722F37] transition-colors"
                   onClick={() => setShowDropdown(false)}
                 >
                   Billing
                 </Link>
                 <Link
                   href="/settings/connections"
-                  className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                  className="block px-4 py-2.5 text-sm text-[#4A4A4A] hover:bg-[#F5F5F5] hover:text-[#722F37] transition-colors"
                   onClick={() => setShowDropdown(false)}
                 >
                   Email & Phone Connectors
                 </Link>
                 <Link
                   href="/settings/profile"
-                  className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                  className="block px-4 py-2.5 text-sm text-[#4A4A4A] hover:bg-[#F5F5F5] hover:text-[#722F37] transition-colors"
                   onClick={() => setShowDropdown(false)}
                 >
                   User Profile
                 </Link>
                 <Link
                   href="/settings/timezone"
-                  className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                  className="block px-4 py-2.5 text-sm text-[#4A4A4A] hover:bg-[#F5F5F5] hover:text-[#722F37] transition-colors"
                   onClick={() => setShowDropdown(false)}
                 >
                   Timezone
                 </Link>
-                <hr className="my-1" />
+                <hr className="my-1 border-[#E0E0E0]" />
                 <form action="/api/auth/signout" method="POST">
                   <button
                     type="submit"
-                    className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-50"
+                    className="w-full text-left px-4 py-2.5 text-sm text-[#722F37] hover:bg-[#F5F5F5] transition-colors"
                   >
                     Sign Out
                   </button>

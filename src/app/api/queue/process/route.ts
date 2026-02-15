@@ -60,6 +60,7 @@ export async function POST(req: NextRequest) {
 
     let successCount = 0;
     let failureCount = 0;
+    const errors: string[] = [];
 
     // Process each email
     for (const item of queueItems) {
@@ -146,6 +147,12 @@ export async function POST(req: NextRequest) {
           } catch (err: any) {
             console.error('Gmail send error:', err);
             errorMessage = err.message;
+            
+            // Check for specific OAuth errors
+            if (err.message?.includes('invalid_grant')) {
+              errorMessage = 'Gmail OAuth token expired - please reconnect in Settings';
+              errors.push('Gmail OAuth expired');
+            }
           }
         }
 
@@ -180,15 +187,20 @@ export async function POST(req: NextRequest) {
         // Fallback to Resend if both failed
         if (!success) {
           try {
+            // Use Gmail's from_email if available, otherwise use Resend test domain
+            const fromAddress = gmailConnection?.from_email 
+              ? `Gostwrk <${gmailConnection.from_email}>`
+              : 'Gostwrk <onboarding@resend.dev>';
+            
             await resend.emails.send({
-              from: 'Pannash <onboarding@resend.dev>',
+              from: fromAddress,
               to: lead.email,
               subject: subject,
               html: htmlBody,
             });
 
             success = true;
-            console.log(`Sent via Resend to ${lead.email}`);
+            console.log(`Sent via Resend to ${lead.email} from ${fromAddress}`);
           } catch (err: any) {
             console.error('Resend send error:', err);
             errorMessage = err.message;
@@ -202,11 +214,40 @@ export async function POST(req: NextRequest) {
             .update({ status: 'sent', updated_at: new Date().toISOString() })
             .eq('id', item.id);
 
+          // Get user's loop settings
+          const { data: settings } = await supabase
+            .from('automation_settings')
+            .select('loop_after_days')
+            .eq('user_id', user.id)
+            .single();
+
+          const loopDays = settings?.loop_after_days || 14;
+          
+          // Calculate next_email_at (null if loop is disabled)
+          let nextEmailAt = null;
+          if (loopDays > 0) {
+            const nextDate = new Date();
+            nextDate.setDate(nextDate.getDate() + loopDays);
+            nextEmailAt = nextDate.toISOString();
+          }
+
+          // Get current loop_count
+          const { data: currentLead } = await supabase
+            .from('campaign_leads')
+            .select('loop_count')
+            .eq('campaign_id', item.campaign_id)
+            .eq('lead_id', item.lead_id)
+            .single();
+
+          const currentLoopCount = currentLead?.loop_count || 0;
+
           await supabase
             .from('campaign_leads')
             .update({
               status: 'sent',
               sent_at: new Date().toISOString(),
+              next_email_at: nextEmailAt,
+              loop_count: currentLoopCount + 1,
             })
             .eq('campaign_id', item.campaign_id)
             .eq('lead_id', item.lead_id);
@@ -234,10 +275,14 @@ export async function POST(req: NextRequest) {
             .eq('lead_id', item.lead_id);
 
           failureCount++;
+          if (!errors.includes(errorMessage)) {
+            errors.push(errorMessage);
+          }
         }
       } catch (err: any) {
         console.error('Error processing queue item:', err);
         failureCount++;
+        errors.push(err.message);
       }
     }
 
@@ -246,6 +291,7 @@ export async function POST(req: NextRequest) {
       processed: successCount + failureCount,
       success: successCount,
       failed: failureCount,
+      errors: errors.length > 0 ? errors : undefined,
     });
   } catch (err: any) {
     console.error('Queue processor error:', err);

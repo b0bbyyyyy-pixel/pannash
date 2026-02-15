@@ -6,8 +6,10 @@ import Navbar from '@/components/Navbar';
 import UploadForm from './UploadForm';
 import CreateListButton from './CreateListButton';
 import LeadListSelector from './LeadListSelector';
-import LeadsTable from './LeadsTable';
+import LeadsTableWrapper from './LeadsTableWrapper';
 import EmailToolsBar from './EmailToolsBar';
+import AddLeadButton from './AddLeadButton';
+import ExportListButton from './ExportListButton';
 
 export default async function LeadsPage({
   searchParams,
@@ -177,7 +179,14 @@ export default async function LeadsPage({
               Upload and organize your contact lists
             </p>
           </div>
-          <CreateListButton />
+          <div className="flex gap-3">
+            <AddLeadButton selectedListId={selectedListId} />
+            <ExportListButton 
+              leads={leads || []} 
+              listName={selectedList?.name || 'All_Leads'} 
+            />
+            <CreateListButton />
+          </div>
         </div>
 
         {/* Email Quality Tools */}
@@ -193,40 +202,64 @@ export default async function LeadsPage({
         />
 
         {/* Upload Section */}
-        <div className="bg-white border border-gray-200 rounded-lg p-6 mb-8">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">
-            Upload Leads
-            {selectedList && (
-              <span className="ml-2 text-sm font-normal text-gray-500">
-                to {selectedList.name}
-              </span>
-            )}
-          </h2>
-          <UploadForm selectedListId={selectedListId} />
-        </div>
-
-        {/* Leads Table */}
-        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900">
-                {selectedList ? selectedList.name : 'All Leads'}
+        {leadLists && leadLists.length > 0 ? (
+          selectedListId && selectedListId !== 'unlisted' ? (
+            <div className="bg-white border border-gray-200 rounded-lg p-6 mb-8">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">
+                Upload Leads
+                {selectedList && (
+                  <span className="ml-2 text-sm font-normal text-gray-500">
+                    to {selectedList.name}
+                  </span>
+                )}
               </h2>
-              {selectedList?.description && (
-                <p className="text-sm text-gray-500 mt-1">{selectedList.description}</p>
-              )}
+              <UploadForm selectedListId={selectedListId} />
             </div>
-            <div className="text-sm text-gray-500">
-              {totalLeads} lead{totalLeads !== 1 ? 's' : ''}
+          ) : (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-8 mb-8 text-center">
+              <div className="max-w-md mx-auto">
+                <h2 className="text-xl font-semibold text-gray-900 mb-2">
+                  Select a List to Upload Leads
+                </h2>
+                <p className="text-gray-600 mb-4">
+                  Click on a list tab above to organize your leads properly. Avoid uncategorized leads by selecting a specific list.
+                </p>
+                <div className="mt-4">
+                  <p className="text-sm text-gray-500 mb-3">Need a new category?</p>
+                  <CreateListButton />
+                </div>
+              </div>
+            </div>
+          )
+        ) : (
+          <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-dashed border-blue-300 rounded-lg p-12 mb-8 text-center">
+            <div className="max-w-md mx-auto">
+              <div className="text-5xl mb-4">📋</div>
+              <h2 className="text-2xl font-bold text-gray-900 mb-3">
+                Create Your First Lead List
+              </h2>
+              <p className="text-gray-600 mb-6">
+                Before uploading leads, create a list to organize them. Lists help you manage different campaigns, sources, or categories.
+              </p>
+              <div className="flex flex-col gap-3 items-center">
+                <CreateListButton />
+                <p className="text-sm text-gray-500">
+                  Examples: "Q1 Prospects", "Warm Leads", "Trade Show Contacts"
+                </p>
+              </div>
             </div>
           </div>
+        )}
 
-          <LeadsTable 
-            leads={leads || []} 
-            deleteLead={deleteLead}
-            deleteMultipleLeads={deleteMultipleLeads}
-          />
-        </div>
+        {/* Leads Table */}
+        <LeadsTableWrapper
+          leads={leads || []}
+          selectedListName={selectedList ? selectedList.name : 'All Leads'}
+          selectedListDescription={selectedList?.description}
+          totalLeads={totalLeads}
+          deleteLead={deleteLead}
+          deleteMultipleLeads={deleteMultipleLeads}
+        />
       </main>
     </div>
   );

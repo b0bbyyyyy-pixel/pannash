@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import Navbar from '@/components/Navbar';
+import CampaignCard from './CampaignCard';
 
 export default async function CampaignsPage() {
   const cookieStore = await cookies();
@@ -83,39 +84,7 @@ export default async function CampaignsPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {campaignsWithStats.map((campaign) => (
-              <Link
-                key={campaign.id}
-                href={`/campaigns/${campaign.id}`}
-                className="bg-white border border-gray-200 rounded-lg p-6 hover:border-gray-400 transition-all group"
-              >
-                <div className="mb-4">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-1 group-hover:text-gray-700">
-                    {campaign.name}
-                  </h3>
-                  <p className="text-sm text-gray-500">
-                    {new Date(campaign.created_at).toLocaleDateString()}
-                  </p>
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <div className="text-sm text-gray-600">
-                    <span className="font-medium text-gray-900">{campaign.sent}</span> / {campaign.total} sent
-                  </div>
-                  <span
-                    className={`inline-flex px-3 py-1 text-xs font-medium rounded-full ${
-                      campaign.status === 'active'
-                        ? 'bg-green-100 text-green-800'
-                        : campaign.status === 'paused'
-                        ? 'bg-yellow-100 text-yellow-800'
-                        : campaign.status === 'completed'
-                        ? 'bg-gray-100 text-gray-800'
-                        : 'bg-blue-100 text-blue-800'
-                    }`}
-                  >
-                    {campaign.status}
-                  </span>
-                </div>
-              </Link>
+              <CampaignCard key={campaign.id} campaign={campaign} />
             ))}
           </div>
         )}

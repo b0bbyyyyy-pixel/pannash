@@ -1,21 +1,88 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 export default function SettingsForm() {
   const [dailyLimit, setDailyLimit] = useState(75);
-  const [spreadThroughoutDay, setSpreadThroughoutDay] = useState(true);
+  const [emailFrequency, setEmailFrequency] = useState('2-5'); // minutes between emails
   const [autoStartDaily, setAutoStartDaily] = useState(true);
-  const [loopAfter, setLoopAfter] = useState('14_days');
+  const [loopAfterDays, setLoopAfterDays] = useState(14);
   const [followUpEnabled, setFollowUpEnabled] = useState(true);
   const [followUpTiming, setFollowUpTiming] = useState('3_days');
   const [businessHoursOnly, setBusinessHoursOnly] = useState(true);
   const [aiPersonalization, setAIPersonalization] = useState(50);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
-  const handleSave = () => {
-    // TODO: Save settings to Supabase
-    alert('Settings saved! (Backend integration coming soon)');
+  // Load settings on mount
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  const loadSettings = async () => {
+    try {
+      const res = await fetch('/api/settings');
+      if (res.ok) {
+        const data = await res.json();
+        if (data) {
+          setDailyLimit(data.daily_limit || 75);
+          setEmailFrequency(data.email_frequency || '2-5');
+          setAutoStartDaily(data.auto_start_daily ?? true);
+          setLoopAfterDays(data.loop_after_days || 14);
+          setFollowUpEnabled(data.followup_enabled ?? true);
+          setFollowUpTiming(data.followup_timing || '3_days');
+          setBusinessHoursOnly(data.business_hours_only ?? true);
+          setAIPersonalization(data.ai_personalization || 50);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading settings:', error);
+    } finally {
+      setLoading(false);
+    }
   };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          daily_limit: dailyLimit,
+          email_frequency: emailFrequency,
+          auto_start_daily: autoStartDaily,
+          loop_after_days: loopAfterDays,
+          followup_enabled: followUpEnabled,
+          followup_timing: followUpTiming,
+          business_hours_only: businessHoursOnly,
+          ai_personalization: aiPersonalization,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        // Refresh the page to apply new settings
+        alert('✓ Settings saved! Refreshing to apply changes...');
+        window.location.reload();
+      } else {
+        alert(`Error: ${data.error}`);
+      }
+    } catch (error: any) {
+      console.error('Error saving settings:', error);
+      alert(`Error: ${error.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="text-center py-12">
+        <div className="text-gray-500">Loading settings...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -50,34 +117,39 @@ export default function SettingsForm() {
         </div>
       </div>
 
-      {/* Spread Emails Throughout Day */}
+      {/* Email Frequency */}
       <div className="bg-white border border-gray-200 rounded-lg p-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-1">
-              Spread Emails Throughout Day
-            </h3>
-            <p className="text-sm text-gray-600">
-              Evenly distribute {dailyLimit} emails from 9 AM - 6 PM with random variance
-            </p>
-            {spreadThroughoutDay && (
-              <p className="text-xs text-gray-500 mt-2">
-                ≈ {Math.round((9 * 60) / dailyLimit)} minutes between emails (with randomization)
-              </p>
-            )}
-          </div>
-          <button
-            onClick={() => setSpreadThroughoutDay(!spreadThroughoutDay)}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-              spreadThroughoutDay ? 'bg-black' : 'bg-gray-300'
-            }`}
-          >
-            <span
-              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                spreadThroughoutDay ? 'translate-x-6' : 'translate-x-1'
-              }`}
-            />
-          </button>
+        <div className="mb-4">
+          <h3 className="text-lg font-semibold text-gray-900 mb-1">
+            Email Sending Frequency
+          </h3>
+          <p className="text-sm text-gray-600">
+            How many minutes between each email send
+          </p>
+        </div>
+        
+        <select
+          value={emailFrequency}
+          onChange={(e) => setEmailFrequency(e.target.value)}
+          className="w-full px-4 py-3 bg-white border border-gray-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
+        >
+          <option value="0.5-2">Very Fast (30s - 2min between emails)</option>
+          <option value="2-5">Fast (2-5min between emails)</option>
+          <option value="5-10">Moderate (5-10min between emails)</option>
+          <option value="10-20">Slow (10-20min between emails)</option>
+          <option value="20-40">Very Slow (20-40min between emails)</option>
+          <option value="40-60">Ultra Slow (40-60min between emails)</option>
+        </select>
+        
+        <div className="mt-3 p-3 bg-gray-50 rounded-lg">
+          <p className="text-xs text-gray-600">
+            {emailFrequency === '0.5-2' && '⚡ Fastest speed - Use for warm leads or established sender reputation'}
+            {emailFrequency === '2-5' && '🚀 Good balance of speed and safety'}
+            {emailFrequency === '5-10' && '⚖️ Recommended for most campaigns - Natural human pace'}
+            {emailFrequency === '10-20' && '🐢 Slower, more cautious - Good for cold outreach'}
+            {emailFrequency === '20-40' && '🔒 Very conservative - Best for new accounts'}
+            {emailFrequency === '40-60' && '🛡️ Maximum safety - Looks most human-like'}
+          </p>
         </div>
       </div>
 
@@ -119,15 +191,16 @@ export default function SettingsForm() {
         </div>
         
         <select
-          value={loopAfter}
-          onChange={(e) => setLoopAfter(e.target.value)}
+          value={loopAfterDays}
+          onChange={(e) => setLoopAfterDays(parseInt(e.target.value))}
           className="w-full px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
         >
-          <option value="14_days">14 days</option>
-          <option value="30_days">30 days (monthly)</option>
-          <option value="60_days">60 days</option>
-          <option value="90_days">90 days (quarterly)</option>
-          <option value="never">Never loop</option>
+          <option value="7">7 days (weekly)</option>
+          <option value="14">14 days (bi-weekly)</option>
+          <option value="30">30 days (monthly)</option>
+          <option value="60">60 days</option>
+          <option value="90">90 days (quarterly)</option>
+          <option value="0">Never loop</option>
         </select>
       </div>
 
@@ -293,9 +366,10 @@ export default function SettingsForm() {
       <div className="pt-4">
         <button
           onClick={handleSave}
-          className="w-full px-6 py-3 bg-black text-white rounded-lg font-medium hover:bg-gray-800 transition-colors"
+          disabled={saving}
+          className="w-full px-6 py-3 bg-black text-white rounded-lg font-medium hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Save Settings
+          {saving ? 'Saving...' : 'Save Settings'}
         </button>
       </div>
     </div>

@@ -8,9 +8,13 @@ interface Lead {
   status: string;
   sent_at?: string;
   opened_at?: string;
+  clicked_at?: string;
   replied_at?: string;
+  error_message?: string;
   scheduledFor?: string;
   queueStatus?: string;
+  next_email_at?: string;
+  loop_count?: number;
   leads: {
     name: string;
     email: string;
@@ -54,6 +58,24 @@ export default function LeadsTable({ leads, campaignId }: LeadsTableProps) {
     }
 
     return `${minutes}m ${seconds}s`;
+  };
+
+  const getLoopCountdown = (nextEmailAt: string) => {
+    const nextEmail = new Date(nextEmailAt);
+    const diff = nextEmail.getTime() - currentTime.getTime();
+
+    if (diff <= 0) {
+      return 'Ready to loop';
+    }
+
+    const days = Math.floor(diff / (24 * 60 * 60 * 1000));
+    const hours = Math.floor((diff % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+
+    if (days > 0) {
+      return `${days}d until next`;
+    }
+
+    return `${hours}h until next`;
   };
 
   const getStatusBadge = (lead: Lead) => {
@@ -107,25 +129,87 @@ export default function LeadsTable({ leads, campaignId }: LeadsTableProps) {
       .catch(err => console.error('Error fetching hot leads:', err));
   }, []);
 
+  const getNextEmailTime = () => {
+    // Find the next queued email to send
+    const queuedLeads = leads.filter(l => 
+      (l.status === 'queued' || l.queueStatus === 'pending') && l.scheduledFor
+    );
+    
+    if (queuedLeads.length === 0) return null;
+    
+    const nextLead = queuedLeads.reduce((earliest, current) => {
+      if (!earliest.scheduledFor) return current;
+      if (!current.scheduledFor) return earliest;
+      return new Date(current.scheduledFor) < new Date(earliest.scheduledFor) ? current : earliest;
+    });
+    
+    return nextLead.scheduledFor;
+  };
+
+  const nextEmailTime = getNextEmailTime();
+
+  // Calculate progress stats for addictive feedback
+  const queuedCount = leads.filter(l => 
+    l.scheduledFor && l.status !== 'sent' && l.status !== 'opened' && l.status !== 'replied' && l.status !== 'failed' && l.status !== 'bounced'
+  ).length;
+  const sentCount = leads.filter(l => 
+    (l.status === 'sent' || l.status === 'opened' || l.status === 'replied') && 
+    l.status !== 'failed' && l.status !== 'bounced'
+  ).length;
+  const totalCount = leads.length;
+  const progressPercent = totalCount > 0 ? Math.round((sentCount / totalCount) * 100) : 0;
+
   return (
     <div className="overflow-x-auto">
+      {/* Next Email Countdown Banner */}
+      {nextEmailTime && (
+        <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-b-2 border-green-200 px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl animate-pulse">⏱️</span>
+              <div>
+                <div className="text-sm font-medium text-gray-700">Next email sends in:</div>
+                <div className="text-2xl font-bold text-gray-900 font-mono" suppressHydrationWarning>
+                  {getCountdown(nextEmailTime)}
+                </div>
+              </div>
+            </div>
+            <div className="text-right">
+              <div className="text-sm text-gray-600">
+                at {new Date(nextEmailTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </div>
+              <div className="text-xs text-gray-500 mt-1">
+                {queuedCount} queued • {sentCount}/{totalCount} sent ({progressPercent}%)
+              </div>
+            </div>
+          </div>
+          {/* Progress bar */}
+          <div className="mt-3 w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+            <div 
+              className="bg-gradient-to-r from-green-500 to-emerald-500 h-2 rounded-full transition-all duration-500"
+              style={{ width: `${progressPercent}%` }}
+            />
+          </div>
+        </div>
+      )}
+
       <table className="w-full">
         <thead className="bg-gray-50 border-b border-gray-200">
           <tr>
             <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Lead Name
+              Name
+            </th>
+            <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Email
             </th>
             <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
               Phone
             </th>
             <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Scheduled For
+              Countdown / Status
             </th>
             <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
               Status
-            </th>
-            <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Action
             </th>
           </tr>
         </thead>
@@ -155,15 +239,19 @@ export default function LeadsTable({ leads, campaignId }: LeadsTableProps) {
                     </div>
                   </div>
                 </td>
+
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                  {lead.leads.email}
+                </td>
                 
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                   {lead.leads.phone || '—'}
                 </td>
                 
                 <td className="px-6 py-4 whitespace-nowrap">
-                  {lead.scheduledFor ? (
+                  {lead.scheduledFor && lead.status !== 'sent' && lead.status !== 'opened' && lead.status !== 'replied' ? (
                     <div className="text-sm">
-                      <div className="font-mono font-medium text-gray-900">
+                      <div className="font-mono font-bold text-green-600 text-base" suppressHydrationWarning>
                         {getCountdown(lead.scheduledFor)}
                       </div>
                       <div className="text-xs text-gray-500">
@@ -173,26 +261,111 @@ export default function LeadsTable({ leads, campaignId }: LeadsTableProps) {
                         })}
                       </div>
                     </div>
-                  ) : lead.sent_at ? (
-                    <div className="text-sm text-gray-500">
-                      Sent {new Date(lead.sent_at).toLocaleDateString()}
+                  ) : (lead.status === 'sent' || lead.status === 'opened') && lead.next_email_at ? (
+                    <div className="text-sm">
+                      <div className="flex items-center gap-1 mb-1">
+                        {getStatusBadge(lead)}
+                      </div>
+                      <div className="font-mono text-xs text-[#722F37] font-semibold" suppressHydrationWarning>
+                        📧 {getLoopCountdown(lead.next_email_at)}
+                      </div>
+                      {lead.loop_count && lead.loop_count > 0 && (
+                        <div className="text-xs text-gray-400 mt-0.5">
+                          Loop #{lead.loop_count}
+                        </div>
+                      )}
                     </div>
                   ) : (
-                    <div className="text-sm text-gray-400">—</div>
+                    <div>{getStatusBadge(lead)}</div>
                   )}
                 </td>
                 
-                <td className="px-6 py-4 whitespace-nowrap">
-                  {getStatusBadge(lead)}
-                </td>
-                
                 <td className="px-6 py-4 whitespace-nowrap text-sm">
-                  <Link 
-                    href={`/campaigns/${campaignId}`}
-                    className="text-gray-600 hover:text-gray-900 transition-colors"
-                  >
-                    View
-                  </Link>
+                  {lead.status === 'failed' || lead.status === 'bounced' ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xl">❌</span>
+                      <div>
+                        <div className="font-semibold text-red-600">Failed</div>
+                        <div className="text-xs text-red-500" title={lead.error_message}>
+                          {lead.error_message ? 
+                            (lead.error_message.length > 30 ? 
+                              lead.error_message.substring(0, 30) + '...' : 
+                              lead.error_message
+                            ) : 
+                            'Delivery failed'
+                          }
+                        </div>
+                      </div>
+                    </div>
+                  ) : isHot && lead.status === 'replied' ? (
+                    <div className="flex items-center gap-2 animate-pulse">
+                      <span className="text-2xl">🔥</span>
+                      <div>
+                        <div className="font-bold text-red-600">HOT LEAD!</div>
+                        <div className="text-xs text-red-500">
+                          Replied - Take Action
+                        </div>
+                      </div>
+                    </div>
+                  ) : lead.status === 'replied' || lead.replied_at ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-2xl">💬</span>
+                      <div>
+                        <div className="font-semibold text-green-700">Replied!</div>
+                        <div className="text-xs text-gray-500">
+                          {lead.replied_at && new Date(lead.replied_at).toLocaleDateString()}
+                        </div>
+                      </div>
+                    </div>
+                  ) : lead.clicked_at ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xl">🖱️</span>
+                      <div>
+                        <div className="font-semibold text-[#722F37]">Clicked Link!</div>
+                        <div className="text-xs text-gray-500">
+                          {new Date(lead.clicked_at).toLocaleDateString()}
+                        </div>
+                      </div>
+                    </div>
+                  ) : lead.status === 'opened' || lead.opened_at ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xl">👁️</span>
+                      <div>
+                        <div className="font-semibold text-blue-700">Opened</div>
+                        <div className="text-xs text-gray-500">
+                          {lead.opened_at && new Date(lead.opened_at).toLocaleDateString()}
+                        </div>
+                      </div>
+                    </div>
+                  ) : lead.status === 'sent' || lead.sent_at ? (
+                    <div className="flex items-center gap-2">
+                      <div>
+                        <div className="font-semibold text-green-600">Delivered</div>
+                        <div className="text-xs text-gray-500">
+                          {lead.sent_at && new Date(lead.sent_at).toLocaleDateString()}
+                        </div>
+                      </div>
+                    </div>
+                  ) : lead.scheduledFor ? (
+                    <div className="flex items-center gap-2">
+                      <div>
+                        <div className="font-semibold text-yellow-700">Queued</div>
+                        <div className="text-xs text-gray-500">
+                          Sending soon
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xl">⏸️</span>
+                      <div>
+                        <div className="font-semibold text-gray-500">Pending</div>
+                        <div className="text-xs text-gray-400">
+                          Not scheduled
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </td>
               </tr>
             );
