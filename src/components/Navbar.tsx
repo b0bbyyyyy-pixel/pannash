@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 interface NavbarProps {
@@ -10,6 +10,7 @@ interface NavbarProps {
 
 export default function Navbar({ userName }: NavbarProps) {
   const pathname = usePathname();
+  const router = useRouter();
   const [showDropdown, setShowDropdown] = useState(false);
 
   const isActive = (path: string) => pathname === path || pathname?.startsWith(path + '/');
@@ -135,14 +136,27 @@ export default function Navbar({ userName }: NavbarProps) {
                   Timezone
                 </Link>
                 <hr className="my-2 border-[#e5e5e5]" />
-                <form action="/api/auth/signout" method="POST">
-                  <button
-                    type="submit"
-                    className="w-full text-left px-4 py-2.5 text-sm text-[#6b6b6b] hover:bg-[#f5f5f5] hover:text-[#1a1a1a] transition-colors"
-                  >
-                    Sign Out
-                  </button>
-                </form>
+                <button
+                  onClick={async () => {
+                    try {
+                      const res = await fetch('/api/auth/signout', {
+                        method: 'POST',
+                        credentials: 'include',
+                      });
+                      if (res.redirected) {
+                        window.location.href = res.url;
+                      } else {
+                        router.push('/auth');
+                      }
+                    } catch (error) {
+                      console.error('Sign out error:', error);
+                      router.push('/auth');
+                    }
+                  }}
+                  className="w-full text-left px-4 py-2.5 text-sm text-[#6b6b6b] hover:bg-[#f5f5f5] hover:text-[#1a1a1a] transition-colors"
+                >
+                  Sign Out
+                </button>
               </div>
             )}
           </div>
