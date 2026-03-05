@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/queue/daily-schedule",
+      "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/leads/reset-loop",
+      "schedule": "0 9 1,15 * *"
+    }
+  ]
+}

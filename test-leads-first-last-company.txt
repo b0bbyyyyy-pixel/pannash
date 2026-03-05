@@ -1,0 +1,4 @@
+Michael	Brown	michael@techcorp.com	TechCorp Solutions	555-1111	Senior decision maker
+Lisa	Anderson	lisa@designstudio.com	Creative Design Studio	555-2222	Needs pricing
+David	Martinez	david.m@sales.biz	Sales Business Inc	555-3333	Hot lead from webinar
+Emily	Taylor	emily@enterprise.net	Enterprise Solutions	555-4444	Large account opportunity

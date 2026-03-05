@@ -1,0 +1,4 @@
+Full Name	E-mail	Telephone	Organization	Comments
+Robert Smith	robert@business.com	555-1111	Business Corp	VIP client
+Lisa Anderson	lisa@startup.io	555-2222	StartupIO	Needs demo ASAP
+Mark Thompson	mark@agency.net	555-3333	Agency Network	Referred by John
