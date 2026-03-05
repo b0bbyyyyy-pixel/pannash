@@ -85,6 +85,7 @@ export default function ConfigButton({ stages: initialStages, stats: initialStat
       const stagesRes = await fetch('/api/dashboard/update-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ 
           configType: 'stages', 
           configData: stages 
@@ -102,6 +103,7 @@ export default function ConfigButton({ stages: initialStages, stats: initialStat
       const statsRes = await fetch('/api/dashboard/update-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ 
           configType: 'stats', 
           configData: stats 
@@ -119,6 +121,7 @@ export default function ConfigButton({ stages: initialStages, stats: initialStat
       const columnsRes = await fetch('/api/dashboard/update-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ 
           configType: 'columns', 
           configData: columns 
@@ -136,6 +139,7 @@ export default function ConfigButton({ stages: initialStages, stats: initialStat
       const templatesRes = await fetch('/api/templates/save-all', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ 
           emailTemplates,
           textTemplates
@@ -153,6 +157,7 @@ export default function ConfigButton({ stages: initialStages, stats: initialStat
       const frequenciesRes = await fetch('/api/frequencies/save-all', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ 
           emailFrequencies,
           textFrequencies
