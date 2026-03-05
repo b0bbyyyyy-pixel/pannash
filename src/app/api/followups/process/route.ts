@@ -6,7 +6,10 @@ import nodemailer from 'nodemailer';
 import { Resend } from 'resend';
 import { addEmailTracking, convertToHtml } from '@/lib/email-tracking';
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Lazy initialization to avoid build-time errors
+function getResend() {
+  return new Resend(process.env.RESEND_API_KEY);
+}
 
 /**
  * Process and send scheduled follow-ups
@@ -163,6 +166,7 @@ export async function POST(req: NextRequest) {
         // Fallback to Resend
         if (!success) {
           try {
+            const resend = getResend();
             await resend.emails.send({
               from: 'Pannash <onboarding@resend.dev>',
               to: lead.email,

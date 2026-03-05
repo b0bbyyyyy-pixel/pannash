@@ -8,7 +8,10 @@ import { replaceTemplateVariables } from '@/lib/queue';
 import { addEmailTracking, convertToHtml, generateTrackingId } from '@/lib/email-tracking';
 import { refreshGmailToken, isTokenExpired } from '@/lib/gmail-refresh';
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Lazy initialization to avoid build-time errors
+function getResend() {
+  return new Resend(process.env.RESEND_API_KEY);
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -240,6 +243,7 @@ export async function POST(req: NextRequest) {
               ? `Gostwrk <${gmailConnection.from_email}>`
               : 'Gostwrk <onboarding@resend.dev>';
             
+            const resend = getResend();
             await resend.emails.send({
               from: fromAddress,
               to: lead.email,

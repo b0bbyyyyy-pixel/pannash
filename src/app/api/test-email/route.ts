@@ -5,7 +5,10 @@ import { Resend } from 'resend';
 import nodemailer from 'nodemailer';
 import { google } from 'googleapis';
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Lazy initialization to avoid build-time errors
+function getResend() {
+  return new Resend(process.env.RESEND_API_KEY);
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -138,6 +141,7 @@ export async function POST(req: NextRequest) {
       // Fall back to Resend (no connections configured)
       console.log('Sending via Resend (no connections configured)');
 
+      const resend = getResend();
       const { data, error } = await resend.emails.send({
         from: 'Pannash Test <onboarding@resend.dev>',
         to,
