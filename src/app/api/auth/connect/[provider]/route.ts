@@ -4,9 +4,9 @@ import { createServerClient } from '@supabase/ssr';
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { provider: string } }
+  { params }: { params: Promise<{ provider: string }> }
 ) {
-  const { provider } = params;
+  const { provider } = await params;
 
   // Verify user is authenticated
   const cookieStore = await cookies();

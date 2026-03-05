@@ -60,10 +60,11 @@ export async function POST(req: NextRequest) {
       const startTime = new Date();
       startTime.setHours(9, 0, 0, 0); // Start at 9 AM today
       
+      // Use moderate frequency range (5-10 minutes between emails)
       const scheduledTimes = generateScheduledTimes(
         pendingLeads.length,
         startTime,
-        spreadThroughoutDay
+        '5-10'
       );
 
       // Create queue items

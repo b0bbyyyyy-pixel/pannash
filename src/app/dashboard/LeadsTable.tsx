@@ -153,8 +153,7 @@ export default function LeadsTable({ leads, campaignId }: LeadsTableProps) {
     l.scheduledFor && l.status !== 'sent' && l.status !== 'opened' && l.status !== 'replied' && l.status !== 'failed' && l.status !== 'bounced'
   ).length;
   const sentCount = leads.filter(l => 
-    (l.status === 'sent' || l.status === 'opened' || l.status === 'replied') && 
-    l.status !== 'failed' && l.status !== 'bounced'
+    l.status === 'sent' || l.status === 'opened' || l.status === 'replied'
   ).length;
   const totalCount = leads.length;
   const progressPercent = totalCount > 0 ? Math.round((sentCount / totalCount) * 100) : 0;

@@ -19,6 +19,9 @@ export async function POST(req: NextRequest) {
 
     const { type, data } = body;
     
+    // Extract email address for logging
+    const toEmail = data?.to?.[0] || data?.to || 'unknown';
+    
     // Try to get campaign_lead_id from tags first (more reliable)
     let campaignLeadId = null;
     if (data?.tags) {
@@ -31,7 +34,6 @@ export async function POST(req: NextRequest) {
 
     // If no tag, try to find by email
     if (!campaignLeadId) {
-      const toEmail = data?.to?.[0] || data?.to;
       if (!toEmail) {
         console.log('No email or tag found');
         return NextResponse.json({ received: true });

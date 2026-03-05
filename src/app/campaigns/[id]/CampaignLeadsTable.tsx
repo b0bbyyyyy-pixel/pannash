@@ -255,8 +255,8 @@ export default function CampaignLeadsTable({ campaignId, campaignStatus, leads, 
     if (a.sent_at) return 1;
     if (b.sent_at) return -1;
     
-    // Fallback to position
-    return (a.position || 0) - (b.position || 0);
+    // Fallback to ID for consistent ordering
+    return a.id.localeCompare(b.id);
   });
 
   return (

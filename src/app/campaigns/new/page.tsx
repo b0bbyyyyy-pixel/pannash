@@ -35,7 +35,7 @@ export default async function NewCampaignPage() {
     .select('*')
     .eq('user_id', user.id);
 
-  const hasEmailConnection = connections && connections.length > 0;
+  const hasEmailConnection = !!(connections && connections.length > 0);
 
   // Check if user has phone connection
   const { data: phoneConnections } = await supabase
@@ -43,7 +43,7 @@ export default async function NewCampaignPage() {
     .select('*')
     .eq('user_id', user.id);
 
-  const hasPhoneConnection = phoneConnections && phoneConnections.length > 0;
+  const hasPhoneConnection = !!(phoneConnections && phoneConnections.length > 0);
 
   // Fetch user's lead lists
   const { data: leadLists } = await supabase
