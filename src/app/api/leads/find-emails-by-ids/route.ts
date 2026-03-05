@@ -3,9 +3,12 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import OpenAI from 'openai';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// Lazy initialization to avoid build-time errors
+function getOpenAI() {
+  return new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+  });
+}
 
 // Email validation regex
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -130,6 +133,7 @@ Respond in JSON format with SHORT reasoning (max 15 words):
   "reasoning": "Brief explanation (15 words max)"
 }`;
 
+        const openai = getOpenAI();
         const completion = await openai.chat.completions.create({
           model: 'gpt-4o-mini',
           messages: [{ role: 'user', content: prompt }],

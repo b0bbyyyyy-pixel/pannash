@@ -3,9 +3,12 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import OpenAI from 'openai';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// Lazy initialization to avoid build-time errors
+function getOpenAI() {
+  return new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+  });
+}
 
 // Email validation regex
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -81,6 +84,7 @@ export async function POST(req: Request) {
       }
 
       try {
+        const openai = getOpenAI();
         const prompt = `You are an email address research expert with deep knowledge of corporate email patterns and domain conventions.
 
 Person's Name: ${lead.name}
