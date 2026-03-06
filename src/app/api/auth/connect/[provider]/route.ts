@@ -8,6 +8,10 @@ export async function GET(
 ) {
   const { provider } = await params;
 
+  console.log('[OAuth Connect] Provider:', provider);
+  console.log('[OAuth Connect] Base URL:', process.env.NEXT_PUBLIC_BASE_URL);
+  console.log('[OAuth Connect] Client ID exists:', !!process.env.GOOGLE_CLIENT_ID);
+
   // Verify user is authenticated
   const cookieStore = await cookies();
   const supabase = createServerClient(
