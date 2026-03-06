@@ -39,7 +39,7 @@ export default async function DashboardPage() {
     .from('monthly_dashboards')
     .select('*')
     .eq('user_id', user.id)
-    .order('created_at', { ascending: true });
+    .order('display_order', { ascending: true });
 
   if (dashboardError) {
     console.error('Error fetching monthly dashboards:', dashboardError);

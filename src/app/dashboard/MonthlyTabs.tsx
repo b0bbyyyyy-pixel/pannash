@@ -2,6 +2,23 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  horizontalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 interface MonthData {
   monthKey: string;
@@ -14,14 +31,111 @@ interface MonthlyTabsProps {
   onMonthChange: (month: string) => void;
 }
 
+// Sortable Tab Component
+function SortableTab({ 
+  month, 
+  isActive, 
+  onClick, 
+  onContextMenu 
+}: { 
+  month: MonthData; 
+  isActive: boolean; 
+  onClick: () => void;
+  onContextMenu: (e: React.MouseEvent) => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: month.monthKey });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    cursor: isDragging ? 'grabbing' : 'pointer',
+  };
+
+  return (
+    <button
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      onClick={onClick}
+      onContextMenu={onContextMenu}
+      className={`px-4 py-2 text-sm font-medium transition-colors ${
+        isActive
+          ? 'text-[#1a1a1a] border-b-2 border-[#1a1a1a]'
+          : 'text-[#6b6b6b] hover:text-[#1a1a1a]'
+      }`}
+    >
+      {month.customName}
+    </button>
+  );
+}
+
 export default function MonthlyTabs({ availableMonths, currentMonth, onMonthChange }: MonthlyTabsProps) {
+  const [months, setMonths] = useState(availableMonths);
   const [showNewMonthModal, setShowNewMonthModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingMonth, setEditingMonth] = useState<{ monthKey: string; currentName: string } | null>(null);
   const [newMonthName, setNewMonthName] = useState('');
   const [editMonthName, setEditMonthName] = useState('');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; monthKey: string } | null>(null);
+  const [isMounted, setIsMounted] = useState(false);
   const router = useRouter();
+
+  // Prevent hydration mismatch by only enabling DnD after client mount
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  // Sync with prop changes
+  useEffect(() => {
+    setMonths(availableMonths);
+  }, [availableMonths]);
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (over && active.id !== over.id) {
+      const oldIndex = months.findIndex((m) => m.monthKey === active.id);
+      const newIndex = months.findIndex((m) => m.monthKey === over.id);
+
+      const newOrder = arrayMove(months, oldIndex, newIndex);
+      setMonths(newOrder);
+
+      // Save new order to database
+      try {
+        await fetch('/api/dashboard/reorder-months', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            monthKeys: newOrder.map((m) => m.monthKey),
+          }),
+        });
+      } catch (error) {
+        console.error('Error saving tab order:', error);
+        // Revert on error
+        setMonths(availableMonths);
+      }
+    }
+  };
 
   const createNewMonth = async () => {
     if (!newMonthName.trim()) {
@@ -146,29 +260,61 @@ export default function MonthlyTabs({ availableMonths, currentMonth, onMonthChan
 
   return (
     <>
-      <div className="flex items-center gap-2 mb-4 border-b border-[#e5e5e5]">
-        {availableMonths.map(month => (
-          <button
-            key={month.monthKey}
-            onClick={() => onMonthChange(month.monthKey)}
-            onContextMenu={(e) => handleContextMenu(e, month.monthKey)}
-            className={`px-4 py-2 text-sm font-medium transition-colors ${
-              month.monthKey === currentMonth
-                ? 'text-[#1a1a1a] border-b-2 border-[#1a1a1a]'
-                : 'text-[#6b6b6b] hover:text-[#1a1a1a]'
-            }`}
-          >
-            {month.customName}
-          </button>
-        ))}
-        
-        <button
-          onClick={() => setShowNewMonthModal(true)}
-          className="px-4 py-2 text-sm font-medium text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors"
+      {isMounted ? (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
         >
-          + New
-        </button>
-      </div>
+          <div className="flex items-center gap-2 mb-4 border-b border-[#e5e5e5]">
+            <SortableContext
+              items={months.map((m) => m.monthKey)}
+              strategy={horizontalListSortingStrategy}
+            >
+              {months.map((month) => (
+                <SortableTab
+                  key={month.monthKey}
+                  month={month}
+                  isActive={month.monthKey === currentMonth}
+                  onClick={() => onMonthChange(month.monthKey)}
+                  onContextMenu={(e) => handleContextMenu(e, month.monthKey)}
+                />
+              ))}
+            </SortableContext>
+            
+            <button
+              onClick={() => setShowNewMonthModal(true)}
+              className="px-4 py-2 text-sm font-medium text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors"
+            >
+              + New
+            </button>
+          </div>
+        </DndContext>
+      ) : (
+        <div className="flex items-center gap-2 mb-4 border-b border-[#e5e5e5]">
+          {months.map((month) => (
+            <button
+              key={month.monthKey}
+              onClick={() => onMonthChange(month.monthKey)}
+              onContextMenu={(e) => handleContextMenu(e, month.monthKey)}
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                month.monthKey === currentMonth
+                  ? 'text-[#1a1a1a] border-b-2 border-[#1a1a1a]'
+                  : 'text-[#6b6b6b] hover:text-[#1a1a1a]'
+              }`}
+            >
+              {month.customName}
+            </button>
+          ))}
+          
+          <button
+            onClick={() => setShowNewMonthModal(true)}
+            className="px-4 py-2 text-sm font-medium text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors"
+          >
+            + New
+          </button>
+        </div>
+      )}
 
       {/* Context Menu for Edit/Delete */}
       {contextMenu && (

@@ -63,9 +63,10 @@ interface CRMTableProps {
   textTemplates: Template[];
   emailFrequencies: Frequency[];
   textFrequencies: Frequency[];
+  onLeadUpdate: (leadId: string, updates: Partial<Lead>) => void;
 }
 
-export default function CRMTable({ leads: initialLeads, monthKey, stages, columns, emailTemplates, textTemplates, emailFrequencies, textFrequencies }: CRMTableProps) {
+export default function CRMTable({ leads: initialLeads, monthKey, stages, columns, emailTemplates, textTemplates, emailFrequencies, textFrequencies, onLeadUpdate }: CRMTableProps) {
   const [leads, setLeads] = useState(initialLeads);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
@@ -81,6 +82,9 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   const [showEmailModal, setShowEmailModal] = useState<string | null>(null);
   const [showTextModal, setShowTextModal] = useState<string | null>(null);
   const [autoCountdowns, setAutoCountdowns] = useState<{ [key: string]: { email: string, text: string } }>({});
+  const [showCustomTimerModal, setShowCustomTimerModal] = useState<string | null>(null);
+  const [customTimerDate, setCustomTimerDate] = useState('');
+  const [customTimerTime, setCustomTimerTime] = useState('23:59');
   const router = useRouter();
 
   // Update local state when props change (e.g., switching tabs)
@@ -141,14 +145,19 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
       lead.id === leadId ? { ...lead, [field]: value } : lead
     ));
 
+    // Also update parent state so changes persist across tab switches
+    onLeadUpdate(leadId, { [field]: value });
+
     try {
       const res = await fetch('/api/leads/update-crm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ leadId, field, value }),
+        credentials: 'include',
       });
 
       if (!res.ok) {
+        console.error(`Failed to update ${field}:`, await res.text());
         // Revert on failure
         router.refresh();
       }
@@ -174,6 +183,9 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
       lead.id === leadId ? { ...lead, timer_type: timerType, timer_end_date: timerEndDate } : lead
     ));
 
+    // Also update parent state so changes persist across tab switches
+    onLeadUpdate(leadId, { timer_type: timerType, timer_end_date: timerEndDate });
+
     try {
       const res = await fetch('/api/leads/update-crm', {
         method: 'POST',
@@ -183,17 +195,85 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
           field: 'timer', 
           value: { timer_type: timerType, timer_end_date: timerEndDate }
         }),
+        credentials: 'include',
       });
 
       if (!res.ok) {
+        console.error('Failed to update timer:', await res.text());
         // Revert on failure
         router.refresh();
+      } else {
+        const result = await res.json();
+        console.log('Timer updated successfully:', result);
       }
     } catch (error) {
       console.error('Error updating timer:', error);
       // Revert on error
       router.refresh();
     }
+  };
+
+  const handleCustomTimer = async (leadId: string) => {
+    if (!customTimerDate) {
+      alert('Please select a date');
+      return;
+    }
+
+    // Combine date and time
+    const endDate = new Date(`${customTimerDate}T${customTimerTime}`);
+    const timerEndDate = endDate.toISOString();
+
+    // Optimistically update local state
+    setLeads(prev => prev.map(lead => 
+      lead.id === leadId ? { ...lead, timer_type: 'Custom Countdown', timer_end_date: timerEndDate } : lead
+    ));
+
+    // Also update parent state so changes persist across tab switches
+    onLeadUpdate(leadId, { timer_type: 'Custom Countdown', timer_end_date: timerEndDate });
+
+    try {
+      const res = await fetch('/api/leads/update-crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          leadId, 
+          field: 'timer', 
+          value: { timer_type: 'Custom Countdown', timer_end_date: timerEndDate }
+        }),
+        credentials: 'include',
+      });
+
+      if (!res.ok) {
+        console.error('Failed to update custom timer:', await res.text());
+        router.refresh();
+      } else {
+        const result = await res.json();
+        console.log('Custom timer updated successfully:', result);
+      }
+    } catch (error) {
+      console.error('Error updating custom timer:', error);
+      router.refresh();
+    }
+
+    setShowCustomTimerModal(null);
+    setCustomTimerDate('');
+    setCustomTimerTime('23:59');
+  };
+
+  const openCustomTimerModal = (leadId: string) => {
+    const lead = leads.find(l => l.id === leadId);
+    if (lead?.timer_end_date) {
+      const endDate = new Date(lead.timer_end_date);
+      setCustomTimerDate(endDate.toISOString().split('T')[0]);
+      setCustomTimerTime(endDate.toTimeString().slice(0, 5));
+    } else {
+      // Default to 30 days from now
+      const defaultEnd = new Date();
+      defaultEnd.setDate(defaultEnd.getDate() + 30);
+      setCustomTimerDate(defaultEnd.toISOString().split('T')[0]);
+      setCustomTimerTime('23:59');
+    }
+    setShowCustomTimerModal(leadId);
   };
 
   const getCountdown = (timerEndDate: string | null) => {
@@ -291,7 +371,10 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         body: JSON.stringify({ leadId }),
       });
 
-      if (!res.ok) {
+      if (res.ok) {
+        // Refresh to sync with database
+        router.refresh();
+      } else {
         // Revert on failure
         router.refresh();
       }
@@ -320,6 +403,9 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         setLeads(prev => [lead, ...prev]);
         setShowAddModal(false);
         setNewLead({ name: '', email: '', phone: '', company: '' });
+        
+        // Refresh to sync with database
+        router.refresh();
       } else {
         alert('Failed to add lead');
       }
@@ -354,6 +440,10 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
           ) : (
             <button
               onClick={() => setEditingTimerId(lead.id)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                openCustomTimerModal(lead.id);
+              }}
               style={{ 
                 fontFamily: 'var(--font-roboto-mono), monospace', 
                 fontSize: '13px', 
@@ -379,6 +469,10 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
           <select
             value={lead.timer_type}
             onChange={(e) => handleTimerChange(lead.id, e.target.value)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              openCustomTimerModal(lead.id);
+            }}
             className="w-full px-2 py-1 text-xs border border-[#e5e5e5] rounded bg-white text-[#1a1a1a] cursor-pointer"
           >
             {timerTypes.map((type, idx) => (
@@ -752,6 +846,66 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
 
   return (
     <>
+      {/* Custom Timer Modal */}
+      {showCustomTimerModal && (
+        <div 
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" 
+          onClick={() => setShowCustomTimerModal(null)}
+        >
+          <div 
+            className="bg-white rounded-lg p-6 max-w-md w-full mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold text-[#1a1a1a] mb-4">Custom Timer</h2>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-[#1a1a1a] mb-2">
+                  End Date
+                </label>
+                <input
+                  type="date"
+                  value={customTimerDate}
+                  onChange={(e) => setCustomTimerDate(e.target.value)}
+                  className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-[#1a1a1a] mb-2">
+                  End Time
+                </label>
+                <input
+                  type="time"
+                  value={customTimerTime}
+                  onChange={(e) => setCustomTimerTime(e.target.value)}
+                  className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                />
+              </div>
+
+              <p className="text-xs text-[#6b6b6b]">
+                The countdown will expire at this exact date and time
+              </p>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowCustomTimerModal(null)}
+                className="flex-1 px-4 py-2 border border-[#e5e5e5] text-[#1a1a1a] rounded-md text-sm font-medium hover:bg-[#f5f5f5] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => showCustomTimerModal && handleCustomTimer(showCustomTimerModal)}
+                className="flex-1 px-4 py-2 bg-[#1a1a1a] text-white rounded-md text-sm font-medium hover:bg-[#2a2a2a] transition-colors"
+              >
+                Set Timer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Add Lead Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowAddModal(false)}>

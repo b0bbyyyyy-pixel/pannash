@@ -89,11 +89,12 @@ interface DashboardClientProps {
 
 export default function DashboardClient({ allLeads, availableMonths, initialMonth, currentMonthName, stages, stats, columns, emailTemplates, textTemplates, emailFrequencies, textFrequencies }: DashboardClientProps) {
   const [currentMonth, setCurrentMonth] = useState(initialMonth);
+  const [leads, setLeads] = useState(allLeads);
   
   // Get the current month's custom name
   const displayName = availableMonths.find(m => m.monthKey === currentMonth)?.customName || currentMonthName;
 
-  const filteredLeads = allLeads.filter(lead => lead.month_key === currentMonth);
+  const filteredLeads = leads.filter(lead => lead.month_key === currentMonth);
 
   // Calculate stats dynamically based on configuration
   const calculateStatValue = (stat: Stat) => {
@@ -177,7 +178,21 @@ export default function DashboardClient({ allLeads, availableMonths, initialMont
       </div>
 
       {/* CRM Table */}
-      <CRMTable leads={filteredLeads} monthKey={currentMonth} stages={stages} columns={columns} emailTemplates={emailTemplates} textTemplates={textTemplates} emailFrequencies={emailFrequencies} textFrequencies={textFrequencies} />
+      <CRMTable 
+        leads={filteredLeads} 
+        monthKey={currentMonth} 
+        stages={stages} 
+        columns={columns} 
+        emailTemplates={emailTemplates} 
+        textTemplates={textTemplates} 
+        emailFrequencies={emailFrequencies} 
+        textFrequencies={textFrequencies}
+        onLeadUpdate={(leadId, updates) => {
+          setLeads(prev => prev.map(lead => 
+            lead.id === leadId ? { ...lead, ...updates } : lead
+          ));
+        }}
+      />
     </div>
   );
 }

@@ -33,18 +33,22 @@ export async function POST(req: NextRequest) {
     // Handle timer field specially (updates both timer_type and timer_end_date)
     if (field === 'timer') {
       const { timer_type, timer_end_date } = value;
-      const { error } = await supabase
+      console.log('[Timer Update]', { leadId, timer_type, timer_end_date });
+      
+      const { data, error } = await supabase
         .from('leads')
         .update({ timer_type, timer_end_date })
         .eq('id', leadId)
-        .eq('user_id', user.id);
+        .eq('user_id', user.id)
+        .select();
 
       if (error) {
-        console.error('Error updating timer:', error);
+        console.error('[Timer Update Error]:', error);
         return NextResponse.json({ error: error.message }, { status: 500 });
       }
 
-      return NextResponse.json({ success: true });
+      console.log('[Timer Update Success]:', data);
+      return NextResponse.json({ success: true, data });
     }
 
     // Allowed fields to update
