@@ -159,7 +159,6 @@ export default function MonthlyTabs({ availableMonths, currentMonth, onMonthChan
         setShowNewMonthModal(false);
         setNewMonthName('');
         setCopyConfig(true);
-        router.refresh();
         onMonthChange(monthlyDashboard.month_key);
       } else {
         alert('Failed to create page');
@@ -241,8 +240,10 @@ export default function MonthlyTabs({ availableMonths, currentMonth, onMonthChan
           if (nextMonth) {
             onMonthChange(nextMonth.monthKey);
           }
+        } else {
+          // Only refresh if not switching months (onMonthChange handles refresh)
+          router.refresh();
         }
-        router.refresh();
       } else {
         alert('Failed to delete page');
       }

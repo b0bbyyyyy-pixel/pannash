@@ -305,8 +305,8 @@ export default function ConfigButton({ stages: initialStages, stats: initialStat
       }
 
       setShowModal(false);
-      // Force a full page reload to ensure column widths update
-      window.location.reload();
+      // Refresh to update config without losing current month
+      router.refresh();
     } catch (error) {
       console.error('Error saving config:', error);
       alert('Failed to save configuration: ' + (error instanceof Error ? error.message : 'Unknown error'));

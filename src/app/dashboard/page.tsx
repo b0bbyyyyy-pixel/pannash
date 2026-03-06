@@ -4,7 +4,8 @@ import { redirect } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import DashboardClient from './DashboardClient';
 
-export default async function DashboardPage() {
+export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ month?: string }> }) {
+  const params = await searchParams;
   const cookieStore = await cookies();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -77,9 +78,12 @@ export default async function DashboardPage() {
     }
   }
 
-  // Default to the most recently created tab (last in array since we sort by ascending)
-  const currentMonth = availableMonths[availableMonths.length - 1]?.monthKey || '';
-  const currentMonthName = availableMonths[availableMonths.length - 1]?.customName || 'Monthly Working Leads';
+  // Use month from URL param if provided, otherwise default to most recently created tab
+  const urlMonth = params.month;
+  const defaultMonth = availableMonths[availableMonths.length - 1]?.monthKey || '';
+  const currentMonth = (urlMonth && availableMonths.some(m => m.monthKey === urlMonth)) ? urlMonth : defaultMonth;
+  const currentMonthData = availableMonths.find(m => m.monthKey === currentMonth);
+  const currentMonthName = currentMonthData?.customName || 'Monthly Working Leads';
 
   // Fetch dashboard configuration for current month (month-specific first, then fall back to global)
   const fetchConfig = async (configType: string) => {

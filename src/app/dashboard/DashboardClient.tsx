@@ -102,9 +102,11 @@ export default function DashboardClient({ allLeads, availableMonths, initialMont
     setLeads(allLeads);
   }, [allLeads]);
   
-  // When month changes, refresh to load that month's configuration
+  // When month changes, update URL and refresh to load that month's configuration
   const handleMonthChange = (monthKey: string) => {
     setCurrentMonth(monthKey);
+    const url = `/dashboard?month=${encodeURIComponent(monthKey)}`;
+    window.history.pushState({}, '', url);
     router.refresh();
   };
   
