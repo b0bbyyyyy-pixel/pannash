@@ -238,7 +238,8 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
       return;
     }
 
-    const endDate = new Date(displayDate);
+    // Parse date in local timezone at noon to avoid timezone shifting
+    const endDate = new Date(displayDate + 'T12:00:00');
     const timerEndDate = endDate.toISOString();
 
     // Optimistically update local state
@@ -369,10 +370,15 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   const openDisplayDateModal = (leadId: string) => {
     const lead = leads.find(l => l.id === leadId);
     if (lead?.timer_end_date) {
-      const endDate = new Date(lead.timer_end_date);
-      setDisplayDate(endDate.toISOString().split('T')[0]);
+      // Extract just the date portion to avoid timezone issues
+      const dateStr = lead.timer_end_date.split('T')[0];
+      setDisplayDate(dateStr);
     } else {
-      setDisplayDate(new Date().toISOString().split('T')[0]);
+      const today = new Date();
+      const year = today.getFullYear();
+      const month = String(today.getMonth() + 1).padStart(2, '0');
+      const day = String(today.getDate()).padStart(2, '0');
+      setDisplayDate(`${year}-${month}-${day}`);
     }
     setShowDisplayDateModal(leadId);
   };
@@ -618,11 +624,17 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                 }}
                 className="hover:opacity-70 transition-opacity"
               >
-                {new Date(lead.timer_end_date).toLocaleDateString('en-US', { 
-                  month: 'short', 
-                  day: 'numeric', 
-                  year: 'numeric' 
-                })}
+                {(() => {
+                  // Extract date parts from ISO string to avoid timezone conversion
+                  const dateStr = lead.timer_end_date.split('T')[0];
+                  const [year, month, day] = dateStr.split('-');
+                  const date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+                  return date.toLocaleDateString('en-US', { 
+                    month: 'short', 
+                    day: 'numeric', 
+                    year: 'numeric' 
+                  });
+                })()}
               </button>
             )
           ) : (
