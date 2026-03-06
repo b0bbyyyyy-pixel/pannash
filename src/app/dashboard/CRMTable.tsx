@@ -91,6 +91,8 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   const [showCustomTimerModal, setShowCustomTimerModal] = useState<string | null>(null);
   const [customTimerDate, setCustomTimerDate] = useState('');
   const [customTimerTime, setCustomTimerTime] = useState('23:59');
+  const [showDisplayDateModal, setShowDisplayDateModal] = useState<string | null>(null);
+  const [displayDate, setDisplayDate] = useState('');
   const [showExpandedTextModal, setShowExpandedTextModal] = useState<{ leadId: string; field: string; value: string; label: string } | null>(null);
   const router = useRouter();
 
@@ -120,6 +122,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     '15 Day Countdown',
     '30 Day Countdown',
     '60 Day Countdown',
+    'Display Date',
   ];
 
   // Helper function to calculate countdown for auto email/text
@@ -176,6 +179,12 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   };
 
   const handleTimerChange = async (leadId: string, timerType: string) => {
+    // If Display Date is selected, open the modal
+    if (timerType === 'Display Date') {
+      setShowDisplayDateModal(leadId);
+      return;
+    }
+
     let timerEndDate = null;
     
     if (timerType !== 'No Timer') {
@@ -218,6 +227,50 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
       // Revert on error
       router.refresh();
     }
+  };
+
+  const handleDisplayDate = async (leadId: string) => {
+    if (!displayDate) {
+      alert('Please select a date');
+      return;
+    }
+
+    const endDate = new Date(displayDate);
+    const timerEndDate = endDate.toISOString();
+
+    // Optimistically update local state
+    setLeads(prev => prev.map(lead => 
+      lead.id === leadId ? { ...lead, timer_type: 'Display Date', timer_end_date: timerEndDate } : lead
+    ));
+
+    // Update parent state
+    onLeadUpdate(leadId, { timer_type: 'Display Date', timer_end_date: timerEndDate });
+
+    try {
+      const res = await fetch('/api/leads/update-crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          leadId, 
+          field: 'timer', 
+          value: { timer_type: 'Display Date', timer_end_date: timerEndDate }
+        }),
+        credentials: 'include',
+      });
+
+      if (!res.ok) {
+        console.error('Failed to update display date:', await res.text());
+        router.refresh();
+      } else {
+        console.log('Display date updated successfully');
+      }
+    } catch (error) {
+      console.error('Error updating display date:', error);
+      router.refresh();
+    }
+
+    setShowDisplayDateModal(null);
+    setDisplayDate('');
   };
 
   const handleCustomTimer = async (leadId: string) => {
@@ -464,6 +517,29 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                 <option key={`timer-${idx}`} value={type}>{type}</option>
               ))}
             </select>
+          ) : lead.timer_type === 'Display Date' ? (
+            <button
+              onClick={() => setShowDisplayDateModal(lead.id)}
+              style={{ 
+                fontFamily: 'var(--font-roboto-mono), monospace', 
+                fontSize: '13px', 
+                fontWeight: '500', 
+                color: '#1a1a1a', 
+                whiteSpace: 'nowrap',
+                display: 'inline-block',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                padding: 0,
+              }}
+              className="hover:opacity-70 transition-opacity"
+            >
+              {new Date(lead.timer_end_date).toLocaleDateString('en-US', { 
+                month: 'short', 
+                day: 'numeric', 
+                year: 'numeric' 
+              })}
+            </button>
           ) : (
             <button
               onClick={() => setEditingTimerId(lead.id)}
@@ -972,6 +1048,54 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                 className="flex-1 px-4 py-2 bg-[#1a1a1a] text-white rounded-md text-sm font-medium hover:bg-[#2a2a2a] transition-colors"
               >
                 Set Timer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Display Date Modal */}
+      {showDisplayDateModal && (
+        <div 
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" 
+          onClick={() => setShowDisplayDateModal(null)}
+        >
+          <div 
+            className="bg-white rounded-lg p-6 max-w-md w-full mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold text-[#1a1a1a] mb-4">Display Date</h2>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-[#1a1a1a] mb-2">
+                  Date to Display
+                </label>
+                <input
+                  type="date"
+                  value={displayDate}
+                  onChange={(e) => setDisplayDate(e.target.value)}
+                  className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                />
+              </div>
+
+              <p className="text-xs text-[#6b6b6b]">
+                This date will be shown in the timer column without any countdown
+              </p>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowDisplayDateModal(null)}
+                className="flex-1 px-4 py-2 border border-[#e5e5e5] text-[#1a1a1a] rounded-md text-sm font-medium hover:bg-[#f5f5f5] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => showDisplayDateModal && handleDisplayDate(showDisplayDateModal)}
+                className="flex-1 px-4 py-2 bg-[#1a1a1a] text-white rounded-md text-sm font-medium hover:bg-[#2a2a2a] transition-colors"
+              >
+                Set Date
               </button>
             </div>
           </div>
