@@ -1,7 +1,24 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 interface Stage {
   value: string;
@@ -53,6 +70,97 @@ interface ConfigButtonProps {
   textFrequencies: Frequency[];
 }
 
+// Sortable Stage Component
+function SortableStage({ 
+  stage, 
+  index,
+  onUpdate,
+  onUpdateBgColor,
+  onDelete
+}: { 
+  stage: Stage;
+  index: number;
+  onUpdate: (index: number, field: 'value' | 'color', value: string) => void;
+  onUpdateBgColor: (index: number, bgColor: string) => void;
+  onDelete: (index: number) => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: index.toString() });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  // Extract colors for preview
+  const bgMatch = stage.color.match(/bg-\[([^\]]+)\]/);
+  const textMatch = stage.color.match(/text-\[([^\]]+)\]/);
+  const currentBg = bgMatch ? bgMatch[1] : '#e5e5e5';
+  const currentText = textMatch ? textMatch[1] : '#4a4a4a';
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="grid grid-cols-[40px_240px_100px_160px_40px] gap-4 items-end p-4 border border-[#e5e5e5] rounded-md"
+    >
+      <div 
+        {...attributes}
+        {...listeners}
+        className="h-10 flex items-center justify-center text-[#999] hover:text-[#1a1a1a] cursor-grab active:cursor-grabbing"
+      >
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16" />
+        </svg>
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Stage Name</label>
+        <input
+          type="text"
+          value={stage.value}
+          onChange={(e) => onUpdate(index, 'value', e.target.value)}
+          className="w-full px-3 py-2 border border-[#e5e5e5] rounded text-sm"
+        />
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Color</label>
+        <input
+          type="color"
+          value={currentBg}
+          onChange={(e) => onUpdateBgColor(index, e.target.value)}
+          className="w-full h-10 border border-[#e5e5e5] rounded cursor-pointer"
+        />
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Preview</label>
+        <div 
+          className="px-2 py-1 text-xs font-medium rounded text-center"
+          style={{ backgroundColor: currentBg, color: currentText }}
+        >
+          {stage.value}
+        </div>
+      </div>
+      <div>
+        <button
+          onClick={() => onDelete(index)}
+          className="text-[#999] hover:text-[#8a2a2a] transition-colors h-10 flex items-center justify-center"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function ConfigButton({ stages: initialStages, stats: initialStats, columns: initialColumns, emailTemplates: initialEmailTemplates, textTemplates: initialTextTemplates, emailFrequencies: initialEmailFreqs, textFrequencies: initialTextFreqs }: ConfigButtonProps) {
   const [showModal, setShowModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'stages' | 'stats' | 'columns' | 'templates' | 'frequencies'>('stages');
@@ -63,7 +171,24 @@ export default function ConfigButton({ stages: initialStages, stats: initialStat
   const [textTemplates, setTextTemplates] = useState(initialTextTemplates);
   const [emailFrequencies, setEmailFrequencies] = useState(initialEmailFreqs);
   const [textFrequencies, setTextFrequencies] = useState(initialTextFreqs);
+  const [isMounted, setIsMounted] = useState(false);
   const router = useRouter();
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  // Prevent hydration mismatch
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   const saveConfig = async () => {
     try {
@@ -177,6 +302,16 @@ export default function ConfigButton({ stages: initialStages, stats: initialStat
     } catch (error) {
       console.error('Error saving config:', error);
       alert('Failed to save configuration: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    }
+  };
+
+  const handleStagesDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (over && active.id !== over.id) {
+      const oldIndex = parseInt(active.id as string);
+      const newIndex = parseInt(over.id as string);
+      setStages(arrayMove(stages, oldIndex, newIndex));
     }
   };
 
@@ -426,7 +561,7 @@ export default function ConfigButton({ stages: initialStages, stats: initialStat
             {activeTab === 'stages' && (
               <div className="space-y-4">
                 <div className="flex justify-between items-center mb-4">
-                  <p className="text-sm text-[#6b6b6b]">Manage your lead stages and colors</p>
+                  <p className="text-sm text-[#6b6b6b]">Manage your lead stages and colors (drag to reorder)</p>
                   <button
                     onClick={addStage}
                     className="px-3 py-1.5 bg-[#1a1a1a] text-white rounded text-xs font-medium hover:bg-[#2a2a2a]"
@@ -435,55 +570,81 @@ export default function ConfigButton({ stages: initialStages, stats: initialStat
                   </button>
                 </div>
 
-                {stages.map((stage, index) => {
-                  // Extract colors for preview
-                  const bgMatch = stage.color.match(/bg-\[([^\]]+)\]/);
-                  const textMatch = stage.color.match(/text-\[([^\]]+)\]/);
-                  const currentBg = bgMatch ? bgMatch[1] : '#e5e5e5';
-                  const currentText = textMatch ? textMatch[1] : '#4a4a4a';
+                {isMounted ? (
+                  <DndContext
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    onDragEnd={handleStagesDragEnd}
+                  >
+                    <SortableContext
+                      items={stages.map((_, i) => i.toString())}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      {stages.map((stage, index) => (
+                        <SortableStage
+                          key={index}
+                          stage={stage}
+                          index={index}
+                          onUpdate={updateStage}
+                          onUpdateBgColor={updateStageBgColor}
+                          onDelete={deleteStage}
+                        />
+                      ))}
+                    </SortableContext>
+                  </DndContext>
+                ) : (
+                  <>
+                    {stages.map((stage, index) => {
+                      // Extract colors for preview
+                      const bgMatch = stage.color.match(/bg-\[([^\]]+)\]/);
+                      const textMatch = stage.color.match(/text-\[([^\]]+)\]/);
+                      const currentBg = bgMatch ? bgMatch[1] : '#e5e5e5';
+                      const currentText = textMatch ? textMatch[1] : '#4a4a4a';
 
-                  return (
-                    <div key={index} className="grid grid-cols-[240px_100px_160px_40px] gap-4 items-end p-4 border border-[#e5e5e5] rounded-md">
-                      <div>
-                        <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Stage Name</label>
-                        <input
-                          type="text"
-                          value={stage.value}
-                          onChange={(e) => updateStage(index, 'value', e.target.value)}
-                          className="w-full px-3 py-2 border border-[#e5e5e5] rounded text-sm"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Color</label>
-                        <input
-                          type="color"
-                          value={currentBg}
-                          onChange={(e) => updateStageBgColor(index, e.target.value)}
-                          className="w-full h-10 border border-[#e5e5e5] rounded cursor-pointer"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Preview</label>
-                        <div 
-                          className="px-2 py-1 text-xs font-medium rounded text-center"
-                          style={{ backgroundColor: currentBg, color: currentText }}
-                        >
-                          {stage.value}
+                      return (
+                        <div key={index} className="grid grid-cols-[240px_100px_160px_40px] gap-4 items-end p-4 border border-[#e5e5e5] rounded-md">
+                          <div>
+                            <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Stage Name</label>
+                            <input
+                              type="text"
+                              value={stage.value}
+                              onChange={(e) => updateStage(index, 'value', e.target.value)}
+                              className="w-full px-3 py-2 border border-[#e5e5e5] rounded text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Color</label>
+                            <input
+                              type="color"
+                              value={currentBg}
+                              onChange={(e) => updateStageBgColor(index, e.target.value)}
+                              className="w-full h-10 border border-[#e5e5e5] rounded cursor-pointer"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Preview</label>
+                            <div 
+                              className="px-2 py-1 text-xs font-medium rounded text-center"
+                              style={{ backgroundColor: currentBg, color: currentText }}
+                            >
+                              {stage.value}
+                            </div>
+                          </div>
+                          <div>
+                            <button
+                              onClick={() => deleteStage(index)}
+                              className="text-[#999] hover:text-[#8a2a2a] transition-colors h-10 flex items-center justify-center"
+                            >
+                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                      <div>
-                        <button
-                          onClick={() => deleteStage(index)}
-                          className="text-[#999] hover:text-[#8a2a2a] transition-colors h-10 flex items-center justify-center"
-                        >
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
+                      );
+                    })}
+                  </>
+                )}
               </div>
             )}
 
