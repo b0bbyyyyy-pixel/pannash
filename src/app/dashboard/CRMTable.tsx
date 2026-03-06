@@ -366,6 +366,17 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     setCustomTimerTime('23:59');
   };
 
+  const openDisplayDateModal = (leadId: string) => {
+    const lead = leads.find(l => l.id === leadId);
+    if (lead?.timer_end_date) {
+      const endDate = new Date(lead.timer_end_date);
+      setDisplayDate(endDate.toISOString().split('T')[0]);
+    } else {
+      setDisplayDate(new Date().toISOString().split('T')[0]);
+    }
+    setShowDisplayDateModal(leadId);
+  };
+
   const openCustomTimerModal = (leadId: string) => {
     const lead = leads.find(l => l.id === leadId);
     if (lead?.timer_end_date) {
@@ -571,28 +582,49 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
               ))}
             </select>
           ) : lead.timer_type === 'Display Date' ? (
-            <button
-              onClick={() => setShowDisplayDateModal(lead.id)}
-              style={{ 
-                fontFamily: 'var(--font-roboto-mono), monospace', 
-                fontSize: '13px', 
-                fontWeight: '500', 
-                color: '#1a1a1a', 
-                whiteSpace: 'nowrap',
-                display: 'inline-block',
-                background: 'none',
-                border: 'none',
-                cursor: 'pointer',
-                padding: 0,
-              }}
-              className="hover:opacity-70 transition-opacity"
-            >
-              {new Date(lead.timer_end_date).toLocaleDateString('en-US', { 
-                month: 'short', 
-                day: 'numeric', 
-                year: 'numeric' 
-              })}
-            </button>
+            editingTimerId === lead.id ? (
+              <select
+                value={lead.timer_type}
+                onChange={(e) => {
+                  handleTimerChange(lead.id, e.target.value);
+                  setEditingTimerId(null);
+                }}
+                onBlur={() => setEditingTimerId(null)}
+                autoFocus
+                className="w-full px-2 py-1 text-xs border border-[#5a7fc7] rounded bg-white text-[#1a1a1a] cursor-pointer"
+              >
+                {timerTypes.map((type, idx) => (
+                  <option key={`timer-${idx}`} value={type}>{type}</option>
+                ))}
+              </select>
+            ) : (
+              <button
+                onClick={() => setEditingTimerId(lead.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  openDisplayDateModal(lead.id);
+                }}
+                style={{ 
+                  fontFamily: 'var(--font-roboto-mono), monospace', 
+                  fontSize: '13px', 
+                  fontWeight: '500', 
+                  color: '#1a1a1a', 
+                  whiteSpace: 'nowrap',
+                  display: 'inline-block',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: 0,
+                }}
+                className="hover:opacity-70 transition-opacity"
+              >
+                {new Date(lead.timer_end_date).toLocaleDateString('en-US', { 
+                  month: 'short', 
+                  day: 'numeric', 
+                  year: 'numeric' 
+                })}
+              </button>
+            )
           ) : (
             <button
               onClick={() => setEditingTimerId(lead.id)}
