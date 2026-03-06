@@ -23,6 +23,7 @@ interface Lead {
   text_template_id: string | null;
   last_email_sent: string | null;
   last_text_sent: string | null;
+  month_key: string;
 }
 
 interface Stage {
