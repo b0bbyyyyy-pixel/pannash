@@ -34,7 +34,9 @@ interface Stat {
   format?: string;
   type?: string;
   numeratorStage?: string;
+  numeratorStages?: string[];
   denominatorStage?: string;
+  denominatorStages?: string[];
 }
 
 interface Column {
@@ -371,13 +373,13 @@ export default function ConfigButton({ stages: initialStages, stats: initialStat
   const updateStat = (index: number, field: keyof Stat, value: string) => {
     const newStats = [...stats];
     
-    // Handle stages array specially
-    if (field === 'stages') {
+    // Handle array fields specially
+    if (field === 'stages' || field === 'numeratorStages' || field === 'denominatorStages') {
       try {
         const parsedStages = value ? JSON.parse(value) : [];
-        newStats[index] = { ...newStats[index], stages: parsedStages };
+        newStats[index] = { ...newStats[index], [field]: parsedStages };
       } catch {
-        newStats[index] = { ...newStats[index], stages: [] };
+        newStats[index] = { ...newStats[index], [field]: [] };
       }
     } else {
       newStats[index] = { ...newStats[index], [field]: value } as Stat;
@@ -789,30 +791,69 @@ export default function ConfigButton({ stages: initialStages, stats: initialStat
                       {statType === 'percentage' && (
                         <div className="grid grid-cols-2 gap-3">
                           <div>
-                            <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Numerator (Completed)</label>
-                            <select
-                              value={stat.numeratorStage || ''}
-                              onChange={(e) => updateStat(index, 'numeratorStage', e.target.value)}
-                              className="w-full px-3 py-2 border border-[#e5e5e5] rounded text-sm"
-                            >
-                              <option value="">Select stage...</option>
+                            <label className="block text-xs font-medium text-[#6b6b6b] mb-2">Numerator (Completed)</label>
+                            <div className="border border-[#e5e5e5] rounded p-3 space-y-2 max-h-[200px] overflow-y-auto">
                               {stages.map((s, idx) => (
-                                <option key={`stat-${index}-num-${idx}`} value={s.value}>{s.value}</option>
+                                <label key={`stat-${index}-num-${idx}`} className="flex items-center gap-2 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={(stat.numeratorStages || []).includes(s.value)}
+                                    onChange={(e) => {
+                                      const currentStages = stat.numeratorStages || [];
+                                      let newStages: string[];
+                                      if (e.target.checked) {
+                                        newStages = [...currentStages, s.value];
+                                      } else {
+                                        newStages = currentStages.filter(st => st !== s.value);
+                                      }
+                                      updateStat(index, 'numeratorStages', JSON.stringify(newStages));
+                                    }}
+                                    className="cursor-pointer"
+                                  />
+                                  <span className="text-sm">{s.value}</span>
+                                </label>
                               ))}
-                            </select>
+                            </div>
+                            <p className="text-xs text-[#999] mt-1">Completed stages</p>
                           </div>
                           <div>
-                            <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Denominator (Total)</label>
-                            <select
-                              value={stat.denominatorStage || ''}
-                              onChange={(e) => updateStat(index, 'denominatorStage', e.target.value)}
-                              className="w-full px-3 py-2 border border-[#e5e5e5] rounded text-sm"
-                            >
-                              <option value="">All Leads</option>
+                            <label className="block text-xs font-medium text-[#6b6b6b] mb-2">Denominator (Total)</label>
+                            <div className="border border-[#e5e5e5] rounded p-3 space-y-2 max-h-[200px] overflow-y-auto">
+                              <label className="flex items-center gap-2 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={!stat.denominatorStages || stat.denominatorStages.length === 0}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      updateStat(index, 'denominatorStages', '');
+                                    }
+                                  }}
+                                  className="cursor-pointer"
+                                />
+                                <span className="text-sm font-medium">All Leads</span>
+                              </label>
                               {stages.map((s, idx) => (
-                                <option key={`stat-${index}-denom-${idx}`} value={s.value}>{s.value}</option>
+                                <label key={`stat-${index}-denom-${idx}`} className="flex items-center gap-2 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={(stat.denominatorStages || []).includes(s.value)}
+                                    onChange={(e) => {
+                                      const currentStages = stat.denominatorStages || [];
+                                      let newStages: string[];
+                                      if (e.target.checked) {
+                                        newStages = [...currentStages, s.value];
+                                      } else {
+                                        newStages = currentStages.filter(st => st !== s.value);
+                                      }
+                                      updateStat(index, 'denominatorStages', JSON.stringify(newStages));
+                                    }}
+                                    className="cursor-pointer"
+                                  />
+                                  <span className="text-sm">{s.value}</span>
+                                </label>
                               ))}
-                            </select>
+                            </div>
+                            <p className="text-xs text-[#999] mt-1">Total pool stages</p>
                           </div>
                         </div>
                       )}

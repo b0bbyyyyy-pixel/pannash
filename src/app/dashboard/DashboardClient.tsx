@@ -48,7 +48,9 @@ interface Stat {
   format?: string;
   type?: string;
   numeratorStage?: string;
+  numeratorStages?: string[];
   denominatorStage?: string;
+  denominatorStages?: string[];
 }
 
 interface Column {
@@ -121,13 +123,24 @@ export default function DashboardClient({ allLeads, availableMonths, initialMont
 
     // Handle percentage type
     if (stat.type === 'percentage') {
-      const numerator = stat.numeratorStage 
-        ? filteredLeads.filter(l => l.stage === stat.numeratorStage).length
-        : 0;
+      let numerator = 0;
+      let denominator = 0;
       
-      const denominator = stat.denominatorStage
-        ? filteredLeads.filter(l => l.stage === stat.denominatorStage).length
-        : filteredLeads.length;
+      // Calculate numerator (support multi-stage or single stage)
+      if (stat.numeratorStages && stat.numeratorStages.length > 0) {
+        numerator = filteredLeads.filter(l => stat.numeratorStages!.includes(l.stage)).length;
+      } else if (stat.numeratorStage) {
+        numerator = filteredLeads.filter(l => l.stage === stat.numeratorStage).length;
+      }
+      
+      // Calculate denominator (support multi-stage or single stage or all leads)
+      if (stat.denominatorStages && stat.denominatorStages.length > 0) {
+        denominator = filteredLeads.filter(l => stat.denominatorStages!.includes(l.stage)).length;
+      } else if (stat.denominatorStage) {
+        denominator = filteredLeads.filter(l => l.stage === stat.denominatorStage).length;
+      } else {
+        denominator = filteredLeads.length;
+      }
       
       if (denominator === 0) return 0;
       return Math.round((numerator / denominator) * 100);
