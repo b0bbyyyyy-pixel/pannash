@@ -14,7 +14,7 @@ const robotoMono = Roboto_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "pannash.io",
+  title: "Gostwrk.io",
   description: "Minimalist anti-CRM for individual salespeople",
 };
 
