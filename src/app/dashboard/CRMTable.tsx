@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 
 interface Lead {
@@ -95,6 +95,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   const [showDisplayDateModal, setShowDisplayDateModal] = useState<string | null>(null);
   const [displayDate, setDisplayDate] = useState('');
   const [showExpandedTextModal, setShowExpandedTextModal] = useState<{ leadId: string; field: string; value: string; label: string } | null>(null);
+  const textAreaRef = useRef<HTMLTextAreaElement>(null);
   const router = useRouter();
 
   // Update local state when props change (e.g., switching tabs)
@@ -272,6 +273,49 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
 
     setShowDisplayDateModal(null);
     setDisplayDate('');
+  };
+
+  const applyFormatting = (format: 'bold' | 'italic') => {
+    const textarea = textAreaRef.current;
+    if (!textarea || !showExpandedTextModal) return;
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const text = showExpandedTextModal.value;
+    const selectedText = text.substring(start, end);
+
+    if (selectedText) {
+      let formattedText = '';
+      if (format === 'bold') {
+        formattedText = text.substring(0, start) + `**${selectedText}**` + text.substring(end);
+      } else if (format === 'italic') {
+        formattedText = text.substring(0, start) + `*${selectedText}*` + text.substring(end);
+      }
+
+      setShowExpandedTextModal({ ...showExpandedTextModal, value: formattedText });
+      
+      // Restore cursor position after formatting
+      setTimeout(() => {
+        if (textarea) {
+          const newCursorPos = start + (format === 'bold' ? 2 : 1) + selectedText.length;
+          textarea.focus();
+          textarea.setSelectionRange(newCursorPos, newCursorPos);
+        }
+      }, 0);
+    }
+  };
+
+  // Convert markdown to HTML for display
+  const renderMarkdown = (text: string) => {
+    if (!text) return text;
+    
+    // Convert **bold** to <strong>
+    let formatted = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    
+    // Convert *italic* to <em> (but not if it's part of **)
+    formatted = formatted.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
+    
+    return formatted;
   };
 
   const handleCustomTimer = async (leadId: string) => {
@@ -487,15 +531,19 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     // Handle expandable text fields (configurable via column settings)
     if (column.expandable) {
       const value = lead[fieldKey] as string | null;
+      const formattedValue = value ? renderMarkdown(value) : null;
+      
       return (
         <button
           onClick={() => setShowExpandedTextModal({ leadId: lead.id, field: columnField, value: String(value || ''), label: column.label })}
           className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap overflow-hidden text-ellipsis max-w-full block"
         >
           {value ? (
-            <span className="block overflow-hidden text-ellipsis" style={{ maxWidth: `${column.width - 32}px` }}>
-              {value}
-            </span>
+            <span 
+              className="block overflow-hidden text-ellipsis" 
+              style={{ maxWidth: `${column.width - 32}px` }}
+              dangerouslySetInnerHTML={{ __html: formattedValue || '' }}
+            />
           ) : (
             `Add ${column.label.toLowerCase()}`
           )}
@@ -602,9 +650,13 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         ) : (
           <button
             onClick={() => startEdit(lead.id, 'company', lead.company || '')}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setShowExpandedTextModal({ leadId: lead.id, field: 'company', value: String(lead.company || ''), label: 'Opportunity' });
+            }}
             className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
           >
-            {lead.company || 'Add company'}
+            <span dangerouslySetInnerHTML={{ __html: renderMarkdown(lead.company || 'Add company') }} />
           </button>
         );
 
@@ -622,9 +674,13 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         ) : (
           <button
             onClick={() => startEdit(lead.id, 'name', lead.name)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setShowExpandedTextModal({ leadId: lead.id, field: 'name', value: String(lead.name || ''), label: 'Name' });
+            }}
             className="hover:text-[#5a7fc7] transition-colors text-left"
           >
-            {lead.name}
+            <span dangerouslySetInnerHTML={{ __html: renderMarkdown(lead.name || '') }} />
           </button>
         );
 
@@ -678,9 +734,13 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         ) : (
           <button
             onClick={() => startEdit(lead.id, 'email', lead.email || '')}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setShowExpandedTextModal({ leadId: lead.id, field: 'email', value: String(lead.email || ''), label: 'E-Mail' });
+            }}
             className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
           >
-            {lead.email || 'Add email'}
+            <span dangerouslySetInnerHTML={{ __html: renderMarkdown(lead.email || 'Add email') }} />
           </button>
         );
 
@@ -698,9 +758,13 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         ) : (
           <button
             onClick={() => startEdit(lead.id, 'phone', lead.phone || '')}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setShowExpandedTextModal({ leadId: lead.id, field: 'phone', value: String(lead.phone || ''), label: 'Phone' });
+            }}
             className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
           >
-            {lead.phone || 'Add phone'}
+            <span dangerouslySetInnerHTML={{ __html: renderMarkdown(lead.phone || 'Add phone') }} />
           </button>
         );
 
@@ -718,9 +782,13 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         ) : (
           <button
             onClick={() => startEdit(lead.id, 'lead_source', lead.lead_source || '')}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setShowExpandedTextModal({ leadId: lead.id, field: 'lead_source', value: String(lead.lead_source || ''), label: 'Lead Source' });
+            }}
             className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
           >
-            {lead.lead_source || 'Add source'}
+            <span dangerouslySetInnerHTML={{ __html: renderMarkdown(lead.lead_source || 'Add source') }} />
           </button>
         );
 
@@ -967,11 +1035,34 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
               {showExpandedTextModal.label}
             </h2>
             
+            {/* Formatting Toolbar */}
+            <div className="flex gap-2 mb-3 pb-3 border-b border-[#e5e5e5]">
+              <button
+                onClick={() => applyFormatting('bold')}
+                className="px-3 py-1.5 border border-[#e5e5e5] rounded text-sm font-bold hover:bg-[#f5f5f5] transition-colors"
+                title="Bold (wrap with **text**)"
+              >
+                B
+              </button>
+              <button
+                onClick={() => applyFormatting('italic')}
+                className="px-3 py-1.5 border border-[#e5e5e5] rounded text-sm italic hover:bg-[#f5f5f5] transition-colors"
+                title="Italic (wrap with *text*)"
+              >
+                I
+              </button>
+              <div className="flex-1" />
+              <span className="text-xs text-[#6b6b6b] self-center">
+                Select text and click B or I to format
+              </span>
+            </div>
+            
             <textarea
+              ref={textAreaRef}
               value={showExpandedTextModal.value}
               onChange={(e) => setShowExpandedTextModal({ ...showExpandedTextModal, value: e.target.value })}
-              className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm min-h-[200px] resize-y"
-              placeholder={`Enter ${showExpandedTextModal.label.toLowerCase()} here...`}
+              className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm min-h-[200px] resize-y font-mono"
+              placeholder={`Enter ${showExpandedTextModal.label.toLowerCase()} here...\n\nFormatting:\n**bold text**\n*italic text*`}
               autoFocus
             />
 
