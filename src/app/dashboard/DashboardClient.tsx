@@ -199,7 +199,7 @@ export default function DashboardClient({ allLeads, availableMonths, initialMont
       />
 
       {/* Quick Stats - Dynamic based on configuration */}
-      <div className={`grid gap-3 mb-4`} style={{ gridTemplateColumns: `repeat(${stats.length}, minmax(0, 1fr))` }}>
+      <div className={`grid gap-3 mb-4 sticky z-40 bg-[#fafafa] pt-4 pb-4 -mx-12 px-12`} style={{ gridTemplateColumns: `repeat(${stats.length}, minmax(0, 1fr))`, top: '64px' }}>
         {stats.map((stat, index) => {
           const value = calculateStatValue(stat);
           // Extract color for inline style
