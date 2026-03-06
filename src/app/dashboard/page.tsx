@@ -77,27 +77,38 @@ export default async function DashboardPage() {
     }
   }
 
-  // Fetch dashboard configuration (stages, stats, columns)
-  const { data: stagesConfig } = await supabase
-    .from('dashboard_config')
-    .select('config_data')
-    .eq('user_id', user.id)
-    .eq('config_type', 'stages')
-    .single();
+  // Default to the most recently created tab (last in array since we sort by ascending)
+  const currentMonth = availableMonths[availableMonths.length - 1]?.monthKey || '';
+  const currentMonthName = availableMonths[availableMonths.length - 1]?.customName || 'Monthly Working Leads';
 
-  const { data: statsConfig } = await supabase
-    .from('dashboard_config')
-    .select('config_data')
-    .eq('user_id', user.id)
-    .eq('config_type', 'stats')
-    .single();
+  // Fetch dashboard configuration for current month (month-specific first, then fall back to global)
+  const fetchConfig = async (configType: string) => {
+    // Try month-specific config first
+    const { data: monthConfig } = await supabase
+      .from('dashboard_config')
+      .select('config_data')
+      .eq('user_id', user.id)
+      .eq('config_type', configType)
+      .eq('month_key', currentMonth)
+      .maybeSingle();
+    
+    if (monthConfig) return monthConfig;
+    
+    // Fall back to global config (null month_key)
+    const { data: globalConfig } = await supabase
+      .from('dashboard_config')
+      .select('config_data')
+      .eq('user_id', user.id)
+      .eq('config_type', configType)
+      .is('month_key', null)
+      .maybeSingle();
+    
+    return globalConfig;
+  };
 
-  const { data: columnsConfig } = await supabase
-    .from('dashboard_config')
-    .select('config_data')
-    .eq('user_id', user.id)
-    .eq('config_type', 'columns')
-    .single();
+  const stagesConfig = await fetchConfig('stages');
+  const statsConfig = await fetchConfig('stats');
+  const columnsConfig = await fetchConfig('columns');
 
   // Default stages if not configured
   const stages = stagesConfig?.config_data || [
@@ -119,19 +130,19 @@ export default async function DashboardPage() {
 
   // Default columns if not configured
   const columns = columnsConfig?.config_data || [
-    { field: 'timer', label: 'Timer', width: 120, visible: true },
-    { field: 'company', label: 'Opportunity', width: 150, visible: true },
-    { field: 'name', label: 'Name', width: 150, visible: true },
-    { field: 'stage', label: 'Stage', width: 160, visible: true },
-    { field: 'value', label: 'Value', width: 100, visible: true },
-    { field: 'email', label: 'E-Mail', width: 180, visible: true },
-    { field: 'phone', label: 'Phone', width: 120, visible: true },
-    { field: 'lead_source', label: 'Lead Source', width: 120, visible: true },
-    { field: 'last_contact', label: 'Last Contact', width: 120, visible: true },
-    { field: 'notes', label: 'Notes', width: 150, visible: true },
-    { field: 'offers', label: 'Offers', width: 150, visible: true },
-    { field: 'auto_email_frequency', label: 'Auto Email', width: 140, visible: true },
-    { field: 'auto_text_frequency', label: 'Auto Text', width: 140, visible: true },
+    { field: 'timer', label: 'Timer', width: 120, visible: true, expandable: false },
+    { field: 'company', label: 'Opportunity', width: 150, visible: true, expandable: false },
+    { field: 'name', label: 'Name', width: 150, visible: true, expandable: false },
+    { field: 'stage', label: 'Stage', width: 160, visible: true, expandable: false },
+    { field: 'value', label: 'Value', width: 100, visible: true, expandable: false },
+    { field: 'email', label: 'E-Mail', width: 180, visible: true, expandable: false },
+    { field: 'phone', label: 'Phone', width: 120, visible: true, expandable: false },
+    { field: 'lead_source', label: 'Lead Source', width: 120, visible: true, expandable: false },
+    { field: 'last_contact', label: 'Last Contact', width: 120, visible: true, expandable: false },
+    { field: 'notes', label: 'Notes', width: 150, visible: true, expandable: true },
+    { field: 'offers', label: 'Offers', width: 150, visible: true, expandable: true },
+    { field: 'auto_email_frequency', label: 'Auto Email', width: 140, visible: true, expandable: false },
+    { field: 'auto_text_frequency', label: 'Auto Text', width: 140, visible: true, expandable: false },
   ];
 
   // Fetch templates (with error handling for if table doesn't exist yet)
@@ -182,10 +193,6 @@ export default async function DashboardPage() {
     emailFrequencies = defaults;
     textFrequencies = defaults;
   }
-
-  // Default to the most recently created tab (last in array since we sort by ascending)
-  const currentMonth = availableMonths[availableMonths.length - 1]?.monthKey || '';
-  const currentMonthName = availableMonths[availableMonths.length - 1]?.customName || 'Monthly Working Leads';
 
   return (
     <div className="min-h-screen bg-[#fafafa]">

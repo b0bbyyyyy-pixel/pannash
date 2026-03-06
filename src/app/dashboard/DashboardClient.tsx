@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import MonthlyTabs from './MonthlyTabs';
 import CRMTable from './CRMTable';
 import ConfigButton from './ConfigButton';
@@ -43,6 +44,7 @@ interface Stat {
   label: string;
   color: string;
   stage?: string;
+  stages?: string[];
   format?: string;
   type?: string;
   numeratorStage?: string;
@@ -54,6 +56,7 @@ interface Column {
   label: string;
   width: number;
   visible: boolean;
+  expandable?: boolean;
 }
 
 interface Template {
@@ -90,6 +93,13 @@ interface DashboardClientProps {
 export default function DashboardClient({ allLeads, availableMonths, initialMonth, currentMonthName, stages, stats, columns, emailTemplates, textTemplates, emailFrequencies, textFrequencies }: DashboardClientProps) {
   const [currentMonth, setCurrentMonth] = useState(initialMonth);
   const [leads, setLeads] = useState(allLeads);
+  const router = useRouter();
+  
+  // When month changes, refresh to load that month's configuration
+  const handleMonthChange = (monthKey: string) => {
+    setCurrentMonth(monthKey);
+    router.refresh();
+  };
   
   // Get the current month's custom name
   const displayName = availableMonths.find(m => m.monthKey === currentMonth)?.customName || currentMonthName;
@@ -98,6 +108,17 @@ export default function DashboardClient({ allLeads, availableMonths, initialMont
 
   // Calculate stats dynamically based on configuration
   const calculateStatValue = (stat: Stat) => {
+    // Determine which leads to use based on stage filter
+    let leadsToCount = filteredLeads;
+    
+    // Check for multi-stage filter (new feature)
+    if (stat.stages && stat.stages.length > 0) {
+      leadsToCount = filteredLeads.filter(l => stat.stages!.includes(l.stage));
+    } else if (stat.stage) {
+      // Single stage filter (legacy)
+      leadsToCount = filteredLeads.filter(l => l.stage === stat.stage);
+    }
+
     // Handle percentage type
     if (stat.type === 'percentage') {
       const numerator = stat.numeratorStage 
@@ -106,29 +127,30 @@ export default function DashboardClient({ allLeads, availableMonths, initialMont
       
       const denominator = stat.denominatorStage
         ? filteredLeads.filter(l => l.stage === stat.denominatorStage).length
-        : filteredLeads.length; // All leads if no denominator stage
+        : filteredLeads.length;
       
       if (denominator === 0) return 0;
       return Math.round((numerator / denominator) * 100);
     }
 
+    // Handle currency format (sum values)
+    if (stat.format === 'currency') {
+      return leadsToCount.reduce((sum, l) => sum + (l.value || 0), 0);
+    }
+
     // Legacy key-based stats
     if (stat.key === 'activeLeads') {
-      return filteredLeads.length;
+      return leadsToCount.length;
     }
     if (stat.key === 'totalValue') {
-      return filteredLeads.reduce((sum, l) => sum + (l.value || 0), 0);
+      return leadsToCount.reduce((sum, l) => sum + (l.value || 0), 0);
     }
     if (stat.key === 'activeTimers') {
-      return filteredLeads.filter(l => l.timer_type !== 'No Timer' && l.timer_end_date).length;
+      return leadsToCount.filter(l => l.timer_type !== 'No Timer' && l.timer_end_date).length;
     }
     
-    // Count type with stage filter
-    if (stat.stage) {
-      return filteredLeads.filter(l => l.stage === stat.stage).length;
-    }
-    
-    return 0;
+    // Count type returns the count of filtered leads
+    return leadsToCount.length;
   };
 
   const formatStatValue = (value: number, stat: Stat) => {
@@ -148,14 +170,14 @@ export default function DashboardClient({ allLeads, availableMonths, initialMont
         <h1 className="text-3xl font-bold text-[#1a1a1a] tracking-tight">
           {displayName}
         </h1>
-        <ConfigButton stages={stages} stats={stats} columns={columns} emailTemplates={emailTemplates} textTemplates={textTemplates} emailFrequencies={emailFrequencies} textFrequencies={textFrequencies} />
+        <ConfigButton stages={stages} stats={stats} columns={columns} emailTemplates={emailTemplates} textTemplates={textTemplates} emailFrequencies={emailFrequencies} textFrequencies={textFrequencies} monthKey={currentMonth} />
       </div>
 
       {/* Monthly Tabs */}
       <MonthlyTabs 
         availableMonths={availableMonths}
         currentMonth={currentMonth}
-        onMonthChange={setCurrentMonth}
+        onMonthChange={handleMonthChange}
       />
 
       {/* Quick Stats - Dynamic based on configuration */}

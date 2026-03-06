@@ -35,6 +35,7 @@ interface Column {
   label: string;
   width: number;
   visible: boolean;
+  expandable?: boolean;
 }
 
 interface Template {
@@ -70,6 +71,11 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   const [leads, setLeads] = useState(initialLeads);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
+
+  // Sync local state when initialLeads prop changes (after router.refresh)
+  useEffect(() => {
+    setLeads(initialLeads);
+  }, [initialLeads]);
   const [editField, setEditField] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingTimerId, setEditingTimerId] = useState<string | null>(null);
@@ -85,6 +91,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   const [showCustomTimerModal, setShowCustomTimerModal] = useState<string | null>(null);
   const [customTimerDate, setCustomTimerDate] = useState('');
   const [customTimerTime, setCustomTimerTime] = useState('23:59');
+  const [showExpandedTextModal, setShowExpandedTextModal] = useState<{ leadId: string; field: string; value: string; label: string } | null>(null);
   const router = useRouter();
 
   // Update local state when props change (e.g., switching tabs)
@@ -416,8 +423,28 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   };
 
   // Helper function to render cell content based on field type
-  const renderCell = (lead: Lead, columnField: string, bgColor: string, textColor: string) => {
+  const renderCell = (lead: Lead, column: Column, bgColor: string, textColor: string) => {
+    const columnField = column.field;
     const fieldKey = columnField as keyof Lead;
+    
+    // Handle expandable text fields (configurable via column settings)
+    if (column.expandable) {
+      const value = lead[fieldKey] as string | null;
+      return (
+        <button
+          onClick={() => setShowExpandedTextModal({ leadId: lead.id, field: columnField, value: String(value || ''), label: column.label })}
+          className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap overflow-hidden text-ellipsis max-w-full block"
+        >
+          {value ? (
+            <span className="block overflow-hidden text-ellipsis" style={{ maxWidth: `${column.width - 32}px` }}>
+              {value}
+            </span>
+          ) : (
+            `Add ${column.label.toLowerCase()}`
+          )}
+        </button>
+      );
+    }
     
     switch (columnField) {
       case 'timer':
@@ -846,6 +873,51 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
 
   return (
     <>
+      {/* Expanded Text Modal */}
+      {showExpandedTextModal && (
+        <div 
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" 
+          onClick={() => setShowExpandedTextModal(null)}
+        >
+          <div 
+            className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold text-[#1a1a1a] mb-4">
+              {showExpandedTextModal.label}
+            </h2>
+            
+            <textarea
+              value={showExpandedTextModal.value}
+              onChange={(e) => setShowExpandedTextModal({ ...showExpandedTextModal, value: e.target.value })}
+              className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm min-h-[200px] resize-y"
+              placeholder={`Enter ${showExpandedTextModal.label.toLowerCase()} here...`}
+              autoFocus
+            />
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowExpandedTextModal(null)}
+                className="flex-1 px-4 py-2 border border-[#e5e5e5] text-[#1a1a1a] rounded-md text-sm font-medium hover:bg-[#f5f5f5] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (showExpandedTextModal) {
+                    updateLead(showExpandedTextModal.leadId, showExpandedTextModal.field, showExpandedTextModal.value);
+                    setShowExpandedTextModal(null);
+                  }
+                }}
+                className="flex-1 px-4 py-2 bg-[#1a1a1a] text-white rounded-md text-sm font-medium hover:bg-[#2a2a2a] transition-colors"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Custom Timer Modal */}
       {showCustomTimerModal && (
         <div 
@@ -1020,7 +1092,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                       className="px-4 py-3 text-sm text-[#1a1a1a] whitespace-nowrap"
                       style={{ width: `${col.width}px`, minWidth: `${col.width}px` }}
                     >
-                      {renderCell(lead, col.field, bgColor, textColor)}
+                      {renderCell(lead, col, bgColor, textColor)}
                     </td>
                   ))}
                   

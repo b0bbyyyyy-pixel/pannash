@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(req: NextRequest) {
   try {
-    const { configType, configData } = await req.json();
+    const { configType, configData, monthKey } = await req.json();
 
     if (!configType || !configData) {
       return NextResponse.json({ error: 'Config type and data are required' }, { status: 400 });
@@ -34,21 +34,45 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Upsert the configuration
-    const { error } = await supabase
+    // Check if month-specific config already exists
+    const { data: existing } = await supabase
       .from('dashboard_config')
-      .upsert({
-        user_id: user.id,
-        config_type: configType,
-        config_data: configData,
-        updated_at: new Date().toISOString(),
-      }, {
-        onConflict: 'user_id,config_type'
-      });
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('config_type', configType)
+      .eq('month_key', monthKey || null)
+      .maybeSingle();
 
-    if (error) {
-      console.error('Error updating dashboard config:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    if (existing) {
+      // Update existing config
+      const { error } = await supabase
+        .from('dashboard_config')
+        .update({
+          config_data: configData,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id);
+
+      if (error) {
+        console.error('Error updating dashboard config:', error);
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+    } else {
+      // Insert new config
+      const { error } = await supabase
+        .from('dashboard_config')
+        .insert({
+          user_id: user.id,
+          config_type: configType,
+          config_data: configData,
+          month_key: monthKey || null,
+          updated_at: new Date().toISOString(),
+        });
+
+      if (error) {
+        console.error('Error inserting dashboard config:', error);
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
     }
 
     return NextResponse.json({ success: true });

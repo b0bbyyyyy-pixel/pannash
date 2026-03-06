@@ -84,6 +84,7 @@ export default function MonthlyTabs({ availableMonths, currentMonth, onMonthChan
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingMonth, setEditingMonth] = useState<{ monthKey: string; currentName: string } | null>(null);
   const [newMonthName, setNewMonthName] = useState('');
+  const [copyConfig, setCopyConfig] = useState(true);
   const [editMonthName, setEditMonthName] = useState('');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; monthKey: string } | null>(null);
   const [isMounted, setIsMounted] = useState(false);
@@ -137,7 +138,7 @@ export default function MonthlyTabs({ availableMonths, currentMonth, onMonthChan
     }
   };
 
-  const createNewMonth = async () => {
+  const createNewMonth = async (copyConfig: boolean) => {
     if (!newMonthName.trim()) {
       alert('Please enter a name');
       return;
@@ -147,13 +148,17 @@ export default function MonthlyTabs({ availableMonths, currentMonth, onMonthChan
       const res = await fetch('/api/dashboard/create-month', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customName: newMonthName }),
+        body: JSON.stringify({ 
+          customName: newMonthName,
+          copyFromMonthKey: copyConfig ? currentMonth : null 
+        }),
       });
 
       if (res.ok) {
         const { monthlyDashboard } = await res.json();
         setShowNewMonthModal(false);
         setNewMonthName('');
+        setCopyConfig(true);
         router.refresh();
         onMonthChange(monthlyDashboard.month_key);
       } else {
@@ -351,7 +356,7 @@ export default function MonthlyTabs({ availableMonths, currentMonth, onMonthChan
                 type="text"
                 value={newMonthName}
                 onChange={(e) => setNewMonthName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && createNewMonth()}
+                onKeyDown={(e) => e.key === 'Enter' && createNewMonth(copyConfig)}
                 className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
                 placeholder="e.g. March 2026, Q1 Pipeline, etc."
                 autoFocus
@@ -361,18 +366,51 @@ export default function MonthlyTabs({ availableMonths, currentMonth, onMonthChan
               </p>
             </div>
 
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-[#1a1a1a] mb-3">
+                Configuration
+              </label>
+              <div className="space-y-3">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="radio"
+                    checked={copyConfig}
+                    onChange={() => setCopyConfig(true)}
+                    className="mt-1 cursor-pointer"
+                  />
+                  <div>
+                    <div className="text-sm text-[#1a1a1a] font-medium">Copy from current tab</div>
+                    <div className="text-xs text-[#6b6b6b]">Use the same stages, stats, columns, and templates</div>
+                  </div>
+                </label>
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="radio"
+                    checked={!copyConfig}
+                    onChange={() => setCopyConfig(false)}
+                    className="mt-1 cursor-pointer"
+                  />
+                  <div>
+                    <div className="text-sm text-[#1a1a1a] font-medium">Start fresh</div>
+                    <div className="text-xs text-[#6b6b6b]">Begin with default settings</div>
+                  </div>
+                </label>
+              </div>
+            </div>
+
             <div className="flex gap-3">
               <button
                 onClick={() => {
                   setShowNewMonthModal(false);
                   setNewMonthName('');
+                  setCopyConfig(true);
                 }}
                 className="flex-1 px-4 py-2 border border-[#e5e5e5] text-[#1a1a1a] rounded-md text-sm font-medium hover:bg-[#f5f5f5] transition-colors"
               >
                 Cancel
               </button>
               <button
-                onClick={createNewMonth}
+                onClick={() => createNewMonth(copyConfig)}
                 className="flex-1 px-4 py-2 bg-[#1a1a1a] text-white rounded-md text-sm font-medium hover:bg-[#2a2a2a] transition-colors"
               >
                 Create

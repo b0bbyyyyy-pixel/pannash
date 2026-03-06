@@ -30,6 +30,7 @@ interface Stat {
   label: string;
   color: string;
   stage?: string;
+  stages?: string[];
   format?: string;
   type?: string;
   numeratorStage?: string;
@@ -41,6 +42,7 @@ interface Column {
   label: string;
   width: number;
   visible: boolean;
+  expandable?: boolean;
 }
 
 interface Template {
@@ -68,6 +70,7 @@ interface ConfigButtonProps {
   textTemplates: Template[];
   emailFrequencies: Frequency[];
   textFrequencies: Frequency[];
+  monthKey: string;
 }
 
 // Sortable Stage Component
@@ -161,7 +164,7 @@ function SortableStage({
   );
 }
 
-export default function ConfigButton({ stages: initialStages, stats: initialStats, columns: initialColumns, emailTemplates: initialEmailTemplates, textTemplates: initialTextTemplates, emailFrequencies: initialEmailFreqs, textFrequencies: initialTextFreqs }: ConfigButtonProps) {
+export default function ConfigButton({ stages: initialStages, stats: initialStats, columns: initialColumns, emailTemplates: initialEmailTemplates, textTemplates: initialTextTemplates, emailFrequencies: initialEmailFreqs, textFrequencies: initialTextFreqs, monthKey }: ConfigButtonProps) {
   const [showModal, setShowModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'stages' | 'stats' | 'columns' | 'templates' | 'frequencies'>('stages');
   const [stages, setStages] = useState(initialStages);
@@ -206,14 +209,15 @@ export default function ConfigButton({ stages: initialStages, stats: initialStat
         return;
       }
 
-      // Save stages
+      // Save stages (month-specific)
       const stagesRes = await fetch('/api/dashboard/update-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ 
           configType: 'stages', 
-          configData: stages 
+          configData: stages,
+          monthKey 
         }),
       });
 
@@ -224,14 +228,15 @@ export default function ConfigButton({ stages: initialStages, stats: initialStat
         return;
       }
 
-      // Save stats
+      // Save stats (month-specific)
       const statsRes = await fetch('/api/dashboard/update-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ 
           configType: 'stats', 
-          configData: stats 
+          configData: stats,
+          monthKey 
         }),
       });
 
@@ -242,14 +247,15 @@ export default function ConfigButton({ stages: initialStages, stats: initialStat
         return;
       }
 
-      // Save columns
+      // Save columns (month-specific)
       const columnsRes = await fetch('/api/dashboard/update-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ 
           configType: 'columns', 
-          configData: columns 
+          configData: columns,
+          monthKey 
         }),
       });
 
@@ -364,7 +370,19 @@ export default function ConfigButton({ stages: initialStages, stats: initialStat
 
   const updateStat = (index: number, field: keyof Stat, value: string) => {
     const newStats = [...stats];
-    newStats[index] = { ...newStats[index], [field]: value };
+    
+    // Handle stages array specially
+    if (field === 'stages') {
+      try {
+        const parsedStages = value ? JSON.parse(value) : [];
+        newStats[index] = { ...newStats[index], stages: parsedStages };
+      } catch {
+        newStats[index] = { ...newStats[index], stages: [] };
+      }
+    } else {
+      newStats[index] = { ...newStats[index], [field]: value } as Stat;
+    }
+    
     setStats(newStats);
   };
 
@@ -715,16 +733,54 @@ export default function ConfigButton({ stages: initialStages, stats: initialStat
                       {statType === 'count' && (
                         <div className="grid grid-cols-1 gap-3">
                           <div>
-                            <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Filter Stage (Optional)</label>
+                            <label className="block text-xs font-medium text-[#6b6b6b] mb-2">Filter by Stages (Optional)</label>
+                            <div className="border border-[#e5e5e5] rounded p-3 space-y-2 max-h-[200px] overflow-y-auto">
+                              <label className="flex items-center gap-2 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={!stat.stages || stat.stages.length === 0}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      updateStat(index, 'stages', '');
+                                      updateStat(index, 'stage', '');
+                                    }
+                                  }}
+                                  className="cursor-pointer"
+                                />
+                                <span className="text-sm">All Leads</span>
+                              </label>
+                              {stages.map((s, idx) => (
+                                <label key={`stat-${index}-stage-${idx}`} className="flex items-center gap-2 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={(stat.stages || []).includes(s.value)}
+                                    onChange={(e) => {
+                                      const currentStages = stat.stages || [];
+                                      let newStages: string[];
+                                      if (e.target.checked) {
+                                        newStages = [...currentStages, s.value];
+                                      } else {
+                                        newStages = currentStages.filter(st => st !== s.value);
+                                      }
+                                      updateStat(index, 'stages', JSON.stringify(newStages));
+                                    }}
+                                    className="cursor-pointer"
+                                  />
+                                  <span className="text-sm">{s.value}</span>
+                                </label>
+                              ))}
+                            </div>
+                            <p className="text-xs text-[#999] mt-1">Select multiple stages to include in this stat</p>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Format</label>
                             <select
-                              value={stat.stage || ''}
-                              onChange={(e) => updateStat(index, 'stage', e.target.value)}
+                              value={stat.format || 'count'}
+                              onChange={(e) => updateStat(index, 'format', e.target.value)}
                               className="w-full px-3 py-2 border border-[#e5e5e5] rounded text-sm"
                             >
-                              <option value="">All Leads</option>
-                              {stages.map((s, idx) => (
-                                <option key={`stat-${index}-stage-${idx}`} value={s.value}>{s.value}</option>
-                              ))}
+                              <option value="count">Number</option>
+                              <option value="currency">Currency ($)</option>
                             </select>
                           </div>
                         </div>
@@ -778,7 +834,7 @@ export default function ConfigButton({ stages: initialStages, stats: initialStat
                 </div>
 
                 {columns.map((column, index) => (
-                  <div key={index} className="grid grid-cols-[200px_100px_80px] gap-4 items-end p-4 border border-[#e5e5e5] rounded-md">
+                  <div key={index} className="grid grid-cols-[200px_100px_80px_100px] gap-4 items-end p-4 border border-[#e5e5e5] rounded-md">
                     <div>
                       <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Column Name</label>
                       <input
@@ -808,11 +864,21 @@ export default function ConfigButton({ stages: initialStages, stats: initialStat
                         className="w-5 h-10 cursor-pointer"
                       />
                     </div>
+                    <div>
+                      <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Expandable</label>
+                      <input
+                        type="checkbox"
+                        checked={column.expandable || false}
+                        onChange={(e) => updateColumn(index, 'expandable', e.target.checked)}
+                        className="w-5 h-10 cursor-pointer"
+                        title="Open in a large modal for long text"
+                      />
+                    </div>
                   </div>
                 ))}
 
                 <div className="text-xs text-[#6b6b6b] mt-4 p-3 bg-[#f5f5f5] rounded">
-                  <strong>Tip:</strong> Adjust column widths to fit your content. Uncheck "Show" to hide columns you don't need.
+                  <strong>Tip:</strong> Adjust column widths to fit your content. Uncheck "Show" to hide columns. Enable "Expandable" for fields with long text (opens in modal).
                 </div>
               </div>
             )}

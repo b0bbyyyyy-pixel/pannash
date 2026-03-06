@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(req: NextRequest) {
   try {
-    const { customName } = await req.json();
+    const { customName, copyFromMonthKey } = await req.json();
 
     if (!customName || !customName.trim()) {
       return NextResponse.json({ error: 'Custom name is required' }, { status: 400 });
@@ -51,6 +51,33 @@ export async function POST(req: NextRequest) {
         error: error.message || 'Failed to create dashboard',
         details: error 
       }, { status: 500 });
+    }
+
+    // If copyFromMonthKey is provided, copy configuration from that month
+    if (copyFromMonthKey) {
+      const { data: configsToCopy, error: fetchError } = await supabase
+        .from('dashboard_config')
+        .select('config_type, config_data')
+        .eq('user_id', user.id)
+        .eq('month_key', copyFromMonthKey);
+
+      if (!fetchError && configsToCopy && configsToCopy.length > 0) {
+        // Create new configs for the new month
+        const newConfigs = configsToCopy.map(config => ({
+          user_id: user.id,
+          month_key: monthKey,
+          config_type: config.config_type,
+          config_data: config.config_data,
+        }));
+
+        const { error: insertError } = await supabase
+          .from('dashboard_config')
+          .insert(newConfigs);
+
+        if (insertError) {
+          console.error('Error copying configs:', insertError);
+        }
+      }
     }
 
     return NextResponse.json({ monthlyDashboard });
