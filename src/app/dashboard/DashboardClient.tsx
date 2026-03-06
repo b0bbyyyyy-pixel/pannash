@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import MonthlyTabs from './MonthlyTabs';
 import CRMTable from './CRMTable';
@@ -96,6 +96,11 @@ export default function DashboardClient({ allLeads, availableMonths, initialMont
   const [currentMonth, setCurrentMonth] = useState(initialMonth);
   const [leads, setLeads] = useState(allLeads);
   const router = useRouter();
+  
+  // Sync leads when allLeads prop changes (after router.refresh)
+  useEffect(() => {
+    setLeads(allLeads);
+  }, [allLeads]);
   
   // When month changes, refresh to load that month's configuration
   const handleMonthChange = (monthKey: string) => {
@@ -226,6 +231,9 @@ export default function DashboardClient({ allLeads, availableMonths, initialMont
           setLeads(prev => prev.map(lead => 
             lead.id === leadId ? { ...lead, ...updates } : lead
           ));
+        }}
+        onLeadCreate={(lead) => {
+          setLeads(prev => [lead, ...prev]);
         }}
       />
     </div>

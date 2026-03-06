@@ -65,9 +65,10 @@ interface CRMTableProps {
   emailFrequencies: Frequency[];
   textFrequencies: Frequency[];
   onLeadUpdate: (leadId: string, updates: Partial<Lead>) => void;
+  onLeadCreate: (lead: Lead) => void;
 }
 
-export default function CRMTable({ leads: initialLeads, monthKey, stages, columns, emailTemplates, textTemplates, emailFrequencies, textFrequencies, onLeadUpdate }: CRMTableProps) {
+export default function CRMTable({ leads: initialLeads, monthKey, stages, columns, emailTemplates, textTemplates, emailFrequencies, textFrequencies, onLeadUpdate, onLeadCreate }: CRMTableProps) {
   const [leads, setLeads] = useState(initialLeads);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
@@ -460,12 +461,15 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
 
       if (res.ok) {
         const { lead } = await res.json();
+        
+        // Update local state
         setLeads(prev => [lead, ...prev]);
+        
+        // Update parent state so it persists
+        onLeadCreate(lead);
+        
         setShowAddModal(false);
         setNewLead({ name: '', email: '', phone: '', company: '' });
-        
-        // Refresh to sync with database
-        router.refresh();
       } else {
         alert('Failed to add lead');
       }
