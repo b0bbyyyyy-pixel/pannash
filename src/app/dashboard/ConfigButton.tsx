@@ -76,6 +76,99 @@ interface ConfigButtonProps {
   monthKey: string;
 }
 
+// Sortable Column Component
+function SortableColumn({ 
+  column, 
+  index,
+  onUpdate
+}: { 
+  column: Column;
+  index: number;
+  onUpdate: (index: number, field: keyof Column, value: any) => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: index.toString() });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="grid grid-cols-[40px_200px_100px_80px_100px_100px] gap-4 items-end p-4 border border-[#e5e5e5] rounded-md"
+    >
+      <div 
+        {...attributes}
+        {...listeners}
+        className="h-10 flex items-center justify-center text-[#999] hover:text-[#1a1a1a] cursor-grab active:cursor-grabbing"
+      >
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16" />
+        </svg>
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Column Name</label>
+        <input
+          type="text"
+          value={column.label}
+          onChange={(e) => onUpdate(index, 'label', e.target.value)}
+          className="w-full px-3 py-2 border border-[#e5e5e5] rounded text-sm"
+        />
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Width (px)</label>
+        <input
+          type="number"
+          value={column.width}
+          onChange={(e) => onUpdate(index, 'width', parseInt(e.target.value) || 100)}
+          min="50"
+          max="400"
+          className="w-full px-3 py-2 border border-[#e5e5e5] rounded text-sm"
+        />
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Show</label>
+        <input
+          type="checkbox"
+          checked={column.visible}
+          onChange={(e) => onUpdate(index, 'visible', e.target.checked)}
+          className="w-5 h-10 cursor-pointer"
+        />
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Expandable</label>
+        <input
+          type="checkbox"
+          checked={column.expandable || false}
+          onChange={(e) => onUpdate(index, 'expandable', e.target.checked)}
+          className="w-5 h-10 cursor-pointer"
+          title="Open in a large modal for long text"
+        />
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Attachments</label>
+        <input
+          type="checkbox"
+          checked={column.allowAttachments || false}
+          onChange={(e) => onUpdate(index, 'allowAttachments', e.target.checked)}
+          className="w-5 h-10 cursor-pointer"
+          title="Allow file attachments for this column"
+        />
+      </div>
+    </div>
+  );
+}
+
 // Sortable Stage Component
 function SortableStage({ 
   stage, 
@@ -323,6 +416,16 @@ export default function ConfigButton({ stages: initialStages, stats: initialStat
       const oldIndex = parseInt(active.id as string);
       const newIndex = parseInt(over.id as string);
       setStages(arrayMove(stages, oldIndex, newIndex));
+    }
+  };
+
+  const handleColumnsDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (over && active.id !== over.id) {
+      const oldIndex = parseInt(active.id as string);
+      const newIndex = parseInt(over.id as string);
+      setColumns(arrayMove(columns, oldIndex, newIndex));
     }
   };
 
@@ -874,62 +977,28 @@ export default function ConfigButton({ stages: initialStages, stats: initialStat
             {activeTab === 'columns' && (
               <div className="space-y-4">
                 <div className="flex justify-between items-center mb-4">
-                  <p className="text-sm text-[#6b6b6b]">Customize column names and widths</p>
+                  <p className="text-sm text-[#6b6b6b]">Customize column names and widths (drag to reorder)</p>
                 </div>
 
-                {columns.map((column, index) => (
-                  <div key={index} className="grid grid-cols-[200px_100px_80px_100px] gap-4 items-end p-4 border border-[#e5e5e5] rounded-md">
-                    <div>
-                      <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Column Name</label>
-                      <input
-                        type="text"
-                        value={column.label}
-                        onChange={(e) => updateColumn(index, 'label', e.target.value)}
-                        className="w-full px-3 py-2 border border-[#e5e5e5] rounded text-sm"
+                <DndContext
+                  sensors={sensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={handleColumnsDragEnd}
+                >
+                  <SortableContext
+                    items={columns.map((_, i) => i.toString())}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    {columns.map((column, index) => (
+                      <SortableColumn
+                        key={index}
+                        column={column}
+                        index={index}
+                        onUpdate={updateColumn}
                       />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Width (px)</label>
-                      <input
-                        type="number"
-                        value={column.width}
-                        onChange={(e) => updateColumn(index, 'width', parseInt(e.target.value) || 100)}
-                        min="50"
-                        max="400"
-                        className="w-full px-3 py-2 border border-[#e5e5e5] rounded text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Show</label>
-                      <input
-                        type="checkbox"
-                        checked={column.visible}
-                        onChange={(e) => updateColumn(index, 'visible', e.target.checked)}
-                        className="w-5 h-10 cursor-pointer"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Expandable</label>
-                      <input
-                        type="checkbox"
-                        checked={column.expandable || false}
-                        onChange={(e) => updateColumn(index, 'expandable', e.target.checked)}
-                        className="w-5 h-10 cursor-pointer"
-                        title="Open in a large modal for long text"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Attachments</label>
-                      <input
-                        type="checkbox"
-                        checked={column.allowAttachments || false}
-                        onChange={(e) => updateColumn(index, 'allowAttachments', e.target.checked)}
-                        className="w-5 h-10 cursor-pointer"
-                        title="Allow file attachments for this column"
-                      />
-                    </div>
-                  </div>
-                ))}
+                    ))}
+                  </SortableContext>
+                </DndContext>
 
                 <div className="text-xs text-[#6b6b6b] mt-4 p-3 bg-[#f5f5f5] rounded">
                   <strong>Tip:</strong> Adjust column widths to fit your content. Uncheck "Show" to hide columns. Enable "Expandable" for fields with long text (opens in modal). Enable "Attachments" to upload files.
