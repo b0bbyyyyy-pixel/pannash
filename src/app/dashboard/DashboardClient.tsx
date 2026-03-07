@@ -59,6 +59,7 @@ interface Column {
   width: number;
   visible: boolean;
   expandable?: boolean;
+  allowAttachments?: boolean;
 }
 
 interface Template {

@@ -37,6 +37,16 @@ interface Column {
   width: number;
   visible: boolean;
   expandable?: boolean;
+  allowAttachments?: boolean;
+}
+
+interface Attachment {
+  id: string;
+  file_name: string;
+  file_path: string;
+  file_size: number;
+  file_type: string;
+  created_at: string;
 }
 
 interface Template {
@@ -78,6 +88,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   useEffect(() => {
     setLeads(initialLeads);
   }, [initialLeads]);
+
   const [editField, setEditField] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingTimerId, setEditingTimerId] = useState<string | null>(null);
@@ -97,6 +108,9 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   const [displayDate, setDisplayDate] = useState('');
   const [showExpandedTextModal, setShowExpandedTextModal] = useState<{ leadId: string; field: string; value: string; label: string } | null>(null);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [attachmentCounts, setAttachmentCounts] = useState<{ [key: string]: number }>({});
   const router = useRouter();
 
   // Update local state when props change (e.g., switching tabs)
@@ -318,6 +332,110 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     formatted = formatted.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
     
     return formatted;
+  };
+
+  // Fetch attachments when modal opens
+  useEffect(() => {
+    if (showExpandedTextModal) {
+      fetchAttachments(showExpandedTextModal.leadId, showExpandedTextModal.field);
+    } else {
+      setAttachments([]);
+    }
+  }, [showExpandedTextModal]);
+
+  const fetchAttachments = async (leadId: string, columnField: string) => {
+    try {
+      const res = await fetch(`/api/attachments?leadId=${leadId}&columnField=${columnField}`);
+      if (res.ok) {
+        const { attachments: fetchedAttachments } = await res.json();
+        setAttachments(fetchedAttachments || []);
+        // Update count
+        const countKey = `${leadId}-${columnField}`;
+        setAttachmentCounts(prev => ({ ...prev, [countKey]: fetchedAttachments?.length || 0 }));
+      }
+    } catch (error) {
+      console.error('Error fetching attachments:', error);
+    }
+  };
+
+  const handleFileUpload = async (leadId: string, columnField: string, file: File) => {
+    setUploadingFile(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('leadId', leadId);
+      formData.append('columnField', columnField);
+
+      const res = await fetch('/api/attachments', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (res.ok) {
+        const { attachment } = await res.json();
+        setAttachments(prev => [attachment, ...prev]);
+        // Update attachment count
+        const countKey = `${leadId}-${columnField}`;
+        setAttachmentCounts(prev => ({ ...prev, [countKey]: (prev[countKey] || 0) + 1 }));
+      } else {
+        alert('Failed to upload file');
+      }
+    } catch (error) {
+      console.error('Error uploading file:', error);
+      alert('Failed to upload file');
+    } finally {
+      setUploadingFile(false);
+    }
+  };
+
+  const handleFileDelete = async (attachmentId: string) => {
+    if (!confirm('Delete this file?')) return;
+
+    try {
+      const res = await fetch(`/api/attachments?id=${attachmentId}`, {
+        method: 'DELETE',
+      });
+
+      if (res.ok) {
+        setAttachments(prev => prev.filter(a => a.id !== attachmentId));
+        // Update attachment count
+        if (showExpandedTextModal) {
+          const countKey = `${showExpandedTextModal.leadId}-${showExpandedTextModal.field}`;
+          setAttachmentCounts(prev => ({ ...prev, [countKey]: Math.max((prev[countKey] || 1) - 1, 0) }));
+        }
+      } else {
+        alert('Failed to delete file');
+      }
+    } catch (error) {
+      console.error('Error deleting file:', error);
+      alert('Failed to delete file');
+    }
+  };
+
+  const handleFileDownload = async (attachmentId: string) => {
+    try {
+      const res = await fetch(`/api/attachments/download?id=${attachmentId}`);
+      if (res.ok) {
+        const { url, fileName } = await res.json();
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } else {
+        alert('Failed to download file');
+      }
+    } catch (error) {
+      console.error('Error downloading file:', error);
+      alert('Failed to download file');
+    }
+  };
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
   const handleCustomTimer = async (leadId: string) => {
@@ -550,21 +668,33 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     if (column.expandable) {
       const value = lead[fieldKey] as string | null;
       const formattedValue = value ? renderMarkdown(value) : null;
+      const countKey = `${lead.id}-${columnField}`;
+      const attachmentCount = attachmentCounts[countKey] || 0;
       
       return (
         <button
           onClick={() => setShowExpandedTextModal({ leadId: lead.id, field: columnField, value: String(value || ''), label: column.label })}
           className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap overflow-hidden text-ellipsis max-w-full block"
         >
-          {value ? (
-            <span 
-              className="block overflow-hidden text-ellipsis" 
-              style={{ maxWidth: `${column.width - 32}px` }}
-              dangerouslySetInnerHTML={{ __html: formattedValue || '' }}
-            />
-          ) : (
-            `Add ${column.label.toLowerCase()}`
-          )}
+          <div className="flex items-center gap-1.5">
+            {value ? (
+              <span 
+                className="block overflow-hidden text-ellipsis" 
+                style={{ maxWidth: `${column.width - (attachmentCount > 0 ? 60 : 32)}px` }}
+                dangerouslySetInnerHTML={{ __html: formattedValue || '' }}
+              />
+            ) : (
+              `Add ${column.label.toLowerCase()}`
+            )}
+            {column.allowAttachments && attachmentCount > 0 && (
+              <span className="flex items-center gap-1 text-xs text-[#6b6b6b] flex-shrink-0">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                </svg>
+                {attachmentCount}
+              </span>
+            )}
+          </div>
         </button>
       );
     }
@@ -681,7 +811,9 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
           </select>
         );
 
-      case 'company':
+      case 'company': {
+        const countKey = `${lead.id}-company`;
+        const attachmentCount = attachmentCounts[countKey] || 0;
         return editingId === lead.id && editField === 'company' ? (
           <input
             type="text"
@@ -701,11 +833,24 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
             }}
             className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
           >
-            <span dangerouslySetInnerHTML={{ __html: renderMarkdown(lead.company || 'Add company') }} />
+            <div className="flex items-center gap-1.5">
+              <span dangerouslySetInnerHTML={{ __html: renderMarkdown(lead.company || 'Add company') }} />
+              {column.allowAttachments && attachmentCount > 0 && (
+                <span className="flex items-center gap-1 text-xs text-[#6b6b6b]">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                  </svg>
+                  {attachmentCount}
+                </span>
+              )}
+            </div>
           </button>
         );
+      }
 
-      case 'name':
+      case 'name': {
+        const countKey = `${lead.id}-name`;
+        const attachmentCount = attachmentCounts[countKey] || 0;
         return editingId === lead.id && editField === 'name' ? (
           <input
             type="text"
@@ -725,9 +870,20 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
             }}
             className="hover:text-[#5a7fc7] transition-colors text-left"
           >
-            <span dangerouslySetInnerHTML={{ __html: renderMarkdown(lead.name || '') }} />
+            <div className="flex items-center gap-1.5">
+              <span dangerouslySetInnerHTML={{ __html: renderMarkdown(lead.name || '') }} />
+              {column.allowAttachments && attachmentCount > 0 && (
+                <span className="flex items-center gap-1 text-xs text-[#6b6b6b]">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                  </svg>
+                  {attachmentCount}
+                </span>
+              )}
+            </div>
           </button>
         );
+      }
 
       case 'stage':
         return (
@@ -765,7 +921,9 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
           </button>
         );
 
-      case 'email':
+      case 'email': {
+        const countKey = `${lead.id}-email`;
+        const attachmentCount = attachmentCounts[countKey] || 0;
         return editingId === lead.id && editField === 'email' ? (
           <input
             type="email"
@@ -785,11 +943,24 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
             }}
             className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
           >
-            <span dangerouslySetInnerHTML={{ __html: renderMarkdown(lead.email || 'Add email') }} />
+            <div className="flex items-center gap-1.5">
+              <span dangerouslySetInnerHTML={{ __html: renderMarkdown(lead.email || 'Add email') }} />
+              {column.allowAttachments && attachmentCount > 0 && (
+                <span className="flex items-center gap-1 text-xs text-[#6b6b6b]">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                  </svg>
+                  {attachmentCount}
+                </span>
+              )}
+            </div>
           </button>
         );
+      }
 
-      case 'phone':
+      case 'phone': {
+        const countKey = `${lead.id}-phone`;
+        const attachmentCount = attachmentCounts[countKey] || 0;
         return editingId === lead.id && editField === 'phone' ? (
           <input
             type="tel"
@@ -809,11 +980,24 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
             }}
             className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
           >
-            <span dangerouslySetInnerHTML={{ __html: renderMarkdown(lead.phone || 'Add phone') }} />
+            <div className="flex items-center gap-1.5">
+              <span dangerouslySetInnerHTML={{ __html: renderMarkdown(lead.phone || 'Add phone') }} />
+              {column.allowAttachments && attachmentCount > 0 && (
+                <span className="flex items-center gap-1 text-xs text-[#6b6b6b]">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                  </svg>
+                  {attachmentCount}
+                </span>
+              )}
+            </div>
           </button>
         );
+      }
 
-      case 'lead_source':
+      case 'lead_source': {
+        const countKey = `${lead.id}-lead_source`;
+        const attachmentCount = attachmentCounts[countKey] || 0;
         return editingId === lead.id && editField === 'lead_source' ? (
           <input
             type="text"
@@ -833,9 +1017,20 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
             }}
             className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
           >
-            <span dangerouslySetInnerHTML={{ __html: renderMarkdown(lead.lead_source || 'Add source') }} />
+            <div className="flex items-center gap-1.5">
+              <span dangerouslySetInnerHTML={{ __html: renderMarkdown(lead.lead_source || 'Add source') }} />
+              {column.allowAttachments && attachmentCount > 0 && (
+                <span className="flex items-center gap-1 text-xs text-[#6b6b6b]">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                  </svg>
+                  {attachmentCount}
+                </span>
+              )}
+            </div>
           </button>
         );
+      }
 
       case 'last_contact':
         return editingId === lead.id && editField === 'last_contact' ? (
@@ -1110,6 +1305,74 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
               placeholder={`Enter ${showExpandedTextModal.label.toLowerCase()} here...\n\nFormatting:\n**bold text**\n*italic text*`}
               autoFocus
             />
+
+            {/* File Attachments Section - Only show if column allows attachments */}
+            {columns.find(c => c.field === showExpandedTextModal.field)?.allowAttachments && (
+              <div className="mt-4 pt-4 border-t border-[#e5e5e5]">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-medium text-[#1a1a1a]">Attachments</h3>
+                  <label className="px-3 py-1.5 bg-[#1a1a1a] text-white rounded text-xs font-medium hover:bg-[#2a2a2a] transition-colors cursor-pointer">
+                    {uploadingFile ? 'Uploading...' : '+ Add File'}
+                    <input
+                      type="file"
+                      className="hidden"
+                      disabled={uploadingFile}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file && showExpandedTextModal) {
+                          handleFileUpload(showExpandedTextModal.leadId, showExpandedTextModal.field, file);
+                        }
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                </div>
+
+                {/* File List */}
+                {attachments.length > 0 ? (
+                  <div className="space-y-2 max-h-[200px] overflow-y-auto">
+                    {attachments.map((attachment) => (
+                      <div
+                        key={attachment.id}
+                        className="flex items-center justify-between p-2 bg-[#f5f5f5] rounded border border-[#e5e5e5]"
+                      >
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          <svg className="w-4 h-4 text-[#6b6b6b] flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                          </svg>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-[#1a1a1a] truncate">{attachment.file_name}</p>
+                            <p className="text-xs text-[#6b6b6b]">{formatFileSize(attachment.file_size)}</p>
+                          </div>
+                        </div>
+                        <div className="flex gap-1 flex-shrink-0">
+                          <button
+                            onClick={() => handleFileDownload(attachment.id)}
+                            className="p-1.5 hover:bg-[#e5e5e5] rounded transition-colors"
+                            title="Download"
+                          >
+                            <svg className="w-4 h-4 text-[#1a1a1a]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={() => handleFileDelete(attachment.id)}
+                            className="p-1.5 hover:bg-red-100 rounded transition-colors"
+                            title="Delete"
+                          >
+                            <svg className="w-4 h-4 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-[#6b6b6b] italic">No files attached</p>
+                )}
+              </div>
+            )}
 
             <div className="flex gap-3 mt-6">
               <button

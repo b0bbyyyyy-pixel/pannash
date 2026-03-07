@@ -45,6 +45,7 @@ interface Column {
   width: number;
   visible: boolean;
   expandable?: boolean;
+  allowAttachments?: boolean;
 }
 
 interface Template {
@@ -915,11 +916,21 @@ export default function ConfigButton({ stages: initialStages, stats: initialStat
                         title="Open in a large modal for long text"
                       />
                     </div>
+                    <div>
+                      <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Attachments</label>
+                      <input
+                        type="checkbox"
+                        checked={column.allowAttachments || false}
+                        onChange={(e) => updateColumn(index, 'allowAttachments', e.target.checked)}
+                        className="w-5 h-10 cursor-pointer"
+                        title="Allow file attachments for this column"
+                      />
+                    </div>
                   </div>
                 ))}
 
                 <div className="text-xs text-[#6b6b6b] mt-4 p-3 bg-[#f5f5f5] rounded">
-                  <strong>Tip:</strong> Adjust column widths to fit your content. Uncheck "Show" to hide columns. Enable "Expandable" for fields with long text (opens in modal).
+                  <strong>Tip:</strong> Adjust column widths to fit your content. Uncheck "Show" to hide columns. Enable "Expandable" for fields with long text (opens in modal). Enable "Attachments" to upload files.
                 </div>
               </div>
             )}

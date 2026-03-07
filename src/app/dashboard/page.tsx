@@ -134,19 +134,19 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
 
   // Default columns if not configured
   const columns = columnsConfig?.config_data || [
-    { field: 'timer', label: 'Timer', width: 120, visible: true, expandable: false },
-    { field: 'company', label: 'Opportunity', width: 150, visible: true, expandable: false },
-    { field: 'name', label: 'Name', width: 150, visible: true, expandable: false },
-    { field: 'stage', label: 'Stage', width: 160, visible: true, expandable: false },
-    { field: 'value', label: 'Value', width: 100, visible: true, expandable: false },
-    { field: 'email', label: 'E-Mail', width: 180, visible: true, expandable: false },
-    { field: 'phone', label: 'Phone', width: 120, visible: true, expandable: false },
-    { field: 'lead_source', label: 'Lead Source', width: 120, visible: true, expandable: false },
-    { field: 'last_contact', label: 'Last Contact', width: 120, visible: true, expandable: false },
-    { field: 'notes', label: 'Notes', width: 150, visible: true, expandable: true },
-    { field: 'offers', label: 'Offers', width: 150, visible: true, expandable: true },
-    { field: 'auto_email_frequency', label: 'Auto Email', width: 140, visible: true, expandable: false },
-    { field: 'auto_text_frequency', label: 'Auto Text', width: 140, visible: true, expandable: false },
+    { field: 'timer', label: 'Timer', width: 120, visible: true, expandable: false, allowAttachments: false },
+    { field: 'company', label: 'Opportunity', width: 150, visible: true, expandable: false, allowAttachments: false },
+    { field: 'name', label: 'Name', width: 150, visible: true, expandable: false, allowAttachments: false },
+    { field: 'stage', label: 'Stage', width: 160, visible: true, expandable: false, allowAttachments: false },
+    { field: 'value', label: 'Value', width: 100, visible: true, expandable: false, allowAttachments: false },
+    { field: 'email', label: 'E-Mail', width: 180, visible: true, expandable: false, allowAttachments: false },
+    { field: 'phone', label: 'Phone', width: 120, visible: true, expandable: false, allowAttachments: false },
+    { field: 'lead_source', label: 'Lead Source', width: 120, visible: true, expandable: false, allowAttachments: false },
+    { field: 'last_contact', label: 'Last Contact', width: 120, visible: true, expandable: false, allowAttachments: false },
+    { field: 'notes', label: 'Notes', width: 150, visible: true, expandable: true, allowAttachments: false },
+    { field: 'offers', label: 'Offers', width: 150, visible: true, expandable: true, allowAttachments: false },
+    { field: 'auto_email_frequency', label: 'Auto Email', width: 140, visible: true, expandable: false, allowAttachments: false },
+    { field: 'auto_text_frequency', label: 'Auto Text', width: 140, visible: true, expandable: false, allowAttachments: false },
   ];
 
   // Fetch templates (with error handling for if table doesn't exist yet)
