@@ -592,7 +592,9 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
 
   const saveEdit = () => {
     if (editField && editingId) {
-      updateLead(editingId, editField, editValue);
+      // Convert value to number if it's the value field
+      const valueToSave = editField === 'value' ? Number(editValue) : editValue;
+      updateLead(editingId, editField, valueToSave);
     }
     setEditingId(null);
     setEditField('');
