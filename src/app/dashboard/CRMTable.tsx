@@ -531,28 +531,28 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
     const seconds = Math.floor((diff % (1000 * 60)) / 1000);
 
-    // Format: "14D 23:12:32" - keep spacing minimal
     const hoursStr = hours.toString().padStart(2, '0');
     const minutesStr = minutes.toString().padStart(2, '0');
     const secondsStr = seconds.toString().padStart(2, '0');
 
-    return `${days}D ${hoursStr}:${minutesStr}:${secondsStr}`;
+    return { days, time: `${hoursStr}:${minutesStr}:${secondsStr}` };
   };
 
-  const [countdown, setCountdown] = useState<{ [key: string]: string }>({});
+  const [countdown, setCountdown] = useState<{ [key: string]: { days: number; time: string } | string }>({});
 
-  // Initialize countdowns on mount and update every second
+  // Initialize countdowns and update every second
   useEffect(() => {
     // Calculate initial countdowns for deal timers
-    const initialCountdowns: { [key: string]: string } = {};
+    const initialCountdowns: { [key: string]: { days: number; time: string } | string } = {};
     leads.forEach(lead => {
       if (lead.timer_end_date) {
-        initialCountdowns[lead.id] = getCountdown(lead.timer_end_date) || 'Expired';
+        const result = getCountdown(lead.timer_end_date);
+        initialCountdowns[lead.id] = result || 'EXPIRED';
       }
     });
     setCountdown(initialCountdowns);
 
-    // Calculate auto email/text countdowns
+    // Calculate initial auto email/text countdowns
     const initialAutoCountdowns: { [key: string]: { email: string, text: string } } = {};
     leads.forEach(lead => {
       initialAutoCountdowns[lead.id] = {
@@ -564,12 +564,13 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
 
     // Update every second
     const interval = setInterval(() => {
-      const newCountdowns: { [key: string]: string } = {};
+      const newCountdowns: { [key: string]: { days: number; time: string } | string } = {};
       const newAutoCountdowns: { [key: string]: { email: string, text: string } } = {};
       
       leads.forEach(lead => {
         if (lead.timer_end_date) {
-          newCountdowns[lead.id] = getCountdown(lead.timer_end_date) || 'Expired';
+          const result = getCountdown(lead.timer_end_date);
+          newCountdowns[lead.id] = result || 'EXPIRED';
         }
         newAutoCountdowns[lead.id] = {
           email: getAutoCountdown(lead.last_email_sent, lead.auto_email_frequency, emailFrequencies) || '',
@@ -753,6 +754,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                   border: 'none',
                   cursor: 'pointer',
                   padding: 0,
+                  letterSpacing: '-0.02em',
                 }}
                 className="hover:opacity-70 transition-opacity"
               >
@@ -761,11 +763,13 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                   const dateStr = lead.timer_end_date.split('T')[0];
                   const [year, month, day] = dateStr.split('-');
                   const date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-                  return date.toLocaleDateString('en-US', { 
+                  const formatted = date.toLocaleDateString('en-US', { 
                     month: 'short', 
                     day: 'numeric', 
                     year: 'numeric' 
                   });
+                  // Remove extra spaces from date formatting for tighter spacing
+                  return formatted.replace(/,\s+/g, ', ').replace(/\s+/g, ' ');
                 })()}
               </button>
             )
@@ -780,7 +784,6 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                 fontFamily: 'var(--font-roboto-mono), monospace', 
                 fontSize: '13px', 
                 fontWeight: '700', 
-                color: '#ff0000', 
                 whiteSpace: 'nowrap',
                 display: 'inline-block',
                 background: 'none',
@@ -791,9 +794,18 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
               className="hover:opacity-80 transition-opacity"
             >
               {countdown[lead.id] === 'EXPIRED' ? (
-                <span className="animate-pulse">EXPIRED</span>
+                <span style={{ color: '#ff0000' }} className="animate-pulse">EXPIRED</span>
+              ) : typeof countdown[lead.id] === 'object' ? (
+                <>
+                  <span style={{ color: countdown[lead.id].days <= 1 ? '#ff0000' : '#1a1a1a' }}>
+                    {countdown[lead.id].days}D
+                  </span>
+                  <span style={{ color: '#ff0000' }}>
+                    {' '}{countdown[lead.id].time}
+                  </span>
+                </>
               ) : (
-                countdown[lead.id] || '...'
+                '...'
               )}
             </button>
           )
