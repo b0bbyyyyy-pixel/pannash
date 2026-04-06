@@ -38,24 +38,23 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/auth', request.url));
   }
 
+  // Public pages that don't require authentication
+  const publicPages = ['/', '/contact', '/privacy', '/terms'];
+  const isPublicPage = publicPages.includes(request.nextUrl.pathname);
+
   // Redirect logged-in users away from /auth to dashboard
   if (request.nextUrl.pathname.startsWith('/auth') && user) {
     return NextResponse.redirect(new URL('/dashboard', request.url));
   }
 
-  // Redirect root to dashboard if authenticated
-  if (request.nextUrl.pathname === '/' && user) {
-    return NextResponse.redirect(new URL('/dashboard', request.url));
-  }
-
-  // Redirect root to auth if not authenticated
-  if (request.nextUrl.pathname === '/' && !user) {
-    return NextResponse.redirect(new URL('/auth', request.url));
+  // Allow public pages without authentication
+  if (isPublicPage) {
+    return response;
   }
 
   return response;
 }
 
 export const config = {
-  matcher: ['/', '/dashboard/:path*', '/campaigns/:path*', '/leads/:path*', '/settings/:path*', '/onboarding/:path*', '/auth/:path*'],
+  matcher: ['/', '/contact', '/privacy', '/terms', '/dashboard/:path*', '/campaigns/:path*', '/leads/:path*', '/settings/:path*', '/onboarding/:path*', '/auth/:path*'],
 };

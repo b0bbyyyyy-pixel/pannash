@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import { revalidatePath } from 'next/cache';
 
 export async function POST(req: NextRequest) {
   try {
@@ -40,6 +41,9 @@ export async function POST(req: NextRequest) {
     );
 
     await Promise.all(updates);
+
+    // Revalidate dashboard cache to show new tab order immediately
+    revalidatePath('/dashboard');
 
     return NextResponse.json({ success: true });
   } catch (error) {

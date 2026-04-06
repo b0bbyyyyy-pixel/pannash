@@ -20,6 +20,7 @@ interface Lead {
   offers: string | null;
   timer_type: string;
   timer_end_date: string | null;
+  timer_color: string | null;
   auto_email_frequency: string;
   auto_text_frequency: string;
   email_template_id: string | null;

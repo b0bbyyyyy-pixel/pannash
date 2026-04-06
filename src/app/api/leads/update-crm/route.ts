@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
+import { revalidatePath } from 'next/cache';
 
 export async function POST(req: NextRequest) {
   try {
@@ -48,6 +49,7 @@ export async function POST(req: NextRequest) {
       }
 
       console.log('[Timer Update Success]:', data);
+      revalidatePath('/dashboard');
       return NextResponse.json({ success: true, data });
     }
 
@@ -65,6 +67,7 @@ export async function POST(req: NextRequest) {
       'offers',
       'timer_type',
       'timer_end_date',
+      'timer_color',
       'auto_email_frequency',
       'auto_text_frequency',
       'email_template_id',
@@ -89,6 +92,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
+    revalidatePath('/dashboard');
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Error in update-crm:', error);

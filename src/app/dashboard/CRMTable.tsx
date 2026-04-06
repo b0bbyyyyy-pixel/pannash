@@ -17,6 +17,7 @@ interface Lead {
   offers: string | null;
   timer_type: string;
   timer_end_date: string | null;
+  timer_color: string | null;
   auto_email_frequency: string;
   auto_text_frequency: string;
   email_template_id: string | null;
@@ -92,6 +93,9 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   const [editField, setEditField] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingTimerId, setEditingTimerId] = useState<string | null>(null);
+  const [showTimerSetupModal, setShowTimerSetupModal] = useState<string | null>(null);
+  const [tempTimerType, setTempTimerType] = useState('No Timer');
+  const [showTimerColorModal, setShowTimerColorModal] = useState<string | null>(null);
   const [newLead, setNewLead] = useState({
     name: '',
     email: '',
@@ -104,6 +108,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   const [showCustomTimerModal, setShowCustomTimerModal] = useState<string | null>(null);
   const [customTimerDate, setCustomTimerDate] = useState('');
   const [customTimerTime, setCustomTimerTime] = useState('23:59');
+  const [selectedTimerColor, setSelectedTimerColor] = useState('#ff0000');
   const [showDisplayDateModal, setShowDisplayDateModal] = useState<string | null>(null);
   const [displayDate, setDisplayDate] = useState('');
   const [showExpandedTextModal, setShowExpandedTextModal] = useState<{ leadId: string; field: string; value: string; label: string } | null>(null);
@@ -140,6 +145,15 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     '30 Day Countdown',
     '60 Day Countdown',
     'Display Date',
+  ];
+
+  const timerColors = [
+    { name: 'Red', value: '#ff0000', label: '🔴 Red' },
+    { name: 'Orange', value: '#ff8800', label: '🟠 Orange' },
+    { name: 'Yellow', value: '#ffcc00', label: '🟡 Yellow' },
+    { name: 'Green', value: '#00cc00', label: '🟢 Green' },
+    { name: 'Blue', value: '#0088ff', label: '🔵 Blue' },
+    { name: 'Purple', value: '#aa00ff', label: '🟣 Purple' },
   ];
 
   // Helper function to calculate countdown for auto email/text
@@ -193,6 +207,86 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
       // Revert on error
       router.refresh();
     }
+  };
+
+  const openTimerSetupModal = (leadId: string) => {
+    const lead = leads.find(l => l.id === leadId);
+    setTempTimerType(lead?.timer_type || 'No Timer');
+    setSelectedTimerColor(lead?.timer_color || '#ff0000');
+    setShowTimerSetupModal(leadId);
+  };
+
+  const handleQuickTimerSetup = async (leadId: string) => {
+    const timerType = tempTimerType;
+    
+    // If Display Date or Custom Countdown is selected, open respective modals
+    if (timerType === 'Display Date') {
+      setShowTimerSetupModal(null);
+      setShowDisplayDateModal(leadId);
+      return;
+    }
+
+    if (timerType === 'Custom Countdown') {
+      setShowTimerSetupModal(null);
+      openCustomTimerModal(leadId);
+      return;
+    }
+
+    let timerEndDate = null;
+    
+    if (timerType !== 'No Timer') {
+      const days = parseInt(timerType.split(' ')[0]);
+      const endDate = new Date();
+      endDate.setDate(endDate.getDate() + days);
+      timerEndDate = endDate.toISOString();
+    }
+
+    // Optimistically update local state with timer and color
+    setLeads(prev => prev.map(lead => 
+      lead.id === leadId ? { ...lead, timer_type: timerType, timer_end_date: timerEndDate, timer_color: selectedTimerColor } : lead
+    ));
+
+    // Also update parent state so changes persist across tab switches
+    onLeadUpdate(leadId, { timer_type: timerType, timer_end_date: timerEndDate, timer_color: selectedTimerColor });
+
+    try {
+      // Update timer
+      const timerRes = await fetch('/api/leads/update-crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          leadId, 
+          field: 'timer', 
+          value: { timer_type: timerType, timer_end_date: timerEndDate }
+        }),
+        credentials: 'include',
+      });
+
+      // Update color
+      await fetch('/api/leads/update-crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          leadId, 
+          field: 'timer_color',
+          value: selectedTimerColor
+        }),
+        credentials: 'include',
+      });
+
+      if (!timerRes.ok) {
+        console.error('Failed to update timer:', await timerRes.text());
+        router.refresh();
+      } else {
+        const result = await timerRes.json();
+        console.log('Timer updated successfully:', result);
+      }
+    } catch (error) {
+      console.error('Error updating timer:', error);
+      router.refresh();
+    }
+
+    setShowTimerSetupModal(null);
   };
 
   const handleTimerChange = async (leadId: string, timerType: string) => {
@@ -256,16 +350,17 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     const endDate = new Date(displayDate + 'T12:00:00');
     const timerEndDate = endDate.toISOString();
 
-    // Optimistically update local state
+    // Optimistically update local state with timer and color
     setLeads(prev => prev.map(lead => 
-      lead.id === leadId ? { ...lead, timer_type: 'Display Date', timer_end_date: timerEndDate } : lead
+      lead.id === leadId ? { ...lead, timer_type: 'Display Date', timer_end_date: timerEndDate, timer_color: selectedTimerColor } : lead
     ));
 
     // Update parent state
-    onLeadUpdate(leadId, { timer_type: 'Display Date', timer_end_date: timerEndDate });
+    onLeadUpdate(leadId, { timer_type: 'Display Date', timer_end_date: timerEndDate, timer_color: selectedTimerColor });
 
     try {
-      const res = await fetch('/api/leads/update-crm', {
+      // Update timer
+      const timerRes = await fetch('/api/leads/update-crm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -276,8 +371,20 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         credentials: 'include',
       });
 
-      if (!res.ok) {
-        console.error('Failed to update display date:', await res.text());
+      // Update color
+      await fetch('/api/leads/update-crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          leadId, 
+          field: 'timer_color',
+          value: selectedTimerColor
+        }),
+        credentials: 'include',
+      });
+
+      if (!timerRes.ok) {
+        console.error('Failed to update display date:', await timerRes.text());
         router.refresh();
       } else {
         console.log('Display date updated successfully');
@@ -438,6 +545,39 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
+  const handleTimerColorChange = async (leadId: string, color: string) => {
+    // Optimistically update local state first
+    setLeads(prev => prev.map(lead => 
+      lead.id === leadId ? { ...lead, timer_color: color } : lead
+    ));
+
+    // Also update parent state so changes persist across tab switches
+    onLeadUpdate(leadId, { timer_color: color });
+
+    try {
+      const res = await fetch('/api/leads/update-crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          leadId, 
+          field: 'timer_color',
+          value: color
+        }),
+        credentials: 'include',
+      });
+
+      if (!res.ok) {
+        console.error('Failed to update timer color:', await res.text());
+        router.refresh();
+      }
+    } catch (error) {
+      console.error('Error updating timer color:', error);
+      router.refresh();
+    }
+
+    setShowTimerColorModal(null);
+  };
+
   const handleCustomTimer = async (leadId: string) => {
     if (!customTimerDate) {
       alert('Please select a date');
@@ -448,16 +588,17 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     const endDate = new Date(`${customTimerDate}T${customTimerTime}`);
     const timerEndDate = endDate.toISOString();
 
-    // Optimistically update local state
+    // Optimistically update local state with timer and color
     setLeads(prev => prev.map(lead => 
-      lead.id === leadId ? { ...lead, timer_type: 'Custom Countdown', timer_end_date: timerEndDate } : lead
+      lead.id === leadId ? { ...lead, timer_type: 'Custom Countdown', timer_end_date: timerEndDate, timer_color: selectedTimerColor } : lead
     ));
 
     // Also update parent state so changes persist across tab switches
-    onLeadUpdate(leadId, { timer_type: 'Custom Countdown', timer_end_date: timerEndDate });
+    onLeadUpdate(leadId, { timer_type: 'Custom Countdown', timer_end_date: timerEndDate, timer_color: selectedTimerColor });
 
     try {
-      const res = await fetch('/api/leads/update-crm', {
+      // Update timer
+      const timerRes = await fetch('/api/leads/update-crm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -468,11 +609,23 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         credentials: 'include',
       });
 
-      if (!res.ok) {
-        console.error('Failed to update custom timer:', await res.text());
+      // Update color
+      await fetch('/api/leads/update-crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          leadId, 
+          field: 'timer_color',
+          value: selectedTimerColor
+        }),
+        credentials: 'include',
+      });
+
+      if (!timerRes.ok) {
+        console.error('Failed to update custom timer:', await timerRes.text());
         router.refresh();
       } else {
-        const result = await res.json();
+        const result = await timerRes.json();
         console.log('Custom timer updated successfully:', result);
       }
     } catch (error) {
@@ -491,12 +644,14 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
       // Extract just the date portion to avoid timezone issues
       const dateStr = lead.timer_end_date.split('T')[0];
       setDisplayDate(dateStr);
+      setSelectedTimerColor(lead.timer_color || '#ff0000');
     } else {
       const today = new Date();
       const year = today.getFullYear();
       const month = String(today.getMonth() + 1).padStart(2, '0');
       const day = String(today.getDate()).padStart(2, '0');
       setDisplayDate(`${year}-${month}-${day}`);
+      setSelectedTimerColor(lead?.timer_color || '#ff0000');
     }
     setShowDisplayDateModal(leadId);
   };
@@ -507,12 +662,14 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
       const endDate = new Date(lead.timer_end_date);
       setCustomTimerDate(endDate.toISOString().split('T')[0]);
       setCustomTimerTime(endDate.toTimeString().slice(0, 5));
+      setSelectedTimerColor(lead.timer_color || '#ff0000');
     } else {
       // Default to 30 days from now
       const defaultEnd = new Date();
       defaultEnd.setDate(defaultEnd.getDate() + 30);
       setCustomTimerDate(defaultEnd.toISOString().split('T')[0]);
       setCustomTimerTime('23:59');
+      setSelectedTimerColor(lead?.timer_color || '#ff0000');
     }
     setShowCustomTimerModal(leadId);
   };
@@ -594,7 +751,13 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   const saveEdit = () => {
     if (editField && editingId) {
       // Convert value to number if it's the value field
-      const valueToSave = editField === 'value' ? Number(editValue) : editValue;
+      let valueToSave: string | number | null = editField === 'value' ? Number(editValue) : editValue;
+      
+      // Convert empty string to null for date fields
+      if (editField === 'last_contact' && valueToSave === '') {
+        valueToSave = null;
+      }
+      
       updateLead(editingId, editField, valueToSave);
     }
     setEditingId(null);
@@ -775,7 +938,14 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
             )
           ) : (
             <button
-              onClick={() => setEditingTimerId(lead.id)}
+              onClick={(e) => {
+                if (e.shiftKey) {
+                  e.preventDefault();
+                  setShowTimerColorModal(lead.id);
+                } else {
+                  setEditingTimerId(lead.id);
+                }
+              }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 openCustomTimerModal(lead.id);
@@ -792,21 +962,28 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                 padding: 0,
               }}
               className="hover:opacity-80 transition-opacity"
+              title="Click to change type | Shift+Click to change color | Right-click for custom date"
             >
-              {countdown[lead.id] === 'EXPIRED' ? (
-                <span style={{ color: '#ff0000' }} className="animate-pulse">EXPIRED</span>
-              ) : typeof countdown[lead.id] === 'object' ? (
-                <>
-                  <span style={{ color: countdown[lead.id].days <= 1 ? '#ff0000' : '#1a1a1a' }}>
-                    {countdown[lead.id].days}D
-                  </span>
-                  <span style={{ color: '#ff0000' }}>
-                    {' '}{countdown[lead.id].time}
-                  </span>
-                </>
-              ) : (
-                '...'
-              )}
+              {(() => {
+                const countdownValue = countdown[lead.id];
+                const timerColor = lead.timer_color || '#ff0000';
+                if (countdownValue === 'EXPIRED') {
+                  return <span style={{ color: timerColor }} className="animate-pulse">EXPIRED</span>;
+                }
+                if (typeof countdownValue === 'object' && countdownValue !== null) {
+                  return (
+                    <>
+                      <span style={{ color: countdownValue.days <= 1 ? timerColor : '#1a1a1a' }}>
+                        {countdownValue.days}D
+                      </span>
+                      <span style={{ color: timerColor }}>
+                        {' '}{countdownValue.time}
+                      </span>
+                    </>
+                  );
+                }
+                return '...';
+              })()}
             </button>
           )
         ) : (
@@ -1448,6 +1625,29 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                 />
               </div>
 
+              <div>
+                <label className="block text-sm font-medium text-[#1a1a1a] mb-2">
+                  Timer Color
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {timerColors.map((color) => (
+                    <button
+                      key={color.value}
+                      type="button"
+                      onClick={() => setSelectedTimerColor(color.value)}
+                      className={`px-3 py-2 border-2 rounded-md text-xs font-medium transition-colors flex items-center justify-center gap-1.5 ${
+                        selectedTimerColor === color.value 
+                          ? 'border-[#1a1a1a] bg-[#f5f5f5]' 
+                          : 'border-[#e5e5e5] hover:border-[#999]'
+                      }`}
+                    >
+                      <span style={{ color: color.value, fontSize: '16px' }}>●</span>
+                      <span>{color.name}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <p className="text-xs text-[#6b6b6b]">
                 The countdown will expire at this exact date and time
               </p>
@@ -1467,6 +1667,45 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                 Set Timer
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Timer Color Modal */}
+      {showTimerColorModal && (
+        <div 
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" 
+          onClick={() => setShowTimerColorModal(null)}
+        >
+          <div 
+            className="bg-white rounded-lg p-6 max-w-md w-full mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold text-[#1a1a1a] mb-4">Timer Color</h2>
+            
+            <p className="text-sm text-[#6b6b6b] mb-4">
+              Choose a color for this timer countdown
+            </p>
+
+            <div className="grid grid-cols-2 gap-3 mb-6">
+              {timerColors.map((color) => (
+                <button
+                  key={color.value}
+                  onClick={() => handleTimerColorChange(showTimerColorModal, color.value)}
+                  className="px-4 py-3 border-2 border-[#e5e5e5] rounded-lg text-sm font-medium hover:border-[#1a1a1a] transition-colors flex items-center gap-2"
+                >
+                  <span style={{ color: color.value, fontSize: '20px' }}>●</span>
+                  <span>{color.name}</span>
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={() => setShowTimerColorModal(null)}
+              className="w-full px-4 py-2 border border-[#e5e5e5] text-[#1a1a1a] rounded-md text-sm font-medium hover:bg-[#f5f5f5] transition-colors"
+            >
+              Cancel
+            </button>
           </div>
         </div>
       )}
@@ -1494,6 +1733,29 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                   onChange={(e) => setDisplayDate(e.target.value)}
                   className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
                 />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-[#1a1a1a] mb-2">
+                  Date Color
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {timerColors.map((color) => (
+                    <button
+                      key={color.value}
+                      type="button"
+                      onClick={() => setSelectedTimerColor(color.value)}
+                      className={`px-3 py-2 border-2 rounded-md text-xs font-medium transition-colors flex items-center justify-center gap-1.5 ${
+                        selectedTimerColor === color.value 
+                          ? 'border-[#1a1a1a] bg-[#f5f5f5]' 
+                          : 'border-[#e5e5e5] hover:border-[#999]'
+                      }`}
+                    >
+                      <span style={{ color: color.value, fontSize: '16px' }}>●</span>
+                      <span>{color.name}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <p className="text-xs text-[#6b6b6b]">

@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
+import { revalidatePath } from 'next/cache';
 
 export async function POST(req: NextRequest) {
   try {
@@ -79,6 +80,9 @@ export async function POST(req: NextRequest) {
         }
       }
     }
+
+    // Revalidate dashboard cache to show new month immediately
+    revalidatePath('/dashboard');
 
     return NextResponse.json({ monthlyDashboard });
   } catch (error: any) {

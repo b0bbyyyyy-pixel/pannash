@@ -178,6 +178,40 @@ export default function AuthPage() {
             </button>
           </div>
         </form>
+
+        {/* Contact & SMS Disclosure */}
+        <div className="mt-12 pt-8 border-t border-[#555]">
+          <div className="text-center mb-6">
+            <p className="text-sm text-[#999] mb-2">Contact Us</p>
+            <a 
+              href="tel:+16318922787" 
+              className="text-base font-semibold text-[#f5f1e8] hover:text-white transition-colors"
+            >
+              (631) 892-2787
+            </a>
+          </div>
+
+          <div className="bg-[#2a2a2a] border border-[#555] rounded-lg p-4 text-xs text-[#999] leading-relaxed space-y-2">
+            <p>
+              <strong className="text-[#f5f1e8]">SMS Disclosure:</strong> By texting this number, you agree to receive conversational SMS messages from Gostwrk. Message frequency varies. Message and data rates may apply.
+            </p>
+            <p>
+              Reply <strong className="text-[#f5f1e8]">STOP</strong> to opt out. Reply <strong className="text-[#f5f1e8]">HELP</strong> for assistance.
+            </p>
+          </div>
+
+          <div className="flex justify-center gap-4 mt-4">
+            <a href="/contact" className="text-xs text-[#999] hover:text-[#f5f1e8] transition-colors">
+              Contact
+            </a>
+            <a href="/privacy" className="text-xs text-[#999] hover:text-[#f5f1e8] transition-colors">
+              Privacy
+            </a>
+            <a href="/terms" className="text-xs text-[#999] hover:text-[#f5f1e8] transition-colors">
+              Terms
+            </a>
+          </div>
+        </div>
       </div>
     </div>
   );

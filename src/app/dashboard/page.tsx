@@ -4,6 +4,10 @@ import { redirect } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import DashboardClient from './DashboardClient';
 
+// Disable caching for this page to always fetch fresh data
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ month?: string }> }) {
   const params = await searchParams;
   const cookieStore = await cookies();

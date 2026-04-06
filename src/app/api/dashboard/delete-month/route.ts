@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
+import { revalidatePath } from 'next/cache';
 
 export async function POST(req: NextRequest) {
   try {
@@ -41,6 +42,9 @@ export async function POST(req: NextRequest) {
       console.error('Error deleting monthly dashboard:', error);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+
+    // Revalidate dashboard cache to remove deleted month immediately
+    revalidatePath('/dashboard');
 
     return NextResponse.json({ success: true });
   } catch (error) {
