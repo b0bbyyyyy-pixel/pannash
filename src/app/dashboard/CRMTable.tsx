@@ -375,13 +375,13 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     const endDate = new Date(displayDate + 'T12:00:00');
     const timerEndDate = endDate.toISOString();
 
-    // Optimistically update local state with timer and color
+    // Optimistically update local state with timer (no color for display dates)
     setLeads(prev => prev.map(lead => 
-      lead.id === leadId ? { ...lead, timer_type: 'Display Date', timer_end_date: timerEndDate, timer_color: selectedTimerColor } : lead
+      lead.id === leadId ? { ...lead, timer_type: 'Display Date', timer_end_date: timerEndDate } : lead
     ));
 
     // Update parent state
-    onLeadUpdate(leadId, { timer_type: 'Display Date', timer_end_date: timerEndDate, timer_color: selectedTimerColor });
+    onLeadUpdate(leadId, { timer_type: 'Display Date', timer_end_date: timerEndDate });
 
     try {
       // Update timer
@@ -392,18 +392,6 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
           leadId, 
           field: 'timer', 
           value: { timer_type: 'Display Date', timer_end_date: timerEndDate }
-        }),
-        credentials: 'include',
-      });
-
-      // Update color
-      await fetch('/api/leads/update-crm', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          leadId, 
-          field: 'timer_color',
-          value: selectedTimerColor
         }),
         credentials: 'include',
       });
@@ -1805,29 +1793,6 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                   onChange={(e) => setDisplayDate(e.target.value)}
                   className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
                 />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-[#1a1a1a] mb-2">
-                  Date Color
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {timerColors.map((color) => (
-                    <button
-                      key={color.value}
-                      type="button"
-                      onClick={() => setSelectedTimerColor(color.value)}
-                      className={`px-3 py-2 border-2 rounded-md text-xs font-medium transition-colors flex items-center justify-center gap-1.5 ${
-                        selectedTimerColor === color.value 
-                          ? 'border-[#1a1a1a] bg-[#f5f5f5]' 
-                          : 'border-[#e5e5e5] hover:border-[#999]'
-                      }`}
-                    >
-                      <span style={{ color: color.value, fontSize: '16px' }}>●</span>
-                      <span>{color.name}</span>
-                    </button>
-                  ))}
-                </div>
               </div>
 
               <p className="text-xs text-[#6b6b6b]">
