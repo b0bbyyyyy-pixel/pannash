@@ -97,12 +97,28 @@ interface DashboardClientProps {
 export default function DashboardClient({ allLeads, availableMonths, initialMonth, currentMonthName, stages, stats, columns, emailTemplates, textTemplates, emailFrequencies, textFrequencies }: DashboardClientProps) {
   const [currentMonth, setCurrentMonth] = useState(initialMonth);
   const [leads, setLeads] = useState(allLeads);
+  const [currentStages, setCurrentStages] = useState(stages);
+  const [currentStats, setCurrentStats] = useState(stats);
+  const [currentColumns, setCurrentColumns] = useState(columns);
   const router = useRouter();
   
   // Sync leads when allLeads prop changes (after router.refresh)
   useEffect(() => {
     setLeads(allLeads);
   }, [allLeads]);
+  
+  // Sync stages, stats, and columns when props change (after router.refresh)
+  useEffect(() => {
+    setCurrentStages(stages);
+  }, [stages]);
+  
+  useEffect(() => {
+    setCurrentStats(stats);
+  }, [stats]);
+  
+  useEffect(() => {
+    setCurrentColumns(columns);
+  }, [columns]);
   
   // When month changes, update URL and refresh to load that month's configuration
   const handleMonthChange = (monthKey: string) => {
@@ -192,7 +208,7 @@ export default function DashboardClient({ allLeads, availableMonths, initialMont
         <h1 className="text-3xl font-bold text-[#1a1a1a] tracking-tight">
           {displayName}
         </h1>
-        <ConfigButton stages={stages} stats={stats} columns={columns} emailTemplates={emailTemplates} textTemplates={textTemplates} emailFrequencies={emailFrequencies} textFrequencies={textFrequencies} monthKey={currentMonth} />
+        <ConfigButton stages={currentStages} stats={currentStats} columns={currentColumns} emailTemplates={emailTemplates} textTemplates={textTemplates} emailFrequencies={emailFrequencies} textFrequencies={textFrequencies} monthKey={currentMonth} />
       </div>
 
       {/* Monthly Tabs */}
@@ -203,8 +219,8 @@ export default function DashboardClient({ allLeads, availableMonths, initialMont
       />
 
       {/* Quick Stats - Dynamic based on configuration */}
-      <div className={`grid gap-3 mb-4 sticky z-40 bg-[#fafafa] pt-4 pb-4 -mx-12 px-12`} style={{ gridTemplateColumns: `repeat(${stats.length}, minmax(0, 1fr))`, top: '64px' }}>
-        {stats.map((stat, index) => {
+      <div className={`grid gap-3 mb-4 sticky z-40 bg-[#fafafa] pt-4 pb-4 -mx-12 px-12`} style={{ gridTemplateColumns: `repeat(${currentStats.length}, minmax(0, 1fr))`, top: '64px' }}>
+        {currentStats.map((stat, index) => {
           const value = calculateStatValue(stat);
           // Extract color for inline style
           const colorMatch = stat.color.match(/text-\[([^\]]+)\]/);
@@ -225,8 +241,8 @@ export default function DashboardClient({ allLeads, availableMonths, initialMont
       <CRMTable 
         leads={filteredLeads} 
         monthKey={currentMonth} 
-        stages={stages} 
-        columns={columns} 
+        stages={currentStages} 
+        columns={currentColumns} 
         emailTemplates={emailTemplates} 
         textTemplates={textTemplates} 
         emailFrequencies={emailFrequencies} 
