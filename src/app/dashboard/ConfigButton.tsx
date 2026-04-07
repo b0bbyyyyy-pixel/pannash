@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   DndContext,
@@ -46,6 +46,9 @@ interface Column {
   visible: boolean;
   expandable?: boolean;
   allowAttachments?: boolean;
+  showPhoneLocation?: boolean;
+  isTimer?: boolean;
+  isStage?: boolean;
 }
 
 interface Template {
@@ -95,17 +98,47 @@ function SortableColumn({
     isDragging,
   } = useSortable({ id: index.toString() });
 
+  const [showFeaturesMenu, setShowFeaturesMenu] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
   };
 
+  // Auto-detect features based on field type
+  const isTimerColumn = column.isTimer || column.field === 'timer';
+  const isStageColumn = column.isStage || column.field === 'stage';
+  const isPhoneColumn = column.field === 'phone';
+  
+  // Count active features for display
+  const activeFeatures = [
+    column.expandable,
+    column.allowAttachments,
+    column.showPhoneLocation,
+    isTimerColumn,
+    isStageColumn
+  ].filter(Boolean).length;
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowFeaturesMenu(false);
+      }
+    };
+    if (showFeaturesMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [showFeaturesMenu]);
+
   return (
     <div
       ref={setNodeRef}
       style={style}
-      className="grid grid-cols-[40px_200px_100px_80px_100px_100px] gap-4 items-end p-4 border border-[#e5e5e5] rounded-md"
+      className="grid grid-cols-[40px_200px_100px_80px_140px] gap-4 items-end p-4 border border-[#e5e5e5] rounded-md"
     >
       <div 
         {...attributes}
@@ -145,25 +178,106 @@ function SortableColumn({
           className="w-5 h-10 cursor-pointer"
         />
       </div>
-      <div>
-        <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Expandable</label>
-        <input
-          type="checkbox"
-          checked={column.expandable || false}
-          onChange={(e) => onUpdate(index, 'expandable', e.target.checked)}
-          className="w-5 h-10 cursor-pointer"
-          title="Open in a large modal for long text"
-        />
-      </div>
-      <div>
-        <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Attachments</label>
-        <input
-          type="checkbox"
-          checked={column.allowAttachments || false}
-          onChange={(e) => onUpdate(index, 'allowAttachments', e.target.checked)}
-          className="w-5 h-10 cursor-pointer"
-          title="Allow file attachments for this column"
-        />
+      <div className="relative" ref={menuRef}>
+        <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Features</label>
+        <button
+          type="button"
+          onClick={() => setShowFeaturesMenu(!showFeaturesMenu)}
+          className="w-full h-10 px-3 py-2 border border-[#e5e5e5] rounded text-sm bg-white hover:bg-[#f5f5f5] transition-colors flex items-center justify-between"
+        >
+          <span className="text-[#6b6b6b]">
+            {activeFeatures > 0 ? `${activeFeatures} selected` : 'None'}
+          </span>
+          <svg className="w-4 h-4 text-[#6b6b6b]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        
+        {showFeaturesMenu && (
+          <div className="absolute top-full left-0 mt-1 w-full bg-white border border-[#e5e5e5] rounded-md shadow-lg z-50 py-1 max-h-64 overflow-y-auto">
+            <div className="px-3 py-1.5 text-xs font-semibold text-[#999] uppercase tracking-wider">
+              Column Type
+            </div>
+            <label className="flex items-center gap-2 px-3 py-2 hover:bg-[#f5f5f5] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isTimerColumn}
+                onChange={(e) => {
+                  onUpdate(index, 'isTimer', e.target.checked);
+                }}
+                className="cursor-pointer"
+              />
+              <svg className="w-4 h-4 text-[#5a7fc7]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span className="text-sm text-[#1a1a1a]">Timer Column</span>
+            </label>
+            <label className="flex items-center gap-2 px-3 py-2 hover:bg-[#f5f5f5] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isStageColumn}
+                onChange={(e) => {
+                  onUpdate(index, 'isStage', e.target.checked);
+                }}
+                className="cursor-pointer"
+              />
+              <svg className="w-4 h-4 text-[#5a7fc7]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+              <span className="text-sm text-[#1a1a1a]">Stage Dropdown</span>
+            </label>
+            
+            <div className="border-t border-[#e5e5e5] my-1" />
+            
+            <div className="px-3 py-1.5 text-xs font-semibold text-[#999] uppercase tracking-wider">
+              Field Features
+            </div>
+            <label className="flex items-center gap-2 px-3 py-2 hover:bg-[#f5f5f5] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={column.showPhoneLocation || false}
+                onChange={(e) => {
+                  onUpdate(index, 'showPhoneLocation', e.target.checked);
+                }}
+                className="cursor-pointer"
+              />
+              <svg className="w-4 h-4 text-[#5a7fc7]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              <span className="text-sm text-[#1a1a1a]">Show Location</span>
+              {isPhoneColumn && <span className="text-xs text-[#999]">(Phone field)</span>}
+            </label>
+            <label className="flex items-center gap-2 px-3 py-2 hover:bg-[#f5f5f5] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={column.expandable || false}
+                onChange={(e) => {
+                  onUpdate(index, 'expandable', e.target.checked);
+                }}
+                className="cursor-pointer"
+              />
+              <svg className="w-4 h-4 text-[#5a7fc7]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+              </svg>
+              <span className="text-sm text-[#1a1a1a]">Expandable</span>
+            </label>
+            <label className="flex items-center gap-2 px-3 py-2 hover:bg-[#f5f5f5] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={column.allowAttachments || false}
+                onChange={(e) => {
+                  onUpdate(index, 'allowAttachments', e.target.checked);
+                }}
+                className="cursor-pointer"
+              />
+              <svg className="w-4 h-4 text-[#5a7fc7]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+              </svg>
+              <span className="text-sm text-[#1a1a1a]">Attachments</span>
+            </label>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import { getPhoneLocation, PhoneLocationInfo } from '@/lib/phoneLocation';
 
 interface Lead {
   id: string;
@@ -39,6 +40,9 @@ interface Column {
   visible: boolean;
   expandable?: boolean;
   allowAttachments?: boolean;
+  showPhoneLocation?: boolean;
+  isTimer?: boolean;
+  isStage?: boolean;
 }
 
 interface Attachment {
@@ -105,6 +109,9 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   const [showEmailModal, setShowEmailModal] = useState<string | null>(null);
   const [showTextModal, setShowTextModal] = useState<string | null>(null);
   const [autoCountdowns, setAutoCountdowns] = useState<{ [key: string]: { email: string, text: string } }>({});
+  const [hoveredPhone, setHoveredPhone] = useState<string | null>(null);
+  const [phoneLocationData, setPhoneLocationData] = useState<{ [key: string]: PhoneLocationInfo | null }>({});
+  const [userTimezone, setUserTimezone] = useState<string>('America/New_York');
   const [showCustomTimerModal, setShowCustomTimerModal] = useState<string | null>(null);
   const [customTimerDate, setCustomTimerDate] = useState('');
   const [customTimerTime, setCustomTimerTime] = useState('23:59');
@@ -122,6 +129,24 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   useEffect(() => {
     setLeads(initialLeads);
   }, [initialLeads]);
+
+  // Fetch user timezone
+  useEffect(() => {
+    const fetchUserTimezone = async () => {
+      try {
+        const response = await fetch('/api/settings/timezone');
+        if (response.ok) {
+          const data = await response.json();
+          if (data.timezone) {
+            setUserTimezone(data.timezone);
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching timezone:', error);
+      }
+    };
+    fetchUserTimezone();
+  }, []);
 
   // Close modals when clicking outside
   useEffect(() => {
@@ -973,7 +998,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                 if (typeof countdownValue === 'object' && countdownValue !== null) {
                   return (
                     <>
-                      <span style={{ color: countdownValue.days <= 1 ? timerColor : '#1a1a1a' }}>
+                      <span style={{ color: timerColor }}>
                         {countdownValue.days}D
                       </span>
                       <span style={{ color: timerColor }}>
@@ -1152,6 +1177,17 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
       case 'phone': {
         const countKey = `${lead.id}-phone`;
         const attachmentCount = attachmentCounts[countKey] || 0;
+        const phoneKey = `${lead.id}-${column.field}`;
+        const showPhoneLocation = column.showPhoneLocation;
+        
+        const handlePhoneHover = (phoneNumber: string) => {
+          if (!phoneLocationData[phoneKey]) {
+            const locationInfo = getPhoneLocation(phoneNumber, userTimezone);
+            setPhoneLocationData(prev => ({ ...prev, [phoneKey]: locationInfo }));
+          }
+          setHoveredPhone(phoneKey);
+        };
+        
         return editingId === lead.id && editField === 'phone' ? (
           <input
             type="tel"
@@ -1163,26 +1199,62 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
             className="w-full px-2 py-1 text-sm border border-[#5a7fc7] rounded"
           />
         ) : (
-          <button
-            onClick={() => startEdit(lead.id, 'phone', lead.phone || '')}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              setShowExpandedTextModal({ leadId: lead.id, field: 'phone', value: String(lead.phone || ''), label: 'Phone' });
-            }}
-            className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
-          >
-            <div className="flex items-center gap-1.5">
-              <span dangerouslySetInnerHTML={{ __html: renderMarkdown(lead.phone || 'Add phone') }} />
-              {column.allowAttachments && attachmentCount > 0 && (
-                <span className="flex items-center gap-1 text-xs text-[#6b6b6b]">
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                  </svg>
-                  {attachmentCount}
-                </span>
-              )}
-            </div>
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => startEdit(lead.id, 'phone', lead.phone || '')}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setShowExpandedTextModal({ leadId: lead.id, field: 'phone', value: String(lead.phone || ''), label: 'Phone' });
+              }}
+              onMouseEnter={() => showPhoneLocation && lead.phone && handlePhoneHover(lead.phone)}
+              onMouseLeave={() => setHoveredPhone(null)}
+              className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
+            >
+              <div className="flex items-center gap-1.5">
+                <span dangerouslySetInnerHTML={{ __html: renderMarkdown(lead.phone || 'Add phone') }} />
+                {column.allowAttachments && attachmentCount > 0 && (
+                  <span className="flex items-center gap-1 text-xs text-[#6b6b6b]">
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                    </svg>
+                    {attachmentCount}
+                  </span>
+                )}
+              </div>
+            </button>
+            
+            {/* Phone Location Tooltip */}
+            {showPhoneLocation && hoveredPhone === phoneKey && phoneLocationData[phoneKey] && (
+              <div 
+                className="absolute z-50 bg-white border border-[#e5e5e5] rounded-lg shadow-lg p-3 whitespace-nowrap"
+                style={{ 
+                  left: '50%', 
+                  transform: 'translateX(-50%)',
+                  bottom: 'calc(100% + 8px)',
+                  pointerEvents: 'none'
+                }}
+              >
+                <div className="text-xs space-y-1">
+                  <div className="font-semibold text-[#1a1a1a]">
+                    {phoneLocationData[phoneKey]!.city}, {phoneLocationData[phoneKey]!.state}
+                  </div>
+                  <div className="text-[#6b6b6b]">
+                    {phoneLocationData[phoneKey]!.localTime} ({phoneLocationData[phoneKey]!.timeOffset})
+                  </div>
+                </div>
+                {/* Arrow */}
+                <div 
+                  className="absolute left-1/2 transform -translate-x-1/2 w-0 h-0"
+                  style={{
+                    top: '100%',
+                    borderLeft: '6px solid transparent',
+                    borderRight: '6px solid transparent',
+                    borderTop: '6px solid white',
+                  }}
+                />
+              </div>
+            )}
+          </div>
         );
       }
 

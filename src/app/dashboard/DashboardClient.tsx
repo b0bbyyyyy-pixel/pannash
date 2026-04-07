@@ -61,6 +61,9 @@ interface Column {
   visible: boolean;
   expandable?: boolean;
   allowAttachments?: boolean;
+  showPhoneLocation?: boolean;
+  isTimer?: boolean;
+  isStage?: boolean;
 }
 
 interface Template {
