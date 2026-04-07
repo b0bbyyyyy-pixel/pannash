@@ -205,7 +205,7 @@ export default function DashboardClient({ allLeads, availableMonths, initialMont
   };
 
   return (
-    <div className="max-w-[1600px] mx-auto">
+    <div className="w-full">
       {/* Header */}
       <div className="mb-4 flex justify-between items-center">
         <h1 className="text-3xl font-bold text-[#1a1a1a] tracking-tight">
@@ -222,7 +222,7 @@ export default function DashboardClient({ allLeads, availableMonths, initialMont
       />
 
       {/* Quick Stats - Dynamic based on configuration */}
-      <div className={`grid gap-3 mb-4 sticky z-40 bg-[#fafafa] pt-4 pb-4 -mx-12 px-12`} style={{ gridTemplateColumns: `repeat(${currentStats.length}, minmax(0, 1fr))`, top: '64px' }}>
+      <div className={`grid gap-3 mb-4 sticky z-40 bg-[#fafafa] pt-4 pb-4 -mx-6 px-6`} style={{ gridTemplateColumns: `repeat(${currentStats.length}, minmax(0, 1fr))`, top: '64px' }}>
         {currentStats.map((stat, index) => {
           const value = calculateStatValue(stat);
           // Extract color for inline style

@@ -206,7 +206,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     <div className="min-h-screen bg-[#fafafa]">
       <Navbar userName={user.email?.split('@')[0] || 'User'} />
       
-      <main className="px-12 pt-24 pb-12">
+      <main className="px-6 pt-24 pb-12">
         <DashboardClient 
           allLeads={leads || []}
           availableMonths={availableMonths}
