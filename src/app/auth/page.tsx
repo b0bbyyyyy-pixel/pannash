@@ -85,7 +85,7 @@ export default function AuthPage() {
     <div className="min-h-screen bg-[#3a3a3a] flex items-center justify-center px-4">
       <div className="w-full max-w-[320px]">
         {/* Logo */}
-        <div className="text-center mb-12">
+        <div className="text-center mb-8">
           <div className="flex justify-center mb-0">
             <img
               src="/images/logo/gostwrk-logo-cream.svg"
@@ -179,28 +179,42 @@ export default function AuthPage() {
           </div>
         </form>
 
-        {/* Contact & SMS Disclosure */}
+        {/* Contact & SMS Disclosure - Combined */}
         <div className="mt-12 pt-8 border-t border-[#555]">
-          <div className="text-center mb-6">
-            <p className="text-sm text-[#999] mb-2">Contact Us</p>
+          <div className="text-center mb-4">
+            <h2 className="text-lg font-bold text-[#f5f1e8] mb-2">Need Help or Have a Question?</h2>
+            <p className="text-sm text-[#999] mb-4">Text us directly to start a conversation.</p>
+          </div>
+
+          <a
+            href="sms:+16318922787"
+            className="block w-full px-6 py-3 bg-[#f5f1e8] text-[#1a1a1a] rounded-md text-sm font-bold hover:bg-white transition-colors mb-6 text-center"
+          >
+            Text Us Now
+          </a>
+
+          <div className="text-center mb-4">
             <a 
               href="tel:+16318922787" 
-              className="text-base font-semibold text-[#f5f1e8] hover:text-white transition-colors"
+              className="text-2xl font-bold text-[#f5f1e8] hover:text-white transition-colors"
             >
               (631) 892-2787
             </a>
           </div>
 
-          <div className="bg-[#2a2a2a] border border-[#555] rounded-lg p-4 text-xs text-[#999] leading-relaxed space-y-2">
+          <div className="bg-[#2a2a2a] border border-[#555] rounded-lg p-4 text-xs text-[#999] leading-relaxed space-y-3">
             <p>
-              <strong className="text-[#f5f1e8]">SMS Disclosure:</strong> By texting this number, you agree to receive conversational SMS messages from Gostwrk. Message frequency varies. Message and data rates may apply.
+              You can text us at <a href="tel:+16318922787" className="text-[#f5f1e8] font-semibold hover:text-white">(631) 892-2787</a> to start a conversation with Gostwrk regarding your inquiry, support, or account-related questions.
             </p>
             <p>
-              Reply <strong className="text-[#f5f1e8]">STOP</strong> to opt out. Reply <strong className="text-[#f5f1e8]">HELP</strong> for assistance.
+              <strong className="text-[#f5f1e8]">By texting this number</strong>, you agree to receive conversational SMS messages from Gostwrk. Message frequency varies. Message and data rates may apply.
+            </p>
+            <p>
+              Reply <strong className="text-[#f5f1e8]">STOP</strong> to opt out or <strong className="text-[#f5f1e8]">HELP</strong> for assistance.
             </p>
           </div>
 
-          <div className="flex justify-center gap-4 mt-4">
+          <div className="flex justify-center gap-4 mt-6">
             <a href="/contact" className="text-xs text-[#999] hover:text-[#f5f1e8] transition-colors">
               Contact
             </a>
