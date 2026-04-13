@@ -597,6 +597,19 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     return formatted;
   };
 
+  // Strip markdown syntax for plain text display (used when truncating)
+  const stripMarkdown = (text: string) => {
+    if (!text) return text;
+    
+    // Remove **bold** markers
+    let plain = text.replace(/\*\*([^*]+)\*\*/g, '$1');
+    
+    // Remove *italic* markers
+    plain = plain.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '$1');
+    
+    return plain;
+  };
+
   // Fetch attachments when modal opens
   useEffect(() => {
     if (showExpandedTextModal) {
@@ -1185,6 +1198,24 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
       case 'company': {
         const countKey = `${lead.id}-company`;
         const attachmentCount = attachmentCounts[countKey] || 0;
+        const companyText = lead.company || 'Add company';
+        const maxLength = 25;
+        
+        let displayText: string;
+        let shouldRenderMarkdown = true;
+        
+        if (column.truncateText) {
+          const plainText = stripMarkdown(companyText);
+          if (plainText.length > maxLength) {
+            displayText = plainText.substring(0, maxLength) + '...';
+            shouldRenderMarkdown = false;
+          } else {
+            displayText = companyText;
+          }
+        } else {
+          displayText = companyText;
+        }
+        
         return editingId === lead.id && editField === 'company' ? (
           <input
             type="text"
@@ -1203,9 +1234,14 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
               setShowExpandedTextModal({ leadId: lead.id, field: 'company', value: String(lead.company || ''), label: 'Opportunity' });
             }}
             className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
+            title={column.truncateText && stripMarkdown(companyText).length > maxLength ? companyText : undefined}
           >
             <div className="flex items-center gap-1.5">
-              <span dangerouslySetInnerHTML={{ __html: renderMarkdown(lead.company || 'Add company') }} />
+              {shouldRenderMarkdown ? (
+                <span dangerouslySetInnerHTML={{ __html: renderMarkdown(displayText) }} />
+              ) : (
+                <span>{displayText}</span>
+              )}
               {column.allowAttachments && attachmentCount > 0 && (
                 <span className="flex items-center gap-1 text-xs text-[#6b6b6b]">
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1297,9 +1333,21 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         const attachmentCount = attachmentCounts[countKey] || 0;
         const emailText = lead.email || 'Add email';
         const maxEmailLength = 25;
-        const displayEmail = column.truncateText && emailText.length > maxEmailLength 
-          ? emailText.substring(0, maxEmailLength) + '...' 
-          : emailText;
+        
+        let displayEmail: string;
+        let shouldRenderMarkdown = true;
+        
+        if (column.truncateText) {
+          const plainText = stripMarkdown(emailText);
+          if (plainText.length > maxEmailLength) {
+            displayEmail = plainText.substring(0, maxEmailLength) + '...';
+            shouldRenderMarkdown = false; // Don't render markdown on truncated text
+          } else {
+            displayEmail = emailText;
+          }
+        } else {
+          displayEmail = emailText;
+        }
         
         return editingId === lead.id && editField === 'email' ? (
           <input
@@ -1319,10 +1367,14 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
               setShowExpandedTextModal({ leadId: lead.id, field: 'email', value: String(lead.email || ''), label: 'E-Mail' });
             }}
             className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
-            title={column.truncateText && emailText.length > maxEmailLength ? emailText : undefined}
+            title={column.truncateText && stripMarkdown(emailText).length > maxEmailLength ? emailText : undefined}
           >
             <div className="flex items-center gap-1.5">
-              <span dangerouslySetInnerHTML={{ __html: renderMarkdown(displayEmail) }} />
+              {shouldRenderMarkdown ? (
+                <span dangerouslySetInnerHTML={{ __html: renderMarkdown(displayEmail) }} />
+              ) : (
+                <span>{displayEmail}</span>
+              )}
               {column.allowAttachments && attachmentCount > 0 && (
                 <span className="flex items-center gap-1 text-xs text-[#6b6b6b]">
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1423,6 +1475,24 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
       case 'lead_source': {
         const countKey = `${lead.id}-lead_source`;
         const attachmentCount = attachmentCounts[countKey] || 0;
+        const sourceText = lead.lead_source || 'Add source';
+        const maxLength = 25;
+        
+        let displayText: string;
+        let shouldRenderMarkdown = true;
+        
+        if (column.truncateText) {
+          const plainText = stripMarkdown(sourceText);
+          if (plainText.length > maxLength) {
+            displayText = plainText.substring(0, maxLength) + '...';
+            shouldRenderMarkdown = false;
+          } else {
+            displayText = sourceText;
+          }
+        } else {
+          displayText = sourceText;
+        }
+        
         return editingId === lead.id && editField === 'lead_source' ? (
           <input
             type="text"
@@ -1441,9 +1511,14 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
               setShowExpandedTextModal({ leadId: lead.id, field: 'lead_source', value: String(lead.lead_source || ''), label: 'Lead Source' });
             }}
             className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
+            title={column.truncateText && stripMarkdown(sourceText).length > maxLength ? sourceText : undefined}
           >
             <div className="flex items-center gap-1.5">
-              <span dangerouslySetInnerHTML={{ __html: renderMarkdown(lead.lead_source || 'Add source') }} />
+              {shouldRenderMarkdown ? (
+                <span dangerouslySetInnerHTML={{ __html: renderMarkdown(displayText) }} />
+              ) : (
+                <span>{displayText}</span>
+              )}
               {column.allowAttachments && attachmentCount > 0 && (
                 <span className="flex items-center gap-1 text-xs text-[#6b6b6b]">
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1477,7 +1552,23 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
           </button>
         );
 
-      case 'notes':
+      case 'notes': {
+        const notesText = lead.notes || 'Add notes';
+        const maxLength = 25;
+        
+        let displayText: string;
+        
+        if (column.truncateText) {
+          const plainText = stripMarkdown(notesText);
+          if (plainText.length > maxLength) {
+            displayText = plainText.substring(0, maxLength) + '...';
+          } else {
+            displayText = notesText;
+          }
+        } else {
+          displayText = notesText;
+        }
+        
         return editingId === lead.id && editField === 'notes' ? (
           <textarea
             value={editValue}
@@ -1490,12 +1581,30 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
           <button
             onClick={() => startEdit(lead.id, 'notes', lead.notes || '')}
             className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
+            title={column.truncateText && stripMarkdown(notesText).length > maxLength ? notesText : undefined}
           >
-            {lead.notes || 'Add notes'}
+            {displayText}
           </button>
         );
+      }
 
-      case 'offers':
+      case 'offers': {
+        const offersText = lead.offers || 'Add offers';
+        const maxLength = 25;
+        
+        let displayText: string;
+        
+        if (column.truncateText) {
+          const plainText = stripMarkdown(offersText);
+          if (plainText.length > maxLength) {
+            displayText = plainText.substring(0, maxLength) + '...';
+          } else {
+            displayText = offersText;
+          }
+        } else {
+          displayText = offersText;
+        }
+        
         return editingId === lead.id && editField === 'offers' ? (
           <textarea
             value={editValue}
@@ -1508,10 +1617,12 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
           <button
             onClick={() => startEdit(lead.id, 'offers', lead.offers || '')}
             className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
+            title={column.truncateText && stripMarkdown(offersText).length > maxLength ? offersText : undefined}
           >
-            {lead.offers || 'Add offers'}
+            {displayText}
           </button>
         );
+      }
 
       case 'auto_email_frequency':
         const emailFreq = emailFrequencies.find(f => f.name === lead.auto_email_frequency);
@@ -1704,8 +1815,33 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
           </>
         );
 
-      default:
-        return <span className="text-sm text-[#1a1a1a]">{(lead[fieldKey] as any) || '-'}</span>;
+      default: {
+        const fieldValue = (lead[fieldKey] as any) || '-';
+        const valueStr = String(fieldValue);
+        const maxLength = 25;
+        
+        let displayValue: string;
+        
+        if (column.truncateText) {
+          const plainText = stripMarkdown(valueStr);
+          if (plainText.length > maxLength) {
+            displayValue = plainText.substring(0, maxLength) + '...';
+          } else {
+            displayValue = valueStr;
+          }
+        } else {
+          displayValue = valueStr;
+        }
+        
+        return (
+          <span 
+            className="text-sm text-[#1a1a1a]" 
+            title={column.truncateText && stripMarkdown(valueStr).length > maxLength ? valueStr : undefined}
+          >
+            {displayValue}
+          </span>
+        );
+      }
     }
   };
 
