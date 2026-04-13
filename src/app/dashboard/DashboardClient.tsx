@@ -68,6 +68,7 @@ interface Column {
   showPhoneLocation?: boolean;
   isTimer?: boolean;
   isStage?: boolean;
+  truncateText?: boolean;
 }
 
 interface Template {

@@ -47,6 +47,7 @@ interface Column {
   showPhoneLocation?: boolean;
   isTimer?: boolean;
   isStage?: boolean;
+  truncateText?: boolean;
 }
 
 interface Attachment {
@@ -1294,6 +1295,12 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
       case 'email': {
         const countKey = `${lead.id}-email`;
         const attachmentCount = attachmentCounts[countKey] || 0;
+        const emailText = lead.email || 'Add email';
+        const maxEmailLength = 25;
+        const displayEmail = column.truncateText && emailText.length > maxEmailLength 
+          ? emailText.substring(0, maxEmailLength) + '...' 
+          : emailText;
+        
         return editingId === lead.id && editField === 'email' ? (
           <input
             type="email"
@@ -1312,9 +1319,10 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
               setShowExpandedTextModal({ leadId: lead.id, field: 'email', value: String(lead.email || ''), label: 'E-Mail' });
             }}
             className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
+            title={column.truncateText && emailText.length > maxEmailLength ? emailText : undefined}
           >
             <div className="flex items-center gap-1.5">
-              <span dangerouslySetInnerHTML={{ __html: renderMarkdown(lead.email || 'Add email') }} />
+              <span dangerouslySetInnerHTML={{ __html: renderMarkdown(displayEmail) }} />
               {column.allowAttachments && attachmentCount > 0 && (
                 <span className="flex items-center gap-1 text-xs text-[#6b6b6b]">
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
