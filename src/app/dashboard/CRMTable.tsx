@@ -25,6 +25,10 @@ interface Lead {
   text_template_id: string | null;
   last_email_sent: string | null;
   last_text_sent: string | null;
+  scheduled_text_content: string | null;
+  scheduled_text_time: string | null;
+  scheduled_text_frequency: string | null;
+  last_scheduled_text_sent: string | null;
   month_key: string;
 }
 
@@ -123,6 +127,12 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [attachmentCounts, setAttachmentCounts] = useState<{ [key: string]: number }>({});
+  const [showScheduleTextModal, setShowScheduleTextModal] = useState<string | null>(null);
+  const [scheduledTextContent, setScheduledTextContent] = useState('');
+  const [scheduledTextDate, setScheduledTextDate] = useState('');
+  const [scheduledTextTime, setScheduledTextTime] = useState('09:00');
+  const [scheduledTextFrequency, setScheduledTextFrequency] = useState('once');
+  const [scheduledTextCountdowns, setScheduledTextCountdowns] = useState<{ [key: string]: { days: number; time: string } | 'READY' }>({});
   const router = useRouter();
 
   // Update local state when props change (e.g., switching tabs)
@@ -409,6 +419,138 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
 
     setShowDisplayDateModal(null);
     setDisplayDate('');
+  };
+
+  const openScheduleTextModal = (leadId: string) => {
+    const lead = leads.find(l => l.id === leadId);
+    if (lead) {
+      setScheduledTextContent(lead.scheduled_text_content || '');
+      setScheduledTextFrequency(lead.scheduled_text_frequency || 'once');
+      
+      if (lead.scheduled_text_time) {
+        const scheduledDate = new Date(lead.scheduled_text_time);
+        setScheduledTextDate(scheduledDate.toISOString().split('T')[0]);
+        setScheduledTextTime(scheduledDate.toTimeString().slice(0, 5));
+      } else {
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        setScheduledTextDate(tomorrow.toISOString().split('T')[0]);
+        setScheduledTextTime('09:00');
+      }
+    }
+    setShowScheduleTextModal(leadId);
+  };
+
+  const handleScheduleText = async (leadId: string) => {
+    if (!scheduledTextContent.trim()) {
+      alert('Please enter a text message');
+      return;
+    }
+    if (!scheduledTextDate) {
+      alert('Please select a date');
+      return;
+    }
+
+    // Combine date and time
+    const scheduledDateTime = new Date(`${scheduledTextDate}T${scheduledTextTime}`);
+    const scheduledTimeISO = scheduledDateTime.toISOString();
+
+    // Optimistically update local state
+    setLeads(prev => prev.map(lead => 
+      lead.id === leadId ? { 
+        ...lead, 
+        scheduled_text_content: scheduledTextContent,
+        scheduled_text_time: scheduledTimeISO,
+        scheduled_text_frequency: scheduledTextFrequency
+      } : lead
+    ));
+
+    // Update parent state
+    onLeadUpdate(leadId, { 
+      scheduled_text_content: scheduledTextContent,
+      scheduled_text_time: scheduledTimeISO,
+      scheduled_text_frequency: scheduledTextFrequency
+    });
+
+    try {
+      const res = await fetch('/api/leads/schedule-text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          leadId, 
+          content: scheduledTextContent,
+          scheduledTime: scheduledTimeISO,
+          frequency: scheduledTextFrequency
+        }),
+        credentials: 'include',
+      });
+
+      if (!res.ok) {
+        console.error('Failed to schedule text:', await res.text());
+        router.refresh();
+      } else {
+        console.log('Text scheduled successfully');
+      }
+    } catch (error) {
+      console.error('Error scheduling text:', error);
+      router.refresh();
+    }
+
+    setShowScheduleTextModal(null);
+    setScheduledTextContent('');
+  };
+
+  const clearScheduledText = async (leadId: string) => {
+    if (!confirm('Clear this scheduled text?')) return;
+
+    // Optimistically update local state
+    setLeads(prev => prev.map(lead => 
+      lead.id === leadId ? { 
+        ...lead, 
+        scheduled_text_content: null,
+        scheduled_text_time: null,
+        scheduled_text_frequency: null
+      } : lead
+    ));
+
+    // Update parent state
+    onLeadUpdate(leadId, { 
+      scheduled_text_content: null,
+      scheduled_text_time: null,
+      scheduled_text_frequency: null
+    });
+
+    try {
+      const res = await fetch('/api/leads/schedule-text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          leadId, 
+          content: null,
+          scheduledTime: null,
+          frequency: null
+        }),
+        credentials: 'include',
+      });
+
+      if (!res.ok) {
+        console.error('Failed to clear scheduled text:', await res.text());
+        router.refresh();
+      }
+    } catch (error) {
+      console.error('Error clearing scheduled text:', error);
+      router.refresh();
+    }
+  };
+
+  const copyTextToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      alert('Text copied to clipboard!');
+    } catch (error) {
+      console.error('Failed to copy:', error);
+      alert('Failed to copy text');
+    }
   };
 
   const applyFormatting = (format: 'bold' | 'italic') => {
@@ -732,10 +874,25 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     });
     setAutoCountdowns(initialAutoCountdowns);
 
+    // Calculate initial scheduled text countdowns
+    const initialScheduledCountdowns: { [key: string]: { days: number; time: string } | 'READY' } = {};
+    leads.forEach(lead => {
+      if (lead.scheduled_text_time) {
+        const result = getCountdown(lead.scheduled_text_time);
+        if (result === 'EXPIRED') {
+          initialScheduledCountdowns[lead.id] = 'READY';
+        } else if (result) {
+          initialScheduledCountdowns[lead.id] = result;
+        }
+      }
+    });
+    setScheduledTextCountdowns(initialScheduledCountdowns);
+
     // Update every second
     const interval = setInterval(() => {
       const newCountdowns: { [key: string]: { days: number; time: string } | string } = {};
       const newAutoCountdowns: { [key: string]: { email: string, text: string } } = {};
+      const newScheduledCountdowns: { [key: string]: { days: number; time: string } | 'READY' } = {};
       
       leads.forEach(lead => {
         if (lead.timer_end_date) {
@@ -746,10 +903,19 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
           email: getAutoCountdown(lead.last_email_sent, lead.auto_email_frequency, emailFrequencies) || '',
           text: getAutoCountdown(lead.last_text_sent, lead.auto_text_frequency, textFrequencies) || ''
         };
+        if (lead.scheduled_text_time) {
+          const result = getCountdown(lead.scheduled_text_time);
+          if (result === 'EXPIRED') {
+            newScheduledCountdowns[lead.id] = 'READY';
+          } else if (result) {
+            newScheduledCountdowns[lead.id] = result;
+          }
+        }
       });
       
       setCountdown(newCountdowns);
       setAutoCountdowns(newAutoCountdowns);
+      setScheduledTextCountdowns(newScheduledCountdowns);
     }, 1000);
 
     return () => clearInterval(interval);
@@ -1423,32 +1589,57 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         );
 
       case 'auto_text_frequency':
-        const textFreq = textFrequencies.find(f => f.name === lead.auto_text_frequency);
-        const textCountdown = autoCountdowns[lead.id]?.text;
+        const scheduledCountdown = scheduledTextCountdowns[lead.id];
+        const hasScheduledText = lead.scheduled_text_time && lead.scheduled_text_content;
+        
         return (
           <>
-            <button
-              onClick={() => setShowTextModal(lead.id)}
-              className="w-full px-2 py-1 text-xs border-0 rounded cursor-pointer flex flex-col items-start"
-              style={{
-                backgroundColor: textFreq?.bg_color || '#f5f5f5',
-                color: textFreq?.text_color || '#999'
-              }}
-            >
-              <span>{lead.auto_text_frequency}</span>
-              {textCountdown && textCountdown !== 'READY' && (
-                <span 
-                  style={{ 
-                    fontFamily: 'var(--font-roboto-mono), monospace', 
-                    fontSize: '9px',
-                    color: '#ff0000',
-                    marginTop: '2px'
-                  }}
-                >
-                  {textCountdown}
-                </span>
-              )}
-            </button>
+            {hasScheduledText ? (
+              <button
+                onClick={() => openScheduleTextModal(lead.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  clearScheduledText(lead.id);
+                }}
+                className="w-full px-2 py-1 text-xs border border-[#5a7fc7] rounded cursor-pointer hover:bg-[#f5f5f5] transition-colors"
+                title="Click to edit | Right-click to clear"
+              >
+                {scheduledCountdown === 'READY' ? (
+                  <div className="flex flex-col items-start">
+                    <span className="text-[#00cc00] font-bold">READY TO SEND</span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyTextToClipboard(lead.scheduled_text_content!);
+                      }}
+                      className="mt-1 px-2 py-0.5 bg-[#5a7fc7] text-white rounded text-[10px] hover:bg-[#4a6fb7]"
+                    >
+                      Copy Text
+                    </button>
+                  </div>
+                ) : typeof scheduledCountdown === 'object' ? (
+                  <span 
+                    style={{ 
+                      fontFamily: 'var(--font-roboto-mono), monospace', 
+                      fontSize: '11px',
+                      color: '#5a7fc7',
+                      fontWeight: '700'
+                    }}
+                  >
+                    {scheduledCountdown.days}D {scheduledCountdown.time}
+                  </span>
+                ) : (
+                  <span className="text-[#6b6b6b]">Scheduled</span>
+                )}
+              </button>
+            ) : (
+              <button
+                onClick={() => openScheduleTextModal(lead.id)}
+                className="w-full px-2 py-1 text-xs border border-[#e5e5e5] rounded cursor-pointer hover:border-[#5a7fc7] hover:bg-[#f5f5f5] transition-colors text-[#999]"
+              >
+                Schedule Text
+              </button>
+            )}
             
             {showTextModal === lead.id && (
               <div 
@@ -1812,6 +2003,120 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                 className="flex-1 px-4 py-2 bg-[#1a1a1a] text-white rounded-md text-sm font-medium hover:bg-[#2a2a2a] transition-colors"
               >
                 Set Date
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Schedule Text Modal */}
+      {showScheduleTextModal && (
+        <div 
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" 
+          onClick={() => setShowScheduleTextModal(null)}
+        >
+          <div 
+            className="bg-white rounded-lg p-6 max-w-lg w-full mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold text-[#1a1a1a] mb-4">Schedule Text Message</h2>
+            
+            <div className="space-y-4">
+              {/* Text Message Content */}
+              <div>
+                <label className="block text-sm font-medium text-[#1a1a1a] mb-2">
+                  Message Content
+                </label>
+                <textarea
+                  value={scheduledTextContent}
+                  onChange={(e) => setScheduledTextContent(e.target.value)}
+                  placeholder="Enter your text message here..."
+                  rows={6}
+                  className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm resize-none focus:outline-none focus:ring-1 focus:ring-[#5a7fc7] focus:border-[#5a7fc7]"
+                />
+                <div className="flex justify-between mt-1">
+                  <span className="text-xs text-[#6b6b6b]">
+                    {scheduledTextContent.length} characters
+                  </span>
+                  {scheduledTextContent.length > 160 && (
+                    <span className="text-xs text-[#ff8800]">
+                      {Math.ceil(scheduledTextContent.length / 160)} SMS segments
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Date and Time Selection */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-[#1a1a1a] mb-2">
+                    Send Date
+                  </label>
+                  <input
+                    type="date"
+                    value={scheduledTextDate}
+                    onChange={(e) => setScheduledTextDate(e.target.value)}
+                    className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-[#1a1a1a] mb-2">
+                    Send Time
+                  </label>
+                  <input
+                    type="time"
+                    value={scheduledTextTime}
+                    onChange={(e) => setScheduledTextTime(e.target.value)}
+                    className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                  />
+                </div>
+              </div>
+
+              {/* Frequency Selection */}
+              <div>
+                <label className="block text-sm font-medium text-[#1a1a1a] mb-2">
+                  Repeat Frequency
+                </label>
+                <select
+                  value={scheduledTextFrequency}
+                  onChange={(e) => setScheduledTextFrequency(e.target.value)}
+                  className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                >
+                  <option value="once">Send Once</option>
+                  <option value="daily">Daily</option>
+                  <option value="every2days">Every 2 Days</option>
+                  <option value="every3days">Every 3 Days</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="every2weeks">Every 2 Weeks</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+                <p className="text-xs text-[#6b6b6b] mt-1">
+                  {scheduledTextFrequency === 'once' 
+                    ? 'Message will be sent once at the specified time' 
+                    : `Message will repeat ${scheduledTextFrequency.replace('every', 'every ')} after initial send`}
+                </p>
+              </div>
+
+              {/* Info Box */}
+              <div className="bg-[#f0f7ff] border border-[#5a7fc7] rounded-lg p-3 text-xs text-[#1a1a1a]">
+                <p className="font-semibold mb-1">📋 Manual Send (Until Twilio Approved):</p>
+                <p>When time is ready, click "Copy Text" to paste into your phone manually. After Twilio approval, messages will send automatically.</p>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowScheduleTextModal(null)}
+                className="flex-1 px-4 py-2 border border-[#e5e5e5] text-[#1a1a1a] rounded-md text-sm font-medium hover:bg-[#f5f5f5] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => showScheduleTextModal && handleScheduleText(showScheduleTextModal)}
+                className="flex-1 px-4 py-2 bg-[#5a7fc7] text-white rounded-md text-sm font-medium hover:bg-[#4a6fb7] transition-colors"
+              >
+                Schedule Text
               </button>
             </div>
           </div>
