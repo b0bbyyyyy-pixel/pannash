@@ -1,0 +1,6 @@
+Name,Email,Phone,Company,Notes
+Michael Johnson,michael@techstartup.io,555-0101,TechStartup,Interested in demo
+Sarah Williams,sarah@designco.com,555-0202,DesignCo,Follow up next month
+David Brown,david@salesforce.net,555-0303,Salesforce Ltd,Hot lead
+Emily Davis,emily@marketing.agency,555-0404,Marketing Agency,Wants pricing info
+James Wilson,james@enterprise.com,555-0505,Enterprise Corp,Large account opportunity

@@ -1,0 +1,4 @@
+John	Smith	john.smith@acme.com	555-1234	Acme Corporation	Hot lead
+Jane	Doe	jane.doe@example.com	555-5678	Example Inc	Follow up needed
+Robert	Johnson	robert@startup.io	555-9012	Startup IO	Interested in demo
+Sarah	Williams	sarah.w@agency.net	555-3456	Marketing Agency	VIP client

@@ -1,0 +1,4 @@
+Contact Name	Email Address	Mobile	Employer	Remarks
+Alex Johnson	alex@tech.co	555-4444	Tech Co	Hot lead
+Maria Garcia	maria@sales.biz	555-5555	Sales Biz	Follow up
+Chris Lee	chris@design.studio	555-6666	Design Studio	Interested in pricing

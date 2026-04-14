@@ -1,0 +1,2508 @@
+'use client';
+
+import { useState, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
+import { getPhoneLocation, PhoneLocationInfo } from '@/lib/phoneLocation';
+
+interface Lead {
+  id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  company: string | null;
+  notes: string | null;
+  stage: string;
+  value: number;
+  lead_source: string | null;
+  last_contact: string | null;
+  offers: string | null;
+  timer_type: string;
+  timer_end_date: string | null;
+  timer_color: string | null;
+  auto_email_frequency: string;
+  auto_text_frequency: string;
+  email_template_id: string | null;
+  text_template_id: string | null;
+  last_email_sent: string | null;
+  last_text_sent: string | null;
+  scheduled_text_content: string | null;
+  scheduled_text_time: string | null;
+  scheduled_text_frequency: string | null;
+  last_scheduled_text_sent: string | null;
+  month_key: string;
+}
+
+interface Stage {
+  value: string;
+  color: string;
+}
+
+interface Column {
+  field: string;
+  label: string;
+  width: number;
+  visible: boolean;
+  expandable?: boolean;
+  allowAttachments?: boolean;
+  showPhoneLocation?: boolean;
+  isTimer?: boolean;
+  isStage?: boolean;
+  truncateText?: boolean;
+}
+
+interface Attachment {
+  id: string;
+  file_name: string;
+  file_path: string;
+  file_size: number;
+  file_type: string;
+  created_at: string;
+}
+
+interface Template {
+  id: string;
+  type: string;
+  name: string;
+  subject?: string;
+  body: string;
+}
+
+interface Frequency {
+  id: string;
+  name: string;
+  days_interval: number;
+  bg_color: string;
+  text_color: string;
+  type: string;
+}
+
+interface CRMTableProps {
+  leads: Lead[];
+  monthKey: string;
+  stages: Stage[];
+  columns: Column[];
+  emailTemplates: Template[];
+  textTemplates: Template[];
+  emailFrequencies: Frequency[];
+  textFrequencies: Frequency[];
+  onLeadUpdate: (leadId: string, updates: Partial<Lead>) => void;
+  onLeadCreate: (lead: Lead) => void;
+}
+
+export default function CRMTable({ leads: initialLeads, monthKey, stages, columns, emailTemplates, textTemplates, emailFrequencies, textFrequencies, onLeadUpdate, onLeadCreate }: CRMTableProps) {
+  const [leads, setLeads] = useState(initialLeads);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
+
+  // Sync local state when initialLeads prop changes (after router.refresh)
+  useEffect(() => {
+    setLeads(initialLeads);
+  }, [initialLeads]);
+
+  const [editField, setEditField] = useState('');
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [editingTimerId, setEditingTimerId] = useState<string | null>(null);
+  const [showTimerSetupModal, setShowTimerSetupModal] = useState<string | null>(null);
+  const [tempTimerType, setTempTimerType] = useState('No Timer');
+  const [showTimerColorModal, setShowTimerColorModal] = useState<string | null>(null);
+  const [newLead, setNewLead] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    company: '',
+  });
+  const [showEmailModal, setShowEmailModal] = useState<string | null>(null);
+  const [showTextModal, setShowTextModal] = useState<string | null>(null);
+  const [autoCountdowns, setAutoCountdowns] = useState<{ [key: string]: { email: string, text: string } }>({});
+  const [hoveredPhone, setHoveredPhone] = useState<string | null>(null);
+  const [phoneLocationData, setPhoneLocationData] = useState<{ [key: string]: PhoneLocationInfo | null }>({});
+  const [userTimezone, setUserTimezone] = useState<string>('America/New_York');
+  const [showCustomTimerModal, setShowCustomTimerModal] = useState<string | null>(null);
+  const [customTimerDate, setCustomTimerDate] = useState('');
+  const [customTimerTime, setCustomTimerTime] = useState('23:59');
+  const [selectedTimerColor, setSelectedTimerColor] = useState('#ff0000');
+  const [showDisplayDateModal, setShowDisplayDateModal] = useState<string | null>(null);
+  const [displayDate, setDisplayDate] = useState('');
+  const [showExpandedTextModal, setShowExpandedTextModal] = useState<{ leadId: string; field: string; value: string; label: string } | null>(null);
+  const textAreaRef = useRef<HTMLTextAreaElement>(null);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [attachmentCounts, setAttachmentCounts] = useState<{ [key: string]: number }>({});
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const [showScheduleTextModal, setShowScheduleTextModal] = useState<string | null>(null);
+  const [scheduledTextContent, setScheduledTextContent] = useState('');
+  const [scheduledTextDate, setScheduledTextDate] = useState('');
+  const [scheduledTextTime, setScheduledTextTime] = useState('09:00');
+  const [scheduledTextFrequency, setScheduledTextFrequency] = useState('once');
+  const [scheduledTextCountdowns, setScheduledTextCountdowns] = useState<{ [key: string]: { days: number; time: string } | 'READY' }>({});
+  const router = useRouter();
+
+  // Update local state when props change (e.g., switching tabs)
+  useEffect(() => {
+    setLeads(initialLeads);
+  }, [initialLeads]);
+
+  // Fetch user timezone
+  useEffect(() => {
+    const fetchUserTimezone = async () => {
+      try {
+        const response = await fetch('/api/settings/timezone');
+        if (response.ok) {
+          const data = await response.json();
+          if (data.timezone) {
+            setUserTimezone(data.timezone);
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching timezone:', error);
+      }
+    };
+    fetchUserTimezone();
+  }, []);
+
+  // Close modals when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (showEmailModal || showTextModal) {
+        const target = e.target as HTMLElement;
+        if (!target.closest('.email-modal-container') && !target.closest('.text-modal-container')) {
+          setShowEmailModal(null);
+          setShowTextModal(null);
+        }
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showEmailModal, showTextModal]);
+
+  const timerTypes = [
+    'No Timer',
+    '15 Day Countdown',
+    '30 Day Countdown',
+    '60 Day Countdown',
+    'Display Date',
+  ];
+
+  const timerColors = [
+    { name: 'Red', value: '#ff0000', label: '🔴 Red' },
+    { name: 'Orange', value: '#ff8800', label: '🟠 Orange' },
+    { name: 'Yellow', value: '#ffcc00', label: '🟡 Yellow' },
+    { name: 'Green', value: '#00cc00', label: '🟢 Green' },
+    { name: 'Blue', value: '#0088ff', label: '🔵 Blue' },
+    { name: 'Purple', value: '#aa00ff', label: '🟣 Purple' },
+  ];
+
+  // Helper function to calculate countdown for auto email/text
+  const getAutoCountdown = (lastSent: string | null, frequencyName: string, frequencies: Frequency[]) => {
+    const freq = frequencies.find(f => f.name === frequencyName);
+    if (!freq || freq.days_interval === 0 || !lastSent) return null;
+
+    const now = new Date().getTime();
+    const sent = new Date(lastSent).getTime();
+    const nextSend = sent + (freq.days_interval * 24 * 60 * 60 * 1000);
+    const diff = nextSend - now;
+
+    if (diff <= 0) return 'READY';
+
+    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+
+    const hoursStr = hours.toString().padStart(2, '0');
+    const minutesStr = minutes.toString().padStart(2, '0');
+    const secondsStr = seconds.toString().padStart(2, '0');
+
+    return `${days}D ${hoursStr}:${minutesStr}:${secondsStr}`;
+  };
+
+  const updateLead = async (leadId: string, field: string, value: any) => {
+    // Optimistically update local state first
+    setLeads(prev => prev.map(lead => 
+      lead.id === leadId ? { ...lead, [field]: value } : lead
+    ));
+
+    // Also update parent state so changes persist across tab switches
+    onLeadUpdate(leadId, { [field]: value });
+
+    try {
+      const res = await fetch('/api/leads/update-crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadId, field, value }),
+        credentials: 'include',
+      });
+
+      if (!res.ok) {
+        console.error(`Failed to update ${field}:`, await res.text());
+        // Revert on failure
+        router.refresh();
+      }
+    } catch (error) {
+      console.error('Error updating lead:', error);
+      // Revert on error
+      router.refresh();
+    }
+  };
+
+  const openTimerSetupModal = (leadId: string) => {
+    const lead = leads.find(l => l.id === leadId);
+    setTempTimerType(lead?.timer_type || 'No Timer');
+    setSelectedTimerColor(lead?.timer_color || '#ff0000');
+    setShowTimerSetupModal(leadId);
+  };
+
+  const handleQuickTimerSetup = async (leadId: string) => {
+    const timerType = tempTimerType;
+    
+    // If Display Date or Custom Countdown is selected, open respective modals
+    if (timerType === 'Display Date') {
+      setShowTimerSetupModal(null);
+      setShowDisplayDateModal(leadId);
+      return;
+    }
+
+    if (timerType === 'Custom Countdown') {
+      setShowTimerSetupModal(null);
+      openCustomTimerModal(leadId);
+      return;
+    }
+
+    let timerEndDate = null;
+    
+    if (timerType !== 'No Timer') {
+      const days = parseInt(timerType.split(' ')[0]);
+      const endDate = new Date();
+      endDate.setDate(endDate.getDate() + days);
+      timerEndDate = endDate.toISOString();
+    }
+
+    // Optimistically update local state with timer and color
+    setLeads(prev => prev.map(lead => 
+      lead.id === leadId ? { ...lead, timer_type: timerType, timer_end_date: timerEndDate, timer_color: selectedTimerColor } : lead
+    ));
+
+    // Also update parent state so changes persist across tab switches
+    onLeadUpdate(leadId, { timer_type: timerType, timer_end_date: timerEndDate, timer_color: selectedTimerColor });
+
+    try {
+      // Update timer
+      const timerRes = await fetch('/api/leads/update-crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          leadId, 
+          field: 'timer', 
+          value: { timer_type: timerType, timer_end_date: timerEndDate }
+        }),
+        credentials: 'include',
+      });
+
+      // Update color
+      await fetch('/api/leads/update-crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          leadId, 
+          field: 'timer_color',
+          value: selectedTimerColor
+        }),
+        credentials: 'include',
+      });
+
+      if (!timerRes.ok) {
+        console.error('Failed to update timer:', await timerRes.text());
+        router.refresh();
+      } else {
+        const result = await timerRes.json();
+        console.log('Timer updated successfully:', result);
+      }
+    } catch (error) {
+      console.error('Error updating timer:', error);
+      router.refresh();
+    }
+
+    setShowTimerSetupModal(null);
+  };
+
+  const handleTimerChange = async (leadId: string, timerType: string) => {
+    // If Display Date is selected, open the modal
+    if (timerType === 'Display Date') {
+      setShowDisplayDateModal(leadId);
+      return;
+    }
+
+    let timerEndDate = null;
+    
+    if (timerType !== 'No Timer') {
+      const days = parseInt(timerType.split(' ')[0]);
+      const endDate = new Date();
+      endDate.setDate(endDate.getDate() + days);
+      timerEndDate = endDate.toISOString();
+    }
+
+    // Optimistically update local state first
+    setLeads(prev => prev.map(lead => 
+      lead.id === leadId ? { ...lead, timer_type: timerType, timer_end_date: timerEndDate } : lead
+    ));
+
+    // Also update parent state so changes persist across tab switches
+    onLeadUpdate(leadId, { timer_type: timerType, timer_end_date: timerEndDate });
+
+    try {
+      const res = await fetch('/api/leads/update-crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          leadId, 
+          field: 'timer', 
+          value: { timer_type: timerType, timer_end_date: timerEndDate }
+        }),
+        credentials: 'include',
+      });
+
+      if (!res.ok) {
+        console.error('Failed to update timer:', await res.text());
+        // Revert on failure
+        router.refresh();
+      } else {
+        const result = await res.json();
+        console.log('Timer updated successfully:', result);
+      }
+    } catch (error) {
+      console.error('Error updating timer:', error);
+      // Revert on error
+      router.refresh();
+    }
+  };
+
+  const handleDisplayDate = async (leadId: string) => {
+    if (!displayDate) {
+      alert('Please select a date');
+      return;
+    }
+
+    // Parse date in local timezone at noon to avoid timezone shifting
+    const endDate = new Date(displayDate + 'T12:00:00');
+    const timerEndDate = endDate.toISOString();
+
+    // Optimistically update local state with timer (no color for display dates)
+    setLeads(prev => prev.map(lead => 
+      lead.id === leadId ? { ...lead, timer_type: 'Display Date', timer_end_date: timerEndDate } : lead
+    ));
+
+    // Update parent state
+    onLeadUpdate(leadId, { timer_type: 'Display Date', timer_end_date: timerEndDate });
+
+    try {
+      // Update timer
+      const timerRes = await fetch('/api/leads/update-crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          leadId, 
+          field: 'timer', 
+          value: { timer_type: 'Display Date', timer_end_date: timerEndDate }
+        }),
+        credentials: 'include',
+      });
+
+      if (!timerRes.ok) {
+        console.error('Failed to update display date:', await timerRes.text());
+        router.refresh();
+      } else {
+        console.log('Display date updated successfully');
+      }
+    } catch (error) {
+      console.error('Error updating display date:', error);
+      router.refresh();
+    }
+
+    setShowDisplayDateModal(null);
+    setDisplayDate('');
+  };
+
+  const openScheduleTextModal = (leadId: string) => {
+    const lead = leads.find(l => l.id === leadId);
+    if (lead) {
+      setScheduledTextContent(lead.scheduled_text_content || '');
+      setScheduledTextFrequency(lead.scheduled_text_frequency || 'once');
+      
+      if (lead.scheduled_text_time) {
+        const scheduledDate = new Date(lead.scheduled_text_time);
+        setScheduledTextDate(scheduledDate.toISOString().split('T')[0]);
+        setScheduledTextTime(scheduledDate.toTimeString().slice(0, 5));
+      } else {
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        setScheduledTextDate(tomorrow.toISOString().split('T')[0]);
+        setScheduledTextTime('09:00');
+      }
+    }
+    setShowScheduleTextModal(leadId);
+  };
+
+  const handleScheduleText = async (leadId: string) => {
+    if (!scheduledTextContent.trim()) {
+      alert('Please enter a text message');
+      return;
+    }
+    if (!scheduledTextDate) {
+      alert('Please select a date');
+      return;
+    }
+
+    // Combine date and time
+    const scheduledDateTime = new Date(`${scheduledTextDate}T${scheduledTextTime}`);
+    const scheduledTimeISO = scheduledDateTime.toISOString();
+
+    // Optimistically update local state
+    setLeads(prev => prev.map(lead => 
+      lead.id === leadId ? { 
+        ...lead, 
+        scheduled_text_content: scheduledTextContent,
+        scheduled_text_time: scheduledTimeISO,
+        scheduled_text_frequency: scheduledTextFrequency
+      } : lead
+    ));
+
+    // Update parent state
+    onLeadUpdate(leadId, { 
+      scheduled_text_content: scheduledTextContent,
+      scheduled_text_time: scheduledTimeISO,
+      scheduled_text_frequency: scheduledTextFrequency
+    });
+
+    try {
+      const res = await fetch('/api/leads/schedule-text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          leadId, 
+          content: scheduledTextContent,
+          scheduledTime: scheduledTimeISO,
+          frequency: scheduledTextFrequency
+        }),
+        credentials: 'include',
+      });
+
+      if (!res.ok) {
+        console.error('Failed to schedule text:', await res.text());
+        router.refresh();
+      } else {
+        console.log('Text scheduled successfully');
+      }
+    } catch (error) {
+      console.error('Error scheduling text:', error);
+      router.refresh();
+    }
+
+    setShowScheduleTextModal(null);
+    setScheduledTextContent('');
+  };
+
+  const clearScheduledText = async (leadId: string) => {
+    if (!confirm('Clear this scheduled text?')) return;
+
+    // Optimistically update local state
+    setLeads(prev => prev.map(lead => 
+      lead.id === leadId ? { 
+        ...lead, 
+        scheduled_text_content: null,
+        scheduled_text_time: null,
+        scheduled_text_frequency: null
+      } : lead
+    ));
+
+    // Update parent state
+    onLeadUpdate(leadId, { 
+      scheduled_text_content: null,
+      scheduled_text_time: null,
+      scheduled_text_frequency: null
+    });
+
+    try {
+      const res = await fetch('/api/leads/schedule-text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          leadId, 
+          content: null,
+          scheduledTime: null,
+          frequency: null
+        }),
+        credentials: 'include',
+      });
+
+      if (!res.ok) {
+        console.error('Failed to clear scheduled text:', await res.text());
+        router.refresh();
+      }
+    } catch (error) {
+      console.error('Error clearing scheduled text:', error);
+      router.refresh();
+    }
+  };
+
+  const copyTextToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      alert('Text copied to clipboard!');
+    } catch (error) {
+      console.error('Failed to copy:', error);
+      alert('Failed to copy text');
+    }
+  };
+
+  const applyFormatting = (format: 'bold' | 'italic') => {
+    const textarea = textAreaRef.current;
+    if (!textarea || !showExpandedTextModal) return;
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const text = showExpandedTextModal.value;
+    const selectedText = text.substring(start, end);
+
+    if (selectedText) {
+      let formattedText = '';
+      if (format === 'bold') {
+        formattedText = text.substring(0, start) + `**${selectedText}**` + text.substring(end);
+      } else if (format === 'italic') {
+        formattedText = text.substring(0, start) + `*${selectedText}*` + text.substring(end);
+      }
+
+      setShowExpandedTextModal({ ...showExpandedTextModal, value: formattedText });
+      
+      // Restore cursor position after formatting
+      setTimeout(() => {
+        if (textarea) {
+          const newCursorPos = start + (format === 'bold' ? 2 : 1) + selectedText.length;
+          textarea.focus();
+          textarea.setSelectionRange(newCursorPos, newCursorPos);
+        }
+      }, 0);
+    }
+  };
+
+  // Convert markdown to HTML for display
+  const renderMarkdown = (text: string) => {
+    if (!text) return text;
+    
+    // Convert **bold** to <strong>
+    let formatted = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    
+    // Convert *italic* to <em> (but not if it's part of **)
+    formatted = formatted.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
+    
+    return formatted;
+  };
+
+  // Strip markdown syntax for plain text display (used when truncating)
+  const stripMarkdown = (text: string) => {
+    if (!text) return text;
+    
+    // Remove **bold** markers
+    let plain = text.replace(/\*\*([^*]+)\*\*/g, '$1');
+    
+    // Remove *italic* markers
+    plain = plain.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '$1');
+    
+    return plain;
+  };
+
+  // Fetch attachments when modal opens
+  useEffect(() => {
+    if (showExpandedTextModal) {
+      fetchAttachments(showExpandedTextModal.leadId, showExpandedTextModal.field);
+    } else {
+      setAttachments([]);
+    }
+  }, [showExpandedTextModal]);
+
+  const fetchAttachments = async (leadId: string, columnField: string) => {
+    try {
+      const res = await fetch(`/api/attachments?leadId=${leadId}&columnField=${columnField}`);
+      if (res.ok) {
+        const { attachments: fetchedAttachments } = await res.json();
+        setAttachments(fetchedAttachments || []);
+        // Update count
+        const countKey = `${leadId}-${columnField}`;
+        setAttachmentCounts(prev => ({ ...prev, [countKey]: fetchedAttachments?.length || 0 }));
+      }
+    } catch (error) {
+      console.error('Error fetching attachments:', error);
+    }
+  };
+
+  const handleFileUpload = async (leadId: string, columnField: string, file: File) => {
+    setUploadingFile(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('leadId', leadId);
+      formData.append('columnField', columnField);
+
+      const res = await fetch('/api/attachments', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (res.ok) {
+        const { attachment } = await res.json();
+        setAttachments(prev => [attachment, ...prev]);
+        // Update attachment count
+        const countKey = `${leadId}-${columnField}`;
+        setAttachmentCounts(prev => ({ ...prev, [countKey]: (prev[countKey] || 0) + 1 }));
+      } else {
+        alert('Failed to upload file');
+      }
+    } catch (error) {
+      console.error('Error uploading file:', error);
+      alert('Failed to upload file');
+    } finally {
+      setUploadingFile(false);
+    }
+  };
+
+  const handleFileDrop = (e: React.DragEvent, leadId: string, columnField: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingFile(false);
+
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      handleFileUpload(leadId, columnField, files[0]);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingFile(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only set to false if leaving the drop zone entirely
+    if (e.currentTarget === e.target) {
+      setIsDraggingFile(false);
+    }
+  };
+
+  const handleFileDelete = async (attachmentId: string) => {
+    if (!confirm('Delete this file?')) return;
+
+    try {
+      const res = await fetch(`/api/attachments?id=${attachmentId}`, {
+        method: 'DELETE',
+      });
+
+      if (res.ok) {
+        setAttachments(prev => prev.filter(a => a.id !== attachmentId));
+        // Update attachment count
+        if (showExpandedTextModal) {
+          const countKey = `${showExpandedTextModal.leadId}-${showExpandedTextModal.field}`;
+          setAttachmentCounts(prev => ({ ...prev, [countKey]: Math.max((prev[countKey] || 1) - 1, 0) }));
+        }
+      } else {
+        alert('Failed to delete file');
+      }
+    } catch (error) {
+      console.error('Error deleting file:', error);
+      alert('Failed to delete file');
+    }
+  };
+
+  const handleFileDownload = async (attachmentId: string) => {
+    try {
+      const res = await fetch(`/api/attachments/download?id=${attachmentId}`);
+      if (res.ok) {
+        const { url, fileName } = await res.json();
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } else {
+        alert('Failed to download file');
+      }
+    } catch (error) {
+      console.error('Error downloading file:', error);
+      alert('Failed to download file');
+    }
+  };
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const handleTimerColorChange = async (leadId: string, color: string) => {
+    // Optimistically update local state first
+    setLeads(prev => prev.map(lead => 
+      lead.id === leadId ? { ...lead, timer_color: color } : lead
+    ));
+
+    // Also update parent state so changes persist across tab switches
+    onLeadUpdate(leadId, { timer_color: color });
+
+    try {
+      const res = await fetch('/api/leads/update-crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          leadId, 
+          field: 'timer_color',
+          value: color
+        }),
+        credentials: 'include',
+      });
+
+      if (!res.ok) {
+        console.error('Failed to update timer color:', await res.text());
+        router.refresh();
+      }
+    } catch (error) {
+      console.error('Error updating timer color:', error);
+      router.refresh();
+    }
+
+    setShowTimerColorModal(null);
+  };
+
+  const handleCustomTimer = async (leadId: string) => {
+    if (!customTimerDate) {
+      alert('Please select a date');
+      return;
+    }
+
+    // Combine date and time
+    const endDate = new Date(`${customTimerDate}T${customTimerTime}`);
+    const timerEndDate = endDate.toISOString();
+
+    // Optimistically update local state with timer and color
+    setLeads(prev => prev.map(lead => 
+      lead.id === leadId ? { ...lead, timer_type: 'Custom Countdown', timer_end_date: timerEndDate, timer_color: selectedTimerColor } : lead
+    ));
+
+    // Also update parent state so changes persist across tab switches
+    onLeadUpdate(leadId, { timer_type: 'Custom Countdown', timer_end_date: timerEndDate, timer_color: selectedTimerColor });
+
+    try {
+      // Update timer
+      const timerRes = await fetch('/api/leads/update-crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          leadId, 
+          field: 'timer', 
+          value: { timer_type: 'Custom Countdown', timer_end_date: timerEndDate }
+        }),
+        credentials: 'include',
+      });
+
+      // Update color
+      await fetch('/api/leads/update-crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          leadId, 
+          field: 'timer_color',
+          value: selectedTimerColor
+        }),
+        credentials: 'include',
+      });
+
+      if (!timerRes.ok) {
+        console.error('Failed to update custom timer:', await timerRes.text());
+        router.refresh();
+      } else {
+        const result = await timerRes.json();
+        console.log('Custom timer updated successfully:', result);
+      }
+    } catch (error) {
+      console.error('Error updating custom timer:', error);
+      router.refresh();
+    }
+
+    setShowCustomTimerModal(null);
+    setCustomTimerDate('');
+    setCustomTimerTime('23:59');
+  };
+
+  const openDisplayDateModal = (leadId: string) => {
+    const lead = leads.find(l => l.id === leadId);
+    if (lead?.timer_end_date) {
+      // Extract just the date portion to avoid timezone issues
+      const dateStr = lead.timer_end_date.split('T')[0];
+      setDisplayDate(dateStr);
+      setSelectedTimerColor(lead.timer_color || '#ff0000');
+    } else {
+      const today = new Date();
+      const year = today.getFullYear();
+      const month = String(today.getMonth() + 1).padStart(2, '0');
+      const day = String(today.getDate()).padStart(2, '0');
+      setDisplayDate(`${year}-${month}-${day}`);
+      setSelectedTimerColor(lead?.timer_color || '#ff0000');
+    }
+    setShowDisplayDateModal(leadId);
+  };
+
+  const openCustomTimerModal = (leadId: string) => {
+    const lead = leads.find(l => l.id === leadId);
+    if (lead?.timer_end_date) {
+      const endDate = new Date(lead.timer_end_date);
+      setCustomTimerDate(endDate.toISOString().split('T')[0]);
+      setCustomTimerTime(endDate.toTimeString().slice(0, 5));
+      setSelectedTimerColor(lead.timer_color || '#ff0000');
+    } else {
+      // Default to 30 days from now
+      const defaultEnd = new Date();
+      defaultEnd.setDate(defaultEnd.getDate() + 30);
+      setCustomTimerDate(defaultEnd.toISOString().split('T')[0]);
+      setCustomTimerTime('23:59');
+      setSelectedTimerColor(lead?.timer_color || '#ff0000');
+    }
+    setShowCustomTimerModal(leadId);
+  };
+
+  const getCountdown = (timerEndDate: string | null) => {
+    if (!timerEndDate) return null;
+
+    const now = new Date().getTime();
+    const end = new Date(timerEndDate).getTime();
+    const diff = end - now;
+
+    if (diff <= 0) return 'EXPIRED';
+
+    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+
+    const hoursStr = hours.toString().padStart(2, '0');
+    const minutesStr = minutes.toString().padStart(2, '0');
+    const secondsStr = seconds.toString().padStart(2, '0');
+
+    return { days, time: `${hoursStr}:${minutesStr}:${secondsStr}` };
+  };
+
+  const [countdown, setCountdown] = useState<{ [key: string]: { days: number; time: string } | string }>({});
+
+  // Initialize countdowns and update every second
+  useEffect(() => {
+    // Calculate initial countdowns for deal timers
+    const initialCountdowns: { [key: string]: { days: number; time: string } | string } = {};
+    leads.forEach(lead => {
+      if (lead.timer_end_date) {
+        const result = getCountdown(lead.timer_end_date);
+        initialCountdowns[lead.id] = result || 'EXPIRED';
+      }
+    });
+    setCountdown(initialCountdowns);
+
+    // Calculate initial auto email/text countdowns
+    const initialAutoCountdowns: { [key: string]: { email: string, text: string } } = {};
+    leads.forEach(lead => {
+      initialAutoCountdowns[lead.id] = {
+        email: getAutoCountdown(lead.last_email_sent, lead.auto_email_frequency, emailFrequencies) || '',
+        text: getAutoCountdown(lead.last_text_sent, lead.auto_text_frequency, textFrequencies) || ''
+      };
+    });
+    setAutoCountdowns(initialAutoCountdowns);
+
+    // Calculate initial scheduled text countdowns
+    const initialScheduledCountdowns: { [key: string]: { days: number; time: string } | 'READY' } = {};
+    leads.forEach(lead => {
+      if (lead.scheduled_text_time) {
+        const result = getCountdown(lead.scheduled_text_time);
+        if (result === 'EXPIRED') {
+          initialScheduledCountdowns[lead.id] = 'READY';
+        } else if (result) {
+          initialScheduledCountdowns[lead.id] = result;
+        }
+      }
+    });
+    setScheduledTextCountdowns(initialScheduledCountdowns);
+
+    // Update every second
+    const interval = setInterval(() => {
+      const newCountdowns: { [key: string]: { days: number; time: string } | string } = {};
+      const newAutoCountdowns: { [key: string]: { email: string, text: string } } = {};
+      const newScheduledCountdowns: { [key: string]: { days: number; time: string } | 'READY' } = {};
+      
+      leads.forEach(lead => {
+        if (lead.timer_end_date) {
+          const result = getCountdown(lead.timer_end_date);
+          newCountdowns[lead.id] = result || 'EXPIRED';
+        }
+        newAutoCountdowns[lead.id] = {
+          email: getAutoCountdown(lead.last_email_sent, lead.auto_email_frequency, emailFrequencies) || '',
+          text: getAutoCountdown(lead.last_text_sent, lead.auto_text_frequency, textFrequencies) || ''
+        };
+        if (lead.scheduled_text_time) {
+          const result = getCountdown(lead.scheduled_text_time);
+          if (result === 'EXPIRED') {
+            newScheduledCountdowns[lead.id] = 'READY';
+          } else if (result) {
+            newScheduledCountdowns[lead.id] = result;
+          }
+        }
+      });
+      
+      setCountdown(newCountdowns);
+      setAutoCountdowns(newAutoCountdowns);
+      setScheduledTextCountdowns(newScheduledCountdowns);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [leads, emailFrequencies, textFrequencies]);
+
+  const startEdit = (leadId: string, field: string, currentValue: any) => {
+    setEditingId(leadId);
+    setEditField(field);
+    setEditValue(currentValue || '');
+  };
+
+  const saveEdit = () => {
+    if (editField && editingId) {
+      // Convert value to number if it's the value field
+      let valueToSave: string | number | null = editField === 'value' ? Number(editValue) : editValue;
+      
+      // Convert empty string to null for date fields
+      if (editField === 'last_contact' && valueToSave === '') {
+        valueToSave = null;
+      }
+      
+      updateLead(editingId, editField, valueToSave);
+    }
+    setEditingId(null);
+    setEditField('');
+    setEditValue('');
+  };
+
+  const deleteLead = async (leadId: string) => {
+    if (!confirm('Delete this lead?')) return;
+
+    // Optimistically remove from local state
+    setLeads(prev => prev.filter(lead => lead.id !== leadId));
+
+    try {
+      const res = await fetch('/api/leads/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadId }),
+      });
+
+      if (res.ok) {
+        // Refresh to sync with database
+        router.refresh();
+      } else {
+        // Revert on failure
+        router.refresh();
+      }
+    } catch (error) {
+      console.error('Error deleting lead:', error);
+      // Revert on error
+      router.refresh();
+    }
+  };
+
+  const addLead = async () => {
+    if (!newLead.name || !newLead.email) {
+      alert('Name and Email are required');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/leads/create-crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...newLead, monthKey }),
+      });
+
+      if (res.ok) {
+        const { lead } = await res.json();
+        
+        // Update local state
+        setLeads(prev => [lead, ...prev]);
+        
+        // Update parent state so it persists
+        onLeadCreate(lead);
+        
+        setShowAddModal(false);
+        setNewLead({ name: '', email: '', phone: '', company: '' });
+      } else {
+        alert('Failed to add lead');
+      }
+    } catch (error) {
+      console.error('Error creating lead:', error);
+      alert('Failed to add lead');
+    }
+  };
+
+  // Helper function to render cell content based on field type
+  const renderCell = (lead: Lead, column: Column, bgColor: string, textColor: string) => {
+    const columnField = column.field;
+    const fieldKey = columnField as keyof Lead;
+    
+    // Handle expandable text fields (configurable via column settings)
+    if (column.expandable) {
+      const value = lead[fieldKey] as string | null;
+      const formattedValue = value ? renderMarkdown(value) : null;
+      const countKey = `${lead.id}-${columnField}`;
+      const attachmentCount = attachmentCounts[countKey] || 0;
+      
+      return (
+        <button
+          onClick={() => setShowExpandedTextModal({ leadId: lead.id, field: columnField, value: String(value || ''), label: column.label })}
+          className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap overflow-hidden text-ellipsis max-w-full block"
+        >
+          <div className="flex items-center gap-1.5">
+            {value ? (
+              <span 
+                className="block overflow-hidden text-ellipsis" 
+                style={{ maxWidth: `${column.width - (attachmentCount > 0 ? 60 : 32)}px` }}
+                dangerouslySetInnerHTML={{ __html: formattedValue || '' }}
+              />
+            ) : (
+              `Add ${column.label.toLowerCase()}`
+            )}
+            {column.allowAttachments && attachmentCount > 0 && (
+              <span className="flex items-center gap-1 text-xs text-[#6b6b6b] flex-shrink-0">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                </svg>
+                {attachmentCount}
+              </span>
+            )}
+          </div>
+        </button>
+      );
+    }
+    
+    switch (columnField) {
+      case 'timer':
+        return lead.timer_type !== 'No Timer' && lead.timer_end_date ? (
+          editingTimerId === lead.id ? (
+            <select
+              value={lead.timer_type}
+              onChange={(e) => {
+                handleTimerChange(lead.id, e.target.value);
+                setEditingTimerId(null);
+              }}
+              onBlur={() => setEditingTimerId(null)}
+              autoFocus
+              className="w-full px-2 py-1 text-xs border border-[#5a7fc7] rounded bg-white text-[#1a1a1a] cursor-pointer"
+            >
+              {timerTypes.map((type, idx) => (
+                <option key={`timer-${idx}`} value={type}>{type}</option>
+              ))}
+            </select>
+          ) : lead.timer_type === 'Display Date' ? (
+            editingTimerId === lead.id ? (
+              <select
+                value={lead.timer_type}
+                onChange={(e) => {
+                  handleTimerChange(lead.id, e.target.value);
+                  setEditingTimerId(null);
+                }}
+                onBlur={() => setEditingTimerId(null)}
+                autoFocus
+                className="w-full px-2 py-1 text-xs border border-[#5a7fc7] rounded bg-white text-[#1a1a1a] cursor-pointer"
+              >
+                {timerTypes.map((type, idx) => (
+                  <option key={`timer-${idx}`} value={type}>{type}</option>
+                ))}
+              </select>
+            ) : (
+              <button
+                onClick={() => setEditingTimerId(lead.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  openDisplayDateModal(lead.id);
+                }}
+                style={{ 
+                  fontFamily: 'var(--font-roboto-mono), monospace', 
+                  fontSize: '13px', 
+                  fontWeight: '500', 
+                  color: '#1a1a1a', 
+                  whiteSpace: 'nowrap',
+                  display: 'inline-block',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: 0,
+                  letterSpacing: '-0.02em',
+                }}
+                className="hover:opacity-70 transition-opacity"
+              >
+                {(() => {
+                  // Extract date parts from ISO string to avoid timezone conversion
+                  const dateStr = lead.timer_end_date.split('T')[0];
+                  const [year, month, day] = dateStr.split('-');
+                  const date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+                  const formatted = date.toLocaleDateString('en-US', { 
+                    month: 'short', 
+                    day: 'numeric', 
+                    year: 'numeric' 
+                  });
+                  // Remove extra spaces from date formatting for tighter spacing
+                  return formatted.replace(/,\s+/g, ', ').replace(/\s+/g, ' ');
+                })()}
+              </button>
+            )
+          ) : (
+            <button
+              onClick={(e) => {
+                if (e.shiftKey) {
+                  e.preventDefault();
+                  setShowTimerColorModal(lead.id);
+                } else {
+                  setEditingTimerId(lead.id);
+                }
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                openCustomTimerModal(lead.id);
+              }}
+              style={{ 
+                fontFamily: 'var(--font-roboto-mono), monospace', 
+                fontSize: '13px', 
+                fontWeight: '700', 
+                whiteSpace: 'nowrap',
+                display: 'inline-block',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                padding: 0,
+              }}
+              className="hover:opacity-80 transition-opacity"
+              title="Click to change type | Shift+Click to change color | Right-click for custom date"
+            >
+              {(() => {
+                const countdownValue = countdown[lead.id];
+                const timerColor = lead.timer_color || '#ff0000';
+                if (countdownValue === 'EXPIRED') {
+                  return <span style={{ color: timerColor }} className="animate-pulse">EXPIRED</span>;
+                }
+                if (typeof countdownValue === 'object' && countdownValue !== null) {
+                  return (
+                    <>
+                      <span style={{ color: timerColor }}>
+                        {countdownValue.days}D
+                      </span>
+                      <span style={{ color: timerColor }}>
+                        {' '}{countdownValue.time}
+                      </span>
+                    </>
+                  );
+                }
+                return '...';
+              })()}
+            </button>
+          )
+        ) : (
+          <select
+            value={lead.timer_type}
+            onChange={(e) => handleTimerChange(lead.id, e.target.value)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              openCustomTimerModal(lead.id);
+            }}
+            className="w-full px-2 py-1 text-xs border border-[#e5e5e5] rounded bg-white text-[#1a1a1a] cursor-pointer"
+          >
+            {timerTypes.map((type, idx) => (
+              <option key={`timer-${idx}`} value={type}>{type}</option>
+            ))}
+          </select>
+        );
+
+      case 'company': {
+        const countKey = `${lead.id}-company`;
+        const attachmentCount = attachmentCounts[countKey] || 0;
+        const companyText = lead.company || 'Add company';
+        const maxLength = 25;
+        
+        let displayText: string;
+        let shouldRenderMarkdown = true;
+        
+        if (column.truncateText) {
+          const plainText = stripMarkdown(companyText);
+          if (plainText.length > maxLength) {
+            displayText = plainText.substring(0, maxLength) + '...';
+            shouldRenderMarkdown = false;
+          } else {
+            displayText = companyText;
+          }
+        } else {
+          displayText = companyText;
+        }
+        
+        return editingId === lead.id && editField === 'company' ? (
+          <input
+            type="text"
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={saveEdit}
+            onKeyDown={(e) => e.key === 'Enter' && saveEdit()}
+            autoFocus
+            className="w-full px-2 py-1 text-sm border border-[#5a7fc7] rounded"
+          />
+        ) : (
+          <button
+            onClick={() => startEdit(lead.id, 'company', lead.company || '')}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setShowExpandedTextModal({ leadId: lead.id, field: 'company', value: String(lead.company || ''), label: 'Opportunity' });
+            }}
+            className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
+            title={column.truncateText && stripMarkdown(companyText).length > maxLength ? companyText : undefined}
+          >
+            <div className="flex items-center gap-1.5">
+              {shouldRenderMarkdown ? (
+                <span dangerouslySetInnerHTML={{ __html: renderMarkdown(displayText) }} />
+              ) : (
+                <span>{displayText}</span>
+              )}
+              {column.allowAttachments && attachmentCount > 0 && (
+                <span className="flex items-center gap-1 text-xs text-[#6b6b6b]">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                  </svg>
+                  {attachmentCount}
+                </span>
+              )}
+            </div>
+          </button>
+        );
+      }
+
+      case 'name': {
+        const countKey = `${lead.id}-name`;
+        const attachmentCount = attachmentCounts[countKey] || 0;
+        return editingId === lead.id && editField === 'name' ? (
+          <input
+            type="text"
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={saveEdit}
+            onKeyDown={(e) => e.key === 'Enter' && saveEdit()}
+            autoFocus
+            className="w-full px-2 py-1 text-sm border border-[#5a7fc7] rounded"
+          />
+        ) : (
+          <button
+            onClick={() => startEdit(lead.id, 'name', lead.name)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setShowExpandedTextModal({ leadId: lead.id, field: 'name', value: String(lead.name || ''), label: 'Name' });
+            }}
+            className="hover:text-[#5a7fc7] transition-colors text-left"
+          >
+            <div className="flex items-center gap-1.5">
+              <span dangerouslySetInnerHTML={{ __html: renderMarkdown(lead.name || '') }} />
+              {column.allowAttachments && attachmentCount > 0 && (
+                <span className="flex items-center gap-1 text-xs text-[#6b6b6b]">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                  </svg>
+                  {attachmentCount}
+                </span>
+              )}
+            </div>
+          </button>
+        );
+      }
+
+      case 'stage':
+        return (
+          <select
+            value={lead.stage}
+            onChange={(e) => updateLead(lead.id, 'stage', e.target.value)}
+            className="px-2 py-1 text-xs font-medium rounded border-0 cursor-pointer"
+            style={{ backgroundColor: bgColor, color: textColor }}
+          >
+            {stages.map((stage, idx) => (
+              <option key={`stage-${idx}`} value={stage.value}>
+                {stage.value}
+              </option>
+            ))}
+          </select>
+        );
+
+      case 'value':
+        return editingId === lead.id && editField === 'value' ? (
+          <input
+            type="number"
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={saveEdit}
+            onKeyDown={(e) => e.key === 'Enter' && saveEdit()}
+            autoFocus
+            className="w-full px-2 py-1 text-sm border border-[#5a7fc7] rounded"
+          />
+        ) : (
+          <button
+            onClick={() => startEdit(lead.id, 'value', lead.value?.toString() || '0')}
+            className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
+          >
+            ${lead.value?.toLocaleString() || '0'}
+          </button>
+        );
+
+      case 'email': {
+        const countKey = `${lead.id}-email`;
+        const attachmentCount = attachmentCounts[countKey] || 0;
+        const emailText = lead.email || 'Add email';
+        const maxEmailLength = 25;
+        
+        let displayEmail: string;
+        let shouldRenderMarkdown = true;
+        
+        if (column.truncateText) {
+          const plainText = stripMarkdown(emailText);
+          if (plainText.length > maxEmailLength) {
+            displayEmail = plainText.substring(0, maxEmailLength) + '...';
+            shouldRenderMarkdown = false; // Don't render markdown on truncated text
+          } else {
+            displayEmail = emailText;
+          }
+        } else {
+          displayEmail = emailText;
+        }
+        
+        return editingId === lead.id && editField === 'email' ? (
+          <input
+            type="email"
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={saveEdit}
+            onKeyDown={(e) => e.key === 'Enter' && saveEdit()}
+            autoFocus
+            className="w-full px-2 py-1 text-sm border border-[#5a7fc7] rounded"
+          />
+        ) : (
+          <button
+            onClick={() => startEdit(lead.id, 'email', lead.email || '')}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setShowExpandedTextModal({ leadId: lead.id, field: 'email', value: String(lead.email || ''), label: 'E-Mail' });
+            }}
+            className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
+            title={column.truncateText && stripMarkdown(emailText).length > maxEmailLength ? emailText : undefined}
+          >
+            <div className="flex items-center gap-1.5">
+              {shouldRenderMarkdown ? (
+                <span dangerouslySetInnerHTML={{ __html: renderMarkdown(displayEmail) }} />
+              ) : (
+                <span>{displayEmail}</span>
+              )}
+              {column.allowAttachments && attachmentCount > 0 && (
+                <span className="flex items-center gap-1 text-xs text-[#6b6b6b]">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                  </svg>
+                  {attachmentCount}
+                </span>
+              )}
+            </div>
+          </button>
+        );
+      }
+
+      case 'phone': {
+        const countKey = `${lead.id}-phone`;
+        const attachmentCount = attachmentCounts[countKey] || 0;
+        const phoneKey = `${lead.id}-${column.field}`;
+        const showPhoneLocation = column.showPhoneLocation;
+        
+        const handlePhoneHover = (phoneNumber: string) => {
+          if (!phoneLocationData[phoneKey]) {
+            const locationInfo = getPhoneLocation(phoneNumber, userTimezone);
+            setPhoneLocationData(prev => ({ ...prev, [phoneKey]: locationInfo }));
+          }
+          setHoveredPhone(phoneKey);
+        };
+        
+        return editingId === lead.id && editField === 'phone' ? (
+          <input
+            type="tel"
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={saveEdit}
+            onKeyDown={(e) => e.key === 'Enter' && saveEdit()}
+            autoFocus
+            className="w-full px-2 py-1 text-sm border border-[#5a7fc7] rounded"
+          />
+        ) : (
+          <div className="relative">
+            <button
+              onClick={() => startEdit(lead.id, 'phone', lead.phone || '')}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setShowExpandedTextModal({ leadId: lead.id, field: 'phone', value: String(lead.phone || ''), label: 'Phone' });
+              }}
+              onMouseEnter={() => showPhoneLocation && lead.phone && handlePhoneHover(lead.phone)}
+              onMouseLeave={() => setHoveredPhone(null)}
+              className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
+            >
+              <div className="flex items-center gap-1.5">
+                <span dangerouslySetInnerHTML={{ __html: renderMarkdown(lead.phone || 'Add phone') }} />
+                {column.allowAttachments && attachmentCount > 0 && (
+                  <span className="flex items-center gap-1 text-xs text-[#6b6b6b]">
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                    </svg>
+                    {attachmentCount}
+                  </span>
+                )}
+              </div>
+            </button>
+            
+            {/* Phone Location Tooltip */}
+            {showPhoneLocation && hoveredPhone === phoneKey && phoneLocationData[phoneKey] && (
+              <div 
+                className="absolute z-50 bg-white border border-[#e5e5e5] rounded-lg shadow-lg p-3 whitespace-nowrap"
+                style={{ 
+                  left: '50%', 
+                  transform: 'translateX(-50%)',
+                  bottom: 'calc(100% + 8px)',
+                  pointerEvents: 'none'
+                }}
+              >
+                <div className="text-xs space-y-1">
+                  <div className="font-semibold text-[#1a1a1a]">
+                    {phoneLocationData[phoneKey]!.city}, {phoneLocationData[phoneKey]!.state}
+                  </div>
+                  <div className="text-[#6b6b6b]">
+                    {phoneLocationData[phoneKey]!.localTime} ({phoneLocationData[phoneKey]!.timeOffset})
+                  </div>
+                </div>
+                {/* Arrow */}
+                <div 
+                  className="absolute left-1/2 transform -translate-x-1/2 w-0 h-0"
+                  style={{
+                    top: '100%',
+                    borderLeft: '6px solid transparent',
+                    borderRight: '6px solid transparent',
+                    borderTop: '6px solid white',
+                  }}
+                />
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      case 'lead_source': {
+        const countKey = `${lead.id}-lead_source`;
+        const attachmentCount = attachmentCounts[countKey] || 0;
+        const sourceText = lead.lead_source || 'Add source';
+        const maxLength = 25;
+        
+        let displayText: string;
+        let shouldRenderMarkdown = true;
+        
+        if (column.truncateText) {
+          const plainText = stripMarkdown(sourceText);
+          if (plainText.length > maxLength) {
+            displayText = plainText.substring(0, maxLength) + '...';
+            shouldRenderMarkdown = false;
+          } else {
+            displayText = sourceText;
+          }
+        } else {
+          displayText = sourceText;
+        }
+        
+        return editingId === lead.id && editField === 'lead_source' ? (
+          <input
+            type="text"
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={saveEdit}
+            onKeyDown={(e) => e.key === 'Enter' && saveEdit()}
+            autoFocus
+            className="w-full px-2 py-1 text-sm border border-[#5a7fc7] rounded"
+          />
+        ) : (
+          <button
+            onClick={() => startEdit(lead.id, 'lead_source', lead.lead_source || '')}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setShowExpandedTextModal({ leadId: lead.id, field: 'lead_source', value: String(lead.lead_source || ''), label: 'Lead Source' });
+            }}
+            className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
+            title={column.truncateText && stripMarkdown(sourceText).length > maxLength ? sourceText : undefined}
+          >
+            <div className="flex items-center gap-1.5">
+              {shouldRenderMarkdown ? (
+                <span dangerouslySetInnerHTML={{ __html: renderMarkdown(displayText) }} />
+              ) : (
+                <span>{displayText}</span>
+              )}
+              {column.allowAttachments && attachmentCount > 0 && (
+                <span className="flex items-center gap-1 text-xs text-[#6b6b6b]">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                  </svg>
+                  {attachmentCount}
+                </span>
+              )}
+            </div>
+          </button>
+        );
+      }
+
+      case 'last_contact':
+        return editingId === lead.id && editField === 'last_contact' ? (
+          <input
+            type="date"
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={saveEdit}
+            onKeyDown={(e) => e.key === 'Enter' && saveEdit()}
+            autoFocus
+            className="w-full px-2 py-1 text-sm border border-[#5a7fc7] rounded"
+          />
+        ) : (
+          <button
+            onClick={() => startEdit(lead.id, 'last_contact', lead.last_contact ? new Date(lead.last_contact).toISOString().split('T')[0] : '')}
+            className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
+          >
+            {lead.last_contact ? new Date(lead.last_contact).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' }) : 'Add date'}
+          </button>
+        );
+
+      case 'notes': {
+        const notesText = lead.notes || 'Add notes';
+        const maxLength = 25;
+        
+        let displayText: string;
+        
+        if (column.truncateText) {
+          const plainText = stripMarkdown(notesText);
+          if (plainText.length > maxLength) {
+            displayText = plainText.substring(0, maxLength) + '...';
+          } else {
+            displayText = notesText;
+          }
+        } else {
+          displayText = notesText;
+        }
+        
+        return editingId === lead.id && editField === 'notes' ? (
+          <textarea
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={saveEdit}
+            autoFocus
+            className="w-full px-2 py-1 text-sm border border-[#5a7fc7] rounded min-h-[60px]"
+          />
+        ) : (
+          <button
+            onClick={() => startEdit(lead.id, 'notes', lead.notes || '')}
+            className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
+            title={column.truncateText && stripMarkdown(notesText).length > maxLength ? notesText : undefined}
+          >
+            {displayText}
+          </button>
+        );
+      }
+
+      case 'offers': {
+        const offersText = lead.offers || 'Add offers';
+        const maxLength = 25;
+        
+        let displayText: string;
+        
+        if (column.truncateText) {
+          const plainText = stripMarkdown(offersText);
+          if (plainText.length > maxLength) {
+            displayText = plainText.substring(0, maxLength) + '...';
+          } else {
+            displayText = offersText;
+          }
+        } else {
+          displayText = offersText;
+        }
+        
+        return editingId === lead.id && editField === 'offers' ? (
+          <textarea
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={saveEdit}
+            autoFocus
+            className="w-full px-2 py-1 text-sm border border-[#5a7fc7] rounded min-h-[60px]"
+          />
+        ) : (
+          <button
+            onClick={() => startEdit(lead.id, 'offers', lead.offers || '')}
+            className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
+            title={column.truncateText && stripMarkdown(offersText).length > maxLength ? offersText : undefined}
+          >
+            {displayText}
+          </button>
+        );
+      }
+
+      case 'auto_email_frequency':
+        const emailFreq = emailFrequencies.find(f => f.name === lead.auto_email_frequency);
+        const emailCountdown = autoCountdowns[lead.id]?.email;
+        return (
+          <>
+            <button
+              onClick={() => setShowEmailModal(lead.id)}
+              className="w-full px-2 py-1 text-xs border-0 rounded cursor-pointer flex flex-col items-start"
+              style={{
+                backgroundColor: emailFreq?.bg_color || '#f5f5f5',
+                color: emailFreq?.text_color || '#999'
+              }}
+            >
+              <span>{lead.auto_email_frequency}</span>
+              {emailCountdown && emailCountdown !== 'READY' && (
+                <span 
+                  style={{ 
+                    fontFamily: 'var(--font-roboto-mono), monospace', 
+                    fontSize: '9px',
+                    color: '#ff0000',
+                    marginTop: '2px'
+                  }}
+                >
+                  {emailCountdown}
+                </span>
+              )}
+            </button>
+            
+            {showEmailModal === lead.id && (
+              <div 
+                className="fixed inset-0 bg-black/20 flex items-center justify-center z-50 email-modal-container" 
+                onClick={() => setShowEmailModal(null)}
+              >
+                <div 
+                  className="bg-white border-2 border-[#5a7fc7] rounded-md shadow-xl p-4 w-[300px]"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <h3 className="text-sm font-medium text-[#1a1a1a] mb-3">Email Automation</h3>
+                  <div className="mb-3">
+                    <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Frequency</label>
+                    <select
+                      value={lead.auto_email_frequency}
+                      onChange={(e) => {
+                        updateLead(lead.id, 'auto_email_frequency', e.target.value);
+                        // If setting a frequency for the first time, set last_sent to now
+                        if (e.target.value !== 'Off' && !lead.last_email_sent) {
+                          updateLead(lead.id, 'last_email_sent', new Date().toISOString());
+                        }
+                      }}
+                      className="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded"
+                    >
+                      {emailFrequencies.map((freq, idx) => (
+                        <option key={`email-${idx}`} value={freq.name}>{freq.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {lead.auto_email_frequency !== 'Off' && (
+                    <div className="mb-3">
+                      <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Template</label>
+                      <select
+                        value={lead.email_template_id || ''}
+                        onChange={(e) => updateLead(lead.id, 'email_template_id', e.target.value)}
+                        className="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded"
+                      >
+                        <option value="">Select template...</option>
+                        {emailTemplates.map((template) => (
+                          <option key={template.id} value={template.id}>{template.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  <button
+                    onClick={() => setShowEmailModal(null)}
+                    className="w-full px-3 py-2 bg-[#1a1a1a] text-white rounded text-sm font-medium hover:bg-[#2a2a2a]"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        );
+
+      case 'auto_text_frequency':
+        const scheduledCountdown = scheduledTextCountdowns[lead.id];
+        const hasScheduledText = lead.scheduled_text_time && lead.scheduled_text_content;
+        
+        return (
+          <>
+            {hasScheduledText ? (
+              scheduledCountdown === 'READY' ? (
+                <div 
+                  className="border border-[#5a7fc7] rounded cursor-pointer hover:bg-[#f5f5f5] transition-colors"
+                  onClick={() => openScheduleTextModal(lead.id)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    clearScheduledText(lead.id);
+                  }}
+                  title="Click to edit | Right-click to clear"
+                  style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center',
+                    gap: '6px',
+                    padding: '4px 8px',
+                    width: 'fit-content',
+                    margin: '0 auto'
+                  }}
+                >
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      copyTextToClipboard(lead.scheduled_text_content!);
+                    }}
+                    className="px-1.5 py-0.5 bg-[#5a7fc7] text-white rounded hover:bg-[#4a6fb7] transition-colors"
+                    style={{ fontSize: '10px', fontWeight: '600', lineHeight: '1.2' }}
+                  >
+                    Copy
+                  </button>
+                  <span 
+                    className="text-[#00cc00] font-bold animate-pulse"
+                    style={{ fontSize: '11px', fontWeight: '700', lineHeight: '1.2' }}
+                  >
+                    Send Text
+                  </span>
+                </div>
+              ) : (
+                <button
+                  onClick={() => openScheduleTextModal(lead.id)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    clearScheduledText(lead.id);
+                  }}
+                  className="w-full px-2 py-1 text-xs border border-[#5a7fc7] rounded cursor-pointer hover:bg-[#f5f5f5] transition-colors"
+                  title="Click to edit | Right-click to clear"
+                >
+                  {typeof scheduledCountdown === 'object' ? (
+                    <span 
+                      style={{ 
+                        fontFamily: 'var(--font-roboto-mono), monospace', 
+                        fontSize: '11px',
+                        color: '#5a7fc7',
+                        fontWeight: '700'
+                      }}
+                    >
+                      {scheduledCountdown.days}D {scheduledCountdown.time}
+                    </span>
+                  ) : (
+                    <span className="text-[#6b6b6b]">Scheduled</span>
+                  )}
+                </button>
+              )
+            ) : (
+              <button
+                onClick={() => openScheduleTextModal(lead.id)}
+                className="w-full px-2 py-1 text-xs border border-[#e5e5e5] rounded cursor-pointer hover:border-[#5a7fc7] hover:bg-[#f5f5f5] transition-colors text-[#999]"
+              >
+                Schedule Text
+              </button>
+            )}
+            
+            {showTextModal === lead.id && (
+              <div 
+                className="fixed inset-0 bg-black/20 flex items-center justify-center z-50 text-modal-container" 
+                onClick={() => setShowTextModal(null)}
+              >
+                <div 
+                  className="bg-white border-2 border-[#5a7fc7] rounded-md shadow-xl p-4 w-[300px]"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <h3 className="text-sm font-medium text-[#1a1a1a] mb-3">Text Automation</h3>
+                  <div className="mb-3">
+                    <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Frequency</label>
+                    <select
+                      value={lead.auto_text_frequency}
+                      onChange={(e) => {
+                        updateLead(lead.id, 'auto_text_frequency', e.target.value);
+                        // If setting a frequency for the first time, set last_sent to now
+                        if (e.target.value !== 'Off' && !lead.last_text_sent) {
+                          updateLead(lead.id, 'last_text_sent', new Date().toISOString());
+                        }
+                      }}
+                      className="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded"
+                    >
+                      {textFrequencies.map((freq, idx) => (
+                        <option key={`text-${idx}`} value={freq.name}>{freq.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {lead.auto_text_frequency !== 'Off' && (
+                    <div className="mb-3">
+                      <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Template</label>
+                      <select
+                        value={lead.text_template_id || ''}
+                        onChange={(e) => updateLead(lead.id, 'text_template_id', e.target.value)}
+                        className="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded"
+                      >
+                        <option value="">Select template...</option>
+                        {textTemplates.map((template) => (
+                          <option key={template.id} value={template.id}>{template.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  <button
+                    onClick={() => setShowTextModal(null)}
+                    className="w-full px-3 py-2 bg-[#1a1a1a] text-white rounded text-sm font-medium hover:bg-[#2a2a2a]"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        );
+
+      default: {
+        const fieldValue = (lead[fieldKey] as any) || '-';
+        const valueStr = String(fieldValue);
+        const maxLength = 25;
+        
+        let displayValue: string;
+        
+        if (column.truncateText) {
+          const plainText = stripMarkdown(valueStr);
+          if (plainText.length > maxLength) {
+            displayValue = plainText.substring(0, maxLength) + '...';
+          } else {
+            displayValue = valueStr;
+          }
+        } else {
+          displayValue = valueStr;
+        }
+        
+        return (
+          <span 
+            className="text-sm text-[#1a1a1a]" 
+            title={column.truncateText && stripMarkdown(valueStr).length > maxLength ? valueStr : undefined}
+          >
+            {displayValue}
+          </span>
+        );
+      }
+    }
+  };
+
+  return (
+    <>
+      {/* Expanded Text Modal */}
+      {showExpandedTextModal && (
+        <div 
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" 
+          onClick={() => setShowExpandedTextModal(null)}
+        >
+          <div 
+            className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold text-[#1a1a1a] mb-4">
+              {showExpandedTextModal.label}
+            </h2>
+            
+            {/* Formatting Toolbar */}
+            <div className="flex gap-2 mb-3 pb-3 border-b border-[#e5e5e5]">
+              <button
+                onClick={() => applyFormatting('bold')}
+                className="px-3 py-1.5 border border-[#e5e5e5] rounded text-sm font-bold hover:bg-[#f5f5f5] transition-colors"
+                title="Bold (wrap with **text**)"
+              >
+                B
+              </button>
+              <button
+                onClick={() => applyFormatting('italic')}
+                className="px-3 py-1.5 border border-[#e5e5e5] rounded text-sm italic hover:bg-[#f5f5f5] transition-colors"
+                title="Italic (wrap with *text*)"
+              >
+                I
+              </button>
+              <div className="flex-1" />
+              <span className="text-xs text-[#6b6b6b] self-center">
+                Select text and click B or I to format
+              </span>
+            </div>
+            
+            <textarea
+              ref={textAreaRef}
+              value={showExpandedTextModal.value}
+              onChange={(e) => setShowExpandedTextModal({ ...showExpandedTextModal, value: e.target.value })}
+              className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm min-h-[200px] resize-y font-mono"
+              placeholder={`Enter ${showExpandedTextModal.label.toLowerCase()} here...\n\nFormatting:\n**bold text**\n*italic text*`}
+              autoFocus
+            />
+
+            {/* File Attachments Section - Only show if column allows attachments */}
+            {columns.find(c => c.field === showExpandedTextModal.field)?.allowAttachments && (
+              <div className="mt-4 pt-4 border-t border-[#e5e5e5]">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-medium text-[#1a1a1a]">Attachments</h3>
+                  <label className="px-3 py-1.5 bg-[#1a1a1a] text-white rounded text-xs font-medium hover:bg-[#2a2a2a] transition-colors cursor-pointer">
+                    {uploadingFile ? 'Uploading...' : '+ Add File'}
+                    <input
+                      type="file"
+                      className="hidden"
+                      disabled={uploadingFile}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file && showExpandedTextModal) {
+                          handleFileUpload(showExpandedTextModal.leadId, showExpandedTextModal.field, file);
+                        }
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                </div>
+
+                {/* Drag and Drop Zone */}
+                <div
+                  onDrop={(e) => handleFileDrop(e, showExpandedTextModal.leadId, showExpandedTextModal.field)}
+                  onDragOver={handleDragOver}
+                  onDragEnter={handleDragEnter}
+                  onDragLeave={handleDragLeave}
+                  className={`mb-3 p-6 border-2 border-dashed rounded-lg transition-colors text-center ${
+                    isDraggingFile 
+                      ? 'border-[#5a7fc7] bg-[#f0f7ff]' 
+                      : 'border-[#e5e5e5] bg-[#f9f9f9] hover:border-[#5a7fc7]'
+                  }`}
+                >
+                  <svg 
+                    className={`w-8 h-8 mx-auto mb-2 ${isDraggingFile ? 'text-[#5a7fc7]' : 'text-[#6b6b6b]'}`}
+                    fill="none" 
+                    stroke="currentColor" 
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                  </svg>
+                  <p className={`text-sm ${isDraggingFile ? 'text-[#5a7fc7] font-medium' : 'text-[#6b6b6b]'}`}>
+                    {isDraggingFile ? 'Drop file here' : 'Drag and drop file here'}
+                  </p>
+                  <p className="text-xs text-[#999] mt-1">or click "+ Add File" above</p>
+                </div>
+
+                {/* File List */}
+                {attachments.length > 0 ? (
+                  <div className="space-y-2 max-h-[200px] overflow-y-auto">
+                    {attachments.map((attachment) => (
+                      <div
+                        key={attachment.id}
+                        className="flex items-center justify-between p-2 bg-[#f5f5f5] rounded border border-[#e5e5e5]"
+                      >
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          <svg className="w-4 h-4 text-[#6b6b6b] flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                          </svg>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-[#1a1a1a] truncate">{attachment.file_name}</p>
+                            <p className="text-xs text-[#6b6b6b]">{formatFileSize(attachment.file_size)}</p>
+                          </div>
+                        </div>
+                        <div className="flex gap-1 flex-shrink-0">
+                          <button
+                            onClick={() => handleFileDownload(attachment.id)}
+                            className="p-1.5 hover:bg-[#e5e5e5] rounded transition-colors"
+                            title="Download"
+                          >
+                            <svg className="w-4 h-4 text-[#1a1a1a]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={() => handleFileDelete(attachment.id)}
+                            className="p-1.5 hover:bg-red-100 rounded transition-colors"
+                            title="Delete"
+                          >
+                            <svg className="w-4 h-4 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-[#6b6b6b] italic">No files attached</p>
+                )}
+              </div>
+            )}
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowExpandedTextModal(null)}
+                className="flex-1 px-4 py-2 border border-[#e5e5e5] text-[#1a1a1a] rounded-md text-sm font-medium hover:bg-[#f5f5f5] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (showExpandedTextModal) {
+                    updateLead(showExpandedTextModal.leadId, showExpandedTextModal.field, showExpandedTextModal.value);
+                    setShowExpandedTextModal(null);
+                  }
+                }}
+                className="flex-1 px-4 py-2 bg-[#1a1a1a] text-white rounded-md text-sm font-medium hover:bg-[#2a2a2a] transition-colors"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Timer Modal */}
+      {showCustomTimerModal && (
+        <div 
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" 
+          onClick={() => setShowCustomTimerModal(null)}
+        >
+          <div 
+            className="bg-white rounded-lg p-6 max-w-md w-full mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold text-[#1a1a1a] mb-4">Custom Timer</h2>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-[#1a1a1a] mb-2">
+                  End Date
+                </label>
+                <input
+                  type="date"
+                  value={customTimerDate}
+                  onChange={(e) => setCustomTimerDate(e.target.value)}
+                  className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-[#1a1a1a] mb-2">
+                  End Time
+                </label>
+                <input
+                  type="time"
+                  value={customTimerTime}
+                  onChange={(e) => setCustomTimerTime(e.target.value)}
+                  className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-[#1a1a1a] mb-2">
+                  Timer Color
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {timerColors.map((color) => (
+                    <button
+                      key={color.value}
+                      type="button"
+                      onClick={() => setSelectedTimerColor(color.value)}
+                      className={`px-3 py-2 border-2 rounded-md text-xs font-medium transition-colors flex items-center justify-center gap-1.5 ${
+                        selectedTimerColor === color.value 
+                          ? 'border-[#1a1a1a] bg-[#f5f5f5]' 
+                          : 'border-[#e5e5e5] hover:border-[#999]'
+                      }`}
+                    >
+                      <span style={{ color: color.value, fontSize: '16px' }}>●</span>
+                      <span>{color.name}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <p className="text-xs text-[#6b6b6b]">
+                The countdown will expire at this exact date and time
+              </p>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowCustomTimerModal(null)}
+                className="flex-1 px-4 py-2 border border-[#e5e5e5] text-[#1a1a1a] rounded-md text-sm font-medium hover:bg-[#f5f5f5] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => showCustomTimerModal && handleCustomTimer(showCustomTimerModal)}
+                className="flex-1 px-4 py-2 bg-[#1a1a1a] text-white rounded-md text-sm font-medium hover:bg-[#2a2a2a] transition-colors"
+              >
+                Set Timer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Timer Color Modal */}
+      {showTimerColorModal && (
+        <div 
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" 
+          onClick={() => setShowTimerColorModal(null)}
+        >
+          <div 
+            className="bg-white rounded-lg p-6 max-w-md w-full mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold text-[#1a1a1a] mb-4">Timer Color</h2>
+            
+            <p className="text-sm text-[#6b6b6b] mb-4">
+              Choose a color for this timer countdown
+            </p>
+
+            <div className="grid grid-cols-2 gap-3 mb-6">
+              {timerColors.map((color) => (
+                <button
+                  key={color.value}
+                  onClick={() => handleTimerColorChange(showTimerColorModal, color.value)}
+                  className="px-4 py-3 border-2 border-[#e5e5e5] rounded-lg text-sm font-medium hover:border-[#1a1a1a] transition-colors flex items-center gap-2"
+                >
+                  <span style={{ color: color.value, fontSize: '20px' }}>●</span>
+                  <span>{color.name}</span>
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={() => setShowTimerColorModal(null)}
+              className="w-full px-4 py-2 border border-[#e5e5e5] text-[#1a1a1a] rounded-md text-sm font-medium hover:bg-[#f5f5f5] transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Display Date Modal */}
+      {showDisplayDateModal && (
+        <div 
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" 
+          onClick={() => setShowDisplayDateModal(null)}
+        >
+          <div 
+            className="bg-white rounded-lg p-6 max-w-md w-full mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold text-[#1a1a1a] mb-4">Display Date</h2>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-[#1a1a1a] mb-2">
+                  Date to Display
+                </label>
+                <input
+                  type="date"
+                  value={displayDate}
+                  onChange={(e) => setDisplayDate(e.target.value)}
+                  className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                />
+              </div>
+
+              <p className="text-xs text-[#6b6b6b]">
+                This date will be shown in the timer column without any countdown
+              </p>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowDisplayDateModal(null)}
+                className="flex-1 px-4 py-2 border border-[#e5e5e5] text-[#1a1a1a] rounded-md text-sm font-medium hover:bg-[#f5f5f5] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => showDisplayDateModal && handleDisplayDate(showDisplayDateModal)}
+                className="flex-1 px-4 py-2 bg-[#1a1a1a] text-white rounded-md text-sm font-medium hover:bg-[#2a2a2a] transition-colors"
+              >
+                Set Date
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Schedule Text Modal */}
+      {showScheduleTextModal && (
+        <div 
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" 
+          onClick={() => setShowScheduleTextModal(null)}
+        >
+          <div 
+            className="bg-white rounded-lg p-6 max-w-lg w-full mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold text-[#1a1a1a] mb-4">Schedule Text Message</h2>
+            
+            <div className="space-y-4">
+              {/* Text Message Content */}
+              <div>
+                <label className="block text-sm font-medium text-[#1a1a1a] mb-2">
+                  Message Content
+                </label>
+                <textarea
+                  value={scheduledTextContent}
+                  onChange={(e) => setScheduledTextContent(e.target.value)}
+                  placeholder="Enter your text message here..."
+                  rows={6}
+                  className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm resize-none focus:outline-none focus:ring-1 focus:ring-[#5a7fc7] focus:border-[#5a7fc7]"
+                />
+                <div className="flex justify-between mt-1">
+                  <span className="text-xs text-[#6b6b6b]">
+                    {scheduledTextContent.length} characters
+                  </span>
+                  {scheduledTextContent.length > 160 && (
+                    <span className="text-xs text-[#ff8800]">
+                      {Math.ceil(scheduledTextContent.length / 160)} SMS segments
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Date and Time Selection */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-[#1a1a1a] mb-2">
+                    Send Date
+                  </label>
+                  <input
+                    type="date"
+                    value={scheduledTextDate}
+                    onChange={(e) => setScheduledTextDate(e.target.value)}
+                    className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-[#1a1a1a] mb-2">
+                    Send Time
+                  </label>
+                  <input
+                    type="time"
+                    value={scheduledTextTime}
+                    onChange={(e) => setScheduledTextTime(e.target.value)}
+                    className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                  />
+                </div>
+              </div>
+
+              {/* Frequency Selection */}
+              <div>
+                <label className="block text-sm font-medium text-[#1a1a1a] mb-2">
+                  Repeat Frequency
+                </label>
+                <select
+                  value={scheduledTextFrequency}
+                  onChange={(e) => setScheduledTextFrequency(e.target.value)}
+                  className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                >
+                  <option value="once">Send Once</option>
+                  <option value="daily">Daily</option>
+                  <option value="every2days">Every 2 Days</option>
+                  <option value="every3days">Every 3 Days</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="every2weeks">Every 2 Weeks</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+                <p className="text-xs text-[#6b6b6b] mt-1">
+                  {scheduledTextFrequency === 'once' 
+                    ? 'Message will be sent once at the specified time' 
+                    : `Message will repeat ${scheduledTextFrequency.replace('every', 'every ')} after initial send`}
+                </p>
+              </div>
+
+              {/* Info Box */}
+              <div className="bg-[#f0f7ff] border border-[#5a7fc7] rounded-lg p-3 text-xs text-[#1a1a1a]">
+                <p className="font-semibold mb-1">📋 Manual Send (Until Twilio Approved):</p>
+                <p>When time is ready, click "Copy Text" to paste into your phone manually. After Twilio approval, messages will send automatically.</p>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowScheduleTextModal(null)}
+                className="flex-1 px-4 py-2 border border-[#e5e5e5] text-[#1a1a1a] rounded-md text-sm font-medium hover:bg-[#f5f5f5] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => showScheduleTextModal && handleScheduleText(showScheduleTextModal)}
+                className="flex-1 px-4 py-2 bg-[#5a7fc7] text-white rounded-md text-sm font-medium hover:bg-[#4a6fb7] transition-colors"
+              >
+                Schedule Text
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Lead Modal */}
+      {showAddModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowAddModal(false)}>
+          <div className="bg-white rounded-lg p-8 max-w-md w-full mx-4" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-xl font-bold text-[#1a1a1a] mb-6">Add New Lead</h2>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-[#1a1a1a] mb-1">
+                  Name *
+                </label>
+                <input
+                  type="text"
+                  value={newLead.name}
+                  onChange={(e) => setNewLead({ ...newLead, name: e.target.value })}
+                  className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                  placeholder="John Doe"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-[#1a1a1a] mb-1">
+                  Email *
+                </label>
+                <input
+                  type="email"
+                  value={newLead.email}
+                  onChange={(e) => setNewLead({ ...newLead, email: e.target.value })}
+                  className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                  placeholder="john@company.com"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-[#1a1a1a] mb-1">
+                  Phone
+                </label>
+                <input
+                  type="tel"
+                  value={newLead.phone}
+                  onChange={(e) => setNewLead({ ...newLead, phone: e.target.value })}
+                  className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                  placeholder="+1234567890"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-[#1a1a1a] mb-1">
+                  Company
+                </label>
+                <input
+                  type="text"
+                  value={newLead.company}
+                  onChange={(e) => setNewLead({ ...newLead, company: e.target.value })}
+                  className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                  placeholder="Acme Corp"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowAddModal(false)}
+                className="flex-1 px-4 py-2 border border-[#e5e5e5] text-[#1a1a1a] rounded-md text-sm font-medium hover:bg-[#f5f5f5] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={addLead}
+                className="flex-1 px-4 py-2 bg-[#1a1a1a] text-white rounded-md text-sm font-medium hover:bg-[#2a2a2a] transition-colors"
+              >
+                Add Lead
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Table */}
+      <div className="bg-white border border-[#e5e5e5] rounded-md overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="bg-[#f5f5f5] border-b border-[#e5e5e5]">
+                {columns.filter(col => col.visible).map((col, idx) => (
+                  <th 
+                    key={idx}
+                    className="px-4 py-3 text-left text-xs font-bold text-[#1a1a1a] uppercase tracking-wider whitespace-nowrap"
+                    style={{ width: `${col.width}px`, minWidth: `${col.width}px`, maxWidth: `${col.width}px` }}
+                  >
+                    {col.label}
+                  </th>
+                ))}
+                <th className="px-4 py-3 text-left text-xs font-bold text-[#1a1a1a] uppercase tracking-wider whitespace-nowrap" style={{ width: '60px' }}></th>
+              </tr>
+            </thead>
+          <tbody>
+            {leads.map((lead) => {
+              const stageConfig = stages.find(s => s.value === lead.stage) || stages[2];
+              
+              // Extract colors from Tailwind classes for inline styles
+              const bgMatch = stageConfig.color.match(/bg-\[([^\]]+)\]/);
+              const textMatch = stageConfig.color.match(/text-\[([^\]]+)\]/);
+              const bgColor = bgMatch ? bgMatch[1] : '#e5e5e5';
+              const textColor = textMatch ? textMatch[1] : '#4a4a4a';
+              
+              return (
+                <tr key={lead.id} className="border-b border-[#f0f0f0] hover:bg-[#fafafa] transition-colors">
+                  {columns.filter(col => col.visible).map((col, colIdx) => (
+                    <td 
+                      key={colIdx} 
+                      className="px-4 py-3 text-sm text-[#1a1a1a] whitespace-nowrap"
+                      style={{ width: `${col.width}px`, minWidth: `${col.width}px` }}
+                    >
+                      {renderCell(lead, col, bgColor, textColor)}
+                    </td>
+                  ))}
+                  
+                  {/* Delete Button */}
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <button
+                      onClick={() => deleteLead(lead.id)}
+                      className="text-[#999] hover:text-[#8a2a2a] transition-colors"
+                      title="Delete lead"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+
+        {leads.length === 0 && (
+          <div className="text-center py-12">
+            <p className="text-[#999] text-sm">No leads yet. Add a lead to get started.</p>
+          </div>
+        )}
+      </div>
+    </div>
+
+    {/* Add Lead Button */}
+    <div className="mt-4 flex justify-end">
+      <button
+        onClick={() => setShowAddModal(true)}
+        className="px-5 py-2.5 bg-[#1a1a1a] text-white rounded-md text-sm font-medium hover:bg-[#2a2a2a] transition-colors"
+      >
+        Add Lead
+      </button>
+    </div>
+    </>
+  );
+}
