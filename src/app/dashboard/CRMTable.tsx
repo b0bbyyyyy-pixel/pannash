@@ -1714,43 +1714,47 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         return (
           <>
             {hasScheduledText ? (
-              <button
-                onClick={() => openScheduleTextModal(lead.id)}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  clearScheduledText(lead.id);
-                }}
-                className="w-full px-2 py-1 text-xs border border-[#5a7fc7] rounded cursor-pointer hover:bg-[#f5f5f5] transition-colors"
-                title="Click to edit | Right-click to clear"
-              >
-                {scheduledCountdown === 'READY' ? (
-                  <div className="flex flex-col items-start">
-                    <span className="text-[#00cc00] font-bold">READY TO SEND</span>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        copyTextToClipboard(lead.scheduled_text_content!);
-                      }}
-                      className="mt-1 px-2 py-0.5 bg-[#5a7fc7] text-white rounded text-[10px] hover:bg-[#4a6fb7]"
-                    >
-                      Copy Text
-                    </button>
-                  </div>
-                ) : typeof scheduledCountdown === 'object' ? (
-                  <span 
-                    style={{ 
-                      fontFamily: 'var(--font-roboto-mono), monospace', 
-                      fontSize: '11px',
-                      color: '#5a7fc7',
-                      fontWeight: '700'
+              scheduledCountdown === 'READY' ? (
+                <div className="w-full px-2 py-1 text-xs border border-[#5a7fc7] rounded flex items-center justify-between gap-2">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      copyTextToClipboard(lead.scheduled_text_content!);
                     }}
+                    className="px-3 py-1 bg-[#5a7fc7] text-white rounded text-xs hover:bg-[#4a6fb7] transition-colors font-medium"
                   >
-                    {scheduledCountdown.days}D {scheduledCountdown.time}
+                    Copy
+                  </button>
+                  <span className="text-[#00cc00] font-bold text-sm animate-pulse">
+                    Send
                   </span>
-                ) : (
-                  <span className="text-[#6b6b6b]">Scheduled</span>
-                )}
-              </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => openScheduleTextModal(lead.id)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    clearScheduledText(lead.id);
+                  }}
+                  className="w-full px-2 py-1 text-xs border border-[#5a7fc7] rounded cursor-pointer hover:bg-[#f5f5f5] transition-colors"
+                  title="Click to edit | Right-click to clear"
+                >
+                  {typeof scheduledCountdown === 'object' ? (
+                    <span 
+                      style={{ 
+                        fontFamily: 'var(--font-roboto-mono), monospace', 
+                        fontSize: '11px',
+                        color: '#5a7fc7',
+                        fontWeight: '700'
+                      }}
+                    >
+                      {scheduledCountdown.days}D {scheduledCountdown.time}
+                    </span>
+                  ) : (
+                    <span className="text-[#6b6b6b]">Scheduled</span>
+                  )}
+                </button>
+              )
             ) : (
               <button
                 onClick={() => openScheduleTextModal(lead.id)}
