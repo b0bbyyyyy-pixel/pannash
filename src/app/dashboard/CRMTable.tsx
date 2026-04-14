@@ -1715,18 +1715,39 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
           <>
             {hasScheduledText ? (
               scheduledCountdown === 'READY' ? (
-                <div className="w-full px-2 py-1 text-xs border border-[#5a7fc7] rounded flex items-center justify-between gap-2">
+                <div 
+                  className="border border-[#5a7fc7] rounded cursor-pointer hover:bg-[#f5f5f5] transition-colors"
+                  onClick={() => openScheduleTextModal(lead.id)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    clearScheduledText(lead.id);
+                  }}
+                  title="Click to edit | Right-click to clear"
+                  style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center',
+                    gap: '6px',
+                    padding: '4px 8px',
+                    width: 'fit-content',
+                    margin: '0 auto'
+                  }}
+                >
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       copyTextToClipboard(lead.scheduled_text_content!);
                     }}
-                    className="px-3 py-1 bg-[#5a7fc7] text-white rounded text-xs hover:bg-[#4a6fb7] transition-colors font-medium"
+                    className="px-1.5 py-0.5 bg-[#5a7fc7] text-white rounded hover:bg-[#4a6fb7] transition-colors"
+                    style={{ fontSize: '10px', fontWeight: '600', lineHeight: '1.2' }}
                   >
                     Copy
                   </button>
-                  <span className="text-[#00cc00] font-bold text-sm animate-pulse">
-                    Send
+                  <span 
+                    className="text-[#00cc00] font-bold animate-pulse"
+                    style={{ fontSize: '11px', fontWeight: '700', lineHeight: '1.2' }}
+                  >
+                    Send Text
                   </span>
                 </div>
               ) : (
