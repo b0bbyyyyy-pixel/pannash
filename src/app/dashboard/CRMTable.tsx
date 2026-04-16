@@ -1086,9 +1086,15 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
       // Convert value to number if it's the value field
       let valueToSave: string | number | null = editField === 'value' ? Number(editValue) : editValue;
       
-      // Convert empty string to null for date fields
-      if (editField === 'last_contact' && valueToSave === '') {
-        valueToSave = null;
+      // Handle datetime-local fields - convert to ISO string with proper timezone
+      if (editField === 'last_contact') {
+        if (valueToSave === '') {
+          valueToSave = null;
+        } else if (typeof valueToSave === 'string' && valueToSave) {
+          // Convert datetime-local format (YYYY-MM-DDTHH:MM) to ISO string
+          const date = new Date(valueToSave);
+          valueToSave = date.toISOString();
+        }
       }
       
       updateLead(editingId, editField, valueToSave);
@@ -1672,10 +1678,32 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         );
       }
 
-      case 'last_contact':
+      case 'last_contact': {
+        // Format datetime for input (YYYY-MM-DDTHH:MM)
+        const formatDateTimeForInput = (dateString: string | null) => {
+          if (!dateString) return '';
+          const date = new Date(dateString);
+          // Get local time components
+          const year = date.getFullYear();
+          const month = String(date.getMonth() + 1).padStart(2, '0');
+          const day = String(date.getDate()).padStart(2, '0');
+          const hours = String(date.getHours()).padStart(2, '0');
+          const minutes = String(date.getMinutes()).padStart(2, '0');
+          return `${year}-${month}-${day}T${hours}:${minutes}`;
+        };
+
+        // Format datetime for display (M/D/YY h:mm AM/PM)
+        const formatDateTimeForDisplay = (dateString: string | null) => {
+          if (!dateString) return 'Add date & time';
+          const date = new Date(dateString);
+          const dateStr = date.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' });
+          const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+          return `${dateStr} ${timeStr}`;
+        };
+
         return editingId === lead.id && editField === 'last_contact' ? (
           <input
-            type="date"
+            type="datetime-local"
             value={editValue}
             onChange={(e) => setEditValue(e.target.value)}
             onBlur={saveEdit}
@@ -1685,12 +1713,13 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
           />
         ) : (
           <button
-            onClick={() => startEdit(lead.id, 'last_contact', lead.last_contact ? new Date(lead.last_contact).toISOString().split('T')[0] : '')}
+            onClick={() => startEdit(lead.id, 'last_contact', formatDateTimeForInput(lead.last_contact))}
             className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
           >
-            {lead.last_contact ? new Date(lead.last_contact).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' }) : 'Add date'}
+            {formatDateTimeForDisplay(lead.last_contact)}
           </button>
         );
+      }
 
       case 'notes': {
         const notesText = lead.notes || 'Add notes';
@@ -2701,13 +2730,13 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                 {columns.filter(col => col.visible).map((col, idx) => (
                   <th 
                     key={idx}
-                    className="px-4 py-3 text-left text-xs font-bold text-[#1a1a1a] uppercase tracking-wider whitespace-nowrap"
+                    className="px-2 py-2 text-left text-xs font-bold text-[#1a1a1a] uppercase tracking-wider whitespace-nowrap"
                     style={{ width: `${col.width}px`, minWidth: `${col.width}px`, maxWidth: `${col.width}px` }}
                   >
                     {col.label}
                   </th>
                 ))}
-                <th className="px-4 py-3 text-left text-xs font-bold text-[#1a1a1a] uppercase tracking-wider whitespace-nowrap" style={{ width: '60px' }}></th>
+                <th className="px-2 py-2 text-left text-xs font-bold text-[#1a1a1a] uppercase tracking-wider whitespace-nowrap" style={{ width: '60px' }}></th>
               </tr>
             </thead>
           <tbody>
@@ -2740,7 +2769,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                   {columns.filter(col => col.visible).map((col, colIdx) => (
                     <td 
                       key={colIdx} 
-                      className="px-4 py-3 text-sm text-[#1a1a1a] whitespace-nowrap"
+                      className="px-2 py-2 text-sm text-[#1a1a1a] whitespace-nowrap"
                       style={{ width: `${col.width}px`, minWidth: `${col.width}px` }}
                     >
                       {renderCell(lead, col, bgColor, textColor)}
@@ -2748,7 +2777,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                   ))}
                   
                   {/* Delete Button */}
-                  <td className="px-4 py-3 whitespace-nowrap">
+                  <td className="px-2 py-2 whitespace-nowrap">
                     <button
                       onClick={() => deleteLead(lead.id)}
                       className="text-[#999] hover:text-[#8a2a2a] transition-colors"
