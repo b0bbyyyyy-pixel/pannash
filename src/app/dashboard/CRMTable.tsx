@@ -76,6 +76,11 @@ interface Frequency {
   type: string;
 }
 
+interface MonthData {
+  monthKey: string;
+  customName: string;
+}
+
 interface CRMTableProps {
   leads: Lead[];
   monthKey: string;
@@ -85,11 +90,12 @@ interface CRMTableProps {
   textTemplates: Template[];
   emailFrequencies: Frequency[];
   textFrequencies: Frequency[];
+  availableMonths: MonthData[];
   onLeadUpdate: (leadId: string, updates: Partial<Lead>) => void;
   onLeadCreate: (lead: Lead) => void;
 }
 
-export default function CRMTable({ leads: initialLeads, monthKey, stages, columns, emailTemplates, textTemplates, emailFrequencies, textFrequencies, onLeadUpdate, onLeadCreate }: CRMTableProps) {
+export default function CRMTable({ leads: initialLeads, monthKey, stages, columns, emailTemplates, textTemplates, emailFrequencies, textFrequencies, availableMonths, onLeadUpdate, onLeadCreate }: CRMTableProps) {
   const [leads, setLeads] = useState(initialLeads);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
@@ -135,6 +141,10 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   const [scheduledTextTime, setScheduledTextTime] = useState('09:00');
   const [scheduledTextFrequency, setScheduledTextFrequency] = useState('once');
   const [scheduledTextCountdowns, setScheduledTextCountdowns] = useState<{ [key: string]: { days: number; time: string } | 'READY' }>({});
+  const [showCopyMoveModal, setShowCopyMoveModal] = useState<{ lead: Lead; action: 'copy' | 'move' } | null>(null);
+  const [selectedDestinationMonth, setSelectedDestinationMonth] = useState('');
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; lead: Lead } | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
   // Update local state when props change (e.g., switching tabs)
@@ -159,6 +169,20 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     };
     fetchUserTimezone();
   }, []);
+
+  // Close context menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
+        setContextMenu(null);
+      }
+    };
+
+    if (contextMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [contextMenu]);
 
   // Close modals when clicking outside
   useEffect(() => {
@@ -552,6 +576,58 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     } catch (error) {
       console.error('Failed to copy:', error);
       alert('Failed to copy text');
+    }
+  };
+
+  const handleCopyLead = async (lead: Lead, destinationMonth: string) => {
+    try {
+      const res = await fetch('/api/leads/copy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          leadId: lead.id,
+          destinationMonth
+        }),
+        credentials: 'include',
+      });
+
+      if (res.ok) {
+        alert('Lead copied successfully!');
+        setShowCopyMoveModal(null);
+        setSelectedDestinationMonth('');
+        router.refresh();
+      } else {
+        alert('Failed to copy lead');
+      }
+    } catch (error) {
+      console.error('Error copying lead:', error);
+      alert('Failed to copy lead');
+    }
+  };
+
+  const handleMoveLead = async (lead: Lead, destinationMonth: string) => {
+    try {
+      const res = await fetch('/api/leads/move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          leadId: lead.id,
+          destinationMonth
+        }),
+        credentials: 'include',
+      });
+
+      if (res.ok) {
+        alert('Lead moved successfully!');
+        setShowCopyMoveModal(null);
+        setSelectedDestinationMonth('');
+        router.refresh();
+      } else {
+        alert('Failed to move lead');
+      }
+    } catch (error) {
+      console.error('Error moving lead:', error);
+      alert('Failed to move lead');
     }
   };
 
@@ -1904,6 +1980,43 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
 
   return (
     <>
+      {/* Context Menu for Copy/Move Lead */}
+      {contextMenu && (
+        <div
+          ref={contextMenuRef}
+          className="fixed bg-white border border-[#e5e5e5] rounded-md shadow-xl py-1 z-[100]"
+          style={{
+            left: `${contextMenu.x}px`,
+            top: `${contextMenu.y}px`,
+          }}
+        >
+          <button
+            onClick={() => {
+              setShowCopyMoveModal({ lead: contextMenu.lead, action: 'copy' });
+              setContextMenu(null);
+            }}
+            className="w-full px-4 py-2 text-left text-sm text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors flex items-center gap-2"
+          >
+            <svg className="w-4 h-4 text-[#5a7fc7]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+            Copy to Another Tab
+          </button>
+          <button
+            onClick={() => {
+              setShowCopyMoveModal({ lead: contextMenu.lead, action: 'move' });
+              setContextMenu(null);
+            }}
+            className="w-full px-4 py-2 text-left text-sm text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors flex items-center gap-2"
+          >
+            <svg className="w-4 h-4 text-[#5a7fc7]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+            </svg>
+            Move to Another Tab
+          </button>
+        </div>
+      )}
+
       {/* Expanded Text Modal */}
       {showExpandedTextModal && (
         <div 
@@ -2350,6 +2463,93 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         </div>
       )}
 
+      {/* Copy/Move Lead Modal */}
+      {showCopyMoveModal && (
+        <div 
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" 
+          onClick={() => {
+            setShowCopyMoveModal(null);
+            setSelectedDestinationMonth('');
+          }}
+        >
+          <div 
+            className="bg-white rounded-lg p-6 max-w-md w-full mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold text-[#1a1a1a] mb-4">
+              {showCopyMoveModal.action === 'copy' ? 'Copy' : 'Move'} Lead: {showCopyMoveModal.lead.name}
+            </h2>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-[#1a1a1a] mb-2">
+                  Select Destination Tab
+                </label>
+                <select
+                  value={selectedDestinationMonth}
+                  onChange={(e) => setSelectedDestinationMonth(e.target.value)}
+                  className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                >
+                  <option value="">Choose a tab...</option>
+                  {availableMonths?.map((month) => (
+                    <option 
+                      key={`tab-${month.monthKey}`} 
+                      value={month.monthKey}
+                      disabled={month.monthKey === monthKey}
+                    >
+                      {month.customName} {month.monthKey === monthKey ? '(current)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="bg-[#f0f7ff] border border-[#5a7fc7] rounded-lg p-3 text-xs text-[#1a1a1a]">
+                {showCopyMoveModal.action === 'copy' ? (
+                  <>
+                    <p className="font-semibold mb-1">📋 Copy Lead:</p>
+                    <p>Creates a duplicate of this lead in the selected tab. The original lead remains in the current tab.</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="font-semibold mb-1">➡️ Move Lead:</p>
+                    <p>Moves this lead to the selected tab. It will be removed from the current tab.</p>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => {
+                  setShowCopyMoveModal(null);
+                  setSelectedDestinationMonth('');
+                }}
+                className="flex-1 px-4 py-2 border border-[#e5e5e5] text-[#1a1a1a] rounded-md text-sm font-medium hover:bg-[#f5f5f5] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (!selectedDestinationMonth) {
+                    alert('Please select a destination month');
+                    return;
+                  }
+                  if (showCopyMoveModal.action === 'copy') {
+                    handleCopyLead(showCopyMoveModal.lead, selectedDestinationMonth);
+                  } else {
+                    handleMoveLead(showCopyMoveModal.lead, selectedDestinationMonth);
+                  }
+                }}
+                disabled={!selectedDestinationMonth}
+                className="flex-1 px-4 py-2 bg-[#5a7fc7] text-white rounded-md text-sm font-medium hover:bg-[#4a6fb7] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {showCopyMoveModal.action === 'copy' ? 'Copy to Tab' : 'Move to Tab'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Add Lead Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowAddModal(false)}>
@@ -2457,7 +2657,22 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
               const textColor = textMatch ? textMatch[1] : '#4a4a4a';
               
               return (
-                <tr key={lead.id} className="border-b border-[#f0f0f0] hover:bg-[#fafafa] transition-colors">
+                <tr 
+                  key={lead.id} 
+                  className="border-b border-[#f0f0f0] hover:bg-[#fafafa] transition-colors"
+                  onContextMenu={(e) => {
+                    // Only show context menu if not clicking on an interactive element
+                    const target = e.target as HTMLElement;
+                    if (!target.closest('button') && !target.closest('input') && !target.closest('select') && !target.closest('textarea')) {
+                      e.preventDefault();
+                      setContextMenu({
+                        x: e.clientX,
+                        y: e.clientY,
+                        lead
+                      });
+                    }
+                  }}
+                >
                   {columns.filter(col => col.visible).map((col, colIdx) => (
                     <td 
                       key={colIdx} 

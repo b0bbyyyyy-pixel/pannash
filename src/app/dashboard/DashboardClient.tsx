@@ -255,6 +255,7 @@ export default function DashboardClient({ allLeads, availableMonths, initialMont
         textTemplates={textTemplates} 
         emailFrequencies={emailFrequencies} 
         textFrequencies={textFrequencies}
+        availableMonths={availableMonths}
         onLeadUpdate={(leadId, updates) => {
           setLeads(prev => prev.map(lead => 
             lead.id === leadId ? { ...lead, ...updates } : lead
