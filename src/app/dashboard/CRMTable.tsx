@@ -137,6 +137,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   const [newContactDate, setNewContactDate] = useState('');
   const [newContactTime, setNewContactTime] = useState('');
   const [newContactNotes, setNewContactNotes] = useState('');
+  const [tooltipPosition, setTooltipPosition] = useState<{ x: number; y: number } | null>(null);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [attachmentCounts, setAttachmentCounts] = useState<{ [key: string]: number }>({});
   const [isDraggingFile, setIsDraggingFile] = useState(false);
@@ -902,6 +903,8 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   const handleDeleteContact = async (id: string) => {
     if (!confirm('Delete this contact entry?')) return;
 
+    if (!showContactHistoryModal) return;
+
     try {
       const res = await fetch(`/api/contact-history?id=${id}`, {
         method: 'DELETE',
@@ -909,7 +912,9 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
       });
 
       if (res.ok) {
-        setContactHistory(prev => prev.filter(c => c.id !== id));
+        // Refresh contact history from server
+        await fetchContactHistory(showContactHistoryModal.leadId);
+        // Refresh dashboard to update last_contact
         router.refresh();
       } else {
         alert('Failed to delete contact');
@@ -1621,11 +1626,18 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         const phoneKey = `${lead.id}-${column.field}`;
         const showPhoneLocation = column.showPhoneLocation;
         
-        const handlePhoneHover = (phoneNumber: string) => {
+        const handlePhoneHover = (phoneNumber: string, event: React.MouseEvent) => {
           if (!phoneLocationData[phoneKey]) {
             const locationInfo = getPhoneLocation(phoneNumber, userTimezone);
             setPhoneLocationData(prev => ({ ...prev, [phoneKey]: locationInfo }));
           }
+          
+          // Calculate tooltip position
+          const rect = event.currentTarget.getBoundingClientRect();
+          const tooltipX = rect.left + (rect.width / 2);
+          const tooltipY = rect.bottom + 8; // 8px below the element
+          
+          setTooltipPosition({ x: tooltipX, y: tooltipY });
           setHoveredPhone(phoneKey);
         };
         
@@ -1647,8 +1659,11 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                 e.preventDefault();
                 setShowExpandedTextModal({ leadId: lead.id, field: 'phone', value: String(lead.phone || ''), label: 'Phone' });
               }}
-              onMouseEnter={() => showPhoneLocation && lead.phone && handlePhoneHover(lead.phone)}
-              onMouseLeave={() => setHoveredPhone(null)}
+              onMouseEnter={(e) => showPhoneLocation && lead.phone && handlePhoneHover(lead.phone, e)}
+              onMouseLeave={() => {
+                setHoveredPhone(null);
+                setTooltipPosition(null);
+              }}
               className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
             >
               <div className="flex items-center gap-1.5">
@@ -1665,13 +1680,13 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
             </button>
             
             {/* Phone Location Tooltip */}
-            {showPhoneLocation && hoveredPhone === phoneKey && phoneLocationData[phoneKey] && (
+            {showPhoneLocation && hoveredPhone === phoneKey && phoneLocationData[phoneKey] && tooltipPosition && (
               <div 
-                className="absolute z-50 bg-white border border-[#e5e5e5] rounded-lg shadow-lg p-3 whitespace-nowrap"
+                className="fixed z-50 bg-white border border-[#e5e5e5] rounded-lg shadow-xl p-3 whitespace-nowrap"
                 style={{ 
-                  left: '50%', 
+                  left: `${tooltipPosition.x}px`, 
+                  top: `${tooltipPosition.y}px`,
                   transform: 'translateX(-50%)',
-                  bottom: 'calc(100% + 8px)',
                   pointerEvents: 'none'
                 }}
               >
@@ -1683,14 +1698,16 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                     {phoneLocationData[phoneKey]!.localTime} ({phoneLocationData[phoneKey]!.timeOffset})
                   </div>
                 </div>
-                {/* Arrow */}
+                {/* Arrow pointing up */}
                 <div 
-                  className="absolute left-1/2 transform -translate-x-1/2 w-0 h-0"
+                  className="absolute left-1/2 transform -translate-x-1/2"
                   style={{
-                    top: '100%',
+                    bottom: '100%',
+                    width: 0,
+                    height: 0,
                     borderLeft: '6px solid transparent',
                     borderRight: '6px solid transparent',
-                    borderTop: '6px solid white',
+                    borderBottom: '6px solid white',
                   }}
                 />
               </div>
