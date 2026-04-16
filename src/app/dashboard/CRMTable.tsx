@@ -132,6 +132,11 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   const [showExpandedTextModal, setShowExpandedTextModal] = useState<{ leadId: string; field: string; value: string; label: string } | null>(null);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [showContactHistoryModal, setShowContactHistoryModal] = useState<{ leadId: string; leadName: string } | null>(null);
+  const [contactHistory, setContactHistory] = useState<any[]>([]);
+  const [newContactDate, setNewContactDate] = useState('');
+  const [newContactTime, setNewContactTime] = useState('');
+  const [newContactNotes, setNewContactNotes] = useState('');
   const [uploadingFile, setUploadingFile] = useState(false);
   const [attachmentCounts, setAttachmentCounts] = useState<{ [key: string]: number }>({});
   const [isDraggingFile, setIsDraggingFile] = useState(false);
@@ -828,6 +833,93 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     }
   };
 
+  // Fetch contact history when modal opens
+  useEffect(() => {
+    if (showContactHistoryModal) {
+      fetchContactHistory(showContactHistoryModal.leadId);
+      // Set default date/time to now
+      const now = new Date();
+      setNewContactDate(now.toISOString().split('T')[0]);
+      setNewContactTime(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
+    } else {
+      setContactHistory([]);
+      setNewContactDate('');
+      setNewContactTime('');
+      setNewContactNotes('');
+    }
+  }, [showContactHistoryModal]);
+
+  const fetchContactHistory = async (leadId: string) => {
+    try {
+      const res = await fetch(`/api/contact-history?leadId=${leadId}`, {
+        credentials: 'include',
+      });
+      if (res.ok) {
+        const { history } = await res.json();
+        setContactHistory(history || []);
+      }
+    } catch (error) {
+      console.error('Error fetching contact history:', error);
+    }
+  };
+
+  const handleAddContact = async () => {
+    if (!showContactHistoryModal || !newContactDate || !newContactTime) return;
+
+    const contactDate = new Date(`${newContactDate}T${newContactTime}`).toISOString();
+
+    try {
+      const res = await fetch('/api/contact-history', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          leadId: showContactHistoryModal.leadId,
+          contactDate,
+          notes: newContactNotes,
+        }),
+        credentials: 'include',
+      });
+
+      if (res.ok) {
+        // Refresh history
+        await fetchContactHistory(showContactHistoryModal.leadId);
+        // Clear form
+        const now = new Date();
+        setNewContactDate(now.toISOString().split('T')[0]);
+        setNewContactTime(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
+        setNewContactNotes('');
+        // Refresh dashboard to update last_contact
+        router.refresh();
+      } else {
+        alert('Failed to add contact');
+      }
+    } catch (error) {
+      console.error('Error adding contact:', error);
+      alert('Failed to add contact');
+    }
+  };
+
+  const handleDeleteContact = async (id: string) => {
+    if (!confirm('Delete this contact entry?')) return;
+
+    try {
+      const res = await fetch(`/api/contact-history?id=${id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+
+      if (res.ok) {
+        setContactHistory(prev => prev.filter(c => c.id !== id));
+        router.refresh();
+      } else {
+        alert('Failed to delete contact');
+      }
+    } catch (error) {
+      console.error('Error deleting contact:', error);
+      alert('Failed to delete contact');
+    }
+  };
+
   const handleFileDownload = async (attachmentId: string) => {
     try {
       const res = await fetch(`/api/attachments/download?id=${attachmentId}`);
@@ -1085,17 +1177,6 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     if (editField && editingId) {
       // Convert value to number if it's the value field
       let valueToSave: string | number | null = editField === 'value' ? Number(editValue) : editValue;
-      
-      // Handle datetime-local fields - convert to ISO string with proper timezone
-      if (editField === 'last_contact') {
-        if (valueToSave === '') {
-          valueToSave = null;
-        } else if (typeof valueToSave === 'string' && valueToSave) {
-          // Convert datetime-local format (YYYY-MM-DDTHH:MM) to ISO string
-          const date = new Date(valueToSave);
-          valueToSave = date.toISOString();
-        }
-      }
       
       updateLead(editingId, editField, valueToSave);
     }
@@ -1679,44 +1760,24 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
       }
 
       case 'last_contact': {
-        // Format datetime for input (YYYY-MM-DDTHH:MM)
-        const formatDateTimeForInput = (dateString: string | null) => {
-          if (!dateString) return '';
-          const date = new Date(dateString);
-          // Get local time components
-          const year = date.getFullYear();
-          const month = String(date.getMonth() + 1).padStart(2, '0');
-          const day = String(date.getDate()).padStart(2, '0');
-          const hours = String(date.getHours()).padStart(2, '0');
-          const minutes = String(date.getMinutes()).padStart(2, '0');
-          return `${year}-${month}-${day}T${hours}:${minutes}`;
-        };
-
-        // Format datetime for display (M/D/YY h:mm AM/PM)
-        const formatDateTimeForDisplay = (dateString: string | null) => {
-          if (!dateString) return 'Add date & time';
+        // Format datetime for display (M/D/YY 11am)
+        const formatLastContact = (dateString: string | null) => {
+          if (!dateString) return 'Add contact';
           const date = new Date(dateString);
           const dateStr = date.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' });
-          const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+          const hour = date.getHours();
+          const isPM = hour >= 12;
+          const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+          const timeStr = `${displayHour}${isPM ? 'pm' : 'am'}`;
           return `${dateStr} ${timeStr}`;
         };
 
-        return editingId === lead.id && editField === 'last_contact' ? (
-          <input
-            type="datetime-local"
-            value={editValue}
-            onChange={(e) => setEditValue(e.target.value)}
-            onBlur={saveEdit}
-            onKeyDown={(e) => e.key === 'Enter' && saveEdit()}
-            autoFocus
-            className="w-full px-2 py-1 text-sm border border-[#5a7fc7] rounded"
-          />
-        ) : (
+        return (
           <button
-            onClick={() => startEdit(lead.id, 'last_contact', formatDateTimeForInput(lead.last_contact))}
+            onClick={() => setShowContactHistoryModal({ leadId: lead.id, leadName: lead.name })}
             className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
           >
-            {formatDateTimeForDisplay(lead.last_contact)}
+            {formatLastContact(lead.last_contact)}
           </button>
         );
       }
@@ -2637,6 +2698,122 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                 className="flex-1 px-4 py-2 bg-[#5a7fc7] text-white rounded-md text-sm font-medium hover:bg-[#4a6fb7] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {showCopyMoveModal.action === 'copy' ? 'Copy to Tab' : 'Move to Tab'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Contact History Modal */}
+      {showContactHistoryModal && (
+        <div 
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" 
+          onClick={() => setShowContactHistoryModal(null)}
+        >
+          <div 
+            className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold text-[#1a1a1a] mb-4">
+              Contact History - {showContactHistoryModal.leadName}
+            </h2>
+
+            {/* Add New Contact Form */}
+            <div className="bg-[#f5f5f5] border border-[#e5e5e5] rounded-lg p-4 mb-4">
+              <h3 className="text-sm font-medium text-[#1a1a1a] mb-3">Add New Contact</h3>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div>
+                  <label className="block text-xs text-[#6b6b6b] mb-1">Date</label>
+                  <input
+                    type="date"
+                    value={newContactDate}
+                    onChange={(e) => setNewContactDate(e.target.value)}
+                    className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-[#6b6b6b] mb-1">Time</label>
+                  <input
+                    type="time"
+                    value={newContactTime}
+                    onChange={(e) => setNewContactTime(e.target.value)}
+                    className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                  />
+                </div>
+              </div>
+              <div className="mb-3">
+                <label className="block text-xs text-[#6b6b6b] mb-1">Notes (optional)</label>
+                <textarea
+                  value={newContactNotes}
+                  onChange={(e) => setNewContactNotes(e.target.value)}
+                  placeholder="Add notes about this contact..."
+                  className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm min-h-[60px] resize-y"
+                />
+              </div>
+              <button
+                onClick={handleAddContact}
+                disabled={!newContactDate || !newContactTime}
+                className="w-full px-4 py-2 bg-[#5a7fc7] text-white rounded-md text-sm font-medium hover:bg-[#4a6fb7] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Add Contact
+              </button>
+            </div>
+
+            {/* Contact History List */}
+            <div>
+              <h3 className="text-sm font-medium text-[#1a1a1a] mb-3">Previous Contacts ({contactHistory.length})</h3>
+              {contactHistory.length > 0 ? (
+                <div className="space-y-2">
+                  {contactHistory.map((contact) => {
+                    const date = new Date(contact.contact_date);
+                    const dateStr = date.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' });
+                    const hour = date.getHours();
+                    const isPM = hour >= 12;
+                    const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+                    const minute = String(date.getMinutes()).padStart(2, '0');
+                    const timeStr = `${displayHour}:${minute}${isPM ? 'pm' : 'am'}`;
+                    
+                    return (
+                      <div 
+                        key={contact.id} 
+                        className="bg-white border border-[#e5e5e5] rounded-lg p-3 hover:bg-[#f5f5f5] transition-colors"
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-sm font-medium text-[#1a1a1a]">
+                                {dateStr} {timeStr}
+                              </span>
+                            </div>
+                            {contact.notes && (
+                              <p className="text-sm text-[#6b6b6b] mt-1">{contact.notes}</p>
+                            )}
+                          </div>
+                          <button
+                            onClick={() => handleDeleteContact(contact.id)}
+                            className="text-[#999] hover:text-[#8a2a2a] transition-colors ml-2"
+                            title="Delete contact"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-sm text-[#6b6b6b] italic text-center py-8">No contact history yet</p>
+              )}
+            </div>
+
+            <div className="mt-6">
+              <button
+                onClick={() => setShowContactHistoryModal(null)}
+                className="w-full px-4 py-2 border border-[#e5e5e5] text-[#1a1a1a] rounded-md text-sm font-medium hover:bg-[#f5f5f5] transition-colors"
+              >
+                Close
               </button>
             </div>
           </div>
