@@ -905,23 +905,44 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
 
     if (!showContactHistoryModal) return;
 
+    // Optimistically update UI immediately
+    setContactHistory(prev => prev.filter(c => c.id !== id));
+
     try {
       const res = await fetch(`/api/contact-history?id=${id}`, {
         method: 'DELETE',
         credentials: 'include',
       });
 
+      console.log('Delete response status:', res.status, res.statusText);
+
       if (res.ok) {
-        // Refresh contact history from server
-        await fetchContactHistory(showContactHistoryModal.leadId);
+        const result = await res.json();
+        console.log('Delete successful:', result);
         // Refresh dashboard to update last_contact
         router.refresh();
       } else {
-        alert('Failed to delete contact');
+        let errorData;
+        try {
+          errorData = await res.json();
+        } catch (e) {
+          errorData = { error: `HTTP ${res.status}: ${res.statusText}` };
+        }
+        console.error('Delete failed:', res.status, errorData);
+        // Revert on failure - fetch from server
+        await fetchContactHistory(showContactHistoryModal.leadId);
+        
+        if (res.status === 404) {
+          alert('Contact entry not found. It may have already been deleted.');
+        } else {
+          alert(`Failed to delete contact: ${errorData.error || 'Unknown error'}\n\nPlease run fix-contact-history.sql in Supabase SQL Editor`);
+        }
       }
     } catch (error) {
       console.error('Error deleting contact:', error);
-      alert('Failed to delete contact');
+      // Revert on error - fetch from server
+      await fetchContactHistory(showContactHistoryModal.leadId);
+      alert('Failed to delete contact. Check console for details.');
     }
   };
 

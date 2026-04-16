@@ -43,7 +43,14 @@ export async function GET(request: NextRequest) {
 
   if (error) {
     console.error('Error fetching contact history:', error);
-    return NextResponse.json({ error: 'Failed to fetch contact history' }, { status: 500 });
+    // Check if table doesn't exist
+    if (error.message?.includes('relation') && error.message?.includes('does not exist')) {
+      return NextResponse.json({ 
+        error: 'Contact history table not found. Please run the database migration (add-contact-history.sql)',
+        history: [] 
+      }, { status: 200 }); // Return 200 with empty array so UI doesn't break
+    }
+    return NextResponse.json({ error: error.message || 'Failed to fetch contact history' }, { status: 500 });
   }
 
   return NextResponse.json({ history: data });
@@ -138,17 +145,24 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { error } = await supabase
+  const { data: deletedData, error } = await supabase
     .from('contact_history')
     .delete()
     .eq('id', id)
-    .eq('user_id', user.id);
+    .eq('user_id', user.id)
+    .select();
 
   if (error) {
     console.error('Error deleting contact history:', error);
-    return NextResponse.json({ error: 'Failed to delete contact history' }, { status: 500 });
+    return NextResponse.json({ error: error.message || 'Failed to delete contact history' }, { status: 500 });
   }
 
+  if (!deletedData || deletedData.length === 0) {
+    console.warn('No contact history entry found to delete:', id);
+    return NextResponse.json({ error: 'Contact history entry not found' }, { status: 404 });
+  }
+
+  console.log('Successfully deleted contact history:', id);
   revalidatePath('/dashboard');
-  return NextResponse.json({ success: true });
+  return NextResponse.json({ success: true, deleted: deletedData });
 }
