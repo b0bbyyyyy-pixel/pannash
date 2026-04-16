@@ -661,8 +661,29 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     }
   };
 
+  // Convert URLs to clickable links (with option to make them clickable or just styled)
+  const linkifyText = (text: string, clickable: boolean = false) => {
+    if (!text) return text;
+    
+    // Regex to match URLs (http://, https://, www.)
+    const urlRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)/gi;
+    
+    return text.replace(urlRegex, (match) => {
+      // If URL doesn't start with http/https, add https://
+      const href = match.startsWith('http') ? match : `https://${match}`;
+      
+      if (clickable) {
+        // In expanded modal - make links clickable
+        return `<a href="${href}" target="_blank" rel="noopener noreferrer" class="text-[#5a7fc7] underline hover:text-[#4a6fb7]" onclick="event.stopPropagation()">${match}</a>`;
+      } else {
+        // In cell view - just style as link but don't make clickable
+        return `<span class="text-[#5a7fc7] underline">${match}</span>`;
+      }
+    });
+  };
+
   // Convert markdown to HTML for display
-  const renderMarkdown = (text: string) => {
+  const renderMarkdown = (text: string, clickableLinks: boolean = false) => {
     if (!text) return text;
     
     // Convert **bold** to <strong>
@@ -670,6 +691,9 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     
     // Convert *italic* to <em> (but not if it's part of **)
     formatted = formatted.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
+    
+    // Convert URLs to links (clickable or just styled)
+    formatted = linkifyText(formatted, clickableLinks);
     
     return formatted;
   };
@@ -698,16 +722,24 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
 
   const fetchAttachments = async (leadId: string, columnField: string) => {
     try {
-      const res = await fetch(`/api/attachments?leadId=${leadId}&columnField=${columnField}`);
+      const res = await fetch(`/api/attachments?leadId=${leadId}&columnField=${columnField}`, {
+        credentials: 'include',
+      });
       if (res.ok) {
         const { attachments: fetchedAttachments } = await res.json();
         setAttachments(fetchedAttachments || []);
         // Update count
         const countKey = `${leadId}-${columnField}`;
         setAttachmentCounts(prev => ({ ...prev, [countKey]: fetchedAttachments?.length || 0 }));
+      } else {
+        // Silently handle non-ok responses (like 401 unauthorized)
+        console.warn('Failed to fetch attachments:', res.status);
+        setAttachments([]);
       }
     } catch (error) {
-      console.error('Error fetching attachments:', error);
+      // Silently handle fetch errors (network issues, etc.)
+      console.warn('Error fetching attachments:', error);
+      setAttachments([]);
     }
   };
 
@@ -1134,7 +1166,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     // Handle expandable text fields (configurable via column settings)
     if (column.expandable) {
       const value = lead[fieldKey] as string | null;
-      const formattedValue = value ? renderMarkdown(value) : null;
+      const formattedValue = value ? renderMarkdown(value, false) : null; // Links not clickable in cell view
       const countKey = `${lead.id}-${columnField}`;
       const attachmentCount = attachmentCounts[countKey] || 0;
       
@@ -1346,7 +1378,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
           >
             <div className="flex items-center gap-1.5">
               {shouldRenderMarkdown ? (
-                <span dangerouslySetInnerHTML={{ __html: renderMarkdown(displayText) }} />
+                <span dangerouslySetInnerHTML={{ __html: renderMarkdown(displayText, false) }} />
               ) : (
                 <span>{displayText}</span>
               )}
@@ -1386,7 +1418,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
             className="hover:text-[#5a7fc7] transition-colors text-left"
           >
             <div className="flex items-center gap-1.5">
-              <span dangerouslySetInnerHTML={{ __html: renderMarkdown(lead.name || '') }} />
+              <span dangerouslySetInnerHTML={{ __html: renderMarkdown(lead.name || '', false) }} />
               {column.allowAttachments && attachmentCount > 0 && (
                 <span className="flex items-center gap-1 text-xs text-[#6b6b6b]">
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1479,7 +1511,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
           >
             <div className="flex items-center gap-1.5">
               {shouldRenderMarkdown ? (
-                <span dangerouslySetInnerHTML={{ __html: renderMarkdown(displayEmail) }} />
+                <span dangerouslySetInnerHTML={{ __html: renderMarkdown(displayEmail, false) }} />
               ) : (
                 <span>{displayEmail}</span>
               )}
@@ -1533,7 +1565,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
               className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
             >
               <div className="flex items-center gap-1.5">
-                <span dangerouslySetInnerHTML={{ __html: renderMarkdown(lead.phone || 'Add phone') }} />
+                <span dangerouslySetInnerHTML={{ __html: renderMarkdown(lead.phone || 'Add phone', false) }} />
                 {column.allowAttachments && attachmentCount > 0 && (
                   <span className="flex items-center gap-1 text-xs text-[#6b6b6b]">
                     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1623,7 +1655,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
           >
             <div className="flex items-center gap-1.5">
               {shouldRenderMarkdown ? (
-                <span dangerouslySetInnerHTML={{ __html: renderMarkdown(displayText) }} />
+                <span dangerouslySetInnerHTML={{ __html: renderMarkdown(displayText, false) }} />
               ) : (
                 <span>{displayText}</span>
               )}
@@ -2058,9 +2090,41 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
               value={showExpandedTextModal.value}
               onChange={(e) => setShowExpandedTextModal({ ...showExpandedTextModal, value: e.target.value })}
               className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm min-h-[200px] resize-y font-mono"
-              placeholder={`Enter ${showExpandedTextModal.label.toLowerCase()} here...\n\nFormatting:\n**bold text**\n*italic text*`}
+              placeholder={`Enter ${showExpandedTextModal.label.toLowerCase()} here...\n\nFormatting:\n**bold text**\n*italic text*\nURLs are automatically clickable`}
               autoFocus
             />
+            
+            {/* Clickable Links Preview - Only shows extracted links */}
+            {(() => {
+              const urlRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)/gi;
+              const matches = showExpandedTextModal.value.match(urlRegex);
+              
+              return matches && matches.length > 0 ? (
+                <div className="mt-3 p-3 bg-[#f5f5f5] border border-[#e5e5e5] rounded-md">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-medium text-[#6b6b6b]">Links in this field ({matches.length})</span>
+                    <span className="text-xs text-[#6b6b6b] italic">Click to open</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {matches.map((url, idx) => {
+                      const href = url.startsWith('http') ? url : `https://${url}`;
+                      return (
+                        <a
+                          key={idx}
+                          href={href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block text-sm text-[#5a7fc7] underline hover:text-[#4a6fb7] truncate"
+                          title={url}
+                        >
+                          {url}
+                        </a>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null;
+            })()}
 
             {/* File Attachments Section - Only show if column allows attachments */}
             {columns.find(c => c.field === showExpandedTextModal.field)?.allowAttachments && (
