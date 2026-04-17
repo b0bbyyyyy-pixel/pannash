@@ -29,7 +29,18 @@ interface Lead {
   scheduled_text_time: string | null;
   scheduled_text_frequency: string | null;
   last_scheduled_text_sent: string | null;
+  scheduled_email_template_id: string | null;
+  scheduled_email_time: string | null;
+  scheduled_email_frequency: string | null;
+  last_scheduled_email_sent: string | null;
   month_key: string;
+}
+
+interface EmailTemplate {
+  id: string;
+  name: string;
+  subject: string;
+  body: string;
 }
 
 interface Stage {
@@ -151,6 +162,18 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   const [selectedDestinationMonth, setSelectedDestinationMonth] = useState('');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; lead: Lead } | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+  const [showScheduleEmailModal, setShowScheduleEmailModal] = useState<string | null>(null);
+  const [selectedEmailTemplate, setSelectedEmailTemplate] = useState<string>('');
+  const [scheduledEmailDate, setScheduledEmailDate] = useState('');
+  const [scheduledEmailTime, setScheduledEmailTime] = useState('09:00');
+  const [scheduledEmailFrequency, setScheduledEmailFrequency] = useState('once');
+  const [scheduledEmailCountdowns, setScheduledEmailCountdowns] = useState<{ [key: string]: { days: number; time: string } | 'READY' }>({});
+  const [savedEmailTemplates, setSavedEmailTemplates] = useState<EmailTemplate[]>([]);
+  const [showTemplateManager, setShowTemplateManager] = useState(false);
+  const [editingTemplate, setEditingTemplate] = useState<EmailTemplate | null>(null);
+  const [templateName, setTemplateName] = useState('');
+  const [templateSubject, setTemplateSubject] = useState('');
+  const [templateBody, setTemplateBody] = useState('');
   const router = useRouter();
 
   // Update local state when props change (e.g., switching tabs)
@@ -174,6 +197,24 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
       }
     };
     fetchUserTimezone();
+  }, []);
+
+  // Fetch saved email templates for scheduled emails
+  useEffect(() => {
+    const fetchSavedEmailTemplates = async () => {
+      try {
+        const response = await fetch('/api/email-templates', {
+          credentials: 'include',
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setSavedEmailTemplates(data.templates || []);
+        }
+      } catch (error) {
+        console.error('Error fetching saved email templates:', error);
+      }
+    };
+    fetchSavedEmailTemplates();
   }, []);
 
   // Close context menu when clicking outside
@@ -583,6 +624,218 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
       console.error('Failed to copy:', error);
       alert('Failed to copy text');
     }
+  };
+
+  // Email scheduling functions
+  const openScheduleEmailModal = (leadId: string) => {
+    const lead = leads.find(l => l.id === leadId);
+    if (lead) {
+      // Pre-fill if already scheduled
+      if (lead.scheduled_email_template_id) {
+        setSelectedEmailTemplate(lead.scheduled_email_template_id);
+      }
+      if (lead.scheduled_email_time) {
+        const date = new Date(lead.scheduled_email_time);
+        setScheduledEmailDate(date.toISOString().split('T')[0]);
+        setScheduledEmailTime(`${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`);
+      }
+      if (lead.scheduled_email_frequency) {
+        setScheduledEmailFrequency(lead.scheduled_email_frequency);
+      }
+    }
+    setShowScheduleEmailModal(leadId);
+  };
+
+  const handleScheduleEmail = async (leadId: string, sendNow: boolean = false) => {
+    if (!selectedEmailTemplate) {
+      alert('Please select an email template');
+      return;
+    }
+
+    let scheduledTimeISO = null;
+    
+    if (!sendNow) {
+      if (!scheduledEmailDate) {
+        alert('Please select a date');
+        return;
+      }
+      // Combine date and time
+      const scheduledDateTime = new Date(`${scheduledEmailDate}T${scheduledEmailTime}`);
+      scheduledTimeISO = scheduledDateTime.toISOString();
+    } else {
+      // Send now = set to current time (will show as READY)
+      scheduledTimeISO = new Date().toISOString();
+    }
+
+    // Optimistically update local state
+    setLeads(prev => prev.map(lead => 
+      lead.id === leadId ? { 
+        ...lead, 
+        scheduled_email_template_id: selectedEmailTemplate,
+        scheduled_email_time: scheduledTimeISO,
+        scheduled_email_frequency: sendNow ? 'once' : scheduledEmailFrequency
+      } : lead
+    ));
+
+    // Update parent state
+    onLeadUpdate(leadId, { 
+      scheduled_email_template_id: selectedEmailTemplate,
+      scheduled_email_time: scheduledTimeISO,
+      scheduled_email_frequency: sendNow ? 'once' : scheduledEmailFrequency
+    });
+
+    try {
+      const res = await fetch('/api/leads/schedule-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          leadId, 
+          templateId: selectedEmailTemplate,
+          scheduledTime: scheduledTimeISO,
+          frequency: sendNow ? 'once' : scheduledEmailFrequency
+        }),
+        credentials: 'include',
+      });
+
+      if (!res.ok) {
+        console.error('Failed to schedule email:', await res.text());
+        router.refresh();
+      }
+    } catch (error) {
+      console.error('Error scheduling email:', error);
+      router.refresh();
+    }
+
+    setShowScheduleEmailModal(null);
+    setSelectedEmailTemplate('');
+    setScheduledEmailDate('');
+    setScheduledEmailTime('09:00');
+    setScheduledEmailFrequency('once');
+  };
+
+  const clearScheduledEmail = async (leadId: string) => {
+    if (!confirm('Clear this scheduled email?')) return;
+
+    // Optimistically update local state
+    setLeads(prev => prev.map(lead => 
+      lead.id === leadId ? { 
+        ...lead, 
+        scheduled_email_template_id: null,
+        scheduled_email_time: null,
+        scheduled_email_frequency: null
+      } : lead
+    ));
+
+    // Update parent state
+    onLeadUpdate(leadId, { 
+      scheduled_email_template_id: null,
+      scheduled_email_time: null,
+      scheduled_email_frequency: null
+    });
+
+    try {
+      const res = await fetch('/api/leads/schedule-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          leadId, 
+          templateId: null,
+          scheduledTime: null,
+          frequency: null
+        }),
+        credentials: 'include',
+      });
+
+      if (!res.ok) {
+        console.error('Failed to clear scheduled email:', await res.text());
+        router.refresh();
+      }
+    } catch (error) {
+      console.error('Error clearing scheduled email:', error);
+      router.refresh();
+    }
+  };
+
+  const copyEmailToClipboard = async (templateId: string) => {
+    const template = savedEmailTemplates.find(t => t.id === templateId);
+    if (!template) return;
+    
+    const emailContent = `Subject: ${template.subject}\n\n${template.body}`;
+    try {
+      await navigator.clipboard.writeText(emailContent);
+      alert('Email copied to clipboard!');
+    } catch (error) {
+      console.error('Failed to copy:', error);
+      alert('Failed to copy email');
+    }
+  };
+
+  // Email template management functions
+  const handleSaveTemplate = async () => {
+    if (!templateName.trim() || !templateSubject.trim() || !templateBody.trim()) {
+      alert('Please fill in all template fields');
+      return;
+    }
+
+    try {
+      const url = editingTemplate ? '/api/email-templates' : '/api/email-templates';
+      const method = editingTemplate ? 'PUT' : 'POST';
+      const body = editingTemplate 
+        ? { id: editingTemplate.id, name: templateName, subject: templateSubject, body: templateBody }
+        : { name: templateName, subject: templateSubject, body: templateBody };
+
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        credentials: 'include',
+      });
+
+      if (res.ok) {
+        const { template } = await res.json();
+        if (editingTemplate) {
+          setSavedEmailTemplates(prev => prev.map(t => t.id === template.id ? template : t));
+        } else {
+          setSavedEmailTemplates(prev => [...prev, template]);
+        }
+        setEditingTemplate(null);
+        setTemplateName('');
+        setTemplateSubject('');
+        setTemplateBody('');
+      } else {
+        alert('Failed to save template');
+      }
+    } catch (error) {
+      console.error('Error saving template:', error);
+      alert('Failed to save template');
+    }
+  };
+
+  const handleDeleteTemplate = async (templateId: string) => {
+    if (!confirm('Delete this template?')) return;
+
+    try {
+      const res = await fetch(`/api/email-templates?id=${templateId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+
+      if (res.ok) {
+        setSavedEmailTemplates(prev => prev.filter(t => t.id !== templateId));
+      } else {
+        alert('Failed to delete template');
+      }
+    } catch (error) {
+      console.error('Error deleting template:', error);
+      alert('Failed to delete template');
+    }
+  };
+
+  const handleEditTemplate = (template: EmailTemplate) => {
+    setEditingTemplate(template);
+    setTemplateName(template.name);
+    setTemplateSubject(template.subject);
+    setTemplateBody(template.body);
   };
 
   const handleCopyLead = async (lead: Lead, destinationMonth: string) => {
@@ -1160,11 +1413,26 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     });
     setScheduledTextCountdowns(initialScheduledCountdowns);
 
+    // Calculate initial scheduled email countdowns
+    const initialScheduledEmailCountdowns: { [key: string]: { days: number; time: string } | 'READY' } = {};
+    leads.forEach(lead => {
+      if (lead.scheduled_email_time) {
+        const result = getCountdown(lead.scheduled_email_time);
+        if (result === 'EXPIRED') {
+          initialScheduledEmailCountdowns[lead.id] = 'READY';
+        } else if (result) {
+          initialScheduledEmailCountdowns[lead.id] = result;
+        }
+      }
+    });
+    setScheduledEmailCountdowns(initialScheduledEmailCountdowns);
+
     // Update every second
     const interval = setInterval(() => {
       const newCountdowns: { [key: string]: { days: number; time: string } | string } = {};
       const newAutoCountdowns: { [key: string]: { email: string, text: string } } = {};
       const newScheduledCountdowns: { [key: string]: { days: number; time: string } | 'READY' } = {};
+      const newScheduledEmailCountdowns: { [key: string]: { days: number; time: string } | 'READY' } = {};
       
       leads.forEach(lead => {
         if (lead.timer_end_date) {
@@ -1183,11 +1451,20 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
             newScheduledCountdowns[lead.id] = result;
           }
         }
+        if (lead.scheduled_email_time) {
+          const result = getCountdown(lead.scheduled_email_time);
+          if (result === 'EXPIRED') {
+            newScheduledEmailCountdowns[lead.id] = 'READY';
+          } else if (result) {
+            newScheduledEmailCountdowns[lead.id] = result;
+          }
+        }
       });
       
       setCountdown(newCountdowns);
       setAutoCountdowns(newAutoCountdowns);
       setScheduledTextCountdowns(newScheduledCountdowns);
+      setScheduledEmailCountdowns(newScheduledEmailCountdowns);
     }, 1000);
 
     return () => clearInterval(interval);
@@ -1892,88 +2169,84 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         );
       }
 
-      case 'auto_email_frequency':
-        const emailFreq = emailFrequencies.find(f => f.name === lead.auto_email_frequency);
-        const emailCountdown = autoCountdowns[lead.id]?.email;
+      case 'auto_email_frequency': {
+        const scheduledEmailCountdown = scheduledEmailCountdowns[lead.id];
+        const hasScheduledEmail = lead.scheduled_email_time && lead.scheduled_email_template_id;
+        
         return (
           <>
-            <button
-              onClick={() => setShowEmailModal(lead.id)}
-              className="w-full px-2 py-1 text-xs border-0 rounded cursor-pointer flex flex-col items-start"
-              style={{
-                backgroundColor: emailFreq?.bg_color || '#f5f5f5',
-                color: emailFreq?.text_color || '#999'
-              }}
-            >
-              <span>{lead.auto_email_frequency}</span>
-              {emailCountdown && emailCountdown !== 'READY' && (
-                <span 
+            {hasScheduledEmail ? (
+              scheduledEmailCountdown === 'READY' ? (
+                <div 
+                  className="border border-[#5a7fc7] rounded cursor-pointer hover:bg-[#f5f5f5] transition-colors"
+                  onClick={() => openScheduleEmailModal(lead.id)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    clearScheduledEmail(lead.id);
+                  }}
+                  title="Click to edit | Right-click to clear"
                   style={{ 
-                    fontFamily: 'var(--font-roboto-mono), monospace', 
-                    fontSize: '9px',
-                    color: '#ff0000',
-                    marginTop: '2px'
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center',
+                    gap: '6px',
+                    padding: '4px 8px',
+                    width: 'fit-content',
+                    margin: '0 auto'
                   }}
                 >
-                  {emailCountdown}
-                </span>
-              )}
-            </button>
-            
-            {showEmailModal === lead.id && (
-              <div 
-                className="fixed inset-0 bg-black/20 flex items-center justify-center z-50 email-modal-container" 
-                onClick={() => setShowEmailModal(null)}
-              >
-                <div 
-                  className="bg-white border-2 border-[#5a7fc7] rounded-md shadow-xl p-4 w-[300px]"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <h3 className="text-sm font-medium text-[#1a1a1a] mb-3">Email Automation</h3>
-                  <div className="mb-3">
-                    <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Frequency</label>
-                    <select
-                      value={lead.auto_email_frequency}
-                      onChange={(e) => {
-                        updateLead(lead.id, 'auto_email_frequency', e.target.value);
-                        // If setting a frequency for the first time, set last_sent to now
-                        if (e.target.value !== 'Off' && !lead.last_email_sent) {
-                          updateLead(lead.id, 'last_email_sent', new Date().toISOString());
-                        }
-                      }}
-                      className="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded"
-                    >
-                      {emailFrequencies.map((freq, idx) => (
-                        <option key={`email-${idx}`} value={freq.name}>{freq.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                  {lead.auto_email_frequency !== 'Off' && (
-                    <div className="mb-3">
-                      <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Template</label>
-                      <select
-                        value={lead.email_template_id || ''}
-                        onChange={(e) => updateLead(lead.id, 'email_template_id', e.target.value)}
-                        className="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded"
-                      >
-                        <option value="">Select template...</option>
-                        {emailTemplates.map((template) => (
-                          <option key={template.id} value={template.id}>{template.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
                   <button
-                    onClick={() => setShowEmailModal(null)}
-                    className="w-full px-3 py-2 bg-[#1a1a1a] text-white rounded text-sm font-medium hover:bg-[#2a2a2a]"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      copyEmailToClipboard(lead.scheduled_email_template_id!);
+                    }}
+                    className="px-1.5 py-0.5 bg-[#5a7fc7] text-white rounded hover:bg-[#4a6fb7] transition-colors"
+                    style={{ fontSize: '10px', fontWeight: '600', lineHeight: '1.2' }}
                   >
-                    Done
+                    Copy
                   </button>
+                  <span 
+                    className="text-[#00cc00] font-bold animate-pulse"
+                    style={{ fontSize: '11px', fontWeight: '700', lineHeight: '1.2' }}
+                  >
+                    Send Email
+                  </span>
                 </div>
-              </div>
+              ) : (
+                <button
+                  onClick={() => openScheduleEmailModal(lead.id)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    clearScheduledEmail(lead.id);
+                  }}
+                  className="w-full px-2 py-1 text-xs border border-[#5a7fc7] rounded cursor-pointer hover:bg-[#f5f5f5] transition-colors"
+                  title="Click to edit | Right-click to clear"
+                >
+                  {typeof scheduledEmailCountdown === 'object' ? (
+                    <span 
+                      style={{ 
+                        fontFamily: 'var(--font-roboto-mono), monospace', 
+                        fontSize: '11px',
+                        color: '#5a7fc7',
+                        fontWeight: '700'
+                      }}
+                    >
+                      {scheduledEmailCountdown.days}D {scheduledEmailCountdown.time}
+                    </span>
+                  ) : null}
+                </button>
+              )
+            ) : (
+              <button
+                onClick={() => openScheduleEmailModal(lead.id)}
+                className="w-full px-2 py-1 text-xs border border-[#e5e5e5] rounded cursor-pointer hover:border-[#5a7fc7] hover:bg-[#f5f5f5] transition-colors text-[#6b6b6b]"
+              >
+                Schedule Email
+              </button>
             )}
           </>
         );
+      }
 
       case 'auto_text_frequency':
         const scheduledCountdown = scheduledTextCountdowns[lead.id];
@@ -2649,6 +2922,350 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                 className="flex-1 px-4 py-2 bg-[#5a7fc7] text-white rounded-md text-sm font-medium hover:bg-[#4a6fb7] transition-colors"
               >
                 Schedule Text
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Schedule Email Modal */}
+      {showScheduleEmailModal && (
+        <div 
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" 
+          onClick={() => setShowScheduleEmailModal(null)}
+        >
+          <div 
+            className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold text-[#1a1a1a] mb-4">Schedule Email</h2>
+            
+            <div className="space-y-4">
+              {/* Template Selection */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-medium text-[#1a1a1a]">
+                    Select Email Template *
+                  </label>
+                  <button
+                    onClick={() => setShowTemplateManager(true)}
+                    className="text-xs text-[#5a7fc7] hover:text-[#4a6fb7] font-medium"
+                  >
+                    + Manage Templates
+                  </button>
+                </div>
+                <select
+                  value={selectedEmailTemplate}
+                  onChange={(e) => setSelectedEmailTemplate(e.target.value)}
+                className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-[#5a7fc7] focus:border-[#5a7fc7]"
+              >
+                <option value="">Choose a template...</option>
+                {savedEmailTemplates.map((template) => (
+                  <option key={template.id} value={template.id}>{template.name}</option>
+                ))}
+              </select>
+              </div>
+
+            {/* Email Preview */}
+            {selectedEmailTemplate && (() => {
+              const template = savedEmailTemplates.find(t => t.id === selectedEmailTemplate);
+              return template ? (
+                  <div className="border border-[#e5e5e5] rounded-lg p-4 bg-[#f5f5f5]">
+                    <div className="text-xs font-medium text-[#6b6b6b] mb-3">Email Preview:</div>
+                    <div className="bg-white rounded p-3 space-y-3">
+                      <div>
+                        <span className="text-xs font-semibold text-[#6b6b6b]">Subject:</span>
+                        <p className="text-sm text-[#1a1a1a] mt-1">{template.subject}</p>
+                      </div>
+                      <div className="border-t border-[#e5e5e5] pt-3">
+                        <span className="text-xs font-semibold text-[#6b6b6b]">Body:</span>
+                        <p className="text-sm text-[#1a1a1a] mt-1 whitespace-pre-wrap">{template.body}</p>
+                      </div>
+                    </div>
+                  </div>
+                ) : null;
+              })()}
+
+              {/* Send Options */}
+              <div className="border-t border-[#e5e5e5] pt-4">
+                <h3 className="text-sm font-medium text-[#1a1a1a] mb-3">Sending Options</h3>
+                
+                {/* Send Now Button */}
+                <button
+                  onClick={() => showScheduleEmailModal && handleScheduleEmail(showScheduleEmailModal, true)}
+                  disabled={!selectedEmailTemplate}
+                  className="w-full px-4 py-3 bg-[#00cc00] text-white rounded-md text-sm font-medium hover:bg-[#00b300] transition-colors mb-3 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  📨 Send Now (Copy & Paste)
+                </button>
+
+                <div className="text-center text-xs text-[#6b6b6b] mb-3">— OR —</div>
+
+                {/* Schedule for Later */}
+                <div className="space-y-3">
+                  <label className="block text-sm font-medium text-[#1a1a1a]">
+                    Schedule for Later
+                  </label>
+                  
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs text-[#6b6b6b] mb-1">Date</label>
+                      <input
+                        type="date"
+                        value={scheduledEmailDate}
+                        onChange={(e) => setScheduledEmailDate(e.target.value)}
+                        className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-[#6b6b6b] mb-1">Time</label>
+                      <input
+                        type="time"
+                        value={scheduledEmailTime}
+                        onChange={(e) => setScheduledEmailTime(e.target.value)}
+                        className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-[#6b6b6b] mb-1">Frequency</label>
+                    <select
+                      value={scheduledEmailFrequency}
+                      onChange={(e) => setScheduledEmailFrequency(e.target.value)}
+                      className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                    >
+                      <option value="once">Once</option>
+                      <option value="daily">Daily</option>
+                      <option value="weekly">Weekly</option>
+                      <option value="monthly">Monthly</option>
+                    </select>
+                    <p className="text-xs text-[#6b6b6b] mt-1">
+                      {scheduledEmailFrequency === 'once' 
+                        ? 'Email will be sent once at the specified time' 
+                        : `Email will repeat ${scheduledEmailFrequency} after initial send`}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Info Box */}
+              <div className="bg-[#f0f7ff] border border-[#5a7fc7] rounded-lg p-3 text-xs text-[#1a1a1a]">
+                <p className="font-semibold mb-1">📋 Manual Send (Until Email Connected):</p>
+                <p>When ready, click "Copy" to get the email content. Paste into your email client manually. After email service is connected, emails will send automatically.</p>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowScheduleEmailModal(null)}
+                className="flex-1 px-4 py-2 border border-[#e5e5e5] text-[#1a1a1a] rounded-md text-sm font-medium hover:bg-[#f5f5f5] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => showScheduleEmailModal && handleScheduleEmail(showScheduleEmailModal, false)}
+                disabled={!selectedEmailTemplate || !scheduledEmailDate}
+                className="flex-1 px-4 py-2 bg-[#5a7fc7] text-white rounded-md text-sm font-medium hover:bg-[#4a6fb7] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Schedule Email
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Email Template Manager Modal */}
+      {showTemplateManager && (
+        <div 
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]" 
+          onClick={() => {
+            setShowTemplateManager(false);
+            setEditingTemplate(null);
+            setTemplateName('');
+            setTemplateSubject('');
+            setTemplateBody('');
+          }}
+        >
+          <div 
+            className="bg-white rounded-lg p-6 max-w-7xl w-full mx-4 max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold text-[#1a1a1a] mb-4">
+              {editingTemplate ? 'Edit Email Template' : 'Manage Email Templates'}
+            </h2>
+
+            {/* Template Form */}
+            <div className="bg-[#f5f5f5] border border-[#e5e5e5] rounded-lg p-4 mb-4">
+              <h3 className="text-sm font-medium text-[#1a1a1a] mb-3">
+                {editingTemplate ? 'Edit Template' : 'Create New Template'}
+              </h3>
+              <div className="grid grid-cols-2 gap-6">
+                {/* Left Side - Form Inputs */}
+                <div className="space-y-3 flex flex-col">
+                  <div>
+                    <label className="block text-xs text-[#6b6b6b] mb-1">Template Name *</label>
+                    <input
+                      type="text"
+                      value={templateName}
+                      onChange={(e) => setTemplateName(e.target.value)}
+                      placeholder="e.g., Follow Up Email"
+                      className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-[#6b6b6b] mb-1">Email Subject *</label>
+                    <input
+                      type="text"
+                      value={templateSubject}
+                      onChange={(e) => setTemplateSubject(e.target.value)}
+                      placeholder="e.g., Following up on our conversation"
+                      className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                    />
+                  </div>
+                  <div className="flex-1 flex flex-col">
+                    <label className="block text-xs text-[#6b6b6b] mb-1">Email Body *</label>
+                    <textarea
+                      value={templateBody}
+                      onChange={(e) => setTemplateBody(e.target.value)}
+                      placeholder="Enter your email content here..."
+                      className="flex-1 min-h-[500px] px-3 py-2 border border-[#e5e5e5] rounded-md text-sm resize-none font-sans"
+                      style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleSaveTemplate}
+                      disabled={!templateName.trim() || !templateSubject.trim() || !templateBody.trim()}
+                      className="flex-1 px-4 py-2 bg-[#5a7fc7] text-white rounded-md text-sm font-medium hover:bg-[#4a6fb7] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {editingTemplate ? 'Update Template' : 'Save Template'}
+                    </button>
+                    {editingTemplate && (
+                      <button
+                        onClick={() => {
+                          setEditingTemplate(null);
+                          setTemplateName('');
+                          setTemplateSubject('');
+                          setTemplateBody('');
+                        }}
+                        className="px-4 py-2 border border-[#e5e5e5] text-[#1a1a1a] rounded-md text-sm font-medium hover:bg-[#f5f5f5] transition-colors"
+                      >
+                        Cancel Edit
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Right Side - Full Email Preview */}
+                <div className="flex flex-col">
+                  <label className="block text-xs text-[#6b6b6b] mb-1">Live Email Preview</label>
+                  <div className="bg-white border-2 border-[#d4d4d4] rounded-md shadow-lg flex-1 overflow-hidden flex flex-col">
+                    {/* Email Header */}
+                    <div className="border-b border-[#e5e5e5] p-4 bg-[#f9f9f9]">
+                      <div className="space-y-2 text-sm">
+                        <div className="flex">
+                          <span className="text-[#6b6b6b] font-medium w-16 flex-shrink-0">From:</span>
+                          <span className="text-[#1a1a1a]">you@gostwrk.io</span>
+                        </div>
+                        <div className="flex">
+                          <span className="text-[#6b6b6b] font-medium w-16 flex-shrink-0">To:</span>
+                          <span className="text-[#1a1a1a]">recipient@example.com</span>
+                        </div>
+                        <div className="flex">
+                          <span className="text-[#6b6b6b] font-medium w-16 flex-shrink-0">Subject:</span>
+                          <span className="text-[#1a1a1a] font-semibold">
+                            {templateSubject || <span className="text-[#999] italic font-normal">Your email subject...</span>}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    {/* Email Body - 8.5x11 proportions */}
+                    <div className="flex-1 p-8 overflow-y-auto bg-white">
+                      <div 
+                        className="text-sm text-[#1a1a1a] whitespace-pre-wrap leading-relaxed"
+                        style={{ 
+                          fontFamily: 'system-ui, -apple-system, sans-serif',
+                          minHeight: '600px',
+                          maxWidth: '100%'
+                        }}
+                      >
+                        {templateBody || (
+                          <span className="text-[#999] italic">
+                            Your email content will appear here as you type...
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          {/* Saved Templates List */}
+          <div>
+            <h3 className="text-sm font-medium text-[#1a1a1a] mb-3">
+              Saved Templates ({savedEmailTemplates.length})
+            </h3>
+            {savedEmailTemplates.length > 0 ? (
+              <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                {savedEmailTemplates.map((template) => (
+                    <div 
+                      key={template.id} 
+                      className="bg-white border border-[#e5e5e5] rounded-lg p-3"
+                    >
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="flex-1">
+                          <h4 className="text-sm font-medium text-[#1a1a1a]">{template.name}</h4>
+                          <p className="text-xs text-[#6b6b6b] mt-1">
+                            <span className="font-semibold">Subject:</span> {template.subject}
+                          </p>
+                        </div>
+                        <div className="flex gap-2 ml-2">
+                          <button
+                            onClick={() => handleEditTemplate(template)}
+                            className="text-[#5a7fc7] hover:text-[#4a6fb7] transition-colors"
+                            title="Edit template"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={() => handleDeleteTemplate(template.id)}
+                            className="text-[#999] hover:text-[#8a2a2a] transition-colors"
+                            title="Delete template"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                      <p className="text-xs text-[#6b6b6b] line-clamp-2">{template.body}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-[#6b6b6b] italic text-center py-8">
+                  No templates yet. Click "Manage Templates" to create one.
+                </p>
+              )}
+            </div>
+
+            <div className="mt-6">
+              <button
+                onClick={() => {
+                  setShowTemplateManager(false);
+                  setEditingTemplate(null);
+                  setTemplateName('');
+                  setTemplateSubject('');
+                  setTemplateBody('');
+                }}
+                className="w-full px-4 py-2 border border-[#e5e5e5] text-[#1a1a1a] rounded-md text-sm font-medium hover:bg-[#f5f5f5] transition-colors"
+              >
+                Close
               </button>
             </div>
           </div>

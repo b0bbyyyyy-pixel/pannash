@@ -31,6 +31,10 @@ interface Lead {
   scheduled_text_time: string | null;
   scheduled_text_frequency: string | null;
   last_scheduled_text_sent: string | null;
+  scheduled_email_template_id: string | null;
+  scheduled_email_time: string | null;
+  scheduled_email_frequency: string | null;
+  last_scheduled_email_sent: string | null;
   month_key: string;
 }
 
