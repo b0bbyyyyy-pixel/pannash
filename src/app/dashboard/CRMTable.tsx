@@ -174,6 +174,8 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   const [templateName, setTemplateName] = useState('');
   const [templateSubject, setTemplateSubject] = useState('');
   const [templateBody, setTemplateBody] = useState('');
+  const [editingInScheduleModal, setEditingInScheduleModal] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const router = useRouter();
 
   // Update local state when props change (e.g., switching tabs)
@@ -756,11 +758,24 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     }
   };
 
-  const copyEmailToClipboard = async (templateId: string) => {
+  const copyEmailToClipboard = async (templateId: string, lead: Lead) => {
     const template = savedEmailTemplates.find(t => t.id === templateId);
     if (!template) return;
     
-    const emailContent = `Subject: ${template.subject}\n\n${template.body}`;
+    // Replace placeholders with lead data
+    const subjectWithData = replacePlaceholders(template.subject, lead);
+    const bodyWithData = replacePlaceholders(template.body, lead);
+    
+    // Strip HTML tags for plain text copying, but keep structure
+    const stripHtml = (html: string) => {
+      const tmp = document.createElement('div');
+      tmp.innerHTML = html;
+      return tmp.textContent || tmp.innerText || '';
+    };
+    
+    const plainTextBody = stripHtml(bodyWithData.replace(/<br\s*\/?>/gi, '\n'));
+    const emailContent = `Subject: ${subjectWithData}\n\n${plainTextBody}`;
+    
     try {
       await navigator.clipboard.writeText(emailContent);
       alert('Email copied to clipboard!');
@@ -802,6 +817,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         setTemplateName('');
         setTemplateSubject('');
         setTemplateBody('');
+        setEditingInScheduleModal(false);
       } else {
         alert('Failed to save template');
       }
@@ -836,6 +852,124 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     setTemplateName(template.name);
     setTemplateSubject(template.subject);
     setTemplateBody(template.body);
+  };
+
+  // Rich text formatting functions
+  const insertBold = () => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const selectedText = templateBody.substring(start, end);
+    
+    if (selectedText) {
+      // Wrap selected text in <strong> tags
+      const before = templateBody.substring(0, start);
+      const after = templateBody.substring(end);
+      const newText = `${before}<strong>${selectedText}</strong>${after}`;
+      setTemplateBody(newText);
+      
+      // Reset cursor position after the inserted tag
+      setTimeout(() => {
+        textarea.focus();
+        textarea.setSelectionRange(start + 8 + selectedText.length + 9, start + 8 + selectedText.length + 9);
+      }, 0);
+    } else {
+      // Insert placeholder bold tags
+      const before = templateBody.substring(0, start);
+      const after = templateBody.substring(start);
+      const newText = `${before}<strong>Bold text</strong>${after}`;
+      setTemplateBody(newText);
+      
+      setTimeout(() => {
+        textarea.focus();
+        textarea.setSelectionRange(start + 8, start + 8 + 9); // Select "Bold text"
+      }, 0);
+    }
+  };
+
+  const insertImage = () => {
+    const imageUrl = prompt('Enter image URL:');
+    if (!imageUrl) return;
+
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const start = textarea.selectionStart;
+    const before = templateBody.substring(0, start);
+    const after = templateBody.substring(start);
+    const imageTag = `<img src="${imageUrl}" alt="Image" style="max-width: 100%; height: auto;" />`;
+    const newText = `${before}${imageTag}${after}`;
+    setTemplateBody(newText);
+
+    setTimeout(() => {
+      textarea.focus();
+      textarea.setSelectionRange(start + imageTag.length, start + imageTag.length);
+    }, 0);
+  };
+
+  const insertPlaceholder = (placeholder: string) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const start = textarea.selectionStart;
+    const before = templateBody.substring(0, start);
+    const after = templateBody.substring(start);
+    const newText = `${before}{{${placeholder}}}${after}`;
+    setTemplateBody(newText);
+
+    setTimeout(() => {
+      textarea.focus();
+      textarea.setSelectionRange(start + placeholder.length + 4, start + placeholder.length + 4);
+    }, 0);
+  };
+
+  const replacePlaceholders = (text: string, lead: Lead) => {
+    // Get first name from full name (before first space)
+    const firstName = lead.name.split(' ')[0] || lead.name;
+    
+    const replacements: { [key: string]: string } = {
+      firstName: firstName,
+      name: lead.name,
+      email: lead.email || '',
+      phone: lead.phone || '',
+      company: lead.company || '',
+    };
+
+    let result = text;
+    Object.keys(replacements).forEach(key => {
+      const regex = new RegExp(`{{${key}}}`, 'g');
+      result = result.replace(regex, replacements[key]);
+    });
+
+    return result;
+  };
+
+  const replacePlaceholdersWithExamples = (text: string) => {
+    const exampleReplacements: { [key: string]: string } = {
+      firstName: '<span class="bg-yellow-100 px-1 rounded">John</span>',
+      name: '<span class="bg-yellow-100 px-1 rounded">John Smith</span>',
+      email: '<span class="bg-yellow-100 px-1 rounded">john@example.com</span>',
+      phone: '<span class="bg-yellow-100 px-1 rounded">(555) 123-4567</span>',
+      company: '<span class="bg-yellow-100 px-1 rounded">Acme Corp</span>',
+    };
+
+    let result = text;
+    Object.keys(exampleReplacements).forEach(key => {
+      const regex = new RegExp(`{{${key}}}`, 'g');
+      result = result.replace(regex, exampleReplacements[key]);
+    });
+
+    return result;
+  };
+
+  const editTemplateFromScheduleModal = (template: EmailTemplate) => {
+    setEditingTemplate(template);
+    setTemplateName(template.name);
+    setTemplateSubject(template.subject);
+    setTemplateBody(template.body);
+    setEditingInScheduleModal(true);
   };
 
   const handleCopyLead = async (lead: Lead, destinationMonth: string) => {
@@ -2198,7 +2332,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      copyEmailToClipboard(lead.scheduled_email_template_id!);
+                      copyEmailToClipboard(lead.scheduled_email_template_id!, lead);
                     }}
                     className="px-1.5 py-0.5 bg-[#5a7fc7] text-white rounded hover:bg-[#4a6fb7] transition-colors"
                     style={{ fontSize: '10px', fontWeight: '600', lineHeight: '1.2' }}
@@ -2239,7 +2373,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
             ) : (
               <button
                 onClick={() => openScheduleEmailModal(lead.id)}
-                className="w-full px-2 py-1 text-xs border border-[#e5e5e5] rounded cursor-pointer hover:border-[#5a7fc7] hover:bg-[#f5f5f5] transition-colors text-[#6b6b6b]"
+                className="w-full px-1.5 py-0.5 text-xs border border-[#e5e5e5] rounded cursor-pointer hover:border-[#5a7fc7] hover:bg-[#f5f5f5] transition-colors text-[#6b6b6b]"
               >
                 Schedule Email
               </button>
@@ -2320,7 +2454,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
             ) : (
               <button
                 onClick={() => openScheduleTextModal(lead.id)}
-                className="w-full px-2 py-1 text-xs border border-[#e5e5e5] rounded cursor-pointer hover:border-[#5a7fc7] hover:bg-[#f5f5f5] transition-colors text-[#999]"
+                className="w-full px-1.5 py-0.5 text-xs border border-[#e5e5e5] rounded cursor-pointer hover:border-[#5a7fc7] hover:bg-[#f5f5f5] transition-colors text-[#999]"
               >
                 Schedule Text
               </button>
@@ -2969,22 +3103,161 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
             {/* Email Preview */}
             {selectedEmailTemplate && (() => {
               const template = savedEmailTemplates.find(t => t.id === selectedEmailTemplate);
+              const currentLead = showScheduleEmailModal ? leads.find(l => l.id === showScheduleEmailModal) : null;
+              
               return template ? (
+                editingInScheduleModal && editingTemplate?.id === template.id ? (
+                  /* Inline Editor */
                   <div className="border border-[#e5e5e5] rounded-lg p-4 bg-[#f5f5f5]">
-                    <div className="text-xs font-medium text-[#6b6b6b] mb-3">Email Preview:</div>
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="text-xs font-medium text-[#6b6b6b]">Edit Template:</div>
+                      <button
+                        onClick={() => setEditingInScheduleModal(false)}
+                        className="text-xs text-[#5a7fc7] hover:text-[#4a6fb7]"
+                      >
+                        Done Editing
+                      </button>
+                    </div>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-xs text-[#6b6b6b] mb-1">Subject</label>
+                        <input
+                          type="text"
+                          value={templateSubject}
+                          onChange={(e) => setTemplateSubject(e.target.value)}
+                          className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-[#6b6b6b] mb-1">Body</label>
+                        {/* Formatting Toolbar */}
+                        <div className="flex gap-2 mb-2">
+                          <button
+                            type="button"
+                            onClick={insertBold}
+                            className="px-3 py-1 bg-white border border-[#e5e5e5] rounded text-xs font-bold hover:bg-[#f5f5f5]"
+                            title="Bold (wrap text in <strong> tags)"
+                          >
+                            B
+                          </button>
+                          <button
+                            type="button"
+                            onClick={insertImage}
+                            className="px-3 py-1 bg-white border border-[#e5e5e5] rounded text-xs hover:bg-[#f5f5f5]"
+                            title="Insert image"
+                          >
+                            🖼️ Image
+                          </button>
+                          <div className="relative group">
+                            <button
+                              type="button"
+                              className="px-3 py-1 bg-white border border-[#e5e5e5] rounded text-xs hover:bg-[#f5f5f5]"
+                              title="Insert dynamic field"
+                            >
+                              + Field ▼
+                            </button>
+                            <div className="absolute left-0 mt-1 bg-white border border-[#e5e5e5] rounded-md shadow-lg z-10 hidden group-hover:block min-w-[150px]">
+                              <button
+                                type="button"
+                                onClick={() => insertPlaceholder('firstName')}
+                                className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]"
+                              >
+                                First Name
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => insertPlaceholder('name')}
+                                className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]"
+                              >
+                                Full Name
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => insertPlaceholder('company')}
+                                className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]"
+                              >
+                                Company
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => insertPlaceholder('email')}
+                                className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]"
+                              >
+                                Email
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => insertPlaceholder('phone')}
+                                className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]"
+                              >
+                                Phone
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                        <textarea
+                          ref={textareaRef}
+                          value={templateBody}
+                          onChange={(e) => setTemplateBody(e.target.value)}
+                          rows={10}
+                          className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm font-mono resize-y"
+                        />
+                        <p className="text-xs text-[#6b6b6b] mt-1">Use HTML tags: &lt;strong&gt;bold&lt;/strong&gt; or &lt;img src="url"&gt;</p>
+                      </div>
+                      <button
+                        onClick={handleSaveTemplate}
+                        disabled={!templateName.trim() || !templateSubject.trim() || !templateBody.trim()}
+                        className="w-full px-4 py-2 bg-[#5a7fc7] text-white rounded-md text-sm font-medium hover:bg-[#4a6fb7] transition-colors disabled:opacity-50"
+                      >
+                        Save Changes
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* Preview Mode */
+                  <div className="border border-[#e5e5e5] rounded-lg p-4 bg-[#f5f5f5]">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="text-xs font-medium text-[#6b6b6b]">
+                        {currentLead ? 'Email Preview with Lead Data:' : 'Email Preview:'}
+                      </div>
+                      <button
+                        onClick={() => editTemplateFromScheduleModal(template)}
+                        className="text-xs text-[#5a7fc7] hover:text-[#4a6fb7] font-medium"
+                      >
+                        ✏️ Edit Template
+                      </button>
+                    </div>
                     <div className="bg-white rounded p-3 space-y-3">
                       <div>
                         <span className="text-xs font-semibold text-[#6b6b6b]">Subject:</span>
-                        <p className="text-sm text-[#1a1a1a] mt-1">{template.subject}</p>
+                        {currentLead ? (
+                          <p className="text-sm text-[#1a1a1a] mt-1">{replacePlaceholders(template.subject, currentLead)}</p>
+                        ) : (
+                          <div 
+                            className="text-sm text-[#1a1a1a] mt-1" 
+                            dangerouslySetInnerHTML={{ __html: replacePlaceholdersWithExamples(template.subject) }}
+                          />
+                        )}
                       </div>
                       <div className="border-t border-[#e5e5e5] pt-3">
                         <span className="text-xs font-semibold text-[#6b6b6b]">Body:</span>
-                        <p className="text-sm text-[#1a1a1a] mt-1 whitespace-pre-wrap">{template.body}</p>
+                        {currentLead ? (
+                          <div 
+                            className="text-sm text-[#1a1a1a] mt-1" 
+                            dangerouslySetInnerHTML={{ __html: replacePlaceholders(template.body, currentLead).replace(/\n/g, '<br/>') }}
+                          />
+                        ) : (
+                          <div 
+                            className="text-sm text-[#1a1a1a] mt-1" 
+                            dangerouslySetInnerHTML={{ __html: replacePlaceholdersWithExamples(template.body).replace(/\n/g, '<br/>') }}
+                          />
+                        )}
                       </div>
                     </div>
                   </div>
-                ) : null;
-              })()}
+                )
+              ) : null;
+            })()}
 
               {/* Send Options */}
               <div className="border-t border-[#e5e5e5] pt-4">
@@ -3126,12 +3399,80 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                   </div>
                   <div className="flex-1 flex flex-col">
                     <label className="block text-xs text-[#6b6b6b] mb-1">Email Body *</label>
+                    {/* Formatting Toolbar */}
+                    <div className="flex gap-2 mb-2">
+                      <button
+                        type="button"
+                        onClick={insertBold}
+                        className="px-3 py-1 bg-white border border-[#e5e5e5] rounded text-xs font-bold hover:bg-[#f5f5f5] transition-colors"
+                        title="Bold - Select text and click, or inserts <strong> tags"
+                      >
+                        <strong>B</strong>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={insertImage}
+                        className="px-3 py-1 bg-white border border-[#e5e5e5] rounded text-xs hover:bg-[#f5f5f5] transition-colors"
+                        title="Insert image from URL"
+                      >
+                        🖼️ Image
+                      </button>
+                      <div className="relative group">
+                        <button
+                          type="button"
+                          className="px-3 py-1 bg-white border border-[#e5e5e5] rounded text-xs hover:bg-[#f5f5f5] transition-colors"
+                          title="Insert dynamic field"
+                        >
+                          + Field ▼
+                        </button>
+                        <div className="absolute left-0 mt-1 bg-white border border-[#e5e5e5] rounded-md shadow-lg z-10 hidden group-hover:block min-w-[150px]">
+                          <button
+                            type="button"
+                            onClick={() => insertPlaceholder('firstName')}
+                            className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]"
+                          >
+                            First Name
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => insertPlaceholder('name')}
+                            className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]"
+                          >
+                            Full Name
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => insertPlaceholder('company')}
+                            className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]"
+                          >
+                            Company
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => insertPlaceholder('email')}
+                            className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]"
+                          >
+                            Email
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => insertPlaceholder('phone')}
+                            className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]"
+                          >
+                            Phone
+                          </button>
+                        </div>
+                      </div>
+                      <span className="text-xs text-[#6b6b6b] flex items-center ml-2">
+                        Use {'{{'} firstName {'}}'}  for dynamic fields
+                      </span>
+                    </div>
                     <textarea
+                      ref={textareaRef}
                       value={templateBody}
                       onChange={(e) => setTemplateBody(e.target.value)}
-                      placeholder="Enter your email content here..."
-                      className="flex-1 min-h-[500px] px-3 py-2 border border-[#e5e5e5] rounded-md text-sm resize-none font-sans"
-                      style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}
+                      placeholder="Enter your email content here... Use <strong>text</strong> for bold"
+                      className="flex-1 min-h-[500px] px-3 py-2 border border-[#e5e5e5] rounded-md text-sm resize-none font-mono"
                     />
                   </div>
                   <div className="flex gap-2">
@@ -3176,27 +3517,36 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                         <div className="flex">
                           <span className="text-[#6b6b6b] font-medium w-16 flex-shrink-0">Subject:</span>
                           <span className="text-[#1a1a1a] font-semibold">
-                            {templateSubject || <span className="text-[#999] italic font-normal">Your email subject...</span>}
+                            {templateSubject ? (
+                              <span dangerouslySetInnerHTML={{ __html: replacePlaceholdersWithExamples(templateSubject) }} />
+                            ) : (
+                              <span className="text-[#999] italic font-normal">Your email subject...</span>
+                            )}
                           </span>
                         </div>
                       </div>
                     </div>
                     {/* Email Body - 8.5x11 proportions */}
                     <div className="flex-1 p-8 overflow-y-auto bg-white">
-                      <div 
-                        className="text-sm text-[#1a1a1a] whitespace-pre-wrap leading-relaxed"
-                        style={{ 
-                          fontFamily: 'system-ui, -apple-system, sans-serif',
-                          minHeight: '600px',
-                          maxWidth: '100%'
-                        }}
-                      >
-                        {templateBody || (
-                          <span className="text-[#999] italic">
-                            Your email content will appear here as you type...
-                          </span>
-                        )}
-                      </div>
+                      {templateBody ? (
+                        <div 
+                          className="text-sm text-[#1a1a1a] leading-relaxed"
+                          style={{ 
+                            fontFamily: 'system-ui, -apple-system, sans-serif',
+                            minHeight: '600px',
+                            maxWidth: '100%',
+                            wordWrap: 'break-word'
+                          }}
+                          dangerouslySetInnerHTML={{ __html: replacePlaceholdersWithExamples(templateBody).replace(/\n/g, '<br/>') }}
+                        />
+                      ) : (
+                        <div 
+                          className="text-sm text-[#999] italic leading-relaxed"
+                          style={{ minHeight: '600px' }}
+                        >
+                          Your email content will appear here as you type...
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
