@@ -176,6 +176,14 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   const [templateBody, setTemplateBody] = useState('');
   const [editingInScheduleModal, setEditingInScheduleModal] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  
+  // Text template states
+  const [savedTextTemplates, setSavedTextTemplates] = useState<{ id: string; name: string; body: string }[]>([]);
+  const [showTextTemplateManager, setShowTextTemplateManager] = useState(false);
+  const [editingTextTemplate, setEditingTextTemplate] = useState<{ id: string; name: string; body: string } | null>(null);
+  const [textTemplateName, setTextTemplateName] = useState('');
+  const [textTemplateBody, setTextTemplateBody] = useState('');
+  const [selectedTextTemplate, setSelectedTextTemplate] = useState<string>('');
   const router = useRouter();
 
   // Update local state when props change (e.g., switching tabs)
@@ -217,6 +225,24 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
       }
     };
     fetchSavedEmailTemplates();
+  }, []);
+
+  // Fetch saved text templates for scheduled texts
+  useEffect(() => {
+    const fetchSavedTextTemplates = async () => {
+      try {
+        const response = await fetch('/api/text-templates', {
+          credentials: 'include',
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setSavedTextTemplates(data.templates || []);
+        }
+      } catch (error) {
+        console.error('Error fetching saved text templates:', error);
+      }
+    };
+    fetchSavedTextTemplates();
   }, []);
 
   // Close context menu when clicking outside
@@ -573,6 +599,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
 
     setShowScheduleTextModal(null);
     setScheduledTextContent('');
+    setSelectedTextTemplate('');
   };
 
   const clearScheduledText = async (leadId: string) => {
@@ -970,6 +997,70 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     setTemplateSubject(template.subject);
     setTemplateBody(template.body);
     setEditingInScheduleModal(true);
+  };
+
+  // Text template management functions
+  const handleSaveTextTemplate = async () => {
+    if (!textTemplateName.trim() || !textTemplateBody.trim()) {
+      alert('Please fill in all template fields');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/text-templates', {
+        method: editingTextTemplate ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          id: editingTextTemplate?.id,
+          name: textTemplateName,
+          body: textTemplateBody,
+        }),
+      });
+
+      if (res.ok) {
+        const { template } = await res.json();
+        if (editingTextTemplate) {
+          setSavedTextTemplates(prev => prev.map(t => t.id === template.id ? template : t));
+        } else {
+          setSavedTextTemplates(prev => [...prev, template]);
+        }
+        setEditingTextTemplate(null);
+        setTextTemplateName('');
+        setTextTemplateBody('');
+      } else {
+        alert('Failed to save template');
+      }
+    } catch (error) {
+      console.error('Error saving text template:', error);
+      alert('Failed to save template');
+    }
+  };
+
+  const handleDeleteTextTemplate = async (templateId: string) => {
+    if (!confirm('Delete this template?')) return;
+
+    try {
+      const res = await fetch(`/api/text-templates?id=${templateId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+
+      if (res.ok) {
+        setSavedTextTemplates(prev => prev.filter(t => t.id !== templateId));
+      } else {
+        alert('Failed to delete template');
+      }
+    } catch (error) {
+      console.error('Error deleting text template:', error);
+      alert('Failed to delete template');
+    }
+  };
+
+  const handleEditTextTemplate = (template: { id: string; name: string; body: string }) => {
+    setEditingTextTemplate(template);
+    setTextTemplateName(template.name);
+    setTextTemplateBody(template.body);
   };
 
   const handleCopyLead = async (lead: Lead, destinationMonth: string) => {
@@ -2952,7 +3043,10 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
       {showScheduleTextModal && (
         <div 
           className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" 
-          onClick={() => setShowScheduleTextModal(null)}
+          onClick={() => {
+            setShowScheduleTextModal(null);
+            setSelectedTextTemplate('');
+          }}
         >
           <div 
             className="bg-white rounded-lg p-6 max-w-lg w-full mx-4"
@@ -2961,6 +3055,37 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
             <h2 className="text-lg font-bold text-[#1a1a1a] mb-4">Schedule Text Message</h2>
             
             <div className="space-y-4">
+              {/* Template Selection */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-medium text-[#1a1a1a]">
+                    Load Template (Optional)
+                  </label>
+                  <button
+                    onClick={() => setShowTextTemplateManager(true)}
+                    className="text-xs text-[#5a7fc7] hover:text-[#4a6fb7] font-medium"
+                  >
+                    + Manage Templates
+                  </button>
+                </div>
+                <select
+                  value={selectedTextTemplate}
+                  onChange={(e) => {
+                    setSelectedTextTemplate(e.target.value);
+                    const template = savedTextTemplates.find(t => t.id === e.target.value);
+                    if (template) {
+                      setScheduledTextContent(template.body);
+                    }
+                  }}
+                  className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-[#5a7fc7] focus:border-[#5a7fc7]"
+                >
+                  <option value="">Choose a template or write your own...</option>
+                  {savedTextTemplates.map((template) => (
+                    <option key={template.id} value={template.id}>{template.name}</option>
+                  ))}
+                </select>
+              </div>
+
               {/* Text Message Content */}
               <div>
                 <label className="block text-sm font-medium text-[#1a1a1a] mb-2">
@@ -2969,7 +3094,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                 <textarea
                   value={scheduledTextContent}
                   onChange={(e) => setScheduledTextContent(e.target.value)}
-                  placeholder="Enter your text message here..."
+                  placeholder="Enter your text message here or select a template above..."
                   rows={6}
                   className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm resize-none focus:outline-none focus:ring-1 focus:ring-[#5a7fc7] focus:border-[#5a7fc7]"
                 />
@@ -3046,7 +3171,10 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
             {/* Action Buttons */}
             <div className="flex gap-3 mt-6">
               <button
-                onClick={() => setShowScheduleTextModal(null)}
+                onClick={() => {
+                  setShowScheduleTextModal(null);
+                  setSelectedTextTemplate('');
+                }}
                 className="flex-1 px-4 py-2 border border-[#e5e5e5] text-[#1a1a1a] rounded-md text-sm font-medium hover:bg-[#f5f5f5] transition-colors"
               >
                 Cancel
@@ -3612,6 +3740,150 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                   setTemplateName('');
                   setTemplateSubject('');
                   setTemplateBody('');
+                }}
+                className="w-full px-4 py-2 border border-[#e5e5e5] text-[#1a1a1a] rounded-md text-sm font-medium hover:bg-[#f5f5f5] transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Text Template Manager Modal */}
+      {showTextTemplateManager && (
+        <div 
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]" 
+          onClick={() => {
+            setShowTextTemplateManager(false);
+            setEditingTextTemplate(null);
+            setTextTemplateName('');
+            setTextTemplateBody('');
+          }}
+        >
+          <div 
+            className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold text-[#1a1a1a] mb-4">
+              {editingTextTemplate ? 'Edit Text Template' : 'Manage Text Templates'}
+            </h2>
+
+            {/* Template Form */}
+            <div className="bg-[#f5f5f5] border border-[#e5e5e5] rounded-lg p-4 mb-4">
+              <h3 className="text-sm font-medium text-[#1a1a1a] mb-3">
+                {editingTextTemplate ? 'Edit Template' : 'Create New Template'}
+              </h3>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs text-[#6b6b6b] mb-1">Template Name *</label>
+                  <input
+                    type="text"
+                    value={textTemplateName}
+                    onChange={(e) => setTextTemplateName(e.target.value)}
+                    placeholder="e.g., Follow Up Text"
+                    className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-[#6b6b6b] mb-1">Message Content *</label>
+                  <textarea
+                    value={textTemplateBody}
+                    onChange={(e) => setTextTemplateBody(e.target.value)}
+                    placeholder="Enter your text message template here..."
+                    rows={6}
+                    className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm resize-y"
+                  />
+                  <div className="flex justify-between mt-1">
+                    <span className="text-xs text-[#6b6b6b]">
+                      {textTemplateBody.length} characters
+                    </span>
+                    {textTemplateBody.length > 160 && (
+                      <span className="text-xs text-[#ff8800]">
+                        {Math.ceil(textTemplateBody.length / 160)} SMS segments
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleSaveTextTemplate}
+                    disabled={!textTemplateName.trim() || !textTemplateBody.trim()}
+                    className="flex-1 px-4 py-2 bg-[#5a7fc7] text-white rounded-md text-sm font-medium hover:bg-[#4a6fb7] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {editingTextTemplate ? 'Update Template' : 'Save Template'}
+                  </button>
+                  {editingTextTemplate && (
+                    <button
+                      onClick={() => {
+                        setEditingTextTemplate(null);
+                        setTextTemplateName('');
+                        setTextTemplateBody('');
+                      }}
+                      className="px-4 py-2 border border-[#e5e5e5] text-[#1a1a1a] rounded-md text-sm font-medium hover:bg-[#f5f5f5] transition-colors"
+                    >
+                      Cancel Edit
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Saved Templates List */}
+            <div>
+              <h3 className="text-sm font-medium text-[#1a1a1a] mb-3">
+                Saved Templates ({savedTextTemplates.length})
+              </h3>
+              {savedTextTemplates.length > 0 ? (
+                <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                  {savedTextTemplates.map((template) => (
+                    <div 
+                      key={template.id} 
+                      className="bg-white border border-[#e5e5e5] rounded-lg p-3"
+                    >
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="flex-1">
+                          <h4 className="text-sm font-medium text-[#1a1a1a]">{template.name}</h4>
+                        </div>
+                        <div className="flex gap-2 ml-2">
+                          <button
+                            onClick={() => handleEditTextTemplate(template)}
+                            className="text-[#5a7fc7] hover:text-[#4a6fb7] transition-colors"
+                            title="Edit template"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={() => handleDeleteTextTemplate(template.id)}
+                            className="text-[#999] hover:text-[#8a2a2a] transition-colors"
+                            title="Delete template"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                      <p className="text-xs text-[#6b6b6b] line-clamp-2">{template.body}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-[#6b6b6b] italic text-center py-8">
+                  No templates yet. Create one to get started.
+                </p>
+              )}
+            </div>
+
+            <div className="mt-6">
+              <button
+                onClick={() => {
+                  setShowTextTemplateManager(false);
+                  setEditingTextTemplate(null);
+                  setTextTemplateName('');
+                  setTextTemplateBody('');
                 }}
                 className="w-full px-4 py-2 border border-[#e5e5e5] text-[#1a1a1a] rounded-md text-sm font-medium hover:bg-[#f5f5f5] transition-colors"
               >
