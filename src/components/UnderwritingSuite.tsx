@@ -1012,7 +1012,7 @@ export default function UnderwritingSuite({
                         tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
                       />
                       <Tooltip 
-                        formatter={(value: number) => `$${value.toLocaleString()}`}
+                        formatter={(value: any) => typeof value === 'number' ? `$${value.toLocaleString()}` : value}
                         contentStyle={{ backgroundColor: '#fff', border: '1px solid #e5e5e5' }}
                       />
                       <Legend />
