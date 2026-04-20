@@ -38,6 +38,7 @@ interface UnderwritingData {
   isFunded?: boolean;
   
   // System will calculate these
+  hasCalculated?: boolean;
   lastUpdated?: string;
 }
 
@@ -183,7 +184,7 @@ export default function UnderwritingSuite({
 }: UnderwritingSuiteProps) {
   const [data, setData] = useState<UnderwritingData>({ ...DEFAULT_DATA, ...initialData });
   const [saving, setSaving] = useState(false);
-  const [hasCalculated, setHasCalculated] = useState(false);
+  const [hasCalculated, setHasCalculated] = useState(initialData?.hasCalculated || false);
   
   // Actual offers received tracking
   const [actualOffers, setActualOffers] = useState<Array<{ id: string; lenderName: string; amount: number; factorRate: number; termLength?: number; paymentFrequency?: string; url?: string }>>(
@@ -529,6 +530,7 @@ export default function UnderwritingSuite({
         myPercentage,
         commission: calculatedCommission,
         isFunded,
+        hasCalculated,
         lastUpdated: new Date().toISOString() 
       });
       alert('Underwriting data saved successfully!');
