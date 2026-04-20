@@ -18,13 +18,14 @@ interface UnderwritingData {
   nsfCount: number;
   hasOtherMCALoans: boolean;
   otherMCAMonthlyPayment: number;
+  otherMCALenders: string;
   
   // Additional Info
   requestedAmount: number;
   purposeOfFunds: string;
   
   // Offers Received Section
-  actualOffers?: Array<{ id: string; lenderName: string; amount: number; factorRate: number; url?: string }>;
+  actualOffers?: Array<{ id: string; lenderName: string; amount: number; factorRate: number; termLength?: number; paymentFrequency?: string; url?: string }>;
   offersNotes?: string;
   
   // System will calculate these
@@ -51,6 +52,7 @@ const DEFAULT_DATA: UnderwritingData = {
   nsfCount: 0,
   hasOtherMCALoans: false,
   otherMCAMonthlyPayment: 0,
+  otherMCALenders: '',
   requestedAmount: 100000,
   purposeOfFunds: '',
 };
@@ -171,16 +173,17 @@ export default function UnderwritingSuite({
 }: UnderwritingSuiteProps) {
   const [data, setData] = useState<UnderwritingData>({ ...DEFAULT_DATA, ...initialData });
   const [saving, setSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<'analysis' | 'insights'>('analysis');
   const [hasCalculated, setHasCalculated] = useState(false);
   
   // Actual offers received tracking
-  const [actualOffers, setActualOffers] = useState<Array<{ id: string; lenderName: string; amount: number; factorRate: number; url?: string }>>(
+  const [actualOffers, setActualOffers] = useState<Array<{ id: string; lenderName: string; amount: number; factorRate: number; termLength?: number; paymentFrequency?: string; url?: string }>>(
     initialData?.actualOffers || []
   );
   const [newOfferLender, setNewOfferLender] = useState('');
   const [newOfferAmount, setNewOfferAmount] = useState('');
   const [newOfferFactorRate, setNewOfferFactorRate] = useState('');
+  const [newOfferTermLength, setNewOfferTermLength] = useState('');
+  const [newOfferPaymentFreq, setNewOfferPaymentFreq] = useState('Daily');
   const [newOfferUrl, setNewOfferUrl] = useState('');
   const [offersNotes, setOffersNotes] = useState(initialData?.offersNotes || '');
   
@@ -194,6 +197,8 @@ export default function UnderwritingSuite({
   const [editOfferLender, setEditOfferLender] = useState('');
   const [editOfferAmount, setEditOfferAmount] = useState('');
   const [editOfferFactorRate, setEditOfferFactorRate] = useState('');
+  const [editOfferTermLength, setEditOfferTermLength] = useState('');
+  const [editOfferPaymentFreq, setEditOfferPaymentFreq] = useState('Daily');
   const [editOfferUrl, setEditOfferUrl] = useState('');
   
   // Get the selected offer
@@ -367,7 +372,7 @@ export default function UnderwritingSuite({
       termMonths,
       paymentFrequency,
       maxApprovedAmount,
-      approvedAmount: Math.min(requestedAmount, maxApprovedAmount)
+      approvedAmount: maxApprovedAmount
     };
   };
   
@@ -499,8 +504,8 @@ export default function UnderwritingSuite({
   };
 
   const addActualOffer = () => {
-    if (!newOfferLender.trim() || !newOfferAmount || !newOfferFactorRate) {
-      alert('Please fill in lender name, amount, and factor rate');
+    if (!newOfferLender.trim() || !newOfferAmount || !newOfferFactorRate || !newOfferTermLength) {
+      alert('Please fill in lender name, amount, factor rate, and term length');
       return;
     }
     
@@ -509,6 +514,8 @@ export default function UnderwritingSuite({
       lenderName: newOfferLender.trim(),
       amount: Number(newOfferAmount),
       factorRate: Number(newOfferFactorRate),
+      termLength: Number(newOfferTermLength),
+      paymentFrequency: newOfferPaymentFreq,
       url: newOfferUrl.trim() || undefined,
     };
     
@@ -516,6 +523,8 @@ export default function UnderwritingSuite({
     setNewOfferLender('');
     setNewOfferAmount('');
     setNewOfferFactorRate('');
+    setNewOfferTermLength('');
+    setNewOfferPaymentFreq('Daily');
     setNewOfferUrl('');
   };
 
@@ -531,17 +540,19 @@ export default function UnderwritingSuite({
     }
   };
 
-  const startEditOffer = (offer: { id: string; lenderName: string; amount: number; factorRate: number; url?: string }) => {
+  const startEditOffer = (offer: { id: string; lenderName: string; amount: number; factorRate: number; termLength?: number; paymentFrequency?: string; url?: string }) => {
     setEditingOfferId(offer.id);
     setEditOfferLender(offer.lenderName);
     setEditOfferAmount(offer.amount.toString());
     setEditOfferFactorRate(offer.factorRate.toString());
+    setEditOfferTermLength((offer.termLength || 250).toString()); // Default to 250 payments
+    setEditOfferPaymentFreq(offer.paymentFrequency || 'Daily'); // Default to Daily
     setEditOfferUrl(offer.url || '');
   };
 
   const saveEditOffer = () => {
-    if (!editOfferLender.trim() || !editOfferAmount || !editOfferFactorRate) {
-      alert('Please fill in lender name, amount, and factor rate');
+    if (!editOfferLender.trim() || !editOfferAmount || !editOfferFactorRate || !editOfferTermLength) {
+      alert('Please fill in lender name, amount, factor rate, and term length');
       return;
     }
 
@@ -552,6 +563,8 @@ export default function UnderwritingSuite({
             lenderName: editOfferLender.trim(),
             amount: Number(editOfferAmount),
             factorRate: Number(editOfferFactorRate),
+            termLength: Number(editOfferTermLength),
+            paymentFrequency: editOfferPaymentFreq,
             url: editOfferUrl.trim() || undefined,
           }
         : offer
@@ -691,42 +704,63 @@ export default function UnderwritingSuite({
               <h3 className="text-sm font-medium text-gray-700 mb-3">Bank Statements (Last 3 Months)</h3>
               <div className="space-y-3">
                 <div>
-                  <label className="block text-xs text-gray-600 mb-1">Month 1 Revenue</label>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-xs text-gray-600">Month 1 Revenue</label>
+                    <span className="text-sm font-semibold text-gray-900">${Math.round(data.month1Revenue || 0).toLocaleString()}</span>
+                  </div>
                   <input
-                    type="number"
-                    value={data.month1Revenue || ''}
-                    onChange={(e) => setData({ ...data, month1Revenue: Number(e.target.value) || 0 })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                    type="range"
+                    value={data.month1Revenue || 0}
+                    onChange={(e) => setData({ ...data, month1Revenue: Number(e.target.value) })}
                     min="0"
-                    step="1000"
-                    placeholder="50000"
+                    max="500000"
+                    step="5000"
+                    className="w-full h-2 bg-blue-100 rounded-lg appearance-none cursor-pointer accent-[#5a7fc7]"
                   />
+                  <div className="flex justify-between text-xs text-gray-500 mt-1">
+                    <span>$0</span>
+                    <span>$500k</span>
+                  </div>
                 </div>
                 
                 <div>
-                  <label className="block text-xs text-gray-600 mb-1">Month 2 Revenue</label>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-xs text-gray-600">Month 2 Revenue</label>
+                    <span className="text-sm font-semibold text-gray-900">${Math.round(data.month2Revenue || 0).toLocaleString()}</span>
+                  </div>
                   <input
-                    type="number"
-                    value={data.month2Revenue || ''}
-                    onChange={(e) => setData({ ...data, month2Revenue: Number(e.target.value) || 0 })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                    type="range"
+                    value={data.month2Revenue || 0}
+                    onChange={(e) => setData({ ...data, month2Revenue: Number(e.target.value) })}
                     min="0"
-                    step="1000"
-                    placeholder="50000"
+                    max="500000"
+                    step="5000"
+                    className="w-full h-2 bg-blue-100 rounded-lg appearance-none cursor-pointer accent-[#5a7fc7]"
                   />
+                  <div className="flex justify-between text-xs text-gray-500 mt-1">
+                    <span>$0</span>
+                    <span>$500k</span>
+                  </div>
                 </div>
                 
                 <div>
-                  <label className="block text-xs text-gray-600 mb-1">Month 3 Revenue</label>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-xs text-gray-600">Month 3 Revenue</label>
+                    <span className="text-sm font-semibold text-gray-900">${Math.round(data.month3Revenue || 0).toLocaleString()}</span>
+                  </div>
                   <input
-                    type="number"
-                    value={data.month3Revenue || ''}
-                    onChange={(e) => setData({ ...data, month3Revenue: Number(e.target.value) || 0 })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                    type="range"
+                    value={data.month3Revenue || 0}
+                    onChange={(e) => setData({ ...data, month3Revenue: Number(e.target.value) })}
                     min="0"
-                    step="1000"
-                    placeholder="50000"
+                    max="500000"
+                    step="5000"
+                    className="w-full h-2 bg-blue-100 rounded-lg appearance-none cursor-pointer accent-[#5a7fc7]"
                   />
+                  <div className="flex justify-between text-xs text-gray-500 mt-1">
+                    <span>$0</span>
+                    <span>$500k</span>
+                  </div>
                 </div>
                 
                 <div className="pt-2 border-t border-gray-300">
@@ -737,29 +771,43 @@ export default function UnderwritingSuite({
                 </div>
                 
                 <div>
-                  <label className="block text-xs text-gray-600 mb-1">Average Daily Balance</label>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-xs text-gray-600">Average Daily Balance</label>
+                    <span className="text-sm font-semibold text-gray-900">${Math.round(data.avgDailyBalance || 0).toLocaleString()}</span>
+                  </div>
                   <input
-                    type="number"
-                    value={data.avgDailyBalance || ''}
-                    onChange={(e) => setData({ ...data, avgDailyBalance: Number(e.target.value) || 0 })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                    type="range"
+                    value={data.avgDailyBalance || 0}
+                    onChange={(e) => setData({ ...data, avgDailyBalance: Number(e.target.value) })}
                     min="0"
+                    max="200000"
                     step="1000"
-                    placeholder="15000"
+                    className="w-full h-2 bg-blue-100 rounded-lg appearance-none cursor-pointer accent-[#5a7fc7]"
                   />
+                  <div className="flex justify-between text-xs text-gray-500 mt-1">
+                    <span>$0</span>
+                    <span>$200k</span>
+                  </div>
                 </div>
                 
                 <div>
-                  <label className="block text-xs text-gray-600 mb-1">Ending Balance</label>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-xs text-gray-600">Ending Balance</label>
+                    <span className="text-sm font-semibold text-gray-900">${Math.round(data.endingBalance || 0).toLocaleString()}</span>
+                  </div>
                   <input
-                    type="number"
-                    value={data.endingBalance || ''}
-                    onChange={(e) => setData({ ...data, endingBalance: Number(e.target.value) || 0 })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                    type="range"
+                    value={data.endingBalance || 0}
+                    onChange={(e) => setData({ ...data, endingBalance: Number(e.target.value) })}
                     min="0"
+                    max="200000"
                     step="1000"
-                    placeholder="20000"
+                    className="w-full h-2 bg-blue-100 rounded-lg appearance-none cursor-pointer accent-[#5a7fc7]"
                   />
+                  <div className="flex justify-between text-xs text-gray-500 mt-1">
+                    <span>$0</span>
+                    <span>$200k</span>
+                  </div>
                 </div>
                 
                 <div>
@@ -787,18 +835,32 @@ export default function UnderwritingSuite({
                   </label>
                   
                   {data.hasOtherMCALoans && (
-                    <div className="ml-6 bg-orange-50 border border-orange-200 rounded-md p-3">
-                      <label className="block text-xs text-gray-700 mb-1 font-medium">Monthly MCA Payment</label>
-                      <input
-                        type="number"
-                        value={data.otherMCAMonthlyPayment || ''}
-                        onChange={(e) => setData({ ...data, otherMCAMonthlyPayment: Number(e.target.value) || 0 })}
-                        className="w-full px-3 py-2 border border-orange-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
-                        min="0"
-                        step="100"
-                        placeholder="e.g., 5000"
-                      />
-                      <p className="text-xs text-gray-600 mt-1">Total monthly payment for all existing MCA loans</p>
+                    <div className="ml-6 bg-orange-50 border border-orange-200 rounded-md p-3 space-y-3">
+                      <div>
+                        <label className="block text-xs text-gray-700 mb-1 font-medium">MCA Lender Names</label>
+                        <input
+                          type="text"
+                          value={data.otherMCALenders || ''}
+                          onChange={(e) => setData({ ...data, otherMCALenders: e.target.value })}
+                          className="w-full px-3 py-2 border border-orange-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                          placeholder="e.g., Fundbox, OnDeck..."
+                        />
+                        <p className="text-xs text-gray-600 mt-1">List all MCA lenders (comma separated)</p>
+                      </div>
+                      
+                      <div>
+                        <label className="block text-xs text-gray-700 mb-1 font-medium">Monthly MCA Payment</label>
+                        <input
+                          type="number"
+                          value={data.otherMCAMonthlyPayment || ''}
+                          onChange={(e) => setData({ ...data, otherMCAMonthlyPayment: Number(e.target.value) || 0 })}
+                          className="w-full px-3 py-2 border border-orange-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                          min="0"
+                          step="100"
+                          placeholder="e.g., 5000"
+                        />
+                        <p className="text-xs text-gray-600 mt-1">Total monthly payment for all existing MCA loans</p>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -848,161 +910,127 @@ export default function UnderwritingSuite({
 
           {/* Center - Analysis & Charts */}
           <div className="flex-1 p-6 overflow-y-auto">
-            {/* Tabs */}
-            <div className="flex gap-2 mb-6 border-b border-gray-200">
-              <button
-                onClick={() => setActiveTab('analysis')}
-                className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                  activeTab === 'analysis'
-                    ? 'border-[#5a7fc7] text-[#5a7fc7]'
-                    : 'border-transparent text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                Analysis
-              </button>
-              <button
-                onClick={() => setActiveTab('insights')}
-                className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                  activeTab === 'insights'
-                    ? 'border-[#5a7fc7] text-[#5a7fc7]'
-                    : 'border-transparent text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                Insights
-              </button>
-            </div>
-
-            {activeTab === 'analysis' && (
-              <div>
-                {!hasCalculated ? (
-                  <div className="flex flex-col items-center justify-center h-96 text-center">
-                    <h3 className="text-xl font-semibold text-gray-900 mb-2">Ready to Calculate</h3>
-                    <p className="text-gray-600 max-w-md">
-                      Enter the merchant's financial data in the left panel and click "Calculate Offer" to see recommended terms and analysis.
-                    </p>
-                  </div>
-                ) : (
-                  <>
-                    {/* Recommended Offer Terms */}
-                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-6 mb-6">
-                      <h3 className="text-lg font-semibold text-gray-900 mb-4">Recommended Offer</h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <div className="text-xs text-gray-600 mb-1">Approved Amount</div>
-                      <div className="text-3xl font-bold text-[#5a7fc7]">
-                        ${Math.round(approvedAmount).toLocaleString()}
-                      </div>
-                      {approvedAmount < requestedAmount && (
-                        <div className="text-xs text-orange-600 mt-1">
-                          Max available: ${Math.round(offerTerms.maxApprovedAmount).toLocaleString()}
+            {!hasCalculated ? (
+              <div className="flex flex-col items-center justify-center h-96 text-center">
+                <h3 className="text-xl font-semibold text-gray-900 mb-2">Ready to Calculate</h3>
+                <p className="text-gray-600 max-w-md">
+                  Enter the merchant's financial data in the left panel and click "Calculate Offer" to see recommended terms and analysis.
+                </p>
+              </div>
+            ) : (
+              <>
+                {/* Calculate display values - use selected offer if available, otherwise use calculated recommendation */}
+                {(() => {
+                  let displayAmount, displayFactorRate, displayAPR, displayMonthlyPayment, displayTermLength, displayPaymentFreq;
+                  
+                  if (selectedOffer && adjustedAmount > 0) {
+                    // Use selected offer data
+                    displayAmount = adjustedAmount;
+                    displayFactorRate = selectedOffer.factorRate;
+                    displayTermLength = selectedOffer.termLength || 250;
+                    displayPaymentFreq = selectedOffer.paymentFrequency || 'Daily';
+                    
+                    const selectedTotalRepayment = displayAmount * displayFactorRate;
+                    const selectedTotalCost = selectedTotalRepayment - displayAmount;
+                    const selectedPayment = selectedTotalRepayment / displayTermLength;
+                    
+                    // Convert term length to months for APR calculation
+                    let paymentsPerMonthForOffer = 0;
+                    switch (displayPaymentFreq) {
+                      case 'Daily': paymentsPerMonthForOffer = 22; break;
+                      case 'Weekly': paymentsPerMonthForOffer = 4; break;
+                      case 'Bi-Weekly': paymentsPerMonthForOffer = 2; break;
+                      case 'Monthly': paymentsPerMonthForOffer = 1; break;
+                    }
+                    const termMonthsForOffer = displayTermLength / paymentsPerMonthForOffer;
+                    displayAPR = displayAmount > 0 && termMonthsForOffer > 0 
+                      ? ((selectedTotalCost / displayAmount) / termMonthsForOffer * 12 * 100).toFixed(1)
+                      : '0.0';
+                    displayMonthlyPayment = selectedPayment * paymentsPerMonthForOffer;
+                  } else {
+                    // Use calculated recommendation
+                    displayAmount = approvedAmount;
+                    displayFactorRate = factorRate;
+                    displayAPR = effectiveAPR;
+                    displayMonthlyPayment = paymentAmount * paymentsPerMonth;
+                  }
+                  
+                  const displayPaymentPercent = ((displayMonthlyPayment / avgMonthlyRevenue) * 100).toFixed(1);
+                  const displayRevenueAfterPayment = avgMonthlyRevenue - displayMonthlyPayment;
+                  const displayRetainedPercent = ((displayRevenueAfterPayment / avgMonthlyRevenue) * 100).toFixed(0);
+                  const displayRevenueRatio = (avgMonthlyRevenue / displayMonthlyPayment).toFixed(1);
+                  
+                  return (
+                    <>
+                      {/* Top Metrics */}
+                      <div className="grid grid-cols-4 gap-4 mb-6">
+                        <div className="bg-white border border-gray-200 rounded-lg p-4">
+                          <div className="text-xs text-gray-600 mb-1">Loan Amount</div>
+                          <div className="text-xl font-bold text-[#5a7fc7]">
+                            ${Math.round(displayAmount).toLocaleString()}
+                          </div>
                         </div>
-                      )}
-                    </div>
-                    
-                    <div>
-                      <div className="text-xs text-gray-600 mb-1">Factor Rate</div>
-                      <div className="text-3xl font-bold text-gray-900">
-                        {factorRate}x
+                        
+                        <div className="bg-white border border-gray-200 rounded-lg p-4">
+                          <div className="text-xs text-gray-600 mb-1">Loan APR</div>
+                          <div className="text-xl font-bold text-gray-900">
+                            {displayAPR}%
+                          </div>
+                        </div>
+                        
+                        <div className="bg-white border border-gray-200 rounded-lg p-4">
+                          <div className="text-xs text-gray-600 mb-1">Credit Score</div>
+                          <div className="text-xl font-bold text-gray-900">
+                            {creditScore}
+                          </div>
+                        </div>
+                        
+                        <div className="bg-white border border-gray-200 rounded-lg p-4">
+                          <div className="text-xs text-gray-600 mb-1">Payment % of Monthly Revenue</div>
+                          <div className="text-xl font-bold text-gray-900">
+                            {displayPaymentPercent}%
+                          </div>
+                        </div>
                       </div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        {factorRate <= 1.20 ? 'Excellent terms' : factorRate <= 1.30 ? 'Good terms' : 'Standard terms'}
+                      
+                      {/* Sales-Focused Metrics */}
+                      <div className="grid grid-cols-3 gap-4 mb-6">
+                        <div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-300 rounded-lg p-5">
+                          <div className="text-xs text-green-700 font-medium mb-1">Approval Confidence</div>
+                          <div className="text-4xl font-bold text-green-600">
+                            {approvalProbability}%
+                          </div>
+                          <div className="text-sm text-green-700 mt-1 font-medium">
+                            {approvalProbability >= 80 ? 'Highly Recommended' : approvalProbability >= 60 ? 'Strong Candidate' : 'Reviewable'}
+                          </div>
+                        </div>
+                        
+                        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-lg p-5">
+                          <div className="text-xs text-blue-700 font-medium mb-1">Revenue After Payment</div>
+                          <div className="text-3xl font-bold text-blue-600">
+                            ${Math.round(displayRevenueAfterPayment).toLocaleString()}
+                          </div>
+                          <div className="text-sm text-blue-700 mt-1">
+                            {displayRetainedPercent}% retained monthly
+                          </div>
+                        </div>
+                        
+                        <div className="bg-gradient-to-br from-purple-50 to-violet-50 border-2 border-purple-300 rounded-lg p-5">
+                          <div className="text-xs text-purple-700 font-medium mb-1">Revenue to Payment Ratio</div>
+                          <div className="text-4xl font-bold text-purple-600">
+                            {displayRevenueRatio}x
+                          </div>
+                          <div className="text-sm text-purple-700 mt-1">
+                            {Number(displayRevenueRatio) >= 3 ? 'Excellent coverage' : 'Good coverage'}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                    
-                    <div>
-                      <div className="text-xs text-gray-600 mb-1">{paymentFrequency} Payment</div>
-                      <div className="text-2xl font-bold text-gray-900">
-                        ${Math.round(paymentAmount).toLocaleString()}
-                      </div>
-                    </div>
-                    
-                    <div>
-                      <div className="text-xs text-gray-600 mb-1">Holdback %</div>
-                      <div className="text-2xl font-bold text-gray-900">
-                        {holdbackPercent}%
-                      </div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        ~${Math.round(dailyHoldback).toLocaleString()}/day
-                      </div>
-                    </div>
-                    
-                    <div>
-                      <div className="text-xs text-gray-600 mb-1">Term Length</div>
-                      <div className="text-2xl font-bold text-gray-900">
-                        {termMonths} months
-                      </div>
-                    </div>
-                    
-                    <div>
-                      <div className="text-xs text-gray-600 mb-1">Total Repayment</div>
-                      <div className="text-2xl font-bold text-gray-900">
-                        ${Math.round(totalRepayment).toLocaleString()}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Additional Metrics */}
-                <div className="grid grid-cols-3 gap-4 mb-6">
-                  <div className="bg-white border border-gray-200 rounded-lg p-4">
-                    <div className="text-xs text-gray-600 mb-1">Total Cost</div>
-                    <div className="text-xl font-bold text-orange-600">
-                      ${Math.round(totalCost).toLocaleString()}
-                    </div>
-                  </div>
-                  
-                  <div className="bg-white border border-gray-200 rounded-lg p-4">
-                    <div className="text-xs text-gray-600 mb-1">Effective APR</div>
-                    <div className="text-xl font-bold text-gray-900">
-                      {effectiveAPR}%
-                    </div>
-                  </div>
-                  
-                  <div className="bg-white border border-gray-200 rounded-lg p-4">
-                    <div className="text-xs text-gray-600 mb-1">Total Payments</div>
-                    <div className="text-xl font-bold text-gray-900">
-                      {totalPayments}
-                    </div>
-                  </div>
-                </div>
-                
-                {/* Risk Assessment */}
-                <div className={`grid ${hasOtherMCALoans && otherMCAMonthlyPayment > 0 ? 'grid-cols-3' : 'grid-cols-2'} gap-4 mb-6`}>
-                  <div className="bg-white border border-gray-200 rounded-lg p-4">
-                    <div className="text-xs text-gray-600 mb-1">Risk Score</div>
-                    <div className={`text-3xl font-bold ${getRiskColor(riskScore)}`}>
-                      {riskScore}/100
-                    </div>
-                    <div className={`text-sm font-medium ${getRiskColor(riskScore)}`}>
-                      {getRiskLabel(riskScore)}
-                    </div>
-                  </div>
-                  
-                  <div className="bg-white border border-gray-200 rounded-lg p-4">
-                    <div className="text-xs text-gray-600 mb-1">Approval Probability</div>
-                    <div className="text-3xl font-bold text-green-600">
-                      {approvalProbability}%
-                    </div>
-                    <div className="text-sm text-gray-600">
-                      {approvalProbability >= 80 ? 'Strong approval' : approvalProbability >= 60 ? 'Likely approval' : 'Needs review'}
-                    </div>
-                  </div>
-                  
-                  {hasOtherMCALoans && otherMCAMonthlyPayment > 0 && (
-                    <div className="bg-orange-50 border-2 border-orange-300 rounded-lg p-4">
-                      <div className="text-xs text-orange-700 font-medium mb-1">Available Revenue</div>
-                      <div className="text-2xl font-bold text-orange-800">
-                        ${Math.round(availableMonthlyRevenue).toLocaleString()}/mo
-                      </div>
-                      <div className="text-xs text-orange-600 mt-1">
-                        After ${otherMCAMonthlyPayment.toLocaleString()}/mo MCA debt
-                      </div>
-                    </div>
-                  )}
-                </div>
+                    </>
+                  );
+                })()}
 
                 {/* Revenue & Offers Chart */}
-                <div className="bg-white border border-gray-200 rounded-lg p-6">
+                <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
                   <h3 className="text-lg font-semibold text-gray-900 mb-4">Revenue vs. Offer Comparison</h3>
                   <ResponsiveContainer width="100%" height={350}>
                     <LineChart data={revenueChartData}>
@@ -1061,85 +1089,64 @@ export default function UnderwritingSuite({
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
-                  </>
-                )}
-              </div>
-            )}
 
-            {activeTab === 'insights' && (
-              <div className="bg-white border border-gray-200 rounded-lg p-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Deal Insights</h3>
-                
-                {/* TODO: AI Integration - This will be replaced with actual AI-generated insights */}
-                <div className="space-y-4">
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                    <h4 className="font-medium text-blue-900 mb-2">Deal Strengths</h4>
-                    <ul className="text-sm text-blue-800 space-y-1 list-disc list-inside">
-                      {creditScore >= 650 && <li>Good credit profile ({creditScore})</li>}
-                      {timeInBusiness >= 24 && <li>Established business ({Math.floor(timeInBusiness / 12)}+ years)</li>}
-                      {nsfCount === 0 && <li>Zero NSFs - excellent bank health</li>}
-                      {revenueStability > 0.7 && <li>Stable revenue pattern ({(revenueStability * 100).toFixed(0)}% stability)</li>}
-                      {avgDailyBalance >= 15000 && <li>Strong average daily balance (${Math.round(avgDailyBalance).toLocaleString()})</li>}
-                      {requestedAmount > 0 && avgMonthlyRevenue > 0 && avgMonthlyRevenue / requestedAmount >= 0.3 && <li>Strong revenue-to-advance ratio</li>}
-                    </ul>
-                  </div>
-                  
-                  {(creditScore < 600 || timeInBusiness < 12 || nsfCount >= 2 || avgDailyBalance < 8000 || (requestedAmount > 0 && avgMonthlyRevenue / requestedAmount < 0.2) || (hasOtherMCALoans && otherMCAMonthlyPayment > 0)) && (
-                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                      <h4 className="font-medium text-yellow-900 mb-2">Risk Factors</h4>
-                      <ul className="text-sm text-yellow-800 space-y-1 list-disc list-inside">
-                        {creditScore < 600 && <li>Lower credit score ({creditScore}) - higher factor rate applied</li>}
-                        {timeInBusiness < 12 && <li>Less than 1 year in business - higher risk category</li>}
-                        {nsfCount >= 2 && <li>{nsfCount} NSFs in last 3 months - cash flow concerns</li>}
-                        {avgDailyBalance < 8000 && <li>Low average daily balance - increased holdback recommended</li>}
-                        {requestedAmount > 0 && avgMonthlyRevenue > 0 && avgMonthlyRevenue / requestedAmount < 0.2 && <li>Advance amount high relative to revenue - may need reduction</li>}
-                        {revenueStability < 0.5 && <li>Unstable revenue pattern - stricter terms applied</li>}
-                        {hasOtherMCALoans && otherMCAMonthlyPayment > 0 && (
-                          <li>
-                            Existing MCA debt: ${otherMCAMonthlyPayment.toLocaleString()}/mo 
-                            ({((otherMCAMonthlyPayment / avgMonthlyRevenue) * 100).toFixed(1)}% of revenue)
-                            {(otherMCAMonthlyPayment / avgMonthlyRevenue) > 0.25 && ' - High debt burden'}
-                          </li>
-                        )}
-                      </ul>
+                {/* Recommended Offer Terms - Now at Bottom */}
+                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-6">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Recommended Offer</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <div className="text-xs text-gray-600 mb-1">Max Approved Amount</div>
+                      <div className="text-3xl font-bold text-[#5a7fc7]">
+                        ${Math.round(approvedAmount).toLocaleString()}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        Based on financial profile
+                      </div>
                     </div>
-                  )}
-                  
-                  <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                    <h4 className="font-medium text-green-900 mb-2">Why This Offer Works</h4>
-                    <ul className="text-sm text-green-800 space-y-1 list-disc list-inside">
-                      <li>Flexible {paymentFrequency.toLowerCase()} payments based on their revenue pattern</li>
-                      <li>{holdbackPercent}% holdback calculated from their ${Math.round(avgMonthlyRevenue).toLocaleString()}/mo average</li>
-                      <li>Factor rate of {factorRate}x reflects their {getRiskLabel(riskScore).toLowerCase()} profile</li>
-                      <li>{termMonths}-month term optimized for their business age and stability</li>
-                      <li>Fast funding (24-48 hours) for {data.purposeOfFunds || 'business needs'}</li>
-                    </ul>
-                  </div>
-                  
-                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                    <h4 className="font-medium text-gray-900 mb-2">Underwriter Notes</h4>
-                    <div className="text-sm text-gray-700 space-y-2">
-                      <div className="mb-2">
-                        Based on <strong>{approvalProbability}% approval probability</strong> and <strong>{getRiskLabel(riskScore).toLowerCase()}</strong> assessment, 
-                        this deal is <strong>{approvalProbability >= 75 ? 'highly recommended for approval' : approvalProbability >= 50 ? 'recommended with standard monitoring' : 'requires additional review'}</strong>.
+                    
+                    <div>
+                      <div className="text-xs text-gray-600 mb-1">Factor Rate</div>
+                      <div className="text-3xl font-bold text-gray-900">
+                        {factorRate}x
                       </div>
-                      <div className="mt-2">
-                        The ${Math.round(paymentAmount).toLocaleString()} {paymentFrequency.toLowerCase()} payment represents approximately{' '}
-                        <strong>
-                        {avgMonthlyRevenue > 0 
-                          ? ((paymentAmount / (avgMonthlyRevenue / paymentsPerMonth)) * 100).toFixed(1)
-                          : '0.0'}%
-                        </strong> of their average {paymentFrequency.toLowerCase()} revenue, ensuring sustainable cash flow.
+                      <div className="text-xs text-gray-500 mt-1">
+                        {factorRate <= 1.20 ? 'Excellent terms' : factorRate <= 1.30 ? 'Good terms' : 'Standard terms'}
                       </div>
-                      {approvedAmount < requestedAmount && (
-                        <div className="mt-2 text-orange-700">
-                          <strong>Note:</strong> Approved amount reduced from ${requestedAmount.toLocaleString()} to align with revenue capacity. Maximum available: ${Math.round(offerTerms.maxApprovedAmount).toLocaleString()}.
-                        </div>
-                      )}
+                    </div>
+                    
+                    <div>
+                      <div className="text-xs text-gray-600 mb-1">{paymentFrequency} Payment</div>
+                      <div className="text-2xl font-bold text-gray-900">
+                        ${Math.round(paymentAmount).toLocaleString()}
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <div className="text-xs text-gray-600 mb-1">Holdback %</div>
+                      <div className="text-2xl font-bold text-gray-900">
+                        {holdbackPercent}%
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        ~${Math.round(dailyHoldback).toLocaleString()}/day
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <div className="text-xs text-gray-600 mb-1">Term Length</div>
+                      <div className="text-2xl font-bold text-gray-900">
+                        {termMonths} months
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <div className="text-xs text-gray-600 mb-1">Total Repayment</div>
+                      <div className="text-2xl font-bold text-gray-900">
+                        ${Math.round(totalRepayment).toLocaleString()}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
+              </>
             )}
           </div>
 
@@ -1197,6 +1204,30 @@ export default function UnderwritingSuite({
                                 max="2"
                                 step="0.01"
                               />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-gray-600 mb-1">Term Length (# Payments)</label>
+                              <input
+                                type="number"
+                                value={editOfferTermLength}
+                                onChange={(e) => setEditOfferTermLength(e.target.value)}
+                                className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                                min="1"
+                                step="1"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-gray-600 mb-1">Payment Frequency</label>
+                              <select
+                                value={editOfferPaymentFreq}
+                                onChange={(e) => setEditOfferPaymentFreq(e.target.value)}
+                                className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                              >
+                                <option value="Daily">Daily</option>
+                                <option value="Weekly">Weekly</option>
+                                <option value="Bi-Weekly">Bi-Weekly</option>
+                                <option value="Monthly">Monthly</option>
+                              </select>
                             </div>
                             <div>
                               <label className="block text-xs text-gray-600 mb-1">Link (Optional)</label>
@@ -1266,6 +1297,20 @@ export default function UnderwritingSuite({
                               <div className="flex justify-between">
                                 <span className="text-gray-600">Total Repayment:</span>
                                 <span className="font-medium">${totalRepayment.toLocaleString()}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-gray-600">Term Length:</span>
+                                <span className="font-medium">{offer.termLength || 250} payments</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-gray-600">Frequency:</span>
+                                <span className="font-medium">{offer.paymentFrequency || 'Daily'}</span>
+                              </div>
+                              <div className="flex justify-between pt-1 border-t border-gray-200 mt-1">
+                                <span className="text-gray-600 font-medium">{offer.paymentFrequency || 'Daily'} Payment:</span>
+                                <span className="font-bold text-green-700">
+                                  ${Math.round(totalRepayment / (offer.termLength || 250)).toLocaleString()}
+                                </span>
                               </div>
                               {offer.url && (
                                 <div className="pt-2 border-t border-gray-200 mt-2">
@@ -1428,6 +1473,31 @@ export default function UnderwritingSuite({
                     max="2"
                     step="0.01"
                   />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Term Length (# of Payments)</label>
+                  <input
+                    type="number"
+                    value={newOfferTermLength}
+                    onChange={(e) => setNewOfferTermLength(e.target.value)}
+                    placeholder="e.g., 250"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                    min="1"
+                    step="1"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Payment Frequency</label>
+                  <select
+                    value={newOfferPaymentFreq}
+                    onChange={(e) => setNewOfferPaymentFreq(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                  >
+                    <option value="Daily">Daily</option>
+                    <option value="Weekly">Weekly</option>
+                    <option value="Bi-Weekly">Bi-Weekly</option>
+                    <option value="Monthly">Monthly</option>
+                  </select>
                 </div>
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">Link to Offer (Optional)</label>
