@@ -27,6 +27,8 @@ interface UnderwritingData {
   // Offers Received Section
   actualOffers?: Array<{ id: string; lenderName: string; amount: number; factorRate: number; termLength?: number; paymentFrequency?: string; url?: string }>;
   offersNotes?: string;
+  selectedOfferId?: string | null;
+  adjustedAmount?: number;
   
   // System will calculate these
   lastUpdated?: string;
@@ -188,8 +190,8 @@ export default function UnderwritingSuite({
   const [offersNotes, setOffersNotes] = useState(initialData?.offersNotes || '');
   
   // Selected offer for negotiation
-  const [selectedOfferId, setSelectedOfferId] = useState<string | null>(null);
-  const [adjustedAmount, setAdjustedAmount] = useState<number>(0);
+  const [selectedOfferId, setSelectedOfferId] = useState<string | null>(initialData?.selectedOfferId || null);
+  const [adjustedAmount, setAdjustedAmount] = useState<number>(initialData?.adjustedAmount || 0);
   const [negotiationPaymentFrequency, setNegotiationPaymentFrequency] = useState<'Daily' | 'Weekly' | 'Bi-Weekly' | 'Monthly'>('Daily');
   
   // Editing offers
@@ -492,6 +494,8 @@ export default function UnderwritingSuite({
         ...data, 
         actualOffers,
         offersNotes,
+        selectedOfferId,
+        adjustedAmount,
         lastUpdated: new Date().toISOString() 
       });
       alert('Underwriting data saved successfully!');
@@ -714,7 +718,7 @@ export default function UnderwritingSuite({
                     onChange={(e) => setData({ ...data, month1Revenue: Number(e.target.value) })}
                     min="0"
                     max="500000"
-                    step="5000"
+                    step="500"
                     className="w-full h-2 bg-blue-100 rounded-lg appearance-none cursor-pointer accent-[#5a7fc7]"
                   />
                   <div className="flex justify-between text-xs text-gray-500 mt-1">
@@ -734,7 +738,7 @@ export default function UnderwritingSuite({
                     onChange={(e) => setData({ ...data, month2Revenue: Number(e.target.value) })}
                     min="0"
                     max="500000"
-                    step="5000"
+                    step="500"
                     className="w-full h-2 bg-blue-100 rounded-lg appearance-none cursor-pointer accent-[#5a7fc7]"
                   />
                   <div className="flex justify-between text-xs text-gray-500 mt-1">
@@ -754,7 +758,7 @@ export default function UnderwritingSuite({
                     onChange={(e) => setData({ ...data, month3Revenue: Number(e.target.value) })}
                     min="0"
                     max="500000"
-                    step="5000"
+                    step="500"
                     className="w-full h-2 bg-blue-100 rounded-lg appearance-none cursor-pointer accent-[#5a7fc7]"
                   />
                   <div className="flex justify-between text-xs text-gray-500 mt-1">
@@ -781,7 +785,7 @@ export default function UnderwritingSuite({
                     onChange={(e) => setData({ ...data, avgDailyBalance: Number(e.target.value) })}
                     min="0"
                     max="200000"
-                    step="1000"
+                    step="500"
                     className="w-full h-2 bg-blue-100 rounded-lg appearance-none cursor-pointer accent-[#5a7fc7]"
                   />
                   <div className="flex justify-between text-xs text-gray-500 mt-1">
@@ -801,7 +805,7 @@ export default function UnderwritingSuite({
                     onChange={(e) => setData({ ...data, endingBalance: Number(e.target.value) })}
                     min="0"
                     max="200000"
-                    step="1000"
+                    step="500"
                     className="w-full h-2 bg-blue-100 rounded-lg appearance-none cursor-pointer accent-[#5a7fc7]"
                   />
                   <div className="flex justify-between text-xs text-gray-500 mt-1">
