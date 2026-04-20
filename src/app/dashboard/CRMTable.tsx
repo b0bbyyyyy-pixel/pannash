@@ -3,6 +3,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { getPhoneLocation, PhoneLocationInfo } from '@/lib/phoneLocation';
+import dynamic from 'next/dynamic';
+
+const UnderwritingSuite = dynamic(() => import('@/components/UnderwritingSuite'), { ssr: false });
 
 interface Lead {
   id: string;
@@ -16,6 +19,7 @@ interface Lead {
   lead_source: string | null;
   last_contact: string | null;
   offers: string | null;
+  underwriting_data?: any;
   timer_type: string;
   timer_end_date: string | null;
   timer_color: string | null;
@@ -184,6 +188,9 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   const [textTemplateName, setTextTemplateName] = useState('');
   const [textTemplateBody, setTextTemplateBody] = useState('');
   const [selectedTextTemplate, setSelectedTextTemplate] = useState<string>('');
+  
+  // Underwriting suite state
+  const [showUnderwritingSuite, setShowUnderwritingSuite] = useState<{ leadId: string; leadName: string } | null>(null);
   const router = useRouter();
 
   // Update local state when props change (e.g., switching tabs)
@@ -1063,6 +1070,34 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     setTextTemplateBody(template.body);
   };
 
+  // Underwriting functions
+  const handleSaveUnderwriting = async (leadId: string, underwritingData: any) => {
+    try {
+      const response = await fetch('/api/leads/underwriting', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ leadId, underwritingData }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save underwriting data');
+      }
+
+      // Update local state
+      setLeads(prevLeads =>
+        prevLeads.map(lead =>
+          lead.id === leadId ? { ...lead, underwriting_data: underwritingData } : lead
+        )
+      );
+
+      router.refresh();
+    } catch (error) {
+      console.error('Error saving underwriting data:', error);
+      throw error;
+    }
+  };
+
   const handleCopyLead = async (lead: Lead, destinationMonth: string) => {
     try {
       const res = await fetch('/api/leads/copy', {
@@ -1779,7 +1814,8 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     const fieldKey = columnField as keyof Lead;
     
     // Handle expandable text fields (configurable via column settings)
-    if (column.expandable) {
+    // Skip expandable for 'offers' column as it now has the Underwriting Suite
+    if (column.expandable && columnField !== 'offers') {
       const value = lead[fieldKey] as string | null;
       const formattedValue = value ? renderMarkdown(value, false) : null; // Links not clickable in cell view
       const countKey = `${lead.id}-${columnField}`;
@@ -2359,37 +2395,14 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
       }
 
       case 'offers': {
-        const offersText = lead.offers || 'Add offers';
-        const maxLength = 25;
+        const hasUnderwritingData = lead.underwriting_data && Object.keys(lead.underwriting_data).length > 0;
         
-        let displayText: string;
-        
-        if (column.truncateText) {
-          const plainText = stripMarkdown(offersText);
-          if (plainText.length > maxLength) {
-            displayText = plainText.substring(0, maxLength) + '...';
-          } else {
-            displayText = offersText;
-          }
-        } else {
-          displayText = offersText;
-        }
-        
-        return editingId === lead.id && editField === 'offers' ? (
-          <textarea
-            value={editValue}
-            onChange={(e) => setEditValue(e.target.value)}
-            onBlur={saveEdit}
-            autoFocus
-            className="w-full px-2 py-1 text-sm border border-[#5a7fc7] rounded min-h-[60px]"
-          />
-        ) : (
+        return (
           <button
-            onClick={() => startEdit(lead.id, 'offers', lead.offers || '')}
-            className="hover:text-[#5a7fc7] transition-colors text-left whitespace-nowrap"
-            title={column.truncateText && stripMarkdown(offersText).length > maxLength ? offersText : undefined}
+            onClick={() => setShowUnderwritingSuite({ leadId: lead.id, leadName: lead.name })}
+            className="w-full px-2 py-1 text-xs bg-white text-black border border-black rounded hover:bg-gray-50 transition-colors font-medium"
           >
-            {displayText}
+            {hasUnderwritingData ? 'View' : '+ Create Deal'}
           </button>
         );
       }
@@ -4265,6 +4278,17 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         Add Lead
       </button>
     </div>
+
+    {/* Underwriting Suite Modal */}
+    {showUnderwritingSuite && (
+      <UnderwritingSuite
+        leadId={showUnderwritingSuite.leadId}
+        leadName={showUnderwritingSuite.leadName}
+        initialData={leads.find(l => l.id === showUnderwritingSuite.leadId)?.underwriting_data}
+        onClose={() => setShowUnderwritingSuite(null)}
+        onSave={(data) => handleSaveUnderwriting(showUnderwritingSuite.leadId, data)}
+      />
+    )}
     </>
   );
 }
