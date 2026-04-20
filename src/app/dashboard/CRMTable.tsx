@@ -2396,13 +2396,19 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
 
       case 'offers': {
         const hasUnderwritingData = lead.underwriting_data && Object.keys(lead.underwriting_data).length > 0;
+        const isFunded = lead.underwriting_data?.isFunded || false;
+        const commission = lead.underwriting_data?.commission || 0;
         
         return (
           <button
             onClick={() => setShowUnderwritingSuite({ leadId: lead.id, leadName: lead.name })}
-            className="w-full px-2 py-1 text-xs bg-white text-black border border-black rounded hover:bg-gray-50 transition-colors font-medium"
+            className={`w-full px-2 py-1 text-xs rounded transition-colors font-medium ${
+              isFunded 
+                ? 'bg-green-600 text-white border border-green-700 hover:bg-green-700' 
+                : 'bg-white text-black border border-black hover:bg-gray-50'
+            }`}
           >
-            {hasUnderwritingData ? 'View' : '+ Create Deal'}
+            {isFunded ? `$${Math.round(commission).toLocaleString()}` : (hasUnderwritingData ? 'View' : '+ Create Deal')}
           </button>
         );
       }
