@@ -60,7 +60,7 @@ const DEFAULT_DATA: UnderwritingData = {
   avgDailyBalance: 15000,
   endingBalance: 20000,
   nsfCount: 0,
-  depositsCount: 30,
+  depositsCount: 10,
   hasOtherMCALoans: false,
   otherMCAMonthlyPayment: 0,
   otherMCALenders: '',
@@ -334,9 +334,9 @@ export default function UnderwritingSuite({
     else if (revenueStability < 0.5) factorRate += 0.03;
     
     // Deposits count adjustments (more deposits = better cash flow)
-    if (depositsCount >= 40) factorRate -= 0.03; // Frequent deposits (40+ in 3 months = ~13/month)
-    else if (depositsCount >= 25) factorRate -= 0.01; // Good deposit frequency
-    else if (depositsCount < 10) factorRate += 0.03; // Low deposits = higher risk
+    if (depositsCount >= 13) factorRate -= 0.03; // Frequent deposits (13+ per month)
+    else if (depositsCount >= 8) factorRate -= 0.01; // Good deposit frequency (8-12 per month)
+    else if (depositsCount < 3) factorRate += 0.03; // Low deposits = higher risk (less than 3/month)
     
     // Existing MCA debt burden adjustments
     const debtToRevenueRatio = avgMonthlyRevenue > 0 ? otherMCAMonthlyPayment / avgMonthlyRevenue : 0;
@@ -463,9 +463,9 @@ export default function UnderwritingSuite({
     else if (nsfCount >= 3) score -= 10;
     
     // Deposits count impact (±10 points)
-    if (depositsCount >= 40) score += 10; // Frequent deposits = healthy cash flow
-    else if (depositsCount >= 25) score += 5; // Good frequency
-    else if (depositsCount < 10) score -= 10; // Low deposit frequency = concern
+    if (depositsCount >= 13) score += 10; // Frequent deposits = healthy cash flow (13+ per month)
+    else if (depositsCount >= 8) score += 5; // Good frequency (8-12 per month)
+    else if (depositsCount < 3) score -= 10; // Low deposit frequency = concern (less than 3/month)
     
     // Bank balance health (±10 points)
     if (avgDailyBalance >= 20000) score += 10;
@@ -863,17 +863,17 @@ export default function UnderwritingSuite({
                 </div>
                 
                 <div>
-                  <label className="block text-xs text-gray-600 mb-1">Deposits Count (3 months)</label>
+                  <label className="block text-xs text-gray-600 mb-1">Average Monthly Deposits</label>
                   <input
                     type="number"
                     value={data.depositsCount || ''}
                     onChange={(e) => setData({ ...data, depositsCount: Number(e.target.value) || 0 })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
                     min="0"
-                    max="200"
-                    placeholder="30"
+                    max="100"
+                    placeholder="10"
                   />
-                  <p className="text-xs text-gray-500 mt-1">More deposits = better cash flow</p>
+                  <p className="text-xs text-gray-500 mt-1">Average deposits per month</p>
                 </div>
                 
                 <div className="pt-3 border-t border-gray-300 space-y-3">
@@ -920,34 +920,38 @@ export default function UnderwritingSuite({
               </div>
             </div>
 
-            {/* Request Details */}
-            <div className="mb-6">
-              <h3 className="text-sm font-medium text-gray-700 mb-3">Request Details</h3>
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">Requested Amount</label>
-                  <input
-                    type="number"
-                    value={data.requestedAmount || ''}
-                    onChange={(e) => setData({ ...data, requestedAmount: Number(e.target.value) || 0 })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
-                    min="0"
-                    step="5000"
-                    placeholder="100000"
-                  />
+            {/* Expected Offer */}
+            <div className="mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-lg p-4">
+              <h3 className="text-sm font-semibold text-blue-900 mb-3">Expected Offer</h3>
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-blue-800">Max Approved Amount:</span>
+                  <span className="text-lg font-bold text-blue-900">
+                    ${Math.round(approvedAmount).toLocaleString()}
+                  </span>
                 </div>
-                
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">Purpose of Funds</label>
-                  <textarea
-                    value={data.purposeOfFunds || ''}
-                    onChange={(e) => setData({ ...data, purposeOfFunds: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm resize-none focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
-                    rows={3}
-                    placeholder="e.g., Equipment purchase, inventory..."
-                  />
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-blue-800">Factor Rate:</span>
+                  <span className="text-base font-semibold text-blue-900">
+                    {factorRate}x
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-blue-800">{paymentFrequency} Payment:</span>
+                  <span className="text-base font-semibold text-blue-900">
+                    ${Math.round(paymentAmount).toLocaleString()}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center pt-2 border-t border-blue-300">
+                  <span className="text-xs text-blue-800">Holdback %:</span>
+                  <span className="text-sm font-medium text-blue-900">
+                    {holdbackPercent}%
+                  </span>
                 </div>
               </div>
+              <p className="text-xs text-blue-700 mt-3">
+                Click "Calculate Offer" to see full analysis
+              </p>
             </div>
             
             {/* Calculate Button */}
@@ -1013,14 +1017,59 @@ export default function UnderwritingSuite({
                   const displayRetainedPercent = ((displayRevenueAfterPayment / avgMonthlyRevenue) * 100).toFixed(0);
                   const displayRevenueRatio = (avgMonthlyRevenue / displayMonthlyPayment).toFixed(1);
                   
+                  // Calculate individual payment per frequency
+                  let displayIndividualPayment;
+                  let displayFrequency;
+                  if (selectedOffer && adjustedAmount > 0) {
+                    displayFrequency = displayPaymentFreq;
+                    const totalRepay = adjustedAmount * displayFactorRate;
+                    displayIndividualPayment = totalRepay / displayTermLength;
+                  } else {
+                    displayFrequency = paymentFrequency;
+                    displayIndividualPayment = paymentAmount;
+                  }
+                  
                   return (
                     <>
-                      {/* Top Metrics */}
+                      {/* Big 3 Colored Boxes - Top */}
+                      <div className="grid grid-cols-3 gap-4 mb-6">
+                        <div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-300 rounded-lg p-5">
+                          <div className="text-xs text-green-700 font-medium mb-1">Max Approval Amount</div>
+                          <div className="text-4xl font-bold text-green-600">
+                            ${Math.round(displayAmount).toLocaleString()}
+                          </div>
+                          <div className="text-sm text-green-700 mt-1 font-medium">
+                            Funding amount
+                          </div>
+                        </div>
+                        
+                        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-lg p-5">
+                          <div className="text-xs text-blue-700 font-medium mb-1">{displayFrequency} Payment</div>
+                          <div className="text-4xl font-bold text-blue-600">
+                            ${Math.round(displayIndividualPayment).toLocaleString()}
+                          </div>
+                          <div className="text-sm text-blue-700 mt-1">
+                            {displayFrequency} payment amount
+                          </div>
+                        </div>
+                        
+                        <div className="bg-gradient-to-br from-purple-50 to-violet-50 border-2 border-purple-300 rounded-lg p-5">
+                          <div className="text-xs text-purple-700 font-medium mb-1">Monthly Payment % of Sales</div>
+                          <div className="text-4xl font-bold text-purple-600">
+                            {displayPaymentPercent}%
+                          </div>
+                          <div className="text-sm text-purple-700 mt-1">
+                            Of monthly revenue
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* 4 Smaller Boxes Below */}
                       <div className="grid grid-cols-4 gap-4 mb-6">
                         <div className="bg-white border border-gray-200 rounded-lg p-4">
-                          <div className="text-xs text-gray-600 mb-1">Loan Amount</div>
-                          <div className="text-xl font-bold text-[#5a7fc7]">
-                            ${Math.round(displayAmount).toLocaleString()}
+                          <div className="text-xs text-gray-600 mb-1">Credit Score</div>
+                          <div className="text-xl font-bold text-gray-900">
+                            {creditScore}
                           </div>
                         </div>
                         
@@ -1032,49 +1081,19 @@ export default function UnderwritingSuite({
                         </div>
                         
                         <div className="bg-white border border-gray-200 rounded-lg p-4">
-                          <div className="text-xs text-gray-600 mb-1">Credit Score</div>
-                          <div className="text-xl font-bold text-gray-900">
-                            {creditScore}
+                          <div className="text-xs text-gray-600 mb-1">Approval Confidence</div>
+                          <div className="text-xl font-bold text-green-600">
+                            {approvalProbability}%
                           </div>
                         </div>
                         
                         <div className="bg-white border border-gray-200 rounded-lg p-4">
-                          <div className="text-xs text-gray-600 mb-1">Payment % of Monthly Revenue</div>
-                          <div className="text-xl font-bold text-gray-900">
-                            {displayPaymentPercent}%
-                          </div>
-                        </div>
-                      </div>
-                      
-                      {/* Sales-Focused Metrics */}
-                      <div className="grid grid-cols-3 gap-4 mb-6">
-                        <div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-300 rounded-lg p-5">
-                          <div className="text-xs text-green-700 font-medium mb-1">Approval Confidence</div>
-                          <div className="text-4xl font-bold text-green-600">
-                            {approvalProbability}%
-                          </div>
-                          <div className="text-sm text-green-700 mt-1 font-medium">
-                            {approvalProbability >= 80 ? 'Highly Recommended' : approvalProbability >= 60 ? 'Strong Candidate' : 'Reviewable'}
-                          </div>
-                        </div>
-                        
-                        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-lg p-5">
-                          <div className="text-xs text-blue-700 font-medium mb-1">Revenue After Payment</div>
-                          <div className="text-3xl font-bold text-blue-600">
+                          <div className="text-xs text-gray-600 mb-1">Revenue After Payment</div>
+                          <div className="text-lg font-bold text-blue-600">
                             ${Math.round(displayRevenueAfterPayment).toLocaleString()}
                           </div>
-                          <div className="text-sm text-blue-700 mt-1">
-                            {displayRetainedPercent}% retained monthly
-                          </div>
-                        </div>
-                        
-                        <div className="bg-gradient-to-br from-purple-50 to-violet-50 border-2 border-purple-300 rounded-lg p-5">
-                          <div className="text-xs text-purple-700 font-medium mb-1">Revenue to Payment Ratio</div>
-                          <div className="text-4xl font-bold text-purple-600">
-                            {displayRevenueRatio}x
-                          </div>
-                          <div className="text-sm text-purple-700 mt-1">
-                            {Number(displayRevenueRatio) >= 3 ? 'Excellent coverage' : 'Good coverage'}
+                          <div className="text-xs text-gray-500 mt-0.5">
+                            {displayRetainedPercent}% retained
                           </div>
                         </div>
                       </div>
@@ -1421,7 +1440,7 @@ export default function UnderwritingSuite({
                                     
                                     <input
                                       type="range"
-                                      min={Math.max(10000, offer.amount * 0.5)}
+                                      min={0}
                                       max={offer.amount}
                                       step={1000}
                                       value={adjustedAmount}
@@ -1430,7 +1449,7 @@ export default function UnderwritingSuite({
                                     />
                                     
                                     <div className="flex justify-between text-xs text-gray-600 mt-1">
-                                      <span>${Math.round(offer.amount * 0.5).toLocaleString()}</span>
+                                      <span>$0</span>
                                       <span>${offer.amount.toLocaleString()}</span>
                                     </div>
                                   </div>
@@ -1474,6 +1493,70 @@ export default function UnderwritingSuite({
                                           return Math.round(totalRepay / paymentsPerYear).toLocaleString();
                                         })()}
                                       </span>
+                                    </div>
+                                  </div>
+                                  
+                                  {/* Commission Tracking */}
+                                  <div className="pt-3 border-t border-green-300 space-y-3">
+                                    <div>
+                                      <label className="block text-xs text-green-800 font-medium mb-1">Points on Deal (%)</label>
+                                      <input
+                                        type="number"
+                                        value={points || ''}
+                                        onChange={(e) => setPoints(Number(e.target.value) || 0)}
+                                        placeholder="e.g., 3"
+                                        className="w-full px-2 py-1.5 border border-green-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                                        min="0"
+                                        max="20"
+                                        step="0.5"
+                                      />
+                                      <p className="text-xs text-gray-500 mt-1">
+                                        Total commission: ${Math.round(totalCommission).toLocaleString()} ({points}% of ${Math.round(adjustedAmount).toLocaleString()})
+                                      </p>
+                                    </div>
+                                    
+                                    <div>
+                                      <label className="block text-xs text-green-800 font-medium mb-1">My Percentage (%)</label>
+                                      <input
+                                        type="number"
+                                        value={myPercentage || ''}
+                                        onChange={(e) => setMyPercentage(Number(e.target.value) || 0)}
+                                        placeholder="e.g., 50"
+                                        className="w-full px-2 py-1.5 border border-green-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                                        min="0"
+                                        max="100"
+                                        step="5"
+                                      />
+                                      <p className="text-xs text-gray-500 mt-1">
+                                        Your share of the {points}% points
+                                      </p>
+                                    </div>
+                                    
+                                    <div className="bg-white border border-green-400 rounded-lg p-2">
+                                      <div className="flex justify-between items-center">
+                                        <span className="text-xs text-gray-600 font-medium">My Commission:</span>
+                                        <span className="text-xl font-bold text-green-700">
+                                          ${Math.round(calculatedCommission).toLocaleString()}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    
+                                    <div className="pt-2 border-t border-green-300">
+                                      <label className="flex items-center justify-between cursor-pointer">
+                                        <div>
+                                          <span className="text-xs font-semibold text-green-900">Deal Funded</span>
+                                          <p className="text-xs text-green-700">Mark when money is received</p>
+                                        </div>
+                                        <div className="relative inline-block w-10 h-5">
+                                          <input
+                                            type="checkbox"
+                                            checked={isFunded}
+                                            onChange={(e) => setIsFunded(e.target.checked)}
+                                            className="sr-only peer"
+                                          />
+                                          <div className="w-10 h-5 bg-gray-300 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-green-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-600"></div>
+                                        </div>
+                                      </label>
                                     </div>
                                   </div>
                                 </div>
@@ -1581,76 +1664,6 @@ export default function UnderwritingSuite({
                 className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm resize-none focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
                 rows={6}
               />
-            </div>
-            
-            {/* Commission & Funding Section */}
-            <div className="mt-6 bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300 rounded-lg p-4">
-              <h3 className="text-sm font-semibold text-green-900 mb-4">Commission Tracking</h3>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-xs text-green-800 font-medium mb-1">Points on Deal (%)</label>
-                  <input
-                    type="number"
-                    value={points || ''}
-                    onChange={(e) => setPoints(Number(e.target.value) || 0)}
-                    placeholder="e.g., 3"
-                    className="w-full px-3 py-2 border border-green-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                    min="0"
-                    max="20"
-                    step="0.5"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Total commission: ${Math.round(totalCommission).toLocaleString()} ({points}% of ${Math.round(commissionBaseAmount).toLocaleString()})
-                  </p>
-                </div>
-                
-                <div>
-                  <label className="block text-xs text-green-800 font-medium mb-1">My Percentage (%)</label>
-                  <input
-                    type="number"
-                    value={myPercentage || ''}
-                    onChange={(e) => setMyPercentage(Number(e.target.value) || 0)}
-                    placeholder="e.g., 50"
-                    className="w-full px-3 py-2 border border-green-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                    min="0"
-                    max="100"
-                    step="5"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Your share of the {points}% points
-                  </p>
-                </div>
-                
-                <div className="bg-white border border-green-300 rounded-lg p-3">
-                  <div className="flex justify-between items-center mb-1">
-                    <span className="text-xs text-gray-600">My Commission:</span>
-                    <span className="text-2xl font-bold text-green-700">
-                      ${Math.round(calculatedCommission).toLocaleString()}
-                    </span>
-                  </div>
-                  <p className="text-xs text-gray-500">
-                    {myPercentage}% of ${Math.round(totalCommission).toLocaleString()}
-                  </p>
-                </div>
-                
-                <div className="pt-3 border-t border-green-300">
-                  <label className="flex items-center justify-between cursor-pointer">
-                    <div>
-                      <span className="text-sm font-semibold text-green-900">Deal Funded</span>
-                      <p className="text-xs text-green-700">Mark as funded when money is received</p>
-                    </div>
-                    <div className="relative inline-block w-12 h-6">
-                      <input
-                        type="checkbox"
-                        checked={isFunded}
-                        onChange={(e) => setIsFunded(e.target.checked)}
-                        className="sr-only peer"
-                      />
-                      <div className="w-12 h-6 bg-gray-300 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-green-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
-                    </div>
-                  </label>
-                </div>
-              </div>
             </div>
             
             {/* Quick Comparison */}
