@@ -36,6 +36,7 @@ interface Lead {
   scheduled_email_frequency: string | null;
   last_scheduled_email_sent: string | null;
   month_key: string;
+  max_added_points?: number;
 }
 
 interface MonthData {

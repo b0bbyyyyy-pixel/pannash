@@ -9,9 +9,9 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Barlow', 'system-ui', 'sans-serif'],
-        serif: ['Crimson Text', 'Georgia', 'serif'],
-        script: ['Dancing Script', 'cursive'],
+        sans: ['var(--font-barlow)', 'var(--font-inter)', 'system-ui', 'sans-serif'],
+        serif: ['var(--font-crimson)', 'Georgia', 'serif'],
+        script: ['var(--font-dancing)', 'cursive'],
       },
       colors: {
         ald: {

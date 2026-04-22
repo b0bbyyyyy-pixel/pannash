@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { getPhoneLocation, PhoneLocationInfo } from '@/lib/phoneLocation';
 import { parseLeadPasteText } from '@/lib/parse-lead-paste';
+import { setStoredLeadMaxAddedPoints } from '@/lib/maxAddedPointsCap';
 import dynamic from 'next/dynamic';
 
 const UnderwritingSuite = dynamic(() => import('@/components/UnderwritingSuite'), { ssr: false });
@@ -40,6 +41,8 @@ interface Lead {
   scheduled_email_frequency: string | null;
   last_scheduled_email_sent: string | null;
   month_key: string;
+  /** 1–50: cap for added commission points in Underwriting (set at add lead) */
+  max_added_points?: number;
 }
 
 interface EmailTemplate {
@@ -138,12 +141,13 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     email: '',
     phone: '',
     company: '',
+    maxAddedPoints: 50,
   });
   const [leadQuickPaste, setLeadQuickPaste] = useState('');
   const [pasteParseNote, setPasteParseNote] = useState('');
 
   const openAddModal = () => {
-    setNewLead({ name: '', email: '', phone: '', company: '' });
+    setNewLead({ name: '', email: '', phone: '', company: '', maxAddedPoints: 50 });
     setLeadQuickPaste('');
     setPasteParseNote('');
     setShowAddModal(true);
@@ -153,12 +157,13 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     setShowAddModal(false);
     setLeadQuickPaste('');
     setPasteParseNote('');
-    setNewLead({ name: '', email: '', phone: '', company: '' });
+    setNewLead({ name: '', email: '', phone: '', company: '', maxAddedPoints: 50 });
   };
 
   const applyPastedLead = () => {
     const p = parseLeadPasteText(leadQuickPaste);
     setNewLead((prev) => ({
+      ...prev,
       name: p.name || prev.name,
       email: p.email || prev.email,
       phone: p.phone || prev.phone,
@@ -1166,12 +1171,21 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         throw new Error('Failed to save underwriting data');
       }
 
-      // Update local state
-      setLeads(prevLeads =>
-        prevLeads.map(lead =>
-          lead.id === leadId ? { ...lead, underwriting_data: underwritingData } : lead
-        )
-      );
+      const body = await response.json();
+      const serverLead = body?.lead as Lead | undefined;
+      if (serverLead) {
+        setLeads((prevLeads) =>
+          prevLeads.map((lead) =>
+            lead.id === leadId
+              ? { ...lead, ...serverLead, underwriting_data: serverLead.underwriting_data ?? underwritingData }
+              : lead
+          )
+        );
+      } else {
+        setLeads((prevLeads) =>
+          prevLeads.map((lead) => (lead.id === leadId ? { ...lead, underwriting_data: underwritingData } : lead))
+        );
+      }
 
       router.refresh();
     } catch (error) {
@@ -1872,7 +1886,8 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
 
       if (res.ok) {
         const { lead } = await res.json();
-        
+        setStoredLeadMaxAddedPoints(lead.id, newLead.maxAddedPoints);
+
         // Update local state
         setLeads(prev => [lead, ...prev]);
         
@@ -4308,6 +4323,32 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                   placeholder="Acme Corp"
                 />
               </div>
+
+              <div>
+                <label className="block text-sm font-medium text-[#1a1a1a] mb-1">
+                  Max added points (underwriting)
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={newLead.maxAddedPoints}
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    if (e.target.value === '') {
+                      setNewLead({ ...newLead, maxAddedPoints: 50 });
+                      return;
+                    }
+                    if (!Number.isNaN(n)) {
+                      setNewLead({ ...newLead, maxAddedPoints: Math.min(50, Math.max(1, Math.round(n))) });
+                    }
+                  }}
+                  className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
+                />
+                <p className="text-xs text-[#6b6b6b] mt-1">
+                  Caps the &quot;added points&quot; slider when negotiating an offer (1–50; default 50).
+                </p>
+              </div>
             </div>
 
             <div className="mt-5 p-3 bg-[#f9f9f9] border border-[#e5e5e5] rounded-md">
@@ -4447,6 +4488,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     {/* Underwriting Suite Modal */}
     {showUnderwritingSuite && (
       <UnderwritingSuite
+        key={showUnderwritingSuite.leadId}
         leadId={showUnderwritingSuite.leadId}
         leadName={showUnderwritingSuite.leadName}
         initialData={leads.find(l => l.id === showUnderwritingSuite.leadId)?.underwriting_data}

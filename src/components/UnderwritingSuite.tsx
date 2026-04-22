@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, BarChart, Bar, ComposedChart, Cell } from 'recharts';
 
 interface UnderwritingData {
@@ -41,6 +41,7 @@ interface UnderwritingData {
   offersNotes?: string;
   selectedOfferId?: string | null;
   adjustedAmount?: number;
+  negotiationAddedPoints?: number;
   
   // Commission & Funding
   points?: number;
@@ -51,6 +52,7 @@ interface UnderwritingData {
   // System will calculate these
   hasCalculated?: boolean;
   lastUpdated?: string;
+  leadMaxAddedPoints?: number;
 }
 
 interface UnderwritingSuiteProps {
@@ -78,6 +80,9 @@ const DEFAULT_DATA: UnderwritingData = {
   requestedAmount: 0,
   purposeOfFunds: '',
 };
+
+/** Hard cap for added / negotiation commission points (UI never goes above this). */
+const COMMISSION_ADDED_POINTS_MAX = 15;
 
 const INDUSTRIES = [
   // Retail & Food Service
@@ -194,6 +199,7 @@ export default function UnderwritingSuite({
   onSave,
 }: UnderwritingSuiteProps) {
   const [data, setData] = useState<UnderwritingData>({ ...DEFAULT_DATA, ...initialData });
+  const commissionPointsMax = COMMISSION_ADDED_POINTS_MAX;
   const [saving, setSaving] = useState(false);
   const [hasCalculated, setHasCalculated] = useState(initialData?.hasCalculated || false);
   
@@ -226,7 +232,24 @@ export default function UnderwritingSuite({
   // Selected offer for negotiation
   const [selectedOfferId, setSelectedOfferId] = useState<string | null>(initialData?.selectedOfferId || null);
   const [adjustedAmount, setAdjustedAmount] = useState<number>(initialData?.adjustedAmount || 0);
-  const [negotiationPaymentFrequency, setNegotiationPaymentFrequency] = useState<'Daily' | 'Weekly' | 'Bi-Weekly' | 'Monthly'>('Daily');
+  const [negotiationAddedPoints, setNegotiationAddedPoints] = useState(() => {
+    const cap = COMMISSION_ADDED_POINTS_MAX;
+    if (initialData?.negotiationAddedPoints != null) {
+      return Math.min(initialData.negotiationAddedPoints, cap);
+    }
+    const o = (initialData?.actualOffers || []).find((x) => x.id === initialData?.selectedOfferId);
+    if (o) {
+      const br = o.buyRate ?? 1.2;
+      if (o.addedPoints != null) return Math.max(0, Math.min(cap, o.addedPoints));
+      const d = (o.factorRate - br) * 100;
+      if (!Number.isNaN(d)) return Math.max(0, Math.min(cap, Math.round(d * 10) / 10));
+    }
+    return Math.min(5, cap);
+  });
+
+  useEffect(() => {
+    setNegotiationAddedPoints((p) => Math.min(p, commissionPointsMax));
+  }, [commissionPointsMax]);
   
   // Negotiation section collapse state
   const [isNegotiationCollapsed, setIsNegotiationCollapsed] = useState(false);
@@ -250,6 +273,8 @@ export default function UnderwritingSuite({
   
   // Get the selected offer
   const selectedOffer = actualOffers.find(o => o.id === selectedOfferId);
+  const offerBuyForNegotiation = selectedOffer ? (selectedOffer.buyRate ?? 1.2) : 1.2;
+  const negotiatedFactorRate = selectedOffer ? offerBuyForNegotiation + negotiationAddedPoints / 100 : 1.25;
   
   // When an offer is selected, initialize the adjusted amount to its original amount
   const handleSelectOffer = (offerId: string) => {
@@ -264,6 +289,15 @@ export default function UnderwritingSuite({
     if (offer) {
       setSelectedOfferId(offerId);
       setAdjustedAmount(offer.amount);
+      const br = offer.buyRate ?? 1.2;
+      if (offer.addedPoints != null) {
+        setNegotiationAddedPoints(Math.max(0, Math.min(commissionPointsMax, offer.addedPoints)));
+      } else {
+        const d = (offer.factorRate - br) * 100;
+        setNegotiationAddedPoints(
+          !Number.isNaN(d) ? Math.max(0, Math.min(commissionPointsMax, Math.round(d * 10) / 10)) : Math.min(5, commissionPointsMax)
+        );
+      }
     }
   };
 
@@ -488,104 +522,95 @@ export default function UnderwritingSuite({
     ? commissionBaseAmount * ((selectedOffer.myCommissionPercent || 0) / 100)
     : commissionBaseAmount * (points / 100) * (myPercentage / 100);
   
-  // Risk score (0-100, comprehensive algorithm) - STRICT SCORING
+  // Risk score (0-100) — shown in Expected Offer box only
   const calculateRiskScore = (): number => {
-    let score = 40; // Start conservative
-    
-    // Industry risk impact (±20 points) - STRICT
+    let score = 40;
+
     const industry = data.industry || 'Other';
-    if (industry.includes('Healthcare') || industry.includes('Medical') || industry.includes('Dental') || 
+    if (industry.includes('Healthcare') || industry.includes('Medical') || industry.includes('Dental') ||
         industry.includes('Legal') || industry.includes('Accounting') || industry.includes('Insurance')) {
-      score += 20; // Low-risk industries
-    } else if (industry.includes('IT Services') || industry.includes('Software') || industry.includes('SaaS') || 
+      score += 20;
+    } else if (industry.includes('IT Services') || industry.includes('Software') || industry.includes('SaaS') ||
                industry.includes('Consulting') || industry.includes('Financial Services')) {
-      score += 12; // Moderate-low risk
+      score += 12;
     } else if (industry.includes('Retail') && !industry.includes('Bar') && !industry.includes('Nightclub')) {
-      score += 5; // Standard retail
+      score += 5;
     } else if (industry.includes('Restaurant') || industry.includes('Food')) {
-      score -= 5; // Restaurant risk
+      score -= 5;
     } else if (industry.includes('Agriculture') || industry.includes('Farming') || industry.includes('Farm')) {
-      score -= 20; // Very high-risk: seasonal, weather-dependent
+      score -= 20;
     } else if (industry.includes('Bar') || industry.includes('Nightclub') || industry.includes('Trucking') ||
                industry.includes('Construction') || industry.includes('Roofing') || industry.includes('Auto Dealership')) {
-      score -= 15; // High-risk industries
-    } else if (industry.includes('Dropshipping') || industry.includes('Amazon FBA') || 
+      score -= 15;
+    } else if (industry.includes('Dropshipping') || industry.includes('Amazon FBA') ||
                industry.includes('Event Planning') || industry.includes('Non-Profit')) {
-      score -= 25; // Very high-risk industries
+      score -= 25;
     }
-    
-    // Credit score impact (±25 points) - MUCH STRICTER
+
     if (creditScore >= 720) score += 25;
     else if (creditScore >= 680) score += 15;
     else if (creditScore >= 650) score += 5;
     else if (creditScore >= 620) score -= 5;
     else if (creditScore >= 580) score -= 15;
-    else if (creditScore < 580) score -= 25; // Sub-580 is very risky
-    
-    // Time in business impact (±18 points) - STRICTER
+    else if (creditScore < 580) score -= 25;
+
     if (timeInBusiness >= 48) score += 18;
     else if (timeInBusiness >= 36) score += 12;
     else if (timeInBusiness >= 24) score += 6;
     else if (timeInBusiness >= 12) score -= 5;
-    else if (timeInBusiness < 12) score -= 15; // Less than 1 year is very risky
-    
-    // Revenue stability (±15 points) - STRICTER - "Choppy banks"
-    if (revenueStability > 0.9) score += 15; // Very consistent
+    else if (timeInBusiness < 12) score -= 15;
+
+    if (revenueStability > 0.9) score += 15;
     else if (revenueStability > 0.75) score += 8;
     else if (revenueStability > 0.5) score += 2;
-    else if (revenueStability < 0.4) score -= 12; // Choppy = major concern
-    else if (revenueStability < 0.3) score -= 20; // Very choppy = high risk
-    
-    // NSF impact (±15 points) - MUCH STRICTER - Major red flag
+    else if (revenueStability < 0.4) score -= 12;
+    else if (revenueStability < 0.3) score -= 20;
+
     if (nsfCount === 0) score += 15;
-    else if (nsfCount === 1) score -= 5; // Even 1 NSF is concerning
+    else if (nsfCount === 1) score -= 5;
     else if (nsfCount === 2) score -= 12;
-    else if (nsfCount >= 3) score -= 20; // 3+ NSF = very high risk
-    else if (nsfCount >= 5) score -= 30; // 5+ NSF = almost certain decline
-    
-    // Deposits count impact (±12 points) - STRICTER
-    if (depositsCount >= 15) score += 12; // Very frequent = healthy (15+ per month)
-    else if (depositsCount >= 10) score += 6; // Good frequency (10-14 per month)
-    else if (depositsCount >= 5) score += 0; // Moderate (5-9 per month)
-    else if (depositsCount < 5) score -= 10; // Low = concern (less than 5/month)
-    else if (depositsCount < 3) score -= 18; // Very low = major concern
-    
-    // Bank balance health (±15 points) - STRICTER
+    else if (nsfCount >= 3) score -= 20;
+    else if (nsfCount >= 5) score -= 30;
+
+    if (depositsCount >= 15) score += 12;
+    else if (depositsCount >= 10) score += 6;
+    else if (depositsCount >= 5) score += 0;
+    else if (depositsCount < 5) score -= 10;
+    else if (depositsCount < 3) score -= 18;
+
     if (avgDailyBalance >= 30000) score += 15;
     else if (avgDailyBalance >= 15000) score += 8;
     else if (avgDailyBalance >= 8000) score += 3;
-    else if (avgDailyBalance < 5000) score -= 12; // Low balance = concern
-    else if (avgDailyBalance < 2000) score -= 20; // Very low = high risk
-    
-    // Revenue vs requested amount (±12 points) - STRICTER
+    else if (avgDailyBalance < 5000) score -= 12;
+    else if (avgDailyBalance < 2000) score -= 20;
+
     const monthlyRevRatio = approvedAmount > 0 && avgMonthlyRevenue > 0 ? avgMonthlyRevenue / approvedAmount : 0;
-    if (monthlyRevRatio >= 0.6) score += 12; // Strong revenue coverage
+    if (monthlyRevRatio >= 0.6) score += 12;
     else if (monthlyRevRatio >= 0.4) score += 6;
     else if (monthlyRevRatio >= 0.25) score += 0;
-    else if (monthlyRevRatio < 0.2) score -= 15; // Weak coverage = risky
-    
-    // Existing MCA debt burden (±15 points) - STRICTER
+    else if (monthlyRevRatio < 0.2) score -= 15;
+
     const debtRatio = avgMonthlyRevenue > 0 ? otherMCAMonthlyPayment / avgMonthlyRevenue : 0;
-    if (debtRatio === 0) score += 8; // No debt is good
-    else if (debtRatio > 0.30) score -= 20; // Very high debt burden = major risk
-    else if (debtRatio > 0.20) score -= 12; // High debt burden
-    else if (debtRatio > 0.10) score -= 5; // Moderate debt burden
-    
+    if (debtRatio === 0) score += 8;
+    else if (debtRatio > 0.30) score -= 20;
+    else if (debtRatio > 0.20) score -= 12;
+    else if (debtRatio > 0.10) score -= 5;
+
     return Math.max(0, Math.min(100, score));
   };
-  
+
   const riskScore = calculateRiskScore();
-  // More realistic approval probability - don't inflate scores
-  const approvalProbability = Math.max(5, Math.min(95, Math.round(riskScore * 0.85))); // Cap at 95%, floor at 5%
-  
-  // Monthly payment for charts: when negotiating an offer, use the actual per-period
-  // payment from adjusted amount (slider) and negotiation frequency so the line moves with the slider
+  const riskScoreTextClass =
+    riskScore >= 70 ? 'text-emerald-700' : riskScore >= 50 ? 'text-amber-700' : 'text-red-700';
+
+  // Monthly payment for charts: per-period = totalRepay / termLength (same as offer card); scale to monthly using the offer’s frequency
   const calculateMonthlyPayment = (revenue: number) => {
     if (selectedOffer && adjustedAmount > 0) {
-      const totalRepay = adjustedAmount * (selectedOffer.factorRate || 1.25);
+      const totalRepay = adjustedAmount * negotiatedFactorRate;
       const termLength = selectedOffer.termLength || 250;
       const perPeriod = totalRepay / termLength;
-      switch (negotiationPaymentFrequency) {
+      const freq = selectedOffer.paymentFrequency || 'Daily';
+      switch (freq) {
         case 'Daily':
           return perPeriod * 22;
         case 'Weekly':
@@ -690,6 +715,8 @@ export default function UnderwritingSuite({
         offersNotes,
         selectedOfferId,
         adjustedAmount,
+        negotiationAddedPoints,
+        leadMaxAddedPoints: commissionPointsMax,
         points,
         myPercentage,
         commission: calculatedCommission,
@@ -715,7 +742,7 @@ export default function UnderwritingSuite({
 
     // Use defaults for optional fields
     const buyRate = Number(newOfferBuyRate) || 1.20; // Default to 1.20
-    const addedPoints = Number(newOfferAddedPoints) || 5; // Default to 5 points
+    const addedPoints = Math.min(commissionPointsMax, Number(newOfferAddedPoints) || 5);
     const calculatedFactorRate = buyRate + (addedPoints / 100);
 
     const newOffer = {
@@ -788,7 +815,7 @@ export default function UnderwritingSuite({
 
     // Use defaults for optional fields
     const buyRate = Number(editOfferBuyRate) || 1.20; // Default to 1.20
-    const addedPoints = Number(editOfferAddedPoints) || 5; // Default to 5 points
+    const addedPoints = Math.min(commissionPointsMax, Number(editOfferAddedPoints) || 5);
     const calculatedFactorRate = buyRate + (addedPoints / 100);
 
     setActualOffers(actualOffers.map(offer => 
@@ -811,6 +838,7 @@ export default function UnderwritingSuite({
     // Update adjusted amount if we're editing the selected offer
     if (selectedOfferId === editingOfferId) {
       setAdjustedAmount(Number(editOfferAmount));
+      setNegotiationAddedPoints(addedPoints);
     }
 
     setEditingOfferId(null);
@@ -822,18 +850,6 @@ export default function UnderwritingSuite({
     setEditOfferAmount('');
     setEditOfferFactorRate('');
     setEditOfferUrl('');
-  };
-
-  const getRiskColor = (score: number): string => {
-    if (score >= 70) return 'text-green-600';
-    if (score >= 50) return 'text-yellow-600';
-    return 'text-red-600';
-  };
-
-  const getRiskLabel = (score: number): string => {
-    if (score >= 70) return 'Low Risk';
-    if (score >= 50) return 'Medium Risk';
-    return 'High Risk';
   };
 
   return (
@@ -1136,6 +1152,13 @@ export default function UnderwritingSuite({
                   </span>
                 </div>
                 <div className="flex justify-between items-center">
+                  <span className="text-xs text-blue-800">Risk score:</span>
+                  <span className={`text-base font-bold tabular-nums ${riskScoreTextClass}`}>
+                    {riskScore}
+                    <span className="text-xs font-semibold text-blue-800/80 ml-1">/ 100</span>
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
                   <span className="text-xs text-blue-800">Est. weekly payback (avg. over {termMonths} mo):</span>
                   <span className="text-base font-semibold text-blue-900">
                     ${Math.round(weeklyPaymentEstimate).toLocaleString()}
@@ -1190,7 +1213,7 @@ export default function UnderwritingSuite({
                   if (selectedOffer && adjustedAmount > 0) {
                     // Use selected offer data
                     displayAmount = adjustedAmount;
-                    displayFactorRate = selectedOffer.factorRate;
+                    displayFactorRate = negotiatedFactorRate;
                     displayTermLength = selectedOffer.termLength || 250;
                     displayPaymentFreq = selectedOffer.paymentFrequency || 'Daily';
                     
@@ -1225,6 +1248,18 @@ export default function UnderwritingSuite({
                   const displayRevenueAfterPayment = avgMonthlyRevenue - displayMonthlyPayment;
                   const displayRetainedPercent = ((displayRevenueAfterPayment / avgMonthlyRevenue) * 100).toFixed(0);
                   const displayRevenueRatio = (avgMonthlyRevenue / displayMonthlyPayment).toFixed(1);
+
+                  const tibMonths = Math.max(0, Math.round(Number(data.timeInBusiness) || 0));
+                  const tibY = Math.floor(tibMonths / 12);
+                  const tibM = tibMonths % 12;
+                  const timeInBusinessLabel =
+                    tibMonths === 0
+                      ? '—'
+                      : tibY > 0 && tibM > 0
+                        ? `${tibY} yr${tibY === 1 ? '' : 's'} ${tibM} mo`
+                        : tibY > 0
+                          ? `${tibY} yr${tibY === 1 ? '' : 's'}`
+                          : `${tibM} mo`;
                   
                   // Calculate individual payment per frequency
                   let displayIndividualPayment;
@@ -1292,9 +1327,9 @@ export default function UnderwritingSuite({
                         </div>
                         
                         <div className="bg-white border border-gray-200 rounded-lg p-4">
-                          <div className="text-sm text-gray-600 mb-2 font-medium">Approval Confidence</div>
-                          <div className="text-3xl font-bold text-green-600">
-                            {approvalProbability}%
+                          <div className="text-sm text-gray-600 mb-2 font-medium">Time in Business</div>
+                          <div className="text-3xl font-bold text-gray-900">
+                            {timeInBusinessLabel}
                           </div>
                         </div>
                         
@@ -1536,7 +1571,7 @@ export default function UnderwritingSuite({
                                   step="0.01"
                                 />
                               </div>
-                              <div>
+                                <div>
                                 <label className="block text-xs text-gray-600 mb-1">Added Points</label>
                                 <input
                                   type="number"
@@ -1544,7 +1579,7 @@ export default function UnderwritingSuite({
                                   onChange={(e) => setEditOfferAddedPoints(e.target.value)}
                                   className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
                                   min="0"
-                                  max="50"
+                                  max={commissionPointsMax}
                                   step="0.5"
                                 />
                               </div>
@@ -1725,26 +1760,6 @@ export default function UnderwritingSuite({
                                 
                                 {!isNegotiationCollapsed && (
                                   <div className="space-y-3">
-                                  {/* Payment Frequency Toggle */}
-                                  <div>
-                                    <label className="block text-xs text-gray-700 font-medium mb-2">Payment Frequency</label>
-                                    <div className="grid grid-cols-2 gap-2">
-                                      {(['Daily', 'Weekly', 'Bi-Weekly', 'Monthly'] as const).map((freq) => (
-                                        <button
-                                          key={freq}
-                                          onClick={() => setNegotiationPaymentFrequency(freq)}
-                                          className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                                            negotiationPaymentFrequency === freq
-                                              ? 'bg-green-600 text-white'
-                                              : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-                                          }`}
-                                        >
-                                          {freq}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  </div>
-                                  
                                   {/* Amount Slider */}
                                   <div>
                                     <div className="flex justify-between items-center text-xs text-gray-700 mb-1">
@@ -1770,6 +1785,35 @@ export default function UnderwritingSuite({
                                     </div>
                                   </div>
                                   
+                                  {/* Added points (commission) — same logic as add offer: buy rate + points/100 = factor */}
+                                  <div>
+                                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 text-xs text-gray-700 mb-1">
+                                      <span className="font-medium">Added points (commission):</span>
+                                      <div className="text-right">
+                                        <span className="text-base font-bold text-green-700">
+                                          {negotiationAddedPoints} pts
+                                        </span>
+                                        <p className="text-[10px] text-gray-500 font-normal">
+                                          Buy {(offer.buyRate ?? 1.2).toFixed(2)}x + {negotiationAddedPoints} pts = {negotiatedFactorRate.toFixed(3)}x factor
+                                        </p>
+                                      </div>
+                                    </div>
+                                    <input
+                                      key={`negotiate-pts-${leadId}`}
+                                      type="range"
+                                      min={0}
+                                      max={commissionPointsMax}
+                                      step={0.5}
+                                      value={Math.min(negotiationAddedPoints, commissionPointsMax)}
+                                      onChange={(e) => setNegotiationAddedPoints(Number(e.target.value))}
+                                      className="w-full h-2 bg-green-200 rounded-lg appearance-none cursor-pointer accent-green-600"
+                                    />
+                                    <div className="flex justify-between text-xs text-gray-600 mt-1">
+                                      <span>0</span>
+                                      <span className="tabular-nums">{commissionPointsMax}</span>
+                                    </div>
+                                  </div>
+                                  
                                   {/* Calculations */}
                                   <div className="pt-2 border-t border-green-200 space-y-1.5 text-xs">
                                     <div className="flex justify-between">
@@ -1777,37 +1821,29 @@ export default function UnderwritingSuite({
                                       <span className="font-medium">${offer.amount.toLocaleString()}</span>
                                     </div>
                                     <div className="flex justify-between">
-                                      <span className="text-gray-700">Factor Rate (Fixed):</span>
-                                      <span className="font-medium">{offer.factorRate}x</span>
+                                      <span className="text-gray-700">Factor rate (live):</span>
+                                      <span className="font-medium">{negotiatedFactorRate.toFixed(3)}x</span>
                                     </div>
                                     <div className="flex justify-between">
                                       <span className="text-gray-700">Adjusted Total Repayment:</span>
                                       <span className="font-bold text-green-700">
-                                        ${Math.round(adjustedAmount * offer.factorRate).toLocaleString()}
+                                        ${Math.round(adjustedAmount * negotiatedFactorRate).toLocaleString()}
                                       </span>
                                     </div>
                                     <div className="flex justify-between">
                                       <span className="text-gray-700">Total Cost:</span>
                                       <span className="font-medium text-orange-600">
-                                        ${Math.round(adjustedAmount * (offer.factorRate - 1)).toLocaleString()}
+                                        ${Math.round(adjustedAmount * (negotiatedFactorRate - 1)).toLocaleString()}
                                       </span>
                                     </div>
                                     <div className="flex justify-between">
                                       <span className="text-gray-700">
-                                        {negotiationPaymentFrequency} Payment:
+                                        {(offer.paymentFrequency || 'Daily')} payment (per period):
                                       </span>
                                       <span className="font-medium">
-                                        ${(() => {
-                                          const totalRepay = adjustedAmount * offer.factorRate;
-                                          let paymentsPerYear = 0;
-                                          switch (negotiationPaymentFrequency) {
-                                            case 'Daily': paymentsPerYear = 250; break;
-                                            case 'Weekly': paymentsPerYear = 52; break;
-                                            case 'Bi-Weekly': paymentsPerYear = 26; break;
-                                            case 'Monthly': paymentsPerYear = 12; break;
-                                          }
-                                          return Math.round(totalRepay / paymentsPerYear).toLocaleString();
-                                        })()}
+                                        ${Math.round(
+                                          (adjustedAmount * negotiatedFactorRate) / (offer.termLength || 250)
+                                        ).toLocaleString()}
                                       </span>
                                     </div>
                                   </div>
@@ -1895,7 +1931,7 @@ export default function UnderwritingSuite({
                       placeholder="5"
                       className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
                       min="0"
-                      max="50"
+                      max={commissionPointsMax}
                       step="0.5"
                     />
                   </div>
@@ -1993,7 +2029,7 @@ export default function UnderwritingSuite({
                     <div className="flex justify-between border-t border-green-300 pt-2 mt-2">
                       <span className="font-semibold text-green-800">Negotiated ({selectedOffer.lenderName}):</span>
                       <span className="font-bold text-green-800">
-                        ${Math.round(adjustedAmount).toLocaleString()} @ {selectedOffer.factorRate}x
+                        ${Math.round(adjustedAmount).toLocaleString()} @ {negotiatedFactorRate.toFixed(3)}x
                       </span>
                     </div>
                   )}

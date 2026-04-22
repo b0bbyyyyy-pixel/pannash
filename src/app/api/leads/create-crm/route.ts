@@ -4,10 +4,18 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(req: NextRequest) {
   try {
-    const { name, email, phone, company, monthKey } = await req.json();
+    const { name, email, phone, company, monthKey, maxAddedPoints } = await req.json();
 
     if (!name || !email) {
       return NextResponse.json({ error: 'Name and email are required' }, { status: 400 });
+    }
+
+    let cap = 50;
+    if (maxAddedPoints != null && maxAddedPoints !== '') {
+      const n = Number(maxAddedPoints);
+      if (!Number.isNaN(n)) {
+        cap = Math.min(50, Math.max(1, Math.round(n)));
+      }
     }
 
     const cookieStore = await cookies();
@@ -45,6 +53,7 @@ export async function POST(req: NextRequest) {
         auto_email_frequency: 'Off',
         auto_text_frequency: 'Off',
         month_key: monthKey || new Date().toISOString().slice(0, 7), // YYYY-MM format
+        max_added_points: cap,
       })
       .select()
       .single();
