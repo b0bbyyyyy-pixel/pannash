@@ -198,7 +198,18 @@ export default function UnderwritingSuite({
   const [hasCalculated, setHasCalculated] = useState(initialData?.hasCalculated || false);
   
   // Actual offers received tracking
-  const [actualOffers, setActualOffers] = useState<Array<{ id: string; lenderName: string; amount: number; factorRate: number; termLength?: number; paymentFrequency?: string; url?: string }>>(
+  const [actualOffers, setActualOffers] = useState<Array<{ 
+    id: string; 
+    lenderName: string; 
+    amount: number; 
+    factorRate: number; 
+    buyRate?: number;
+    addedPoints?: number;
+    myCommissionPercent?: number;
+    termLength?: number; 
+    paymentFrequency?: string; 
+    url?: string;
+  }>>(
     initialData?.actualOffers || []
   );
   const [newOfferLender, setNewOfferLender] = useState('');
