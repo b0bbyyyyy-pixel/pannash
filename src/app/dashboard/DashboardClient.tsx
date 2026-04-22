@@ -131,6 +131,26 @@ export default function DashboardClient({ allLeads, availableMonths, initialMont
   useEffect(() => {
     setCurrentColumns(columns);
   }, [columns]);
+
+  // Re-fetch from the server when this browser tab becomes visible again (fixes stale
+  // lead stages/config until a manual refresh, e.g. after edits in another window)
+  useEffect(() => {
+    let hiddenAt: number | null = null;
+    const onVis = () => {
+      if (document.visibilityState === 'hidden') {
+        hiddenAt = Date.now();
+        return;
+      }
+      if (document.visibilityState === 'visible' && hiddenAt != null) {
+        if (Date.now() - hiddenAt > 300) {
+          router.refresh();
+        }
+        hiddenAt = null;
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [router]);
   
   // When month changes, update URL and refresh to load that month's configuration
   const handleMonthChange = (monthKey: string) => {

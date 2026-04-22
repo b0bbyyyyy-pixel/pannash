@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { getPhoneLocation, PhoneLocationInfo } from '@/lib/phoneLocation';
 import { parseLeadPasteText } from '@/lib/parse-lead-paste';
@@ -97,6 +98,16 @@ interface MonthData {
   customName: string;
 }
 
+/** Stage colors in config use Tailwind-like tokens, e.g. `bg-[#aabbcc] text-[#112233]`. */
+function parseStageInlineColors(colorClass: string): { backgroundColor: string; color: string } {
+  const bgMatch = colorClass.match(/bg-\[([^\]]+)\]/);
+  const textMatch = colorClass.match(/text-\[([^\]]+)\]/);
+  return {
+    backgroundColor: bgMatch ? bgMatch[1] : '#e5e5e5',
+    color: textMatch ? textMatch[1] : '#4a4a4a',
+  };
+}
+
 interface CRMTableProps {
   leads: Lead[];
   monthKey: string;
@@ -115,11 +126,6 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   const [leads, setLeads] = useState(initialLeads);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
-
-  // Sync local state when initialLeads prop changes (after router.refresh)
-  useEffect(() => {
-    setLeads(initialLeads);
-  }, [initialLeads]);
 
   const [editField, setEditField] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
@@ -232,10 +238,47 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   const [showUnderwritingSuite, setShowUnderwritingSuite] = useState<{ leadId: string; leadName: string } | null>(null);
   const router = useRouter();
 
-  // Update local state when props change (e.g., switching tabs)
+  // Open stage popover: position + which lead. Native <select> cannot style each <option> on Windows/Chrome.
+  const [stageMenu, setStageMenu] = useState<{
+    leadId: string;
+    top: number;
+    left: number;
+    width: number;
+  } | null>(null);
+  const stageMenuPortalRef = useRef<HTMLDivElement | null>(null);
+
+  // Update local state when props change (e.g., switching tabs, router.refresh)
   useEffect(() => {
     setLeads(initialLeads);
   }, [initialLeads]);
+
+  // Close stage menu on outside click, scroll, or Escape; defer mousedown to avoid the opening click
+  useEffect(() => {
+    if (!stageMenu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setStageMenu(null);
+    };
+    const onScroll = () => setStageMenu(null);
+    let closeTimer: number | null = null;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target;
+      if (!(t instanceof Node)) return;
+      if (stageMenuPortalRef.current?.contains(t)) return;
+      if ((t as Element).closest?.('[data-stage-dropdown-trigger]')) return;
+      setStageMenu(null);
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', onScroll, true);
+    closeTimer = window.setTimeout(() => {
+      document.addEventListener('mousedown', onDown);
+    }, 0);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', onScroll, true);
+      if (closeTimer) window.clearTimeout(closeTimer);
+      document.removeEventListener('mousedown', onDown);
+    };
+  }, [stageMenu]);
 
   // Fetch user timezone
   useEffect(() => {
@@ -2121,21 +2164,73 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         );
       }
 
-      case 'stage':
+      case 'stage': {
+        const open = stageMenu?.leadId === lead.id;
         return (
-          <select
-            value={lead.stage}
-            onChange={(e) => updateLead(lead.id, 'stage', e.target.value)}
-            className="px-2 py-1 text-xs font-medium rounded border-0 cursor-pointer"
-            style={{ backgroundColor: bgColor, color: textColor }}
-          >
-            {stages.map((stage, idx) => (
-              <option key={`stage-${idx}`} value={stage.value}>
-                {stage.value}
-              </option>
-            ))}
-          </select>
+          <>
+            <button
+              type="button"
+              data-stage-dropdown-trigger
+              onClick={(e) => {
+                e.stopPropagation();
+                if (open) {
+                  setStageMenu(null);
+                } else {
+                  const r = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
+                  setStageMenu({
+                    leadId: lead.id,
+                    top: r.bottom + 4,
+                    left: r.left,
+                    width: Math.max(r.width, 200),
+                  });
+                }
+              }}
+              className="px-2 py-1 text-xs font-medium rounded border-0 cursor-pointer w-full min-w-[10rem] max-w-[20rem] text-left flex items-center justify-between gap-1"
+              style={{ backgroundColor: bgColor, color: textColor }}
+            >
+              <span className="truncate flex-1">{lead.stage}</span>
+              <svg className="w-3.5 h-3.5 flex-shrink-0 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {open &&
+              typeof document !== 'undefined' &&
+              createPortal(
+                <div
+                  ref={stageMenuPortalRef}
+                  className="fixed z-[200] max-h-[min(50vh,20rem)] overflow-y-auto rounded-md border border-[#e0e0e0] py-0.5 shadow-lg"
+                  style={{
+                    top: stageMenu?.top,
+                    left: stageMenu?.left,
+                    minWidth: stageMenu?.width,
+                    maxWidth: 'min(100vw - 1rem, 24rem)',
+                  }}
+                  data-stage-menu
+                >
+                  {stages.map((st, idx) => {
+                    const c = parseStageInlineColors(st.color);
+                    return (
+                      <button
+                        key={`stage-opt-${idx}`}
+                        type="button"
+                        className="block w-full text-left px-2.5 py-1.5 text-xs font-medium hover:opacity-90 active:opacity-100"
+                        style={c}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void updateLead(lead.id, 'stage', st.value);
+                          setStageMenu(null);
+                        }}
+                      >
+                        {st.value}
+                      </button>
+                    );
+                  })}
+                </div>,
+                document.body
+              )}
+          </>
         );
+      }
 
       case 'value':
         return editingId === lead.id && editField === 'value' ? (
@@ -4284,12 +4379,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
           <tbody>
             {leads.map((lead) => {
               const stageConfig = stages.find(s => s.value === lead.stage) || stages[2];
-              
-              // Extract colors from Tailwind classes for inline styles
-              const bgMatch = stageConfig.color.match(/bg-\[([^\]]+)\]/);
-              const textMatch = stageConfig.color.match(/text-\[([^\]]+)\]/);
-              const bgColor = bgMatch ? bgMatch[1] : '#e5e5e5';
-              const textColor = textMatch ? textMatch[1] : '#4a4a4a';
+              const { backgroundColor: bgColor, color: textColor } = parseStageInlineColors(stageConfig.color);
               
               return (
                 <tr 
