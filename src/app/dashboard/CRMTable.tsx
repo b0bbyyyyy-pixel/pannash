@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { getPhoneLocation, PhoneLocationInfo } from '@/lib/phoneLocation';
+import { parseLeadPasteText } from '@/lib/parse-lead-paste';
 import dynamic from 'next/dynamic';
 
 const UnderwritingSuite = dynamic(() => import('@/components/UnderwritingSuite'), { ssr: false });
@@ -132,6 +133,44 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     phone: '',
     company: '',
   });
+  const [leadQuickPaste, setLeadQuickPaste] = useState('');
+  const [pasteParseNote, setPasteParseNote] = useState('');
+
+  const openAddModal = () => {
+    setNewLead({ name: '', email: '', phone: '', company: '' });
+    setLeadQuickPaste('');
+    setPasteParseNote('');
+    setShowAddModal(true);
+  };
+
+  const closeAddModal = () => {
+    setShowAddModal(false);
+    setLeadQuickPaste('');
+    setPasteParseNote('');
+    setNewLead({ name: '', email: '', phone: '', company: '' });
+  };
+
+  const applyPastedLead = () => {
+    const p = parseLeadPasteText(leadQuickPaste);
+    setNewLead((prev) => ({
+      name: p.name || prev.name,
+      email: p.email || prev.email,
+      phone: p.phone || prev.phone,
+      company: p.company || prev.company,
+    }));
+    const n = [p.name, p.email, p.phone, p.company].filter(Boolean).length;
+    if (n > 0) {
+      setPasteParseNote(
+        p.remainder
+          ? `Updated ${n} field(s) from your paste. Review below — extra: ${p.remainder.length > 180 ? `${p.remainder.slice(0, 180)}…` : p.remainder}`
+          : `Updated ${n} field(s) from your paste. You can still edit them before adding.`
+      );
+    } else {
+      setPasteParseNote(
+        'No fields detected. Try: separate lines (name, email, phone), or labels like Name: / Email: / Company:, or a comma-separated row.'
+      );
+    }
+  };
   const [showEmailModal, setShowEmailModal] = useState<string | null>(null);
   const [showTextModal, setShowTextModal] = useState<string | null>(null);
   const [autoCountdowns, setAutoCountdowns] = useState<{ [key: string]: { email: string, text: string } }>({});
@@ -1797,8 +1836,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         // Update parent state so it persists
         onLeadCreate(lead);
         
-        setShowAddModal(false);
-        setNewLead({ name: '', email: '', phone: '', company: '' });
+        closeAddModal();
       } else {
         alert('Failed to add lead');
       }
@@ -4118,10 +4156,11 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
 
       {/* Add Lead Modal */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowAddModal(false)}>
-          <div className="bg-white rounded-lg p-8 max-w-md w-full mx-4" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-xl font-bold text-[#1a1a1a] mb-6">Add New Lead</h2>
-            
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={closeAddModal}>
+          <div className="bg-white rounded-lg p-8 max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-xl font-bold text-[#1a1a1a] mb-2">Add New Lead</h2>
+            <p className="text-sm text-[#6b6b6b] mb-4">Enter the lead below, or use Quick paste at the bottom to map name, email, phone, and company from a block of text.</p>
+
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-[#1a1a1a] mb-1">
@@ -4176,9 +4215,39 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
               </div>
             </div>
 
+            <div className="mt-5 p-3 bg-[#f9f9f9] border border-[#e5e5e5] rounded-md">
+              <label className="block text-sm font-medium text-[#1a1a1a] mb-2">Quick paste</label>
+              <p className="text-xs text-[#6b6b6b] mb-2">Paste a signature, vCard, or messy note — we will try to map name, email, phone, and company into the fields above.</p>
+              <textarea
+                value={leadQuickPaste}
+                onChange={(e) => setLeadQuickPaste(e.target.value)}
+                className="w-full min-h-[100px] px-3 py-2 border border-[#e5e5e5] rounded-md text-sm font-mono text-[#1a1a1a] resize-y"
+                placeholder="Paste anything: email, phone, name, company, or lines like Name: John Smith"
+              />
+              <div className="flex flex-wrap gap-2 mt-2">
+                <button
+                  type="button"
+                  onClick={applyPastedLead}
+                  className="px-3 py-1.5 bg-[#5a7fc7] text-white rounded-md text-sm font-medium hover:bg-[#4a6fb7] transition-colors"
+                >
+                  Parse &amp; fill fields
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setLeadQuickPaste(''); setPasteParseNote(''); }}
+                  className="px-3 py-1.5 border border-[#e5e5e5] text-[#1a1a1a] rounded-md text-sm hover:bg-white"
+                >
+                  Clear paste
+                </button>
+              </div>
+              {pasteParseNote && (
+                <p className="text-xs text-[#4a4a4a] mt-2 leading-relaxed">{pasteParseNote}</p>
+              )}
+            </div>
+
             <div className="flex gap-3 mt-6">
               <button
-                onClick={() => setShowAddModal(false)}
+                onClick={closeAddModal}
                 className="flex-1 px-4 py-2 border border-[#e5e5e5] text-[#1a1a1a] rounded-md text-sm font-medium hover:bg-[#f5f5f5] transition-colors"
               >
                 Cancel
@@ -4278,7 +4347,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     {/* Add Lead Button */}
     <div className="mt-4 flex justify-end">
       <button
-        onClick={() => setShowAddModal(true)}
+        onClick={openAddModal}
         className="px-5 py-2.5 bg-[#1a1a1a] text-white rounded-md text-sm font-medium hover:bg-[#2a2a2a] transition-colors"
       >
         Add Lead

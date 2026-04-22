@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { parseLeadPasteText } from '@/lib/parse-lead-paste';
 
 interface AddLeadButtonProps {
   selectedListId?: string;
@@ -15,7 +16,26 @@ export default function AddLeadButton({ selectedListId }: AddLeadButtonProps) {
   const [company, setCompany] = useState('');
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
+  const [quickPaste, setQuickPaste] = useState('');
+  const [parseNote, setParseNote] = useState('');
   const router = useRouter();
+
+  const applyPasted = () => {
+    const p = parseLeadPasteText(quickPaste);
+    setName((n) => p.name || n);
+    setEmail((e) => p.email || e);
+    setPhone((ph) => p.phone || ph);
+    setCompany((c) => p.company || c);
+    if (p.remainder) {
+      setNotes((prev) => (prev.trim() ? `${prev}\n\n${p.remainder}` : p.remainder));
+    }
+    const n = [p.name, p.email, p.phone, p.company].filter(Boolean).length;
+    setParseNote(
+      n > 0
+        ? `Filled ${n} field(s)${p.remainder ? '; extra text added to notes' : ''}.`
+        : 'Could not auto-detect fields. Try name / email on separate lines or Name: / Email: labels.'
+    );
+  };
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,6 +62,8 @@ export default function AddLeadButton({ selectedListId }: AddLeadButtonProps) {
         setPhone('');
         setCompany('');
         setNotes('');
+        setQuickPaste('');
+        setParseNote('');
         router.refresh();
       } else {
         const data = await response.json();
@@ -68,9 +90,10 @@ export default function AddLeadButton({ selectedListId }: AddLeadButtonProps) {
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-md p-8 max-w-md w-full">
-            <h2 className="text-2xl font-bold text-[#1a1a1a] mb-5 tracking-tight">
+            <h2 className="text-2xl font-bold text-[#1a1a1a] mb-2 tracking-tight">
               Add Lead Manually
             </h2>
+            <p className="text-sm text-[#6b6b6b] mb-4">Fill in the fields, or use Quick paste at the bottom to auto-fill from a block of text.</p>
             
             <form onSubmit={handleCreate} className="space-y-4">
               <div>
@@ -138,6 +161,26 @@ export default function AddLeadButton({ selectedListId }: AddLeadButtonProps) {
                   rows={3}
                   className="w-full px-4 py-3 bg-white border border-[#e5e5e5] rounded-md text-[#1a1a1a] focus:outline-none focus:ring-1 focus:ring-[#1a1a1a] focus:border-[#1a1a1a]"
                 />
+              </div>
+
+              <div className="p-3 bg-[#f9f9f9] border border-[#e5e5e5] rounded-md">
+                <label className="block text-sm font-bold text-[#1a1a1a] mb-2">Quick paste</label>
+                <p className="text-xs text-[#6b6b6b] mb-2">Paste a signature or vCard — we map name, email, phone, and company; extra text can be added to notes.</p>
+                <textarea
+                  value={quickPaste}
+                  onChange={(e) => setQuickPaste(e.target.value)}
+                  className="w-full min-h-[88px] px-3 py-2 border border-[#e5e5e5] rounded-md text-sm font-mono"
+                  placeholder="Paste signature, vCard, or any text with name, email, phone…"
+                />
+                <div className="flex gap-2 mt-2">
+                  <button type="button" onClick={applyPasted} className="px-3 py-1.5 bg-[#5a7fc7] text-white rounded-md text-sm font-medium">
+                    Parse &amp; fill
+                  </button>
+                  <button type="button" onClick={() => { setQuickPaste(''); setParseNote(''); }} className="px-3 py-1.5 border border-[#e5e5e5] rounded-md text-sm">
+                    Clear
+                  </button>
+                </div>
+                {parseNote && <p className="text-xs text-[#4a4a4a] mt-2">{parseNote}</p>}
               </div>
 
               <div className="flex gap-3 pt-4">

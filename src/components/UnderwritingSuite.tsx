@@ -283,6 +283,9 @@ export default function UnderwritingSuite({
   
   // Calculate average monthly revenue
   const avgMonthlyRevenue = (month1Revenue + month2Revenue + month3Revenue) / 3;
+  // Underwriting rule of thumb: advance size is tied to the *weakest* month, not the average
+  const revenueMonthValues = [month1Revenue, month2Revenue, month3Revenue].filter((r) => r > 0);
+  const lowestMonthlyRevenue = revenueMonthValues.length > 0 ? Math.min(...revenueMonthValues) : 0;
   const revenueStability = month1Revenue > 0 && month2Revenue > 0 && month3Revenue > 0 
     ? 1 - (Math.abs(month1Revenue - month2Revenue) + Math.abs(month2Revenue - month3Revenue)) / (month1Revenue + month2Revenue + month3Revenue)
     : 0.5;
@@ -402,17 +405,44 @@ export default function UnderwritingSuite({
       paymentFrequency = 'Weekly';
     }
     
-    // Max approved amount (based on available revenue after existing MCA obligations)
-    const revenueMultiplier = creditScore >= 700 ? 2.5 : creditScore >= 650 ? 2.0 : 1.5;
-    const baseMaxAmount = Math.floor(avgMonthlyRevenue * revenueMultiplier * industryRiskMultiplier);
-    
-    // Reduce max amount if they have existing MCA debt
-    if (hasOtherMCALoans && otherMCAMonthlyPayment > 0) {
-      // Use available revenue for calculation if debt burden is high
-      const adjustedRevenue = debtToRevenueRatio > 0.20 ? availableMonthlyRevenue : avgMonthlyRevenue;
-      maxApprovedAmount = Math.floor(adjustedRevenue * revenueMultiplier * industryRiskMultiplier * 0.85); // 15% haircut for risk
+    // Max approved amount: industry practice is often ~1–2x the *lowest* month (weakest month drive servicing).
+    // Do NOT use average×2.5 (that was inflating offers).
+    const revenueForAdvance = lowestMonthlyRevenue > 0 ? lowestMonthlyRevenue : (avgMonthlyRevenue > 0 ? avgMonthlyRevenue : 0);
+    if (revenueForAdvance <= 0) {
+      maxApprovedAmount = 0;
     } else {
-      maxApprovedAmount = baseMaxAmount;
+      // Base multiplier 1.0 – 1.25 before adjustments (stay in realistic 1–2x range)
+      let advanceMult = 1.2;
+      if (creditScore >= 720) advanceMult = 1.45;
+      else if (creditScore >= 700) advanceMult = 1.35;
+      else if (creditScore >= 650) advanceMult = 1.2;
+      else if (creditScore >= 600) advanceMult = 1.05;
+      else advanceMult = 0.95; // sub-600
+
+      if (revenueStability < 0.4) advanceMult *= 0.9; // choppy revenue
+      else if (revenueStability < 0.55) advanceMult *= 0.95;
+      else if (revenueStability > 0.8) advanceMult *= 1.04;
+
+      // Industry: stretch or tighten within ~0.9–1.1 on top of 1.2x base (not 0.7–1.15 on raw $)
+      advanceMult *= Math.min(1.1, Math.max(0.88, industryRiskMultiplier * 0.95));
+
+      if (hasOtherMCALoans && otherMCAMonthlyPayment > 0) {
+        advanceMult *= debtToRevenueRatio > 0.25 ? 0.86 : debtToRevenueRatio > 0.15 ? 0.91 : 0.96;
+        if (debtToRevenueRatio > 0.2) advanceMult *= 0.9;
+        if (availableMonthlyRevenue > 0 && availableMonthlyRevenue < revenueForAdvance * 0.5) {
+          advanceMult *= 0.94;
+        }
+      }
+
+      if (nsfCount >= 3) advanceMult *= 0.9;
+      else if (nsfCount >= 1) advanceMult *= 0.97;
+
+      if (avgDailyBalance < 5000) advanceMult *= 0.95;
+      else if (avgDailyBalance < 10000) advanceMult *= 0.98;
+
+      // Hard cap: never above 2.0x lowest (or 2x single filled month) — aligns with "usually 1–2x"
+      advanceMult = Math.max(0.85, Math.min(2.0, advanceMult));
+      maxApprovedAmount = Math.floor(revenueForAdvance * advanceMult);
     }
     
     // Cap factor rate
@@ -441,6 +471,10 @@ export default function UnderwritingSuite({
   const paymentsPerMonth = paymentFrequency === 'Daily' ? 22 : 4;
   const totalPayments = termMonths * paymentsPerMonth;
   const paymentAmount = totalPayments > 0 ? totalRepayment / totalPayments : 0;
+  // Average $ applied per calendar month and per week (for UI — aligns with "weekly" quote style)
+  const monthlyPaybackAvg = termMonths > 0 && totalRepayment > 0 ? totalRepayment / termMonths : 0;
+  const WEEKS_PER_MONTH = 4.33;
+  const weeklyPaymentEstimate = monthlyPaybackAvg > 0 ? monthlyPaybackAvg / WEEKS_PER_MONTH : 0;
   const dailyHoldback = avgMonthlyRevenue * (holdbackPercent / 100) / 22;
   
   // Simple APR calculation (approximate)
@@ -543,16 +577,29 @@ export default function UnderwritingSuite({
   // More realistic approval probability - don't inflate scores
   const approvalProbability = Math.max(5, Math.min(95, Math.round(riskScore * 0.85))); // Cap at 95%, floor at 5%
   
-  // Calculate monthly payment for all charts
+  // Monthly payment for charts: when negotiating an offer, use the actual per-period
+  // payment from adjusted amount (slider) and negotiation frequency so the line moves with the slider
   const calculateMonthlyPayment = (revenue: number) => {
-    let payment = 0;
-    if (selectedOffer && adjustedAmount > 0 && revenue > 0) {
-      const estimatedHoldback = 0.12;
-      payment = revenue * estimatedHoldback;
-    } else if (hasCalculated && holdbackPercent > 0 && revenue > 0) {
-      payment = revenue * (holdbackPercent / 100);
+    if (selectedOffer && adjustedAmount > 0) {
+      const totalRepay = adjustedAmount * (selectedOffer.factorRate || 1.25);
+      const termLength = selectedOffer.termLength || 250;
+      const perPeriod = totalRepay / termLength;
+      switch (negotiationPaymentFrequency) {
+        case 'Daily':
+          return perPeriod * 22;
+        case 'Weekly':
+          return perPeriod * 4.33;
+        case 'Bi-Weekly':
+          return perPeriod * 2.17;
+        case 'Monthly':
+        default:
+          return perPeriod;
+      }
     }
-    return payment;
+    if (hasCalculated && holdbackPercent > 0 && revenue > 0) {
+      return revenue * (holdbackPercent / 100);
+    }
+    return 0;
   };
 
   // Generate revenue trend line chart data
@@ -659,16 +706,17 @@ export default function UnderwritingSuite({
   };
 
   const addActualOffer = () => {
-    if (!newOfferLender.trim() || !newOfferAmount || !newOfferBuyRate || !newOfferAddedPoints || !newOfferTermLength) {
-      alert('Please fill in lender name, amount, buy rate, added points, and term length');
+    // Only require lender name and amount - everything else has defaults
+    if (!newOfferLender.trim() || !newOfferAmount) {
+      alert('Please fill in at least lender name and amount');
       return;
     }
-    
-    // Calculate factor rate from buy rate + points
-    const buyRate = Number(newOfferBuyRate);
-    const addedPoints = Number(newOfferAddedPoints);
+
+    // Use defaults for optional fields
+    const buyRate = Number(newOfferBuyRate) || 1.20; // Default to 1.20
+    const addedPoints = Number(newOfferAddedPoints) || 5; // Default to 5 points
     const calculatedFactorRate = buyRate + (addedPoints / 100);
-    
+
     const newOffer = {
       id: Date.now().toString(),
       lenderName: newOfferLender.trim(),
@@ -677,8 +725,8 @@ export default function UnderwritingSuite({
       buyRate: buyRate,
       addedPoints: addedPoints,
       myCommissionPercent: Number(newOfferMyCommissionPercent) || 0,
-      termLength: Number(newOfferTermLength),
-      paymentFrequency: newOfferPaymentFreq,
+      termLength: Number(newOfferTermLength) || 250, // Default to 250 payments
+      paymentFrequency: newOfferPaymentFreq || 'Daily',
       url: newOfferUrl.trim() || undefined,
     };
     
@@ -731,14 +779,15 @@ export default function UnderwritingSuite({
   };
 
   const saveEditOffer = () => {
-    if (!editOfferLender.trim() || !editOfferAmount || !editOfferBuyRate || !editOfferAddedPoints || !editOfferTermLength) {
-      alert('Please fill in lender name, amount, buy rate, added points, and term length');
+    // Only require lender name and amount - everything else has defaults
+    if (!editOfferLender.trim() || !editOfferAmount) {
+      alert('Please fill in at least lender name and amount');
       return;
     }
 
-    // Calculate factor rate from buy rate + points
-    const buyRate = Number(editOfferBuyRate);
-    const addedPoints = Number(editOfferAddedPoints);
+    // Use defaults for optional fields
+    const buyRate = Number(editOfferBuyRate) || 1.20; // Default to 1.20
+    const addedPoints = Number(editOfferAddedPoints) || 5; // Default to 5 points
     const calculatedFactorRate = buyRate + (addedPoints / 100);
 
     setActualOffers(actualOffers.map(offer => 
@@ -751,8 +800,8 @@ export default function UnderwritingSuite({
             buyRate: buyRate,
             addedPoints: addedPoints,
             myCommissionPercent: Number(editOfferMyCommissionPercent) || 0,
-            termLength: Number(editOfferTermLength),
-            paymentFrequency: editOfferPaymentFreq,
+            termLength: Number(editOfferTermLength) || 250, // Default to 250 payments
+            paymentFrequency: editOfferPaymentFreq || 'Daily',
             url: editOfferUrl.trim() || undefined,
           }
         : offer
@@ -1086,11 +1135,14 @@ export default function UnderwritingSuite({
                   </span>
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-xs text-blue-800">{paymentFrequency} Payment:</span>
+                  <span className="text-xs text-blue-800">Est. weekly payback (avg. over {termMonths} mo):</span>
                   <span className="text-base font-semibold text-blue-900">
-                    ${Math.round(paymentAmount).toLocaleString()}
+                    ${Math.round(weeklyPaymentEstimate).toLocaleString()}
                   </span>
                 </div>
+                <p className="text-[10px] text-blue-700/80 leading-tight">
+                  Modeled {paymentFrequency.toLowerCase()} remittance; week = monthly payback ÷ 4.33
+                </p>
                 <div className="flex justify-between items-center pt-2 border-t border-blue-300">
                   <span className="text-xs text-blue-800">Holdback %:</span>
                   <span className="text-sm font-medium text-blue-900">
@@ -1159,13 +1211,13 @@ export default function UnderwritingSuite({
                       : '0.0';
                     displayMonthlyPayment = selectedPayment * paymentsPerMonthForOffer;
                   } else {
-                    // Use calculated recommendation
+                    // Use calculated recommendation — quote weekly (avg) for clarity; % of sales still from monthly model
                     displayAmount = approvedAmount;
                     displayFactorRate = factorRate;
                     displayAPR = effectiveAPR;
-                    displayMonthlyPayment = paymentAmount * paymentsPerMonth;
+                    displayMonthlyPayment = monthlyPaybackAvg;
                     displayTermLength = totalPayments;
-                    displayPaymentFreq = paymentFrequency;
+                    displayPaymentFreq = 'Weekly';
                   }
                   
                   const displayPaymentPercent = ((displayMonthlyPayment / avgMonthlyRevenue) * 100).toFixed(1);
@@ -1181,8 +1233,8 @@ export default function UnderwritingSuite({
                     const totalRepay = adjustedAmount * displayFactorRate;
                     displayIndividualPayment = totalRepay / displayTermLength;
                   } else {
-                    displayFrequency = paymentFrequency;
-                    displayIndividualPayment = paymentAmount;
+                    displayFrequency = 'Weekly';
+                    displayIndividualPayment = weeklyPaymentEstimate;
                   }
                   
                   return (
@@ -1205,7 +1257,9 @@ export default function UnderwritingSuite({
                             ${Math.round(displayIndividualPayment).toLocaleString()}
                           </div>
                           <div className="text-sm text-blue-700 mt-1">
-                            {displayFrequency} payment amount
+                            {selectedOffer && adjustedAmount > 0
+                              ? `${displayFrequency} payment amount`
+                              : 'Avg. weekly (over term)'}
                           </div>
                         </div>
                         
@@ -1838,7 +1892,9 @@ export default function UnderwritingSuite({
               <h3 className="text-sm font-medium text-gray-900 mb-3">Add Competitor Offer</h3>
               <div className="space-y-3">
                 <div>
-                  <label className="block text-xs text-gray-600 mb-1">Lender Name</label>
+                  <label className="block text-xs text-gray-600 mb-1">
+                    Lender Name <span className="text-red-500">*</span>
+                  </label>
                   <input
                     type="text"
                     value={newOfferLender}
@@ -1848,7 +1904,9 @@ export default function UnderwritingSuite({
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-600 mb-1">Offer Amount</label>
+                  <label className="block text-xs text-gray-600 mb-1">
+                    Offer Amount <span className="text-red-500">*</span>
+                  </label>
                   <input
                     type="number"
                     value={newOfferAmount}
@@ -1861,12 +1919,12 @@ export default function UnderwritingSuite({
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs text-gray-600 mb-1">Buy Rate</label>
+                    <label className="block text-xs text-gray-600 mb-1">Buy Rate (defaults to 1.20)</label>
                     <input
                       type="number"
                       value={newOfferBuyRate}
                       onChange={(e) => setNewOfferBuyRate(e.target.value)}
-                      placeholder="e.g., 1.20"
+                      placeholder="1.20"
                       className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
                       min="1"
                       max="2"
@@ -1874,12 +1932,12 @@ export default function UnderwritingSuite({
                     />
                   </div>
                   <div>
-                    <label className="block text-xs text-gray-600 mb-1">Added Points</label>
+                    <label className="block text-xs text-gray-600 mb-1">Added Points (defaults to 5)</label>
                     <input
                       type="number"
                       value={newOfferAddedPoints}
                       onChange={(e) => setNewOfferAddedPoints(e.target.value)}
-                      placeholder="e.g., 5"
+                      placeholder="5"
                       className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
                       min="0"
                       max="50"
@@ -1888,7 +1946,7 @@ export default function UnderwritingSuite({
                   </div>
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-600 mb-1">My Commission %</label>
+                  <label className="block text-xs text-gray-600 mb-1">My Commission % (optional)</label>
                   <input
                     type="number"
                     value={newOfferMyCommissionPercent}
@@ -1900,25 +1958,25 @@ export default function UnderwritingSuite({
                     step="5"
                   />
                   <p className="text-xs text-gray-500 mt-1">
-                    {newOfferBuyRate && newOfferAddedPoints ? 
-                      `Factor Rate: ${(Number(newOfferBuyRate) + (Number(newOfferAddedPoints) / 100)).toFixed(3)}x` 
-                      : 'Enter buy rate and points to see factor rate'}
+                    {newOfferBuyRate || newOfferAddedPoints ? 
+                      `Factor Rate: ${((Number(newOfferBuyRate) || 1.20) + ((Number(newOfferAddedPoints) || 5) / 100)).toFixed(3)}x` 
+                      : 'Defaults: Buy Rate 1.20 + 5 points = 1.25x'}
                   </p>
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-600 mb-1">Term Length (# of Payments)</label>
+                  <label className="block text-xs text-gray-600 mb-1">Term Length (defaults to 250)</label>
                   <input
                     type="number"
                     value={newOfferTermLength}
                     onChange={(e) => setNewOfferTermLength(e.target.value)}
-                    placeholder="e.g., 250"
+                    placeholder="250"
                     className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
                     min="1"
                     step="1"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-600 mb-1">Payment Frequency</label>
+                  <label className="block text-xs text-gray-600 mb-1">Payment Frequency (defaults to Daily)</label>
                   <select
                     value={newOfferPaymentFreq}
                     onChange={(e) => setNewOfferPaymentFreq(e.target.value)}
