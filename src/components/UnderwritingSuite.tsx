@@ -1116,7 +1116,12 @@ export default function UnderwritingSuite({
               <>
                 {/* Calculate display values - use selected offer if available, otherwise use calculated recommendation */}
                 {(() => {
-                  let displayAmount, displayFactorRate, displayAPR, displayMonthlyPayment, displayTermLength, displayPaymentFreq;
+                  let displayAmount: number;
+                  let displayFactorRate: number;
+                  let displayAPR: string;
+                  let displayMonthlyPayment: number;
+                  let displayTermLength: number = 250; // Default fallback
+                  let displayPaymentFreq: string = 'Daily'; // Default fallback
                   
                   if (selectedOffer && adjustedAmount > 0) {
                     // Use selected offer data
@@ -1148,6 +1153,8 @@ export default function UnderwritingSuite({
                     displayFactorRate = factorRate;
                     displayAPR = effectiveAPR;
                     displayMonthlyPayment = paymentAmount * paymentsPerMonth;
+                    displayTermLength = totalPayments;
+                    displayPaymentFreq = paymentFrequency;
                   }
                   
                   const displayPaymentPercent = ((displayMonthlyPayment / avgMonthlyRevenue) * 100).toFixed(1);
