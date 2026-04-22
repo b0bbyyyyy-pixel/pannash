@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, BarChart, Bar, ComposedChart, Cell } from 'recharts';
 
 interface UnderwritingData {
   // Merchant Info
@@ -26,7 +26,18 @@ interface UnderwritingData {
   purposeOfFunds: string;
   
   // Offers Received Section
-  actualOffers?: Array<{ id: string; lenderName: string; amount: number; factorRate: number; termLength?: number; paymentFrequency?: string; url?: string }>;
+  actualOffers?: Array<{ 
+    id: string; 
+    lenderName: string; 
+    amount: number; 
+    factorRate: number; 
+    buyRate?: number;
+    addedPoints?: number;
+    myCommissionPercent?: number;
+    termLength?: number; 
+    paymentFrequency?: string; 
+    url?: string;
+  }>;
   offersNotes?: string;
   selectedOfferId?: string | null;
   adjustedAmount?: number;
@@ -51,20 +62,20 @@ interface UnderwritingSuiteProps {
 }
 
 const DEFAULT_DATA: UnderwritingData = {
-  timeInBusiness: 24,
+  timeInBusiness: 0,
   industry: 'Retail - General',
-  creditScore: 650,
-  month1Revenue: 50000,
-  month2Revenue: 50000,
-  month3Revenue: 50000,
-  avgDailyBalance: 15000,
-  endingBalance: 20000,
+  creditScore: 0,
+  month1Revenue: 0,
+  month2Revenue: 0,
+  month3Revenue: 0,
+  avgDailyBalance: 0,
+  endingBalance: 0,
   nsfCount: 0,
-  depositsCount: 10,
+  depositsCount: 0,
   hasOtherMCALoans: false,
   otherMCAMonthlyPayment: 0,
   otherMCALenders: '',
-  requestedAmount: 100000,
+  requestedAmount: 0,
   purposeOfFunds: '',
 };
 
@@ -193,6 +204,9 @@ export default function UnderwritingSuite({
   const [newOfferLender, setNewOfferLender] = useState('');
   const [newOfferAmount, setNewOfferAmount] = useState('');
   const [newOfferFactorRate, setNewOfferFactorRate] = useState('');
+  const [newOfferBuyRate, setNewOfferBuyRate] = useState('');
+  const [newOfferAddedPoints, setNewOfferAddedPoints] = useState('');
+  const [newOfferMyCommissionPercent, setNewOfferMyCommissionPercent] = useState('');
   const [newOfferTermLength, setNewOfferTermLength] = useState('');
   const [newOfferPaymentFreq, setNewOfferPaymentFreq] = useState('Daily');
   const [newOfferUrl, setNewOfferUrl] = useState('');
@@ -203,11 +217,17 @@ export default function UnderwritingSuite({
   const [adjustedAmount, setAdjustedAmount] = useState<number>(initialData?.adjustedAmount || 0);
   const [negotiationPaymentFrequency, setNegotiationPaymentFrequency] = useState<'Daily' | 'Weekly' | 'Bi-Weekly' | 'Monthly'>('Daily');
   
+  // Negotiation section collapse state
+  const [isNegotiationCollapsed, setIsNegotiationCollapsed] = useState(false);
+  
   // Editing offers
   const [editingOfferId, setEditingOfferId] = useState<string | null>(null);
   const [editOfferLender, setEditOfferLender] = useState('');
   const [editOfferAmount, setEditOfferAmount] = useState('');
   const [editOfferFactorRate, setEditOfferFactorRate] = useState('');
+  const [editOfferBuyRate, setEditOfferBuyRate] = useState('');
+  const [editOfferAddedPoints, setEditOfferAddedPoints] = useState('');
+  const [editOfferMyCommissionPercent, setEditOfferMyCommissionPercent] = useState('');
   const [editOfferTermLength, setEditOfferTermLength] = useState('');
   const [editOfferPaymentFreq, setEditOfferPaymentFreq] = useState('Daily');
   const [editOfferUrl, setEditOfferUrl] = useState('');
@@ -422,96 +442,181 @@ export default function UnderwritingSuite({
   const totalCommission = commissionBaseAmount * (points / 100);
   const calculatedCommission = totalCommission * (myPercentage / 100);
   
-  // Risk score (0-100, comprehensive algorithm)
+  // Risk score (0-100, comprehensive algorithm) - STRICT SCORING
   const calculateRiskScore = (): number => {
-    let score = 50; // Start neutral
+    let score = 40; // Start conservative
     
-    // Industry risk impact (±15 points)
+    // Industry risk impact (±20 points) - STRICT
     const industry = data.industry || 'Other';
     if (industry.includes('Healthcare') || industry.includes('Medical') || industry.includes('Dental') || 
         industry.includes('Legal') || industry.includes('Accounting') || industry.includes('Insurance')) {
-      score += 15; // Low-risk industries
+      score += 20; // Low-risk industries
     } else if (industry.includes('IT Services') || industry.includes('Software') || industry.includes('SaaS') || 
                industry.includes('Consulting') || industry.includes('Financial Services')) {
-      score += 10; // Moderate-low risk
+      score += 12; // Moderate-low risk
+    } else if (industry.includes('Retail') && !industry.includes('Bar') && !industry.includes('Nightclub')) {
+      score += 5; // Standard retail
+    } else if (industry.includes('Restaurant') || industry.includes('Food')) {
+      score -= 5; // Restaurant risk
+    } else if (industry.includes('Agriculture') || industry.includes('Farming') || industry.includes('Farm')) {
+      score -= 20; // Very high-risk: seasonal, weather-dependent
     } else if (industry.includes('Bar') || industry.includes('Nightclub') || industry.includes('Trucking') ||
                industry.includes('Construction') || industry.includes('Roofing') || industry.includes('Auto Dealership')) {
-      score -= 10; // High-risk industries
+      score -= 15; // High-risk industries
     } else if (industry.includes('Dropshipping') || industry.includes('Amazon FBA') || 
                industry.includes('Event Planning') || industry.includes('Non-Profit')) {
-      score -= 15; // Very high-risk industries
+      score -= 25; // Very high-risk industries
     }
     
-    // Credit score impact (±20 points)
-    if (creditScore >= 700) score += 20;
-    else if (creditScore >= 650) score += 10;
-    else if (creditScore < 600) score -= 15;
+    // Credit score impact (±25 points) - MUCH STRICTER
+    if (creditScore >= 720) score += 25;
+    else if (creditScore >= 680) score += 15;
+    else if (creditScore >= 650) score += 5;
+    else if (creditScore >= 620) score -= 5;
+    else if (creditScore >= 580) score -= 15;
+    else if (creditScore < 580) score -= 25; // Sub-580 is very risky
     
-    // Time in business impact (±15 points)
-    if (timeInBusiness >= 36) score += 15;
-    else if (timeInBusiness >= 24) score += 10;
-    else if (timeInBusiness < 12) score -= 10;
+    // Time in business impact (±18 points) - STRICTER
+    if (timeInBusiness >= 48) score += 18;
+    else if (timeInBusiness >= 36) score += 12;
+    else if (timeInBusiness >= 24) score += 6;
+    else if (timeInBusiness >= 12) score -= 5;
+    else if (timeInBusiness < 12) score -= 15; // Less than 1 year is very risky
     
-    // Revenue stability (±10 points)
-    if (revenueStability > 0.8) score += 10;
-    else if (revenueStability > 0.6) score += 5;
-    else if (revenueStability < 0.4) score -= 10;
+    // Revenue stability (±15 points) - STRICTER - "Choppy banks"
+    if (revenueStability > 0.9) score += 15; // Very consistent
+    else if (revenueStability > 0.75) score += 8;
+    else if (revenueStability > 0.5) score += 2;
+    else if (revenueStability < 0.4) score -= 12; // Choppy = major concern
+    else if (revenueStability < 0.3) score -= 20; // Very choppy = high risk
     
-    // NSF impact (±10 points)
-    if (nsfCount === 0) score += 10;
-    else if (nsfCount === 1) score += 5;
-    else if (nsfCount >= 3) score -= 10;
+    // NSF impact (±15 points) - MUCH STRICTER - Major red flag
+    if (nsfCount === 0) score += 15;
+    else if (nsfCount === 1) score -= 5; // Even 1 NSF is concerning
+    else if (nsfCount === 2) score -= 12;
+    else if (nsfCount >= 3) score -= 20; // 3+ NSF = very high risk
+    else if (nsfCount >= 5) score -= 30; // 5+ NSF = almost certain decline
     
-    // Deposits count impact (±10 points)
-    if (depositsCount >= 13) score += 10; // Frequent deposits = healthy cash flow (13+ per month)
-    else if (depositsCount >= 8) score += 5; // Good frequency (8-12 per month)
-    else if (depositsCount < 3) score -= 10; // Low deposit frequency = concern (less than 3/month)
+    // Deposits count impact (±12 points) - STRICTER
+    if (depositsCount >= 15) score += 12; // Very frequent = healthy (15+ per month)
+    else if (depositsCount >= 10) score += 6; // Good frequency (10-14 per month)
+    else if (depositsCount >= 5) score += 0; // Moderate (5-9 per month)
+    else if (depositsCount < 5) score -= 10; // Low = concern (less than 5/month)
+    else if (depositsCount < 3) score -= 18; // Very low = major concern
     
-    // Bank balance health (±10 points)
-    if (avgDailyBalance >= 20000) score += 10;
-    else if (avgDailyBalance >= 10000) score += 5;
-    else if (avgDailyBalance < 5000) score -= 10;
+    // Bank balance health (±15 points) - STRICTER
+    if (avgDailyBalance >= 30000) score += 15;
+    else if (avgDailyBalance >= 15000) score += 8;
+    else if (avgDailyBalance >= 8000) score += 3;
+    else if (avgDailyBalance < 5000) score -= 12; // Low balance = concern
+    else if (avgDailyBalance < 2000) score -= 20; // Very low = high risk
     
-    // Revenue vs requested amount (±10 points)
+    // Revenue vs requested amount (±12 points) - STRICTER
     const monthlyRevRatio = approvedAmount > 0 && avgMonthlyRevenue > 0 ? avgMonthlyRevenue / approvedAmount : 0;
-    if (monthlyRevRatio >= 0.5) score += 10;
-    else if (monthlyRevRatio >= 0.3) score += 5;
-    else if (monthlyRevRatio < 0.2) score -= 10;
+    if (monthlyRevRatio >= 0.6) score += 12; // Strong revenue coverage
+    else if (monthlyRevRatio >= 0.4) score += 6;
+    else if (monthlyRevRatio >= 0.25) score += 0;
+    else if (monthlyRevRatio < 0.2) score -= 15; // Weak coverage = risky
     
-    // Existing MCA debt burden (±10 points)
+    // Existing MCA debt burden (±15 points) - STRICTER
     const debtRatio = avgMonthlyRevenue > 0 ? otherMCAMonthlyPayment / avgMonthlyRevenue : 0;
-    if (debtRatio === 0) score += 5; // No debt is good
-    else if (debtRatio > 0.25) score -= 10; // High debt burden
-    else if (debtRatio > 0.15) score -= 5; // Moderate debt burden
+    if (debtRatio === 0) score += 8; // No debt is good
+    else if (debtRatio > 0.30) score -= 20; // Very high debt burden = major risk
+    else if (debtRatio > 0.20) score -= 12; // High debt burden
+    else if (debtRatio > 0.10) score -= 5; // Moderate debt burden
     
     return Math.max(0, Math.min(100, score));
   };
   
   const riskScore = calculateRiskScore();
-  const approvalProbability = Math.min(95, riskScore + 10);
+  // More realistic approval probability - don't inflate scores
+  const approvalProbability = Math.max(5, Math.min(95, Math.round(riskScore * 0.85))); // Cap at 95%, floor at 5%
   
-  // Generate revenue chart data
-  const generateRevenueChartData = () => {
+  // Calculate monthly payment for all charts
+  const calculateMonthlyPayment = (revenue: number) => {
+    let payment = 0;
+    if (selectedOffer && adjustedAmount > 0 && revenue > 0) {
+      const estimatedHoldback = 0.12;
+      payment = revenue * estimatedHoldback;
+    } else if (hasCalculated && holdbackPercent > 0 && revenue > 0) {
+      payment = revenue * (holdbackPercent / 100);
+    }
+    return payment;
+  };
+
+  // Generate revenue trend line chart data
+  const generateRevenueTrendData = () => {
+    const avgMonthlyRevenue = (month1Revenue + month2Revenue + month3Revenue) / 3;
+    const projectedRevenue = avgMonthlyRevenue || month1Revenue || month2Revenue || month3Revenue || 0;
+    
     return [
-      {
-        month: 'Month 1',
-        revenue: month1Revenue,
-        proposedAdvance: hasCalculated ? approvedAmount : null,
+      { 
+        month: 'Month 1', 
+        revenue: month1Revenue || 0, 
+        projection: month1Revenue || 0,
+        payment: calculateMonthlyPayment(month1Revenue || projectedRevenue)
       },
-      {
-        month: 'Month 2',
-        revenue: month2Revenue,
-        proposedAdvance: hasCalculated ? approvedAmount : null,
+      { 
+        month: 'Month 2', 
+        revenue: month2Revenue || 0, 
+        projection: month2Revenue || 0,
+        payment: calculateMonthlyPayment(month2Revenue || projectedRevenue)
       },
-      {
-        month: 'Month 3',
-        revenue: month3Revenue,
-        proposedAdvance: hasCalculated ? approvedAmount : null,
+      { 
+        month: 'Month 3', 
+        revenue: month3Revenue || 0, 
+        projection: month3Revenue || 0,
+        payment: calculateMonthlyPayment(month3Revenue || projectedRevenue)
       },
+      { 
+        month: 'Projected', 
+        revenue: null, 
+        projection: projectedRevenue,
+        payment: calculateMonthlyPayment(projectedRevenue)
+      }
     ];
   };
 
-  const revenueChartData = generateRevenueChartData();
+  // Generate cash flow impact bar chart data - showing impact on key metrics
+  const generateCashFlowImpactData = () => {
+    const avgMonthlyRevenue = (month1Revenue + month2Revenue + month3Revenue) / 3 || 
+                              month1Revenue || month2Revenue || month3Revenue || 0;
+    const monthlyPayment = calculateMonthlyPayment(avgMonthlyRevenue);
+    
+    // Calculate impact on cash flow (retained after payment)
+    const cashFlowAfterPayment = avgMonthlyRevenue - monthlyPayment;
+    
+    // Calculate impact on daily balance (estimate payment reduces it proportionally)
+    const dailyPaymentImpact = monthlyPayment / 22; // ~22 business days
+    const avgDailyBalanceAfter = Math.max(0, avgDailyBalance - (dailyPaymentImpact * 10)); // Impact over ~10 days
+    
+    // Calculate impact on ending balance (payment reduces monthly)
+    const endingBalanceAfter = Math.max(0, endingBalance - monthlyPayment);
+    
+    return [
+      {
+        name: 'Monthly Cash Flow',
+        before: avgMonthlyRevenue,
+        after: cashFlowAfterPayment,
+        impact: monthlyPayment
+      },
+      {
+        name: 'Avg Daily Balance',
+        before: avgDailyBalance,
+        after: avgDailyBalanceAfter,
+        impact: avgDailyBalance - avgDailyBalanceAfter
+      },
+      {
+        name: 'Ending Balance',
+        before: endingBalance,
+        after: endingBalanceAfter,
+        impact: monthlyPayment
+      }
+    ];
+  };
+
+  const revenueTrendData = generateRevenueTrendData();
+  const cashFlowImpactData = generateCashFlowImpactData();
 
   const handleCalculate = () => {
     setHasCalculated(true);
@@ -543,16 +648,24 @@ export default function UnderwritingSuite({
   };
 
   const addActualOffer = () => {
-    if (!newOfferLender.trim() || !newOfferAmount || !newOfferFactorRate || !newOfferTermLength) {
-      alert('Please fill in lender name, amount, factor rate, and term length');
+    if (!newOfferLender.trim() || !newOfferAmount || !newOfferBuyRate || !newOfferAddedPoints || !newOfferTermLength) {
+      alert('Please fill in lender name, amount, buy rate, added points, and term length');
       return;
     }
+    
+    // Calculate factor rate from buy rate + points
+    const buyRate = Number(newOfferBuyRate);
+    const addedPoints = Number(newOfferAddedPoints);
+    const calculatedFactorRate = buyRate + (addedPoints / 100);
     
     const newOffer = {
       id: Date.now().toString(),
       lenderName: newOfferLender.trim(),
       amount: Number(newOfferAmount),
-      factorRate: Number(newOfferFactorRate),
+      factorRate: calculatedFactorRate,
+      buyRate: buyRate,
+      addedPoints: addedPoints,
+      myCommissionPercent: Number(newOfferMyCommissionPercent) || 0,
       termLength: Number(newOfferTermLength),
       paymentFrequency: newOfferPaymentFreq,
       url: newOfferUrl.trim() || undefined,
@@ -562,6 +675,9 @@ export default function UnderwritingSuite({
     setNewOfferLender('');
     setNewOfferAmount('');
     setNewOfferFactorRate('');
+    setNewOfferBuyRate('');
+    setNewOfferAddedPoints('');
+    setNewOfferMyCommissionPercent('');
     setNewOfferTermLength('');
     setNewOfferPaymentFreq('Daily');
     setNewOfferUrl('');
@@ -579,21 +695,40 @@ export default function UnderwritingSuite({
     }
   };
 
-  const startEditOffer = (offer: { id: string; lenderName: string; amount: number; factorRate: number; termLength?: number; paymentFrequency?: string; url?: string }) => {
+  const startEditOffer = (offer: { 
+    id: string; 
+    lenderName: string; 
+    amount: number; 
+    factorRate: number; 
+    buyRate?: number;
+    addedPoints?: number;
+    myCommissionPercent?: number;
+    termLength?: number; 
+    paymentFrequency?: string; 
+    url?: string;
+  }) => {
     setEditingOfferId(offer.id);
     setEditOfferLender(offer.lenderName);
     setEditOfferAmount(offer.amount.toString());
     setEditOfferFactorRate(offer.factorRate.toString());
+    setEditOfferBuyRate((offer.buyRate || 1.20).toString()); // Default to 1.20
+    setEditOfferAddedPoints((offer.addedPoints || 0).toString()); // Default to 0
+    setEditOfferMyCommissionPercent((offer.myCommissionPercent || 0).toString()); // Default to 0
     setEditOfferTermLength((offer.termLength || 250).toString()); // Default to 250 payments
     setEditOfferPaymentFreq(offer.paymentFrequency || 'Daily'); // Default to Daily
     setEditOfferUrl(offer.url || '');
   };
 
   const saveEditOffer = () => {
-    if (!editOfferLender.trim() || !editOfferAmount || !editOfferFactorRate || !editOfferTermLength) {
-      alert('Please fill in lender name, amount, factor rate, and term length');
+    if (!editOfferLender.trim() || !editOfferAmount || !editOfferBuyRate || !editOfferAddedPoints || !editOfferTermLength) {
+      alert('Please fill in lender name, amount, buy rate, added points, and term length');
       return;
     }
+
+    // Calculate factor rate from buy rate + points
+    const buyRate = Number(editOfferBuyRate);
+    const addedPoints = Number(editOfferAddedPoints);
+    const calculatedFactorRate = buyRate + (addedPoints / 100);
 
     setActualOffers(actualOffers.map(offer => 
       offer.id === editingOfferId
@@ -601,7 +736,10 @@ export default function UnderwritingSuite({
             ...offer,
             lenderName: editOfferLender.trim(),
             amount: Number(editOfferAmount),
-            factorRate: Number(editOfferFactorRate),
+            factorRate: calculatedFactorRate,
+            buyRate: buyRate,
+            addedPoints: addedPoints,
+            myCommissionPercent: Number(editOfferMyCommissionPercent) || 0,
             termLength: Number(editOfferTermLength),
             paymentFrequency: editOfferPaymentFreq,
             url: editOfferUrl.trim() || undefined,
@@ -1067,32 +1205,32 @@ export default function UnderwritingSuite({
                       {/* 4 Smaller Boxes Below */}
                       <div className="grid grid-cols-4 gap-4 mb-6">
                         <div className="bg-white border border-gray-200 rounded-lg p-4">
-                          <div className="text-xs text-gray-600 mb-1">Credit Score</div>
-                          <div className="text-xl font-bold text-gray-900">
+                          <div className="text-sm text-gray-600 mb-2 font-medium">Credit Score</div>
+                          <div className="text-3xl font-bold text-gray-900">
                             {creditScore}
                           </div>
                         </div>
                         
                         <div className="bg-white border border-gray-200 rounded-lg p-4">
-                          <div className="text-xs text-gray-600 mb-1">Loan APR</div>
-                          <div className="text-xl font-bold text-gray-900">
+                          <div className="text-sm text-gray-600 mb-2 font-medium">Loan APR</div>
+                          <div className="text-3xl font-bold text-gray-900">
                             {displayAPR}%
                           </div>
                         </div>
                         
                         <div className="bg-white border border-gray-200 rounded-lg p-4">
-                          <div className="text-xs text-gray-600 mb-1">Approval Confidence</div>
-                          <div className="text-xl font-bold text-green-600">
+                          <div className="text-sm text-gray-600 mb-2 font-medium">Approval Confidence</div>
+                          <div className="text-3xl font-bold text-green-600">
                             {approvalProbability}%
                           </div>
                         </div>
                         
                         <div className="bg-white border border-gray-200 rounded-lg p-4">
-                          <div className="text-xs text-gray-600 mb-1">Revenue After Payment</div>
-                          <div className="text-lg font-bold text-blue-600">
+                          <div className="text-sm text-gray-600 mb-2 font-medium">Revenue After Payment</div>
+                          <div className="text-2xl font-bold text-blue-600">
                             ${Math.round(displayRevenueAfterPayment).toLocaleString()}
                           </div>
-                          <div className="text-xs text-gray-500 mt-0.5">
+                          <div className="text-sm text-gray-500 mt-1 font-medium">
                             {displayRetainedPercent}% retained
                           </div>
                         </div>
@@ -1101,123 +1239,170 @@ export default function UnderwritingSuite({
                   );
                 })()}
 
-                {/* Revenue & Offers Chart */}
-                <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Revenue vs. Offer Comparison</h3>
-                  <ResponsiveContainer width="100%" height={350}>
-                    <LineChart data={revenueChartData}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="month" />
+                {/* Revenue Trend Line Chart */}
+                <div className="bg-gradient-to-br from-purple-50 to-pink-50 border-2 border-purple-200 rounded-xl p-6 mb-6 shadow-lg">
+                  <h3 className="text-xl font-bold text-gray-900 mb-2">Revenue Trend Analysis</h3>
+                  <p className="text-sm text-gray-600 mb-4">Track revenue patterns and forecast future performance</p>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <LineChart 
+                      data={revenueTrendData}
+                      margin={{ top: 10, right: 30, left: 20, bottom: 10 }}
+                    >
+                      <defs>
+                        <linearGradient id="colorUv" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.8}/>
+                          <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0.1}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e9d5ff" />
+                      <XAxis 
+                        dataKey="month" 
+                        tick={{ fill: '#6b21a8', fontWeight: 600 }}
+                        axisLine={{ stroke: '#c084fc' }}
+                      />
                       <YAxis 
                         tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
+                        tick={{ fill: '#6b21a8', fontWeight: 500 }}
+                        axisLine={{ stroke: '#c084fc' }}
                       />
                       <Tooltip 
                         formatter={(value: any) => typeof value === 'number' ? `$${value.toLocaleString()}` : value}
-                        contentStyle={{ backgroundColor: '#fff', border: '1px solid #e5e5e5' }}
+                        contentStyle={{ 
+                          backgroundColor: '#ffffff', 
+                          border: '2px solid #8b5cf6',
+                          borderRadius: '8px',
+                          boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+                          fontWeight: 600
+                        }}
                       />
                       <Legend />
                       <Line 
                         type="monotone" 
                         dataKey="revenue" 
-                        stroke="#5a7fc7" 
-                        strokeWidth={3} 
-                        name="Monthly Revenue" 
-                        dot={{ r: 6, fill: '#5a7fc7' }}
+                        stroke="#8b5cf6" 
+                        strokeWidth={4} 
+                        dot={{ r: 6, fill: '#8b5cf6', strokeWidth: 2, stroke: '#fff' }}
+                        activeDot={{ r: 8 }}
+                        name="Actual Revenue"
+                        connectNulls={false}
                       />
-                      {hasCalculated && (
-                        <ReferenceLine 
-                          y={approvedAmount} 
-                          stroke="#10b981" 
-                          strokeWidth={2} 
-                          strokeDasharray="5 5" 
-                          label={{ value: 'Your Offer', position: 'right', fill: '#10b981', fontWeight: 'bold' }}
-                        />
-                      )}
-                      {actualOffers.map((offer, index) => (
-                        <ReferenceLine 
-                          key={offer.id}
-                          y={offer.amount} 
-                          stroke={['#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'][index % 4]} 
-                          strokeWidth={2} 
-                          strokeDasharray="3 3" 
-                          label={{ value: offer.lenderName, position: 'right', fill: ['#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'][index % 4], fontSize: 12 }}
-                        />
-                      ))}
-                      {selectedOffer && adjustedAmount !== selectedOffer.amount && (
-                        <ReferenceLine 
-                          y={adjustedAmount} 
-                          stroke="#059669" 
+                      <Line 
+                        type="monotone" 
+                        dataKey="projection" 
+                        stroke="#ec4899" 
+                        strokeWidth={3} 
+                        strokeDasharray="8 4"
+                        dot={{ r: 4, fill: '#ec4899' }}
+                        name="Projection"
+                      />
+                      {(selectedOffer || hasCalculated) && (
+                        <Line 
+                          type="monotone" 
+                          dataKey="payment" 
+                          stroke="#ef4444" 
                           strokeWidth={3} 
-                          strokeDasharray="8 4" 
-                          label={{ 
-                            value: `Negotiated: $${Math.round(adjustedAmount / 1000)}k`, 
-                            position: 'right', 
-                            fill: '#059669', 
-                            fontWeight: 'bold',
-                            fontSize: 13
-                          }}
+                          strokeDasharray="4 4"
+                          dot={{ r: 5, fill: '#ef4444', strokeWidth: 2, stroke: '#fff' }}
+                          name="Monthly Payment"
                         />
                       )}
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
 
-                {/* Recommended Offer Terms - Now at Bottom */}
-                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-6">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Recommended Offer</h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <div className="text-xs text-gray-600 mb-1">Max Approved Amount</div>
-                      <div className="text-3xl font-bold text-[#5a7fc7]">
-                        ${Math.round(approvedAmount).toLocaleString()}
-                      </div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        Based on financial profile
-                      </div>
+                {/* Financial Impact Analysis Chart - Dark Theme */}
+                <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-gray-900 border-2 border-slate-700 rounded-xl p-6 mb-6 shadow-2xl">
+                  <h3 className="text-2xl font-bold text-white mb-2">Financial Impact Analysis</h3>
+                  <p className="text-sm text-slate-300 mb-4">See how payments affect your key financial metrics</p>
+                  <ResponsiveContainer width="100%" height={420}>
+                    <BarChart 
+                      data={cashFlowImpactData}
+                      margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
+                    >
+                      <defs>
+                        <linearGradient id="colorBefore" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#1e293b" stopOpacity={1}/>
+                          <stop offset="95%" stopColor="#334155" stopOpacity={0.95}/>
+                        </linearGradient>
+                        <linearGradient id="colorAfter" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.95}/>
+                          <stop offset="95%" stopColor="#059669" stopOpacity={0.9}/>
+                        </linearGradient>
+                        
+                        {/* Glow effects */}
+                        <filter id="glow">
+                          <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+                          <feMerge>
+                            <feMergeNode in="coloredBlur"/>
+                            <feMergeNode in="SourceGraphic"/>
+                          </feMerge>
+                        </filter>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#475569" opacity={0.3} />
+                      <XAxis 
+                        dataKey="name" 
+                        tick={{ fill: '#cbd5e1', fontWeight: 700, fontSize: 12 }}
+                        axisLine={{ stroke: '#64748b', strokeWidth: 2 }}
+                      />
+                      <YAxis 
+                        tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
+                        tick={{ fill: '#cbd5e1', fontWeight: 600, fontSize: 12 }}
+                        axisLine={{ stroke: '#64748b', strokeWidth: 2 }}
+                      />
+                      <Tooltip 
+                        formatter={(value: any) => typeof value === 'number' ? `$${value.toLocaleString()}` : value}
+                        contentStyle={{ 
+                          backgroundColor: '#1e293b', 
+                          border: '2px solid #475569',
+                          borderRadius: '12px',
+                          boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
+                          fontWeight: 700,
+                          color: '#f1f5f9'
+                        }}
+                        labelStyle={{ color: '#f1f5f9', fontWeight: 700 }}
+                        cursor={{ fill: 'rgba(148, 163, 184, 0.15)' }}
+                      />
+                      <Legend 
+                        wrapperStyle={{ color: '#cbd5e1', fontWeight: 600 }}
+                        iconType="circle"
+                      />
+                      <Bar 
+                        dataKey="before" 
+                        fill="url(#colorBefore)"
+                        radius={[8, 8, 0, 0]}
+                        maxBarSize={80}
+                        name="Before Payment"
+                        stroke="#475569"
+                        strokeWidth={2}
+                        filter="url(#glow)"
+                      />
+                      <Bar 
+                        dataKey="after" 
+                        fill="url(#colorAfter)"
+                        radius={[8, 8, 0, 0]}
+                        maxBarSize={80}
+                        name="After Payment"
+                        stroke="#065f46"
+                        strokeWidth={2}
+                        filter="url(#glow)"
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                  {cashFlowImpactData[0]?.before > 0 && (
+                    <div className="mt-4 grid grid-cols-3 gap-3">
+                      {cashFlowImpactData.map((item, idx) => (
+                        <div key={idx} className="bg-slate-800/50 border border-slate-600 rounded-lg p-3 text-center">
+                          <p className="text-xs font-semibold text-slate-400 mb-1">{item.name}</p>
+                          <p className="text-lg font-black text-red-400">
+                            -{item.impact > 0 ? `$${Math.round(item.impact / 1000)}k` : '$0'}
+                          </p>
+                          <p className="text-xs text-slate-500">Impact</p>
+                        </div>
+                      ))}
                     </div>
-                    
-                    <div>
-                      <div className="text-xs text-gray-600 mb-1">Factor Rate</div>
-                      <div className="text-3xl font-bold text-gray-900">
-                        {factorRate}x
-                      </div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        {factorRate <= 1.20 ? 'Excellent terms' : factorRate <= 1.30 ? 'Good terms' : 'Standard terms'}
-                      </div>
-                    </div>
-                    
-                    <div>
-                      <div className="text-xs text-gray-600 mb-1">{paymentFrequency} Payment</div>
-                      <div className="text-2xl font-bold text-gray-900">
-                        ${Math.round(paymentAmount).toLocaleString()}
-                      </div>
-                    </div>
-                    
-                    <div>
-                      <div className="text-xs text-gray-600 mb-1">Holdback %</div>
-                      <div className="text-2xl font-bold text-gray-900">
-                        {holdbackPercent}%
-                      </div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        ~${Math.round(dailyHoldback).toLocaleString()}/day
-                      </div>
-                    </div>
-                    
-                    <div>
-                      <div className="text-xs text-gray-600 mb-1">Term Length</div>
-                      <div className="text-2xl font-bold text-gray-900">
-                        {termMonths} months
-                      </div>
-                    </div>
-                    
-                    <div>
-                      <div className="text-xs text-gray-600 mb-1">Total Repayment</div>
-                      <div className="text-2xl font-bold text-gray-900">
-                        ${Math.round(totalRepayment).toLocaleString()}
-                      </div>
-                    </div>
-                  </div>
+                  )}
                 </div>
+
               </>
             )}
           </div>
@@ -1265,17 +1450,48 @@ export default function UnderwritingSuite({
                                 step="1000"
                               />
                             </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="block text-xs text-gray-600 mb-1">Buy Rate</label>
+                                <input
+                                  type="number"
+                                  value={editOfferBuyRate}
+                                  onChange={(e) => setEditOfferBuyRate(e.target.value)}
+                                  className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                                  min="1"
+                                  max="2"
+                                  step="0.01"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs text-gray-600 mb-1">Added Points</label>
+                                <input
+                                  type="number"
+                                  value={editOfferAddedPoints}
+                                  onChange={(e) => setEditOfferAddedPoints(e.target.value)}
+                                  className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                                  min="0"
+                                  max="50"
+                                  step="0.5"
+                                />
+                              </div>
+                            </div>
                             <div>
-                              <label className="block text-xs text-gray-600 mb-1">Factor Rate</label>
+                              <label className="block text-xs text-gray-600 mb-1">My Commission %</label>
                               <input
                                 type="number"
-                                value={editOfferFactorRate}
-                                onChange={(e) => setEditOfferFactorRate(e.target.value)}
+                                value={editOfferMyCommissionPercent}
+                                onChange={(e) => setEditOfferMyCommissionPercent(e.target.value)}
                                 className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
-                                min="1"
-                                max="2"
-                                step="0.01"
+                                min="0"
+                                max="100"
+                                step="5"
                               />
+                              <p className="text-xs text-gray-500 mt-1">
+                                {editOfferBuyRate && editOfferAddedPoints ? 
+                                  `Factor Rate: ${(Number(editOfferBuyRate) + (Number(editOfferAddedPoints) / 100)).toFixed(3)}x` 
+                                  : 'Enter buy rate and points'}
+                              </p>
                             </div>
                             <div>
                               <label className="block text-xs text-gray-600 mb-1">Term Length (# Payments)</label>
@@ -1366,10 +1582,22 @@ export default function UnderwritingSuite({
                                 <span className="text-gray-600">Factor:</span>
                                 <span className="font-medium">{offer.factorRate}x</span>
                               </div>
+                              {offer.buyRate && (
+                                <div className="flex justify-between text-[10px] text-gray-500">
+                                  <span>Buy Rate: {offer.buyRate}x</span>
+                                  <span>+ {offer.addedPoints}pts</span>
+                                </div>
+                              )}
                               <div className="flex justify-between">
                                 <span className="text-gray-600">Total Repayment:</span>
                                 <span className="font-medium">${totalRepayment.toLocaleString()}</span>
                               </div>
+                              {offer.myCommissionPercent && offer.myCommissionPercent > 0 && (
+                                <div className="flex justify-between">
+                                  <span className="text-gray-600">My Commission %:</span>
+                                  <span className="font-medium text-green-600">{offer.myCommissionPercent}%</span>
+                                </div>
+                              )}
                               <div className="flex justify-between">
                                 <span className="text-gray-600">Term Length:</span>
                                 <span className="font-medium">{offer.termLength || 250} payments</span>
@@ -1404,11 +1632,26 @@ export default function UnderwritingSuite({
                             {/* Negotiation Slider - Shows right below selected offer */}
                             {selectedOfferId === offer.id && (
                               <div className="mt-4 pt-4 border-t-2 border-green-300 bg-gradient-to-r from-green-50 to-emerald-50 rounded-b-lg p-3 -mx-3 -mb-3">
-                                <h4 className="text-xs font-semibold text-green-900 mb-3">
-                                  Negotiate This Offer
-                                </h4>
+                                <div className="flex items-center justify-between mb-3">
+                                  <h4 className="text-xs font-semibold text-green-900">
+                                    Negotiate This Offer
+                                  </h4>
+                                  <button
+                                    onClick={() => setIsNegotiationCollapsed(!isNegotiationCollapsed)}
+                                    className="text-green-700 hover:text-green-900 transition-colors"
+                                  >
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      {isNegotiationCollapsed ? (
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                      ) : (
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                                      )}
+                                    </svg>
+                                  </button>
+                                </div>
                                 
-                                <div className="space-y-3">
+                                {!isNegotiationCollapsed && (
+                                  <div className="space-y-3">
                                   {/* Payment Frequency Toggle */}
                                   <div>
                                     <label className="block text-xs text-gray-700 font-medium mb-2">Payment Frequency</label>
@@ -1560,6 +1803,7 @@ export default function UnderwritingSuite({
                                     </div>
                                   </div>
                                 </div>
+                                )}
                               </div>
                             )}
                           </>
@@ -1597,18 +1841,51 @@ export default function UnderwritingSuite({
                     step="1000"
                   />
                 </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">Buy Rate</label>
+                    <input
+                      type="number"
+                      value={newOfferBuyRate}
+                      onChange={(e) => setNewOfferBuyRate(e.target.value)}
+                      placeholder="e.g., 1.20"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                      min="1"
+                      max="2"
+                      step="0.01"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">Added Points</label>
+                    <input
+                      type="number"
+                      value={newOfferAddedPoints}
+                      onChange={(e) => setNewOfferAddedPoints(e.target.value)}
+                      placeholder="e.g., 5"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                      min="0"
+                      max="50"
+                      step="0.5"
+                    />
+                  </div>
+                </div>
                 <div>
-                  <label className="block text-xs text-gray-600 mb-1">Factor Rate</label>
+                  <label className="block text-xs text-gray-600 mb-1">My Commission %</label>
                   <input
                     type="number"
-                    value={newOfferFactorRate}
-                    onChange={(e) => setNewOfferFactorRate(e.target.value)}
-                    placeholder="e.g., 1.25"
+                    value={newOfferMyCommissionPercent}
+                    onChange={(e) => setNewOfferMyCommissionPercent(e.target.value)}
+                    placeholder="e.g., 50"
                     className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
-                    min="1"
-                    max="2"
-                    step="0.01"
+                    min="0"
+                    max="100"
+                    step="5"
                   />
+                  <p className="text-xs text-gray-500 mt-1">
+                    {newOfferBuyRate && newOfferAddedPoints ? 
+                      `Factor Rate: ${(Number(newOfferBuyRate) + (Number(newOfferAddedPoints) / 100)).toFixed(3)}x` 
+                      : 'Enter buy rate and points to see factor rate'}
+                  </p>
                 </div>
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">Term Length (# of Payments)</label>
