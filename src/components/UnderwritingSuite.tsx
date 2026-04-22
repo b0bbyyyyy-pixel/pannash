@@ -243,9 +243,9 @@ export default function UnderwritingSuite({
   const [editOfferPaymentFreq, setEditOfferPaymentFreq] = useState('Daily');
   const [editOfferUrl, setEditOfferUrl] = useState('');
   
-  // Commission & Funding tracking
-  const [points, setPoints] = useState<number>(initialData?.points || 0);
-  const [myPercentage, setMyPercentage] = useState<number>(initialData?.myPercentage || 0);
+  // Commission: legacy `points` / `myPercentage` in saved data (no in-form editors — use offer "My Commission %")
+  const [points] = useState<number>(initialData?.points || 0);
+  const [myPercentage] = useState<number>(initialData?.myPercentage || 0);
   const [isFunded, setIsFunded] = useState<boolean>(initialData?.isFunded || false);
   
   // Get the selected offer
@@ -482,10 +482,11 @@ export default function UnderwritingSuite({
     ? ((totalCost / approvedAmount) / termMonths * 12 * 100).toFixed(1)
     : '0.0';
   
-  // Commission calculation (based on selected offer or approved amount)
+  // Commission: use My Commission % on the selected offer; legacy two-field (points × my share) if no offer
   const commissionBaseAmount = selectedOffer && adjustedAmount > 0 ? adjustedAmount : approvedAmount;
-  const totalCommission = commissionBaseAmount * (points / 100);
-  const calculatedCommission = totalCommission * (myPercentage / 100);
+  const calculatedCommission = selectedOffer
+    ? commissionBaseAmount * ((selectedOffer.myCommissionPercent || 0) / 100)
+    : commissionBaseAmount * (points / 100) * (myPercentage / 100);
   
   // Risk score (0-100, comprehensive algorithm) - STRICT SCORING
   const calculateRiskScore = (): number => {
@@ -1811,68 +1812,22 @@ export default function UnderwritingSuite({
                                     </div>
                                   </div>
                                   
-                                  {/* Commission Tracking */}
-                                  <div className="pt-3 border-t border-green-300 space-y-3">
-                                    <div>
-                                      <label className="block text-xs text-green-800 font-medium mb-1">Points on Deal (%)</label>
-                                      <input
-                                        type="number"
-                                        value={points || ''}
-                                        onChange={(e) => setPoints(Number(e.target.value) || 0)}
-                                        placeholder="e.g., 3"
-                                        className="w-full px-2 py-1.5 border border-green-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                                        min="0"
-                                        max="20"
-                                        step="0.5"
-                                      />
-                                      <p className="text-xs text-gray-500 mt-1">
-                                        Total commission: ${Math.round(totalCommission).toLocaleString()} ({points}% of ${Math.round(adjustedAmount).toLocaleString()})
-                                      </p>
-                                    </div>
-                                    
-                                    <div>
-                                      <label className="block text-xs text-green-800 font-medium mb-1">My Percentage (%)</label>
-                                      <input
-                                        type="number"
-                                        value={myPercentage || ''}
-                                        onChange={(e) => setMyPercentage(Number(e.target.value) || 0)}
-                                        placeholder="e.g., 50"
-                                        className="w-full px-2 py-1.5 border border-green-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                                        min="0"
-                                        max="100"
-                                        step="5"
-                                      />
-                                      <p className="text-xs text-gray-500 mt-1">
-                                        Your share of the {points}% points
-                                      </p>
-                                    </div>
-                                    
-                                    <div className="bg-white border border-green-400 rounded-lg p-2">
-                                      <div className="flex justify-between items-center">
-                                        <span className="text-xs text-gray-600 font-medium">My Commission:</span>
-                                        <span className="text-xl font-bold text-green-700">
-                                          ${Math.round(calculatedCommission).toLocaleString()}
-                                        </span>
+                                  <div className="pt-3 border-t border-green-300">
+                                    <label className="flex items-center justify-between cursor-pointer">
+                                      <div>
+                                        <span className="text-xs font-semibold text-green-900">Deal Funded</span>
+                                        <p className="text-xs text-green-700">Mark when money is received</p>
                                       </div>
-                                    </div>
-                                    
-                                    <div className="pt-2 border-t border-green-300">
-                                      <label className="flex items-center justify-between cursor-pointer">
-                                        <div>
-                                          <span className="text-xs font-semibold text-green-900">Deal Funded</span>
-                                          <p className="text-xs text-green-700">Mark when money is received</p>
-                                        </div>
-                                        <div className="relative inline-block w-10 h-5">
-                                          <input
-                                            type="checkbox"
-                                            checked={isFunded}
-                                            onChange={(e) => setIsFunded(e.target.checked)}
-                                            className="sr-only peer"
-                                          />
-                                          <div className="w-10 h-5 bg-gray-300 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-green-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-600"></div>
-                                        </div>
-                                      </label>
-                                    </div>
+                                      <div className="relative inline-block w-10 h-5">
+                                        <input
+                                          type="checkbox"
+                                          checked={isFunded}
+                                          onChange={(e) => setIsFunded(e.target.checked)}
+                                          className="sr-only peer"
+                                        />
+                                        <div className="w-10 h-5 bg-gray-300 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-green-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-600"></div>
+                                      </div>
+                                    </label>
                                   </div>
                                 </div>
                                 )}
