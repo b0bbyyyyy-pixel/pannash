@@ -5,7 +5,6 @@ import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { getPhoneLocation, PhoneLocationInfo } from '@/lib/phoneLocation';
 import { parseLeadPasteText } from '@/lib/parse-lead-paste';
-import { setStoredLeadMaxAddedPoints } from '@/lib/maxAddedPointsCap';
 import dynamic from 'next/dynamic';
 
 const UnderwritingSuite = dynamic(() => import('@/components/UnderwritingSuite'), { ssr: false });
@@ -141,13 +140,12 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     email: '',
     phone: '',
     company: '',
-    maxAddedPoints: 50,
   });
   const [leadQuickPaste, setLeadQuickPaste] = useState('');
   const [pasteParseNote, setPasteParseNote] = useState('');
 
   const openAddModal = () => {
-    setNewLead({ name: '', email: '', phone: '', company: '', maxAddedPoints: 50 });
+    setNewLead({ name: '', email: '', phone: '', company: '' });
     setLeadQuickPaste('');
     setPasteParseNote('');
     setShowAddModal(true);
@@ -157,7 +155,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     setShowAddModal(false);
     setLeadQuickPaste('');
     setPasteParseNote('');
-    setNewLead({ name: '', email: '', phone: '', company: '', maxAddedPoints: 50 });
+    setNewLead({ name: '', email: '', phone: '', company: '' });
   };
 
   const applyPastedLead = () => {
@@ -1886,7 +1884,6 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
 
       if (res.ok) {
         const { lead } = await res.json();
-        setStoredLeadMaxAddedPoints(lead.id, newLead.maxAddedPoints);
 
         // Update local state
         setLeads(prev => [lead, ...prev]);
@@ -4322,32 +4319,6 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                   className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
                   placeholder="Acme Corp"
                 />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-[#1a1a1a] mb-1">
-                  Max added points (underwriting)
-                </label>
-                <input
-                  type="number"
-                  min={1}
-                  max={50}
-                  value={newLead.maxAddedPoints}
-                  onChange={(e) => {
-                    const n = Number(e.target.value);
-                    if (e.target.value === '') {
-                      setNewLead({ ...newLead, maxAddedPoints: 50 });
-                      return;
-                    }
-                    if (!Number.isNaN(n)) {
-                      setNewLead({ ...newLead, maxAddedPoints: Math.min(50, Math.max(1, Math.round(n))) });
-                    }
-                  }}
-                  className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
-                />
-                <p className="text-xs text-[#6b6b6b] mt-1">
-                  Caps the &quot;added points&quot; slider when negotiating an offer (1–50; default 50).
-                </p>
               </div>
             </div>
 
