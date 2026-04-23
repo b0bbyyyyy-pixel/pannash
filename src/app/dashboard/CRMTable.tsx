@@ -2197,7 +2197,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                   });
                 }
               }}
-              className="px-2 py-1 text-xs font-medium rounded border-0 cursor-pointer w-full min-w-[10rem] max-w-[20rem] text-left flex items-center justify-between gap-1"
+              className="px-2 py-1 text-xs font-medium rounded border-0 cursor-pointer w-full min-w-0 max-w-full text-left flex items-center justify-between gap-1"
               style={{ backgroundColor: bgColor, color: textColor }}
             >
               <span className="truncate flex-1">{lead.stage}</span>
@@ -2215,7 +2215,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                     top: stageMenu?.top,
                     left: stageMenu?.left,
                     minWidth: stageMenu?.width,
-                    maxWidth: 'min(100vw - 1rem, 24rem)',
+                    maxWidth: 'min(100vw - 1rem, 12rem)',
                   }}
                   data-stage-menu
                 >

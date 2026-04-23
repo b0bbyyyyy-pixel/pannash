@@ -1148,7 +1148,7 @@ export default function UnderwritingSuite({
                 <div className="flex justify-between items-center">
                   <span className="text-xs text-blue-800">Factor Rate:</span>
                   <span className="text-base font-semibold text-blue-900">
-                    {factorRate}x
+                    {Number(factorRate).toFixed(2)}x
                   </span>
                 </div>
                 <div className="flex justify-between items-center">
@@ -1688,7 +1688,7 @@ export default function UnderwritingSuite({
                               </div>
                               <div className="flex justify-between">
                                 <span className="text-gray-600">Factor:</span>
-                                <span className="font-medium">{offer.factorRate}x</span>
+                                <span className="font-medium">{Number(offer.factorRate).toFixed(2)}x</span>
                               </div>
                               {offer.buyRate && (
                                 <div className="flex justify-between text-[10px] text-gray-500">
@@ -2017,12 +2017,12 @@ export default function UnderwritingSuite({
                 <div className="space-y-2 text-xs text-blue-800">
                   <div className="flex justify-between">
                     <span>Your Offer:</span>
-                    <span className="font-bold">${Math.round(approvedAmount).toLocaleString()} @ {factorRate}x</span>
+                    <span className="font-bold">${Math.round(approvedAmount).toLocaleString()} @ {Number(factorRate).toFixed(2)}x</span>
                   </div>
                   {actualOffers.map((offer) => (
                     <div key={offer.id} className="flex justify-between">
                       <span>{offer.lenderName}:</span>
-                      <span className="font-medium">${offer.amount.toLocaleString()} @ {offer.factorRate}x</span>
+                      <span className="font-medium">${offer.amount.toLocaleString()} @ {Number(offer.factorRate).toFixed(2)}x</span>
                     </div>
                   ))}
                   {selectedOffer && adjustedAmount !== selectedOffer.amount && (

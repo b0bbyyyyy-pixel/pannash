@@ -141,7 +141,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     { field: 'timer', label: 'Timer', width: 120, visible: true, expandable: false, allowAttachments: false },
     { field: 'company', label: 'Opportunity', width: 150, visible: true, expandable: false, allowAttachments: false },
     { field: 'name', label: 'Name', width: 150, visible: true, expandable: false, allowAttachments: false },
-    { field: 'stage', label: 'Stage', width: 160, visible: true, expandable: false, allowAttachments: false },
+    { field: 'stage', label: 'Stage', width: 110, visible: true, expandable: false, allowAttachments: false },
     { field: 'value', label: 'Value', width: 100, visible: true, expandable: false, allowAttachments: false },
     { field: 'email', label: 'E-Mail', width: 180, visible: true, expandable: false, allowAttachments: false },
     { field: 'phone', label: 'Phone', width: 120, visible: true, expandable: false, allowAttachments: false },
