@@ -1763,20 +1763,6 @@ export default function UnderwritingSuite({
                                 {offer.offerType === 'loc' && selectedOfferId !== offer.id && (
                                   <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">LOC</span>
                                 )}
-                                {offer.offerType === 'loc' && selectedOfferId === offer.id && (
-                                  <div className="flex rounded overflow-hidden border border-blue-300 text-[10px] font-semibold">
-                                    <button type="button"
-                                      onClick={() => setSelectedOfferViewType('loc')}
-                                      className={`px-2 py-0.5 transition-colors ${effectiveSelectedOfferType(offer) === 'loc' ? 'bg-blue-600 text-white' : 'bg-white text-blue-600 hover:bg-blue-50'}`}>
-                                      LOC
-                                    </button>
-                                    <button type="button"
-                                      onClick={() => setSelectedOfferViewType('mca')}
-                                      className={`px-2 py-0.5 border-l border-blue-300 transition-colors ${effectiveSelectedOfferType(offer) === 'mca' ? 'bg-blue-600 text-white' : 'bg-white text-blue-600 hover:bg-blue-50'}`}>
-                                      Loan
-                                    </button>
-                                  </div>
-                                )}
                                 {selectedOfferId === offer.id && (
                                   <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full font-medium">Selected</span>
                                 )}
@@ -1796,8 +1782,42 @@ export default function UnderwritingSuite({
                                 </button>
                               </div>
                             </div>
+                            {/* LOC ↔ Loan toggle — clean tab row, only interactive when this offer is selected */}
+                            {offer.offerType === 'loc' && (
+                              <div className="flex mb-3 rounded-lg overflow-hidden border border-gray-200 text-xs font-semibold">
+                                <button
+                                  type="button"
+                                  disabled={selectedOfferId !== offer.id}
+                                  onClick={() => setSelectedOfferViewType('loc')}
+                                  className={`flex-1 py-1.5 transition-colors ${
+                                    effectiveSelectedOfferType(offer) === 'loc'
+                                      ? 'bg-blue-600 text-white'
+                                      : selectedOfferId === offer.id
+                                        ? 'bg-gray-50 text-gray-500 hover:bg-gray-100 cursor-pointer'
+                                        : 'bg-gray-50 text-gray-400 cursor-default'
+                                  }`}
+                                >
+                                  Line of Credit
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={selectedOfferId !== offer.id}
+                                  onClick={() => setSelectedOfferViewType('mca')}
+                                  className={`flex-1 py-1.5 border-l border-gray-200 transition-colors ${
+                                    effectiveSelectedOfferType(offer) === 'mca'
+                                      ? 'bg-blue-600 text-white'
+                                      : selectedOfferId === offer.id
+                                        ? 'bg-gray-50 text-gray-500 hover:bg-gray-100 cursor-pointer'
+                                        : 'bg-gray-50 text-gray-400 cursor-default'
+                                  }`}
+                                >
+                                  Loan / MCA
+                                </button>
+                              </div>
+                            )}
+
                             <div className="space-y-1 text-xs text-gray-700">
-                              {offer.offerType === 'loc' ? (() => {
+                              {effectiveSelectedOfferType(offer) === 'loc' ? (() => {
                                 const P = offer.amount;
                                 const r = (offer.monthlyAPR ?? 0) / 100;
                                 const n = offer.locTermMonths ?? 12;
