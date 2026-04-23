@@ -742,7 +742,7 @@ export default function UnderwritingSuite({
 
     // Use defaults for optional fields
     const buyRate = Number(newOfferBuyRate) || 1.20; // Default to 1.20
-    const addedPoints = Math.min(commissionPointsMax, Number(newOfferAddedPoints) || 5);
+    const addedPoints = Math.min(commissionPointsMax, newOfferAddedPoints === '' ? 0 : Number(newOfferAddedPoints));
     const calculatedFactorRate = buyRate + (addedPoints / 100);
 
     const newOffer = {
@@ -815,7 +815,7 @@ export default function UnderwritingSuite({
 
     // Use defaults for optional fields
     const buyRate = Number(editOfferBuyRate) || 1.20; // Default to 1.20
-    const addedPoints = Math.min(commissionPointsMax, Number(editOfferAddedPoints) || 5);
+    const addedPoints = Math.min(commissionPointsMax, editOfferAddedPoints === '' ? 0 : Number(editOfferAddedPoints));
     const calculatedFactorRate = buyRate + (addedPoints / 100);
 
     setActualOffers(actualOffers.map(offer => 
