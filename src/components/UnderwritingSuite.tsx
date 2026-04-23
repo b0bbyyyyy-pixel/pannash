@@ -208,16 +208,23 @@ export default function UnderwritingSuite({
     id: string; 
     lenderName: string; 
     amount: number; 
+    offerType?: 'mca' | 'loc';
+    // MCA fields
     factorRate: number; 
     buyRate?: number;
     addedPoints?: number;
     myCommissionPercent?: number;
     termLength?: number; 
-    paymentFrequency?: string; 
+    paymentFrequency?: string;
+    // LOC fields
+    monthlyAPR?: number;
+    locTermMonths?: number;
+    locPaymentFrequency?: string;
     url?: string;
   }>>(
     initialData?.actualOffers || []
   );
+  const [newOfferType, setNewOfferType] = useState<'mca' | 'loc'>('mca');
   const [newOfferLender, setNewOfferLender] = useState('');
   const [newOfferAmount, setNewOfferAmount] = useState('');
   const [newOfferFactorRate, setNewOfferFactorRate] = useState('');
@@ -227,6 +234,10 @@ export default function UnderwritingSuite({
   const [newOfferTermLength, setNewOfferTermLength] = useState('');
   const [newOfferPaymentFreq, setNewOfferPaymentFreq] = useState('Daily');
   const [newOfferUrl, setNewOfferUrl] = useState('');
+  // LOC-specific state
+  const [newOfferMonthlyAPR, setNewOfferMonthlyAPR] = useState('');
+  const [newOfferLocTermMonths, setNewOfferLocTermMonths] = useState('');
+  const [newOfferLocPaymentFreq, setNewOfferLocPaymentFreq] = useState('Monthly');
   const [offersNotes, setOffersNotes] = useState(initialData?.offersNotes || '');
   
   // Selected offer for negotiation
@@ -253,9 +264,17 @@ export default function UnderwritingSuite({
   
   // Negotiation section collapse state
   const [isNegotiationCollapsed, setIsNegotiationCollapsed] = useState(false);
+
+  // LOC draw slider
+  const [locDrawAmount, setLocDrawAmount] = useState(0);
+  // Quick view-mode type override per selected offer (so user can flip LOC↔MCA without editing)
+  const [selectedOfferViewType, setSelectedOfferViewType] = useState<'loc' | 'mca' | null>(null);
+  const effectiveSelectedOfferType = (offer: (typeof actualOffers)[number]) =>
+    selectedOfferViewType ?? (offer.offerType === 'loc' ? 'loc' : 'mca');
   
   // Editing offers
   const [editingOfferId, setEditingOfferId] = useState<string | null>(null);
+  const [editOfferType, setEditOfferType] = useState<'mca' | 'loc'>('mca');
   const [editOfferLender, setEditOfferLender] = useState('');
   const [editOfferAmount, setEditOfferAmount] = useState('');
   const [editOfferFactorRate, setEditOfferFactorRate] = useState('');
@@ -265,6 +284,10 @@ export default function UnderwritingSuite({
   const [editOfferTermLength, setEditOfferTermLength] = useState('');
   const [editOfferPaymentFreq, setEditOfferPaymentFreq] = useState('Daily');
   const [editOfferUrl, setEditOfferUrl] = useState('');
+  // LOC edit fields
+  const [editOfferMonthlyAPR, setEditOfferMonthlyAPR] = useState('');
+  const [editOfferLocTermMonths, setEditOfferLocTermMonths] = useState('');
+  const [editOfferLocPaymentFreq, setEditOfferLocPaymentFreq] = useState('Monthly');
   
   // Commission: legacy `points` / `myPercentage` in saved data (no in-form editors — use offer "My Commission %")
   const [points] = useState<number>(initialData?.points || 0);
@@ -289,14 +312,19 @@ export default function UnderwritingSuite({
     if (offer) {
       setSelectedOfferId(offerId);
       setAdjustedAmount(offer.amount);
-      const br = offer.buyRate ?? 1.2;
-      if (offer.addedPoints != null) {
-        setNegotiationAddedPoints(Math.max(0, Math.min(commissionPointsMax, offer.addedPoints)));
+      setSelectedOfferViewType(null); // reset view-type toggle on new selection
+      if (offer.offerType === 'loc') {
+        setLocDrawAmount(offer.amount); // default draw = full credit limit
       } else {
-        const d = (offer.factorRate - br) * 100;
-        setNegotiationAddedPoints(
-          !Number.isNaN(d) ? Math.max(0, Math.min(commissionPointsMax, Math.round(d * 10) / 10)) : Math.min(5, commissionPointsMax)
-        );
+        const br = offer.buyRate ?? 1.2;
+        if (offer.addedPoints != null) {
+          setNegotiationAddedPoints(Math.max(0, Math.min(commissionPointsMax, offer.addedPoints)));
+        } else {
+          const d = (offer.factorRate - br) * 100;
+          setNegotiationAddedPoints(
+            !Number.isNaN(d) ? Math.max(0, Math.min(commissionPointsMax, Math.round(d * 10) / 10)) : Math.min(5, commissionPointsMax)
+          );
+        }
       }
     }
   };
@@ -734,30 +762,48 @@ export default function UnderwritingSuite({
   };
 
   const addActualOffer = () => {
-    // Only require lender name and amount - everything else has defaults
     if (!newOfferLender.trim() || !newOfferAmount) {
       alert('Please fill in at least lender name and amount');
       return;
     }
 
-    // Use defaults for optional fields
-    const buyRate = Number(newOfferBuyRate) || 1.20; // Default to 1.20
-    const addedPoints = Math.min(commissionPointsMax, newOfferAddedPoints === '' ? 0 : Number(newOfferAddedPoints));
-    const calculatedFactorRate = buyRate + (addedPoints / 100);
+    let newOffer: (typeof actualOffers)[number];
 
-    const newOffer = {
-      id: Date.now().toString(),
-      lenderName: newOfferLender.trim(),
-      amount: Number(newOfferAmount),
-      factorRate: calculatedFactorRate,
-      buyRate: buyRate,
-      addedPoints: addedPoints,
-      myCommissionPercent: Number(newOfferMyCommissionPercent) || 0,
-      termLength: Number(newOfferTermLength) || 250, // Default to 250 payments
-      paymentFrequency: newOfferPaymentFreq || 'Daily',
-      url: newOfferUrl.trim() || undefined,
-    };
-    
+    if (newOfferType === 'loc') {
+      if (!newOfferMonthlyAPR || !newOfferLocTermMonths) {
+        alert('Please fill in Monthly APR % and Term Length for the Line of Credit');
+        return;
+      }
+      newOffer = {
+        id: Date.now().toString(),
+        lenderName: newOfferLender.trim(),
+        amount: Number(newOfferAmount),
+        offerType: 'loc',
+        factorRate: 0, // not used for LOC
+        monthlyAPR: Number(newOfferMonthlyAPR),
+        locTermMonths: Number(newOfferLocTermMonths),
+        locPaymentFrequency: newOfferLocPaymentFreq || 'Monthly',
+        url: newOfferUrl.trim() || undefined,
+      };
+    } else {
+      const buyRate = Number(newOfferBuyRate) || 1.20;
+      const addedPoints = Math.min(commissionPointsMax, newOfferAddedPoints === '' ? 0 : Number(newOfferAddedPoints));
+      const calculatedFactorRate = buyRate + (addedPoints / 100);
+      newOffer = {
+        id: Date.now().toString(),
+        lenderName: newOfferLender.trim(),
+        amount: Number(newOfferAmount),
+        offerType: 'mca',
+        factorRate: calculatedFactorRate,
+        buyRate,
+        addedPoints,
+        myCommissionPercent: Number(newOfferMyCommissionPercent) || 0,
+        termLength: Number(newOfferTermLength) || 250,
+        paymentFrequency: newOfferPaymentFreq || 'Daily',
+        url: newOfferUrl.trim() || undefined,
+      };
+    }
+
     setActualOffers([...actualOffers, newOffer]);
     setNewOfferLender('');
     setNewOfferAmount('');
@@ -768,6 +814,9 @@ export default function UnderwritingSuite({
     setNewOfferTermLength('');
     setNewOfferPaymentFreq('Daily');
     setNewOfferUrl('');
+    setNewOfferMonthlyAPR('');
+    setNewOfferLocTermMonths('');
+    setNewOfferLocPaymentFreq('Monthly');
   };
 
   const deleteActualOffer = (offerId: string) => {
@@ -782,63 +831,83 @@ export default function UnderwritingSuite({
     }
   };
 
-  const startEditOffer = (offer: { 
-    id: string; 
-    lenderName: string; 
-    amount: number; 
-    factorRate: number; 
-    buyRate?: number;
-    addedPoints?: number;
-    myCommissionPercent?: number;
-    termLength?: number; 
-    paymentFrequency?: string; 
-    url?: string;
-  }) => {
+  const startEditOffer = (offer: (typeof actualOffers)[number]) => {
     setEditingOfferId(offer.id);
+    setEditOfferType(offer.offerType === 'loc' ? 'loc' : 'mca');
     setEditOfferLender(offer.lenderName);
     setEditOfferAmount(offer.amount.toString());
     setEditOfferFactorRate(offer.factorRate.toString());
-    setEditOfferBuyRate((offer.buyRate || 1.20).toString()); // Default to 1.20
-    setEditOfferAddedPoints((offer.addedPoints || 0).toString()); // Default to 0
-    setEditOfferMyCommissionPercent((offer.myCommissionPercent || 0).toString()); // Default to 0
-    setEditOfferTermLength((offer.termLength || 250).toString()); // Default to 250 payments
-    setEditOfferPaymentFreq(offer.paymentFrequency || 'Daily'); // Default to Daily
+    setEditOfferBuyRate((offer.buyRate || 1.20).toString());
+    setEditOfferAddedPoints((offer.addedPoints || 0).toString());
+    setEditOfferMyCommissionPercent((offer.myCommissionPercent || 0).toString());
+    setEditOfferTermLength((offer.termLength || 250).toString());
+    setEditOfferPaymentFreq(offer.paymentFrequency || 'Daily');
     setEditOfferUrl(offer.url || '');
+    // LOC fields
+    setEditOfferMonthlyAPR((offer.monthlyAPR ?? '').toString());
+    setEditOfferLocTermMonths((offer.locTermMonths ?? '').toString());
+    setEditOfferLocPaymentFreq(offer.locPaymentFrequency || 'Monthly');
   };
 
   const saveEditOffer = () => {
-    // Only require lender name and amount - everything else has defaults
     if (!editOfferLender.trim() || !editOfferAmount) {
       alert('Please fill in at least lender name and amount');
       return;
     }
 
-    // Use defaults for optional fields
-    const buyRate = Number(editOfferBuyRate) || 1.20; // Default to 1.20
-    const addedPoints = Math.min(commissionPointsMax, editOfferAddedPoints === '' ? 0 : Number(editOfferAddedPoints));
-    const calculatedFactorRate = buyRate + (addedPoints / 100);
-
-    setActualOffers(actualOffers.map(offer => 
-      offer.id === editingOfferId
-        ? {
-            ...offer,
-            lenderName: editOfferLender.trim(),
-            amount: Number(editOfferAmount),
-            factorRate: calculatedFactorRate,
-            buyRate: buyRate,
-            addedPoints: addedPoints,
-            myCommissionPercent: Number(editOfferMyCommissionPercent) || 0,
-            termLength: Number(editOfferTermLength) || 250, // Default to 250 payments
-            paymentFrequency: editOfferPaymentFreq || 'Daily',
-            url: editOfferUrl.trim() || undefined,
-          }
-        : offer
-    ));
-
-    // Update adjusted amount if we're editing the selected offer
-    if (selectedOfferId === editingOfferId) {
-      setAdjustedAmount(Number(editOfferAmount));
-      setNegotiationAddedPoints(addedPoints);
+    if (editOfferType === 'loc') {
+      if (!editOfferMonthlyAPR || !editOfferLocTermMonths) {
+        alert('Please fill in Monthly APR % and Term Length for the Line of Credit');
+        return;
+      }
+      setActualOffers(actualOffers.map(offer =>
+        offer.id === editingOfferId
+          ? {
+              ...offer,
+              lenderName: editOfferLender.trim(),
+              amount: Number(editOfferAmount),
+              offerType: 'loc' as const,
+              factorRate: 0,
+              buyRate: undefined,
+              addedPoints: undefined,
+              myCommissionPercent: undefined,
+              termLength: undefined,
+              paymentFrequency: undefined,
+              monthlyAPR: Number(editOfferMonthlyAPR),
+              locTermMonths: Number(editOfferLocTermMonths),
+              locPaymentFrequency: editOfferLocPaymentFreq || 'Monthly',
+              url: editOfferUrl.trim() || undefined,
+            }
+          : offer
+      ));
+    } else {
+      const buyRate = Number(editOfferBuyRate) || 1.20;
+      const addedPoints = Math.min(commissionPointsMax, editOfferAddedPoints === '' ? 0 : Number(editOfferAddedPoints));
+      const calculatedFactorRate = buyRate + (addedPoints / 100);
+      setActualOffers(actualOffers.map(offer =>
+        offer.id === editingOfferId
+          ? {
+              ...offer,
+              lenderName: editOfferLender.trim(),
+              amount: Number(editOfferAmount),
+              offerType: 'mca' as const,
+              factorRate: calculatedFactorRate,
+              buyRate,
+              addedPoints,
+              myCommissionPercent: Number(editOfferMyCommissionPercent) || 0,
+              termLength: Number(editOfferTermLength) || 250,
+              paymentFrequency: editOfferPaymentFreq || 'Daily',
+              monthlyAPR: undefined,
+              locTermMonths: undefined,
+              locPaymentFrequency: undefined,
+              url: editOfferUrl.trim() || undefined,
+            }
+          : offer
+      ));
+      if (selectedOfferId === editingOfferId) {
+        setAdjustedAmount(Number(editOfferAmount));
+        setNegotiationAddedPoints(addedPoints);
+      }
     }
 
     setEditingOfferId(null);
@@ -1273,74 +1342,95 @@ export default function UnderwritingSuite({
                     displayIndividualPayment = weeklyPaymentEstimate;
                   }
                   
+                  const hasActualOffer = !!(selectedOffer && adjustedAmount > 0);
+
                   return (
                     <>
-                      {/* Big 3 Colored Boxes - Top */}
+                      {/* Big 3 Colored Boxes - Top (only populated from actual selected offer) */}
                       <div className="grid grid-cols-3 gap-4 mb-6">
-                        <div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-300 rounded-lg p-5">
-                          <div className="text-xs text-green-700 font-medium mb-1">Max Approval Amount</div>
-                          <div className="text-4xl font-bold text-green-600">
-                            ${Math.round(displayAmount).toLocaleString()}
-                          </div>
-                          <div className="text-sm text-green-700 mt-1 font-medium">
-                            Funding amount
-                          </div>
+                        <div className={`bg-gradient-to-br from-green-50 to-emerald-50 border-2 rounded-lg p-5 ${hasActualOffer ? 'border-green-300' : 'border-green-100'}`}>
+                          <div className="text-xs text-green-700 font-medium mb-1">Offer Amount</div>
+                          {hasActualOffer ? (
+                            <>
+                              <div className="text-4xl font-bold text-green-600">
+                                ${Math.round(displayAmount).toLocaleString()}
+                              </div>
+                              <div className="text-sm text-green-700 mt-1 font-medium">Funding amount</div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="text-4xl font-bold text-green-200">—</div>
+                              <div className="text-sm text-green-400 mt-1">Select an actual offer</div>
+                            </>
+                          )}
                         </div>
                         
-                        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-lg p-5">
+                        <div className={`bg-gradient-to-br from-blue-50 to-indigo-50 border-2 rounded-lg p-5 ${hasActualOffer ? 'border-blue-300' : 'border-blue-100'}`}>
                           <div className="text-xs text-blue-700 font-medium mb-1">{displayFrequency} Payment</div>
-                          <div className="text-4xl font-bold text-blue-600">
-                            ${Math.round(displayIndividualPayment).toLocaleString()}
-                          </div>
-                          <div className="text-sm text-blue-700 mt-1">
-                            {selectedOffer && adjustedAmount > 0
-                              ? `${displayFrequency} payment amount`
-                              : 'Avg. weekly (over term)'}
-                          </div>
+                          {hasActualOffer ? (
+                            <>
+                              <div className="text-4xl font-bold text-blue-600">
+                                ${Math.round(displayIndividualPayment).toLocaleString()}
+                              </div>
+                              <div className="text-sm text-blue-700 mt-1">{displayFrequency} payment amount</div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="text-4xl font-bold text-blue-200">—</div>
+                              <div className="text-sm text-blue-400 mt-1">Select an actual offer</div>
+                            </>
+                          )}
                         </div>
                         
-                        <div className="bg-gradient-to-br from-purple-50 to-violet-50 border-2 border-purple-300 rounded-lg p-5">
+                        <div className={`bg-gradient-to-br from-purple-50 to-violet-50 border-2 rounded-lg p-5 ${hasActualOffer ? 'border-purple-300' : 'border-purple-100'}`}>
                           <div className="text-xs text-purple-700 font-medium mb-1">Monthly Payment % of Sales</div>
-                          <div className="text-4xl font-bold text-purple-600">
-                            {displayPaymentPercent}%
-                          </div>
-                          <div className="text-sm text-purple-700 mt-1">
-                            Of monthly revenue
-                          </div>
+                          {hasActualOffer ? (
+                            <>
+                              <div className="text-4xl font-bold text-purple-600">{displayPaymentPercent}%</div>
+                              <div className="text-sm text-purple-700 mt-1">Of monthly revenue</div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="text-4xl font-bold text-purple-200">—</div>
+                              <div className="text-sm text-purple-400 mt-1">Select an actual offer</div>
+                            </>
+                          )}
                         </div>
                       </div>
                       
-                      {/* 4 Smaller Boxes Below */}
+                      {/* 4 Smaller Boxes — Credit Score & Time in Business always show (inputs), rest need actual offer */}
                       <div className="grid grid-cols-4 gap-4 mb-6">
                         <div className="bg-white border border-gray-200 rounded-lg p-4">
                           <div className="text-sm text-gray-600 mb-2 font-medium">Credit Score</div>
-                          <div className="text-3xl font-bold text-gray-900">
-                            {creditScore}
-                          </div>
+                          <div className="text-3xl font-bold text-gray-900">{creditScore}</div>
                         </div>
                         
                         <div className="bg-white border border-gray-200 rounded-lg p-4">
                           <div className="text-sm text-gray-600 mb-2 font-medium">Loan APR</div>
-                          <div className="text-3xl font-bold text-gray-900">
-                            {displayAPR}%
-                          </div>
+                          {hasActualOffer ? (
+                            <div className="text-3xl font-bold text-gray-900">{displayAPR}%</div>
+                          ) : (
+                            <div className="text-3xl font-bold text-gray-300">—</div>
+                          )}
                         </div>
                         
                         <div className="bg-white border border-gray-200 rounded-lg p-4">
                           <div className="text-sm text-gray-600 mb-2 font-medium">Time in Business</div>
-                          <div className="text-3xl font-bold text-gray-900">
-                            {timeInBusinessLabel}
-                          </div>
+                          <div className="text-3xl font-bold text-gray-900">{timeInBusinessLabel}</div>
                         </div>
                         
                         <div className="bg-white border border-gray-200 rounded-lg p-4">
                           <div className="text-sm text-gray-600 mb-2 font-medium">Revenue After Payment</div>
-                          <div className="text-2xl font-bold text-blue-600">
-                            ${Math.round(displayRevenueAfterPayment).toLocaleString()}
-                          </div>
-                          <div className="text-sm text-gray-500 mt-1 font-medium">
-                            {displayRetainedPercent}% retained
-                          </div>
+                          {hasActualOffer ? (
+                            <>
+                              <div className="text-2xl font-bold text-blue-600">
+                                ${Math.round(displayRevenueAfterPayment).toLocaleString()}
+                              </div>
+                              <div className="text-sm text-gray-500 mt-1 font-medium">{displayRetainedPercent}% retained</div>
+                            </>
+                          ) : (
+                            <div className="text-3xl font-bold text-gray-300">—</div>
+                          )}
                         </div>
                       </div>
                     </>
@@ -1538,113 +1628,121 @@ export default function UnderwritingSuite({
                         {isEditing ? (
                           // Edit Mode
                           <div className="space-y-3">
+                            {/* Type toggle */}
+                            <div className="flex rounded-md overflow-hidden border border-gray-300 text-xs font-medium">
+                              <button type="button" onClick={() => setEditOfferType('mca')}
+                                className={`flex-1 py-1.5 transition-colors ${editOfferType === 'mca' ? 'bg-[#5a7fc7] text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>
+                                MCA / Term Loan
+                              </button>
+                              <button type="button" onClick={() => setEditOfferType('loc')}
+                                className={`flex-1 py-1.5 transition-colors border-l border-gray-300 ${editOfferType === 'loc' ? 'bg-[#5a7fc7] text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>
+                                Line of Credit
+                              </button>
+                            </div>
                             <div>
                               <label className="block text-xs text-gray-600 mb-1">Lender Name</label>
-                              <input
-                                type="text"
-                                value={editOfferLender}
-                                onChange={(e) => setEditOfferLender(e.target.value)}
-                                className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
-                              />
+                              <input type="text" value={editOfferLender} onChange={(e) => setEditOfferLender(e.target.value)}
+                                className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]" />
                             </div>
                             <div>
-                              <label className="block text-xs text-gray-600 mb-1">Amount</label>
-                              <input
-                                type="number"
-                                value={editOfferAmount}
-                                onChange={(e) => setEditOfferAmount(e.target.value)}
+                              <label className="block text-xs text-gray-600 mb-1">{editOfferType === 'loc' ? 'Credit Limit' : 'Amount'}</label>
+                              <input type="number" value={editOfferAmount} onChange={(e) => setEditOfferAmount(e.target.value)}
                                 className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
-                                min="0"
-                                step="1000"
-                              />
+                                min="0" step="1000" />
                             </div>
-                            <div className="grid grid-cols-2 gap-2">
-                              <div>
-                                <label className="block text-xs text-gray-600 mb-1">Buy Rate</label>
-                                <input
-                                  type="number"
-                                  value={editOfferBuyRate}
-                                  onChange={(e) => setEditOfferBuyRate(e.target.value)}
-                                  className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
-                                  min="1"
-                                  max="2"
-                                  step="0.01"
-                                />
-                              </div>
+
+                            {editOfferType === 'loc' ? (
+                              <>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div>
+                                    <label className="block text-xs text-gray-600 mb-1">Monthly APR %</label>
+                                    <input type="number" value={editOfferMonthlyAPR} onChange={(e) => setEditOfferMonthlyAPR(e.target.value)}
+                                      placeholder="e.g., 2.5"
+                                      className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                                      min="0" step="0.1" />
+                                  </div>
+                                  <div>
+                                    <label className="block text-xs text-gray-600 mb-1">Term (months)</label>
+                                    <input type="number" value={editOfferLocTermMonths} onChange={(e) => setEditOfferLocTermMonths(e.target.value)}
+                                      placeholder="e.g., 12"
+                                      className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                                      min="1" step="1" />
+                                  </div>
+                                </div>
                                 <div>
-                                <label className="block text-xs text-gray-600 mb-1">Added Points</label>
-                                <input
-                                  type="number"
-                                  value={editOfferAddedPoints}
-                                  onChange={(e) => setEditOfferAddedPoints(e.target.value)}
-                                  className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
-                                  min="0"
-                                  max={commissionPointsMax}
-                                  step="0.5"
-                                />
-                              </div>
-                            </div>
-                            <div>
-                              <label className="block text-xs text-gray-600 mb-1">My Commission %</label>
-                              <input
-                                type="number"
-                                value={editOfferMyCommissionPercent}
-                                onChange={(e) => setEditOfferMyCommissionPercent(e.target.value)}
-                                className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
-                                min="0"
-                                max="100"
-                                step="5"
-                              />
-                              <p className="text-xs text-gray-500 mt-1">
-                                {editOfferBuyRate && editOfferAddedPoints ? 
-                                  `Factor Rate: ${(Number(editOfferBuyRate) + (Number(editOfferAddedPoints) / 100)).toFixed(3)}x` 
-                                  : 'Enter buy rate and points'}
-                              </p>
-                            </div>
-                            <div>
-                              <label className="block text-xs text-gray-600 mb-1">Term Length (# Payments)</label>
-                              <input
-                                type="number"
-                                value={editOfferTermLength}
-                                onChange={(e) => setEditOfferTermLength(e.target.value)}
-                                className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
-                                min="1"
-                                step="1"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-gray-600 mb-1">Payment Frequency</label>
-                              <select
-                                value={editOfferPaymentFreq}
-                                onChange={(e) => setEditOfferPaymentFreq(e.target.value)}
-                                className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
-                              >
-                                <option value="Daily">Daily</option>
-                                <option value="Weekly">Weekly</option>
-                                <option value="Bi-Weekly">Bi-Weekly</option>
-                                <option value="Monthly">Monthly</option>
-                              </select>
-                            </div>
+                                  <label className="block text-xs text-gray-600 mb-1">Payment Frequency</label>
+                                  <select value={editOfferLocPaymentFreq} onChange={(e) => setEditOfferLocPaymentFreq(e.target.value)}
+                                    className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]">
+                                    <option value="Weekly">Weekly</option>
+                                    <option value="Monthly">Monthly</option>
+                                  </select>
+                                </div>
+                                {editOfferAmount && editOfferMonthlyAPR && editOfferLocTermMonths && (() => {
+                                  const P = Number(editOfferAmount);
+                                  const r = Number(editOfferMonthlyAPR) / 100;
+                                  const n = Number(editOfferLocTermMonths);
+                                  const moPmt = r === 0 ? P / n : P * (r * Math.pow(1+r,n)) / (Math.pow(1+r,n)-1);
+                                  const freq = editOfferLocPaymentFreq;
+                                  const pmt = freq === 'Weekly' ? moPmt * 12 / 52 : moPmt;
+                                  return <p className="text-xs text-gray-500">{freq} payment: <span className="font-semibold text-gray-700">${Math.round(pmt).toLocaleString()}</span></p>;
+                                })()}
+                              </>
+                            ) : (
+                              <>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div>
+                                    <label className="block text-xs text-gray-600 mb-1">Buy Rate</label>
+                                    <input type="number" value={editOfferBuyRate} onChange={(e) => setEditOfferBuyRate(e.target.value)}
+                                      className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                                      min="1" max="2" step="0.01" />
+                                  </div>
+                                  <div>
+                                    <label className="block text-xs text-gray-600 mb-1">Added Points</label>
+                                    <input type="number" value={editOfferAddedPoints} onChange={(e) => setEditOfferAddedPoints(e.target.value)}
+                                      className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                                      min="0" max={commissionPointsMax} step="0.5" />
+                                  </div>
+                                </div>
+                                <div>
+                                  <label className="block text-xs text-gray-600 mb-1">My Commission %</label>
+                                  <input type="number" value={editOfferMyCommissionPercent} onChange={(e) => setEditOfferMyCommissionPercent(e.target.value)}
+                                    className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                                    min="0" max="100" step="5" />
+                                  <p className="text-xs text-gray-500 mt-1">
+                                    Factor Rate: {(Number(editOfferBuyRate || 1.20) + ((editOfferAddedPoints === '' ? 0 : Number(editOfferAddedPoints)) / 100)).toFixed(3)}x
+                                  </p>
+                                </div>
+                                <div>
+                                  <label className="block text-xs text-gray-600 mb-1">Term Length (# Payments)</label>
+                                  <input type="number" value={editOfferTermLength} onChange={(e) => setEditOfferTermLength(e.target.value)}
+                                    className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                                    min="1" step="1" />
+                                </div>
+                                <div>
+                                  <label className="block text-xs text-gray-600 mb-1">Payment Frequency</label>
+                                  <select value={editOfferPaymentFreq} onChange={(e) => setEditOfferPaymentFreq(e.target.value)}
+                                    className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]">
+                                    <option value="Daily">Daily</option>
+                                    <option value="Weekly">Weekly</option>
+                                    <option value="Bi-Weekly">Bi-Weekly</option>
+                                    <option value="Monthly">Monthly</option>
+                                  </select>
+                                </div>
+                              </>
+                            )}
+
                             <div>
                               <label className="block text-xs text-gray-600 mb-1">Link (Optional)</label>
-                              <input
-                                type="url"
-                                value={editOfferUrl}
-                                onChange={(e) => setEditOfferUrl(e.target.value)}
-                                className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
-                              />
+                              <input type="url" value={editOfferUrl} onChange={(e) => setEditOfferUrl(e.target.value)}
+                                className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]" />
                             </div>
                             <div className="flex gap-2">
-                              <button
-                                onClick={saveEditOffer}
-                                className="flex-1 px-3 py-1.5 bg-green-600 text-white rounded text-xs font-medium hover:bg-green-700"
-                              >
+                              <button onClick={saveEditOffer}
+                                className="flex-1 px-3 py-1.5 bg-green-600 text-white rounded text-xs font-medium hover:bg-green-700">
                                 Save
                               </button>
-                              <button
-                                onClick={cancelEditOffer}
-                                className="flex-1 px-3 py-1.5 bg-gray-400 text-white rounded text-xs font-medium hover:bg-gray-500"
-                              >
+                              <button onClick={cancelEditOffer}
+                                className="flex-1 px-3 py-1.5 bg-gray-400 text-white rounded text-xs font-medium hover:bg-gray-500">
                                 Cancel
                               </button>
                             </div>
@@ -1662,6 +1760,23 @@ export default function UnderwritingSuite({
                                   className="w-4 h-4 text-green-600 focus:ring-green-500 cursor-pointer"
                                 />
                                 <div className="font-medium text-gray-900" style={{ color }}>{offer.lenderName}</div>
+                                {offer.offerType === 'loc' && selectedOfferId !== offer.id && (
+                                  <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">LOC</span>
+                                )}
+                                {offer.offerType === 'loc' && selectedOfferId === offer.id && (
+                                  <div className="flex rounded overflow-hidden border border-blue-300 text-[10px] font-semibold">
+                                    <button type="button"
+                                      onClick={() => setSelectedOfferViewType('loc')}
+                                      className={`px-2 py-0.5 transition-colors ${effectiveSelectedOfferType(offer) === 'loc' ? 'bg-blue-600 text-white' : 'bg-white text-blue-600 hover:bg-blue-50'}`}>
+                                      LOC
+                                    </button>
+                                    <button type="button"
+                                      onClick={() => setSelectedOfferViewType('mca')}
+                                      className={`px-2 py-0.5 border-l border-blue-300 transition-colors ${effectiveSelectedOfferType(offer) === 'mca' ? 'bg-blue-600 text-white' : 'bg-white text-blue-600 hover:bg-blue-50'}`}>
+                                      Loan
+                                    </button>
+                                  </div>
+                                )}
                                 {selectedOfferId === offer.id && (
                                   <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full font-medium">Selected</span>
                                 )}
@@ -1682,44 +1797,88 @@ export default function UnderwritingSuite({
                               </div>
                             </div>
                             <div className="space-y-1 text-xs text-gray-700">
-                              <div className="flex justify-between">
-                                <span className="text-gray-600">Amount:</span>
-                                <span className="font-medium">${offer.amount.toLocaleString()}</span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span className="text-gray-600">Factor:</span>
-                                <span className="font-medium">{Number(offer.factorRate).toFixed(2)}x</span>
-                              </div>
-                              {offer.buyRate && (
-                                <div className="flex justify-between text-[10px] text-gray-500">
-                                  <span>Buy Rate: {offer.buyRate}x</span>
-                                  <span>+ {offer.addedPoints}pts</span>
-                                </div>
+                              {offer.offerType === 'loc' ? (() => {
+                                const P = offer.amount;
+                                const r = (offer.monthlyAPR ?? 0) / 100;
+                                const n = offer.locTermMonths ?? 12;
+                                const payment = r === 0 ? P / n : P * (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
+                                const totalRepaymentLOC = payment * n;
+                                return (
+                                  <>
+                                    <div className="flex justify-between">
+                                      <span className="text-gray-600">Credit Limit:</span>
+                                      <span className="font-medium">${offer.amount.toLocaleString()}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                      <span className="text-gray-600">Monthly APR:</span>
+                                      <span className="font-medium">{offer.monthlyAPR}%</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                      <span className="text-gray-600">Term Length:</span>
+                                      <span className="font-medium">{n} months</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                      <span className="text-gray-600">Frequency:</span>
+                                      <span className="font-medium">{offer.locPaymentFrequency || 'Monthly'}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                      <span className="text-gray-600">Total Repayment:</span>
+                                      <span className="font-medium">${Math.round(totalRepaymentLOC).toLocaleString()}</span>
+                                    </div>
+                                    {(() => {
+                                      const freq = offer.locPaymentFrequency || 'Monthly';
+                                      const displayPmt = freq === 'Weekly' ? payment * 12 / 52 : payment;
+                                      return (
+                                        <div className="flex justify-between pt-1 border-t border-gray-200 mt-1">
+                                          <span className="text-gray-600 font-medium">{freq} Payment:</span>
+                                          <span className="font-bold text-green-700">${Math.round(displayPmt).toLocaleString()}</span>
+                                        </div>
+                                      );
+                                    })()}
+                                  </>
+                                );
+                              })() : (
+                                <>
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-600">Amount:</span>
+                                    <span className="font-medium">${offer.amount.toLocaleString()}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-600">Factor:</span>
+                                    <span className="font-medium">{Number(offer.factorRate).toFixed(2)}x</span>
+                                  </div>
+                                  {offer.buyRate && (
+                                    <div className="flex justify-between text-[10px] text-gray-500">
+                                      <span>Buy Rate: {offer.buyRate}x</span>
+                                      <span>+ {offer.addedPoints}pts</span>
+                                    </div>
+                                  )}
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-600">Total Repayment:</span>
+                                    <span className="font-medium">${totalRepayment.toLocaleString()}</span>
+                                  </div>
+                                  {offer.myCommissionPercent && offer.myCommissionPercent > 0 && (
+                                    <div className="flex justify-between">
+                                      <span className="text-gray-600">My Commission %:</span>
+                                      <span className="font-medium text-green-600">{offer.myCommissionPercent}%</span>
+                                    </div>
+                                  )}
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-600">Term Length:</span>
+                                    <span className="font-medium">{offer.termLength || 250} payments</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-600">Frequency:</span>
+                                    <span className="font-medium">{offer.paymentFrequency || 'Daily'}</span>
+                                  </div>
+                                  <div className="flex justify-between pt-1 border-t border-gray-200 mt-1">
+                                    <span className="text-gray-600 font-medium">{offer.paymentFrequency || 'Daily'} Payment:</span>
+                                    <span className="font-bold text-green-700">
+                                      ${Math.round(totalRepayment / (offer.termLength || 250)).toLocaleString()}
+                                    </span>
+                                  </div>
+                                </>
                               )}
-                              <div className="flex justify-between">
-                                <span className="text-gray-600">Total Repayment:</span>
-                                <span className="font-medium">${totalRepayment.toLocaleString()}</span>
-                              </div>
-                              {offer.myCommissionPercent && offer.myCommissionPercent > 0 && (
-                                <div className="flex justify-between">
-                                  <span className="text-gray-600">My Commission %:</span>
-                                  <span className="font-medium text-green-600">{offer.myCommissionPercent}%</span>
-                                </div>
-                              )}
-                              <div className="flex justify-between">
-                                <span className="text-gray-600">Term Length:</span>
-                                <span className="font-medium">{offer.termLength || 250} payments</span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span className="text-gray-600">Frequency:</span>
-                                <span className="font-medium">{offer.paymentFrequency || 'Daily'}</span>
-                              </div>
-                              <div className="flex justify-between pt-1 border-t border-gray-200 mt-1">
-                                <span className="text-gray-600 font-medium">{offer.paymentFrequency || 'Daily'} Payment:</span>
-                                <span className="font-bold text-green-700">
-                                  ${Math.round(totalRepayment / (offer.termLength || 250)).toLocaleString()}
-                                </span>
-                              </div>
                               {offer.url && (
                                 <div className="pt-2 border-t border-gray-200 mt-2">
                                   <a
@@ -1737,8 +1896,86 @@ export default function UnderwritingSuite({
                               )}
                             </div>
                             
-                            {/* Negotiation Slider - Shows right below selected offer */}
-                            {selectedOfferId === offer.id && (
+                            {/* LOC Draw Panel */}
+                            {selectedOfferId === offer.id && effectiveSelectedOfferType(offer) === 'loc' && (() => {
+                              const P = locDrawAmount;
+                              const r = (offer.monthlyAPR ?? 0) / 100;
+                              const n = offer.locTermMonths ?? 12;
+                              const freq = offer.locPaymentFrequency || 'Monthly';
+                              const monthlyPmt = r === 0 ? P / n : P * (r * Math.pow(1+r,n)) / (Math.pow(1+r,n)-1);
+                              const weeklyPmt = monthlyPmt * 12 / 52;
+                              const displayPmt = freq === 'Weekly' ? weeklyPmt : monthlyPmt;
+                              const monthlyInterest = P * r;
+                              const totalCost = monthlyPmt * n - P;
+                              return (
+                                <div className="mt-4 pt-4 border-t-2 border-blue-300 bg-gradient-to-r from-blue-50 to-sky-50 rounded-b-lg p-3 -mx-3 -mb-3">
+                                  <div className="flex items-center justify-between mb-3">
+                                    <h4 className="text-xs font-semibold text-blue-900">Line of Credit Draw</h4>
+                                    <button onClick={() => setIsNegotiationCollapsed(!isNegotiationCollapsed)} className="text-blue-700 hover:text-blue-900">
+                                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        {isNegotiationCollapsed
+                                          ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                          : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />}
+                                      </svg>
+                                    </button>
+                                  </div>
+                                  {!isNegotiationCollapsed && (
+                                    <div className="space-y-3">
+                                      {/* Draw slider */}
+                                      <div>
+                                        <div className="flex justify-between items-center text-xs text-gray-700 mb-1">
+                                          <span className="font-medium">Draw Amount:</span>
+                                          <span className="text-base font-bold text-blue-700">${Math.round(P).toLocaleString()}</span>
+                                        </div>
+                                        <input type="range" min={0} max={offer.amount} step={500}
+                                          value={locDrawAmount}
+                                          onChange={(e) => setLocDrawAmount(Number(e.target.value))}
+                                          className="w-full h-2 bg-blue-200 rounded-lg appearance-none cursor-pointer accent-blue-600" />
+                                        <div className="flex justify-between text-xs text-gray-500 mt-1">
+                                          <span>$0</span>
+                                          <span>${offer.amount.toLocaleString()} (full limit)</span>
+                                        </div>
+                                      </div>
+                                      {/* Calc results */}
+                                      <div className="pt-2 border-t border-blue-200 space-y-1.5 text-xs">
+                                        <div className="flex justify-between">
+                                          <span className="text-gray-700">{freq} Payment:</span>
+                                          <span className="font-bold text-blue-700">${Math.round(displayPmt).toLocaleString()}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                          <span className="text-gray-700">Monthly Interest Cost:</span>
+                                          <span className="font-medium text-orange-600">${Math.round(monthlyInterest).toLocaleString()}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                          <span className="text-gray-700">Total Interest (full term):</span>
+                                          <span className="font-medium text-orange-600">${Math.round(totalCost).toLocaleString()}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                          <span className="text-gray-700">Total Repayment:</span>
+                                          <span className="font-medium">${Math.round(monthlyPmt * n).toLocaleString()}</span>
+                                        </div>
+                                      </div>
+                                      {/* Deal Funded toggle */}
+                                      <div className="pt-3 border-t border-blue-300">
+                                        <label className="flex items-center justify-between cursor-pointer">
+                                          <div>
+                                            <span className="text-xs font-semibold text-blue-900">Deal Funded</span>
+                                            <p className="text-xs text-blue-700">Mark when money is received</p>
+                                          </div>
+                                          <div className="relative inline-block w-10 h-5">
+                                            <input type="checkbox" checked={isFunded} onChange={(e) => setIsFunded(e.target.checked)} className="sr-only peer" />
+                                            <div className="w-10 h-5 bg-gray-300 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                                          </div>
+                                        </label>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
+
+                            {/* Negotiation Slider - MCA / Loan view */}
+                            {selectedOfferId === offer.id && effectiveSelectedOfferType(offer) === 'mca' && (
                               <div className="mt-4 pt-4 border-t-2 border-green-300 bg-gradient-to-r from-green-50 to-emerald-50 rounded-b-lg p-3 -mx-3 -mb-3">
                                 <div className="flex items-center justify-between mb-3">
                                   <h4 className="text-xs font-semibold text-green-900">
@@ -1882,6 +2119,25 @@ export default function UnderwritingSuite({
             <div className="bg-white border border-gray-300 rounded-lg p-4 mb-4">
               <h3 className="text-sm font-medium text-gray-900 mb-3">Add Competitor Offer</h3>
               <div className="space-y-3">
+
+                {/* Offer type toggle */}
+                <div className="flex rounded-md overflow-hidden border border-gray-300 text-xs font-medium">
+                  <button
+                    type="button"
+                    onClick={() => setNewOfferType('mca')}
+                    className={`flex-1 py-2 transition-colors ${newOfferType === 'mca' ? 'bg-[#5a7fc7] text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                  >
+                    MCA / Term Loan
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewOfferType('loc')}
+                    className={`flex-1 py-2 transition-colors border-l border-gray-300 ${newOfferType === 'loc' ? 'bg-[#5a7fc7] text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                  >
+                    Line of Credit
+                  </button>
+                </div>
+
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">
                     Lender Name <span className="text-red-500">*</span>
@@ -1896,7 +2152,7 @@ export default function UnderwritingSuite({
                 </div>
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">
-                    Offer Amount <span className="text-red-500">*</span>
+                    {newOfferType === 'loc' ? 'Credit Limit' : 'Offer Amount'} <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="number"
@@ -1908,77 +2164,133 @@ export default function UnderwritingSuite({
                     step="1000"
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-gray-600 mb-1">Buy Rate (defaults to 1.20)</label>
-                    <input
-                      type="number"
-                      value={newOfferBuyRate}
-                      onChange={(e) => setNewOfferBuyRate(e.target.value)}
-                      placeholder="1.20"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
-                      min="1"
-                      max="2"
-                      step="0.01"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-600 mb-1">Added Points (defaults to 5)</label>
-                    <input
-                      type="number"
-                      value={newOfferAddedPoints}
-                      onChange={(e) => setNewOfferAddedPoints(e.target.value)}
-                      placeholder="5"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
-                      min="0"
-                      max={commissionPointsMax}
-                      step="0.5"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">My Commission % (optional)</label>
-                  <input
-                    type="number"
-                    value={newOfferMyCommissionPercent}
-                    onChange={(e) => setNewOfferMyCommissionPercent(e.target.value)}
-                    placeholder="e.g., 50"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
-                    min="0"
-                    max="100"
-                    step="5"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    {newOfferBuyRate || newOfferAddedPoints ? 
-                      `Factor Rate: ${((Number(newOfferBuyRate) || 1.20) + ((Number(newOfferAddedPoints) || 5) / 100)).toFixed(3)}x` 
-                      : 'Defaults: Buy Rate 1.20 + 5 points = 1.25x'}
-                  </p>
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">Term Length (defaults to 250)</label>
-                  <input
-                    type="number"
-                    value={newOfferTermLength}
-                    onChange={(e) => setNewOfferTermLength(e.target.value)}
-                    placeholder="250"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
-                    min="1"
-                    step="1"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">Payment Frequency (defaults to Daily)</label>
-                  <select
-                    value={newOfferPaymentFreq}
-                    onChange={(e) => setNewOfferPaymentFreq(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
-                  >
-                    <option value="Daily">Daily</option>
-                    <option value="Weekly">Weekly</option>
-                    <option value="Bi-Weekly">Bi-Weekly</option>
-                    <option value="Monthly">Monthly</option>
-                  </select>
-                </div>
+
+                {newOfferType === 'loc' ? (
+                  /* LOC fields */
+                  <>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs text-gray-600 mb-1">Monthly APR % <span className="text-red-500">*</span></label>
+                        <input
+                          type="number"
+                          value={newOfferMonthlyAPR}
+                          onChange={(e) => setNewOfferMonthlyAPR(e.target.value)}
+                          placeholder="e.g., 2.5"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                          min="0"
+                          step="0.1"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-600 mb-1">Term Length (months) <span className="text-red-500">*</span></label>
+                        <input
+                          type="number"
+                          value={newOfferLocTermMonths}
+                          onChange={(e) => setNewOfferLocTermMonths(e.target.value)}
+                          placeholder="e.g., 12"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                          min="1"
+                          step="1"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Payment Frequency</label>
+                      <select value={newOfferLocPaymentFreq} onChange={(e) => setNewOfferLocPaymentFreq(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]">
+                        <option value="Weekly">Weekly</option>
+                        <option value="Monthly">Monthly</option>
+                      </select>
+                    </div>
+                    {newOfferAmount && newOfferMonthlyAPR && newOfferLocTermMonths && (() => {
+                      const P = Number(newOfferAmount);
+                      const r = Number(newOfferMonthlyAPR) / 100;
+                      const n = Number(newOfferLocTermMonths);
+                      const moPmt = r === 0 ? P / n : P * (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
+                      const pmt = newOfferLocPaymentFreq === 'Weekly' ? moPmt * 12 / 52 : moPmt;
+                      return (
+                        <p className="text-xs text-gray-500">
+                          Est. {newOfferLocPaymentFreq.toLowerCase()} payment: <span className="font-semibold text-gray-700">${Math.round(pmt).toLocaleString()}</span>
+                          {' '}· Total repayment: <span className="font-semibold text-gray-700">${Math.round(moPmt * n).toLocaleString()}</span>
+                        </p>
+                      );
+                    })()}
+                  </>
+                ) : (
+                  /* MCA fields */
+                  <>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs text-gray-600 mb-1">Buy Rate (defaults to 1.20)</label>
+                        <input
+                          type="number"
+                          value={newOfferBuyRate}
+                          onChange={(e) => setNewOfferBuyRate(e.target.value)}
+                          placeholder="1.20"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                          min="1"
+                          max="2"
+                          step="0.01"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-600 mb-1">Added Points</label>
+                        <input
+                          type="number"
+                          value={newOfferAddedPoints}
+                          onChange={(e) => setNewOfferAddedPoints(e.target.value)}
+                          placeholder="0"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                          min="0"
+                          max={commissionPointsMax}
+                          step="0.5"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">My Commission % (optional)</label>
+                      <input
+                        type="number"
+                        value={newOfferMyCommissionPercent}
+                        onChange={(e) => setNewOfferMyCommissionPercent(e.target.value)}
+                        placeholder="e.g., 50"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                        min="0"
+                        max="100"
+                        step="5"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Factor Rate: {((Number(newOfferBuyRate) || 1.20) + ((newOfferAddedPoints === '' ? 0 : Number(newOfferAddedPoints)) / 100)).toFixed(3)}x
+                      </p>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Term Length (defaults to 250)</label>
+                      <input
+                        type="number"
+                        value={newOfferTermLength}
+                        onChange={(e) => setNewOfferTermLength(e.target.value)}
+                        placeholder="250"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                        min="1"
+                        step="1"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Payment Frequency</label>
+                      <select
+                        value={newOfferPaymentFreq}
+                        onChange={(e) => setNewOfferPaymentFreq(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                      >
+                        <option value="Daily">Daily</option>
+                        <option value="Weekly">Weekly</option>
+                        <option value="Bi-Weekly">Bi-Weekly</option>
+                        <option value="Monthly">Monthly</option>
+                      </select>
+                    </div>
+                  </>
+                )}
+
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">Link to Offer (Optional)</label>
                   <input
@@ -2015,14 +2327,13 @@ export default function UnderwritingSuite({
               <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
                 <h3 className="text-sm font-medium text-blue-900 mb-3">Quick Comparison</h3>
                 <div className="space-y-2 text-xs text-blue-800">
-                  <div className="flex justify-between">
-                    <span>Your Offer:</span>
-                    <span className="font-bold">${Math.round(approvedAmount).toLocaleString()} @ {Number(factorRate).toFixed(2)}x</span>
-                  </div>
                   {actualOffers.map((offer) => (
                     <div key={offer.id} className="flex justify-between">
-                      <span>{offer.lenderName}:</span>
-                      <span className="font-medium">${offer.amount.toLocaleString()} @ {Number(offer.factorRate).toFixed(2)}x</span>
+                      <span>{offer.lenderName}{offer.offerType === 'loc' ? ' (LOC)' : ''}:</span>
+                      {offer.offerType === 'loc'
+                        ? <span className="font-medium">${offer.amount.toLocaleString()} @ {offer.monthlyAPR}%/mo · {offer.locTermMonths}mo</span>
+                        : <span className="font-medium">${offer.amount.toLocaleString()} @ {Number(offer.factorRate).toFixed(2)}x</span>
+                      }
                     </div>
                   ))}
                   {selectedOffer && adjustedAmount !== selectedOffer.amount && (
