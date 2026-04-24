@@ -1885,7 +1885,27 @@ export default function UnderwritingSuite({
                                   )}
                                   <div className="flex justify-between">
                                     <span className="text-gray-600">Term Length:</span>
-                                    <span className="font-medium">{offer.termLength || 250} payments</span>
+                                    <span className="font-medium">
+                                      {(() => {
+                                        const pmts = offer.termLength || 250;
+                                        const freq = offer.paymentFrequency || 'Daily';
+                                        const perMonth =
+                                          freq === 'Daily' ? 20 :
+                                          freq === 'Weekly' ? 52 / 12 :
+                                          freq === 'Bi-Weekly' ? 26 / 12 :
+                                          1;
+                                        const months = pmts / perMonth;
+                                        const mo = Math.round(months);
+                                        const yr = Math.floor(mo / 12);
+                                        const remMo = mo % 12;
+                                        const label = yr > 0 && remMo > 0
+                                          ? `${yr}yr ${remMo}mo`
+                                          : yr > 0
+                                            ? `${yr} yr${yr > 1 ? 's' : ''}`
+                                            : `${mo} mo`;
+                                        return `${pmts} payments (~${label})`;
+                                      })()}
+                                    </span>
                                   </div>
                                   <div className="flex justify-between">
                                     <span className="text-gray-600">Frequency:</span>
