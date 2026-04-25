@@ -2091,37 +2091,46 @@ export default function UnderwritingSuite({
                                     </div>
                                   </div>
                                   
-                                  {/* Calculations */}
+                                  {/* Calculations — all derived from the two sliders above */}
                                   <div className="pt-2 border-t border-green-200 space-y-1.5 text-xs">
-                                    <div className="flex justify-between">
-                                      <span className="text-gray-700">Original Amount:</span>
-                                      <span className="font-medium">${offer.amount.toLocaleString()}</span>
+                                    {adjustedAmount !== offer.amount && (
+                                      <div className="flex justify-between text-[10px] text-gray-400">
+                                        <span>Original offer amount:</span>
+                                        <span>${offer.amount.toLocaleString()}</span>
+                                      </div>
+                                    )}
+                                    <div className="flex justify-between font-medium">
+                                      <span className="text-gray-700">Funded Amount:</span>
+                                      <span>${Math.round(adjustedAmount).toLocaleString()}</span>
                                     </div>
                                     <div className="flex justify-between">
-                                      <span className="text-gray-700">Factor rate (live):</span>
+                                      <span className="text-gray-700">Factor Rate:</span>
                                       <span className="font-medium">{negotiatedFactorRate.toFixed(3)}x</span>
                                     </div>
-                                    <div className="flex justify-between">
-                                      <span className="text-gray-700">Adjusted Total Repayment:</span>
+                                    <div className="flex justify-between border-t border-green-200 pt-1.5">
+                                      <span className="text-gray-700">Total Repayment:</span>
                                       <span className="font-bold text-green-700">
                                         ${Math.round(adjustedAmount * negotiatedFactorRate).toLocaleString()}
                                       </span>
                                     </div>
                                     <div className="flex justify-between">
-                                      <span className="text-gray-700">Total Cost:</span>
+                                      <span className="text-gray-700">Total Cost (interest):</span>
                                       <span className="font-medium text-orange-600">
                                         ${Math.round(adjustedAmount * (negotiatedFactorRate - 1)).toLocaleString()}
                                       </span>
                                     </div>
                                     <div className="flex justify-between">
                                       <span className="text-gray-700">
-                                        {(offer.paymentFrequency || 'Daily')} payment (per period):
+                                        {(offer.paymentFrequency || 'Daily')} Payment:
                                       </span>
                                       <span className="font-medium">
                                         ${Math.round(
                                           (adjustedAmount * negotiatedFactorRate) / (offer.termLength || 250)
                                         ).toLocaleString()}
                                       </span>
+                                    </div>
+                                    <div className="mt-1 pt-1 border-t border-green-100 text-[10px] text-gray-400 text-right">
+                                      {Math.round(adjustedAmount).toLocaleString()} × {negotiatedFactorRate.toFixed(3)} = {Math.round(adjustedAmount * negotiatedFactorRate).toLocaleString()}
                                     </div>
                                   </div>
                                   
