@@ -2050,7 +2050,7 @@ export default function UnderwritingSuite({
                                       type="range"
                                       min={0}
                                       max={offer.amount}
-                                      step={1000}
+                                      step={500}
                                       value={adjustedAmount}
                                       onChange={(e) => setAdjustedAmount(Number(e.target.value))}
                                       className="w-full h-2 bg-green-200 rounded-lg appearance-none cursor-pointer accent-green-600"
