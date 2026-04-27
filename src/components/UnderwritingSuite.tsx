@@ -20,6 +20,7 @@ interface UnderwritingData {
   hasOtherMCALoans: boolean;
   otherMCAMonthlyPayment: number;
   otherMCALenders: string;
+  otherMCAOutstandingBalance?: number;
   
   // Additional Info
   requestedAmount: number;
@@ -77,6 +78,7 @@ const DEFAULT_DATA: UnderwritingData = {
   hasOtherMCALoans: false,
   otherMCAMonthlyPayment: 0,
   otherMCALenders: '',
+  otherMCAOutstandingBalance: 0,
   requestedAmount: 0,
   purposeOfFunds: '',
 };
@@ -342,6 +344,7 @@ export default function UnderwritingSuite({
   const depositsCount = Number(data.depositsCount) || 0;
   const hasOtherMCALoans = Boolean(data.hasOtherMCALoans);
   const otherMCAMonthlyPayment = Number(data.otherMCAMonthlyPayment) || 0;
+  const otherMCAOutstandingBalance = Number(data.otherMCAOutstandingBalance) || 0;
   
   // Calculate average monthly revenue
   const avgMonthlyRevenue = (month1Revenue + month2Revenue + month3Revenue) / 3;
@@ -437,9 +440,16 @@ export default function UnderwritingSuite({
     // Existing MCA debt burden adjustments
     const debtToRevenueRatio = avgMonthlyRevenue > 0 ? otherMCAMonthlyPayment / avgMonthlyRevenue : 0;
     if (hasOtherMCALoans && otherMCAMonthlyPayment > 0) {
-      if (debtToRevenueRatio > 0.25) factorRate += 0.08; // High debt burden (>25%)
-      else if (debtToRevenueRatio > 0.15) factorRate += 0.05; // Moderate debt (15-25%)
-      else if (debtToRevenueRatio > 0.10) factorRate += 0.03; // Low debt (10-15%)
+      if (debtToRevenueRatio > 0.25) factorRate += 0.08;
+      else if (debtToRevenueRatio > 0.15) factorRate += 0.05;
+      else if (debtToRevenueRatio > 0.10) factorRate += 0.03;
+      // If outstanding balance is known, heavy stacking pushes rate higher
+      if (otherMCAOutstandingBalance > 0 && avgMonthlyRevenue > 0) {
+        const balToRevRatio = otherMCAOutstandingBalance / avgMonthlyRevenue;
+        if (balToRevRatio > 4) factorRate += 0.06;
+        else if (balToRevRatio > 2.5) factorRate += 0.03;
+        else if (balToRevRatio > 1.5) factorRate += 0.01;
+      }
     }
     
     // Holdback adjustments (8% - 18%)
@@ -493,6 +503,13 @@ export default function UnderwritingSuite({
         if (debtToRevenueRatio > 0.2) advanceMult *= 0.9;
         if (availableMonthlyRevenue > 0 && availableMonthlyRevenue < revenueForAdvance * 0.5) {
           advanceMult *= 0.94;
+        }
+        // If outstanding balance is known, use balance-to-revenue ratio to further constrain the offer
+        if (otherMCAOutstandingBalance > 0 && avgMonthlyRevenue > 0) {
+          const balToRevRatio = otherMCAOutstandingBalance / avgMonthlyRevenue;
+          if (balToRevRatio > 4) advanceMult *= 0.82;       // Very heavy stack (>4x monthly rev)
+          else if (balToRevRatio > 2.5) advanceMult *= 0.89; // Heavy stack (2.5–4x)
+          else if (balToRevRatio > 1.5) advanceMult *= 0.94; // Moderate stack (1.5–2.5x)
         }
       }
 
@@ -623,6 +640,14 @@ export default function UnderwritingSuite({
     else if (debtRatio > 0.30) score -= 20;
     else if (debtRatio > 0.20) score -= 12;
     else if (debtRatio > 0.10) score -= 5;
+
+    // Outstanding balance risk — balance-to-revenue ratio captures how deep in debt they actually are
+    if (otherMCAOutstandingBalance > 0 && avgMonthlyRevenue > 0) {
+      const balToRevRatio = otherMCAOutstandingBalance / avgMonthlyRevenue;
+      if (balToRevRatio > 4) score -= 18;
+      else if (balToRevRatio > 2.5) score -= 10;
+      else if (balToRevRatio > 1.5) score -= 5;
+    }
 
     return Math.max(0, Math.min(100, score));
   };
@@ -1184,7 +1209,7 @@ export default function UnderwritingSuite({
                         />
                         <p className="text-xs text-gray-600 mt-1">List all MCA lenders (comma separated)</p>
                       </div>
-                      
+
                       <div>
                         <label className="block text-xs text-gray-700 mb-1 font-medium">Monthly MCA Payment</label>
                         <input
@@ -1197,6 +1222,23 @@ export default function UnderwritingSuite({
                           placeholder="e.g., 5000"
                         />
                         <p className="text-xs text-gray-600 mt-1">Total monthly payment for all existing MCA loans</p>
+                      </div>
+
+                      {/* Outstanding Balance — manual entry */}
+                      <div>
+                        <label className="block text-xs text-gray-700 mb-1 font-medium">
+                          Remaining Balance
+                        </label>
+                        <input
+                          type="number"
+                          value={data.otherMCAOutstandingBalance || ''}
+                          onChange={(e) => setData({ ...data, otherMCAOutstandingBalance: Number(e.target.value) || 0 })}
+                          className="w-full px-3 py-2 border border-orange-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                          min="0"
+                          step="500"
+                          placeholder="Enter if known"
+                        />
+                        <p className="text-xs text-gray-600 mt-1">Total outstanding balance across all MCA loans</p>
                       </div>
                     </div>
                   )}
@@ -1314,7 +1356,8 @@ export default function UnderwritingSuite({
                   }
                   
                   const displayPaymentPercent = ((displayMonthlyPayment / avgMonthlyRevenue) * 100).toFixed(1);
-                  const displayRevenueAfterPayment = avgMonthlyRevenue - displayMonthlyPayment;
+                  // Subtract both the new offer payment AND any existing MCA obligations
+                  const displayRevenueAfterPayment = avgMonthlyRevenue - displayMonthlyPayment - otherMCAMonthlyPayment;
                   const displayRetainedPercent = ((displayRevenueAfterPayment / avgMonthlyRevenue) * 100).toFixed(0);
                   const displayRevenueRatio = (avgMonthlyRevenue / displayMonthlyPayment).toFixed(1);
 
@@ -1423,10 +1466,10 @@ export default function UnderwritingSuite({
                           <div className="text-sm text-gray-600 mb-2 font-medium">Revenue After Payment</div>
                           {hasActualOffer ? (
                             <>
-                              <div className="text-2xl font-bold text-blue-600">
+                              <div className={`text-2xl font-bold ${displayRevenueAfterPayment < 0 ? 'text-red-600' : 'text-blue-600'}`}>
                                 ${Math.round(displayRevenueAfterPayment).toLocaleString()}
                               </div>
-                              <div className="text-sm text-gray-500 mt-1 font-medium">{displayRetainedPercent}% retained</div>
+                              <div className="text-xs text-gray-500 mt-1">{displayRetainedPercent}% retained</div>
                             </>
                           ) : (
                             <div className="text-3xl font-bold text-gray-300">—</div>
