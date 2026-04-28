@@ -561,10 +561,11 @@ export default function UnderwritingSuite({
     ? ((totalCost / approvedAmount) / termMonths * 12 * 100).toFixed(1)
     : '0.0';
   
-  // Commission: use My Commission % on the selected offer; legacy two-field (points × my share) if no offer
+  // Commission: My Commission % is a share of the added-points spread, not of the full funded amount.
+  // e.g. 20% commission on 8 added pts → 1.6 pts → 1.6% of funded amount.
   const commissionBaseAmount = selectedOffer && adjustedAmount > 0 ? adjustedAmount : approvedAmount;
   const calculatedCommission = selectedOffer
-    ? commissionBaseAmount * ((selectedOffer.myCommissionPercent || 0) / 100)
+    ? commissionBaseAmount * ((selectedOffer.addedPoints || 0) / 100) * ((selectedOffer.myCommissionPercent || 0) / 100)
     : commissionBaseAmount * (points / 100) * (myPercentage / 100);
   
   // Risk score (0-100) — shown in Expected Offer box only
