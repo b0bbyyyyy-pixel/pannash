@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bank Statement Analysis Report</title>
+  <link rel="stylesheet" href="../static/styles.css" />
+</head>
+<body>
+
+  <!-- ================================================================
+       HEADER
+  ================================================================ -->
+  <header class="report-header">
+    <div class="header-left">
+      <div class="header-logo">📊</div>
+      <div>
+        <h1>Bank Statement Analysis Report</h1>
+        <p class="header-sub">Powered by YourCRM Bank Analyzer</p>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="header-period">
+        <span class="label">Period Covered</span>
+        <span class="value">{{ metrics.period_label }}</span>
+      </div>
+      <div class="header-generated">
+        Generated {{ generated_at }}
+      </div>
+    </div>
+  </header>
+
+  <!-- ================================================================
+       SUMMARY CARDS
+  ================================================================ -->
+  <section class="section">
+    <h2 class="section-title">Summary</h2>
+    <div class="cards-grid">
+
+      <div class="card card-green">
+        <div class="card-label">Ending Balance</div>
+        <div class="card-value">{{ metrics.ending_balance | currency }}</div>
+      </div>
+
+      <div class="card card-blue">
+        <div class="card-label">Avg Daily Balance</div>
+        <div class="card-value">{{ metrics.avg_daily_balance | currency }}</div>
+      </div>
+
+      <div class="card card-teal">
+        <div class="card-label">True Deposits</div>
+        <div class="card-value">{{ metrics.true_deposits | currency }}</div>
+        <div class="card-sub">{{ metrics.true_deposit_count }} transactions</div>
+      </div>
+
+      <div class="card card-slate">
+        <div class="card-label">Total Deposits</div>
+        <div class="card-value">{{ metrics.total_deposits | currency }}</div>
+        <div class="card-sub">{{ metrics.deposit_count }} transactions</div>
+      </div>
+
+      <div class="card {% if metrics.negative_days > 0 %}card-red{% else %}card-slate{% endif %}">
+        <div class="card-label">Negative Days</div>
+        <div class="card-value">{{ metrics.negative_days }}</div>
+        <div class="card-sub">days below $0</div>
+      </div>
+
+      <div class="card {% if metrics.nsf_count > 0 %}card-red{% else %}card-slate{% endif %}">
+        <div class="card-label">NSF / OD Fees</div>
+        <div class="card-value">{{ metrics.nsf_count }}</div>
+        <div class="card-sub">{{ metrics.nsf_total | currency }} total fees</div>
+      </div>
+
+      <div class="card card-slate">
+        <div class="card-label">Total Withdrawals</div>
+        <div class="card-value">{{ metrics.total_withdrawals | currency }}</div>
+        <div class="card-sub">{{ metrics.withdrawal_count }} transactions</div>
+      </div>
+
+      <div class="card card-purple">
+        <div class="card-label">Loans Identified</div>
+        <div class="card-value">{{ metrics.loans | length }}</div>
+        <div class="card-sub">loan type(s) found</div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ================================================================
+       CHARTS
+  ================================================================ -->
+  <section class="section">
+    <h2 class="section-title">Financial Charts</h2>
+    <div class="charts-row">
+
+      {% if chart_monthly %}
+      <div class="chart-box">
+        <img src="data:image/png;base64,{{ chart_monthly }}" alt="Monthly Revenue Chart" />
+      </div>
+      {% endif %}
+
+      {% if chart_balance %}
+      <div class="chart-box">
+        <img src="data:image/png;base64,{{ chart_balance }}" alt="Daily Balance Chart" />
+      </div>
+      {% endif %}
+
+    </div>
+  </section>
+
+  <!-- ================================================================
+       MONTHLY REVENUE TABLE
+  ================================================================ -->
+  {% if metrics.monthly_revenue %}
+  <section class="section">
+    <h2 class="section-title">Monthly Revenue (True Deposits)</h2>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Month</th>
+          <th class="num">Revenue</th>
+          <th class="num">% of Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% set total = metrics.true_deposits %}
+        {% for row in metrics.monthly_revenue %}
+        <tr class="{% if loop.index is odd %}odd{% else %}even{% endif %}">
+          <td>{{ row.month }}</td>
+          <td class="num green">{{ row.amount | currency }}</td>
+          <td class="num">
+            {% if total > 0 %}
+              {{ "%.1f" | format(row.amount / total * 100) }}%
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        <tr class="total-row">
+          <td><strong>Total</strong></td>
+          <td class="num"><strong>{{ metrics.true_deposits | currency }}</strong></td>
+          <td class="num"><strong>100%</strong></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+
+  <!-- ================================================================
+       LOANS
+  ================================================================ -->
+  {% if metrics.loans %}
+  <section class="section">
+    <h2 class="section-title">Loan / Financing Activity</h2>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th class="num">Count</th>
+          <th class="num">Total Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for loan in metrics.loans %}
+        <tr class="{% if loop.index is odd %}odd{% else %}even{% endif %} loan-row">
+          <td>{{ loan.loan_type }}</td>
+          <td class="num">{{ loan.count }}</td>
+          <td class="num">{{ loan.total | currency }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+
+  <!-- ================================================================
+       FULL TRANSACTION TABLE
+  ================================================================ -->
+  <section class="section">
+    <h2 class="section-title">
+      Full Transaction History
+      <span class="section-badge">{{ transactions | length }} transactions</span>
+    </h2>
+    <table class="data-table transactions-table">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Description</th>
+          <th class="num">Amount</th>
+          <th class="num">Balance</th>
+          <th>Type</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for txn in transactions %}
+        <tr class="{{ txn.row_class }}">
+          <td class="mono">{{ txn.date }}</td>
+          <td class="desc">{{ txn.description }}</td>
+          <td class="num {% if txn.amount >= 0 %}green{% else %}red{% endif %}">
+            {{ txn.amount | currency }}
+          </td>
+          <td class="num {% if txn.balance is not none and txn.balance < 0 %}red{% endif %}">
+            {% if txn.balance is not none %}{{ txn.balance | currency }}{% else %}—{% endif %}
+          </td>
+          <td>
+            {% if txn.row_class == 'true-deposit' %}
+              <span class="badge badge-green">True Deposit</span>
+            {% elif txn.row_class == 'deposit' %}
+              <span class="badge badge-teal">Transfer/Other</span>
+            {% elif txn.row_class == 'nsf' %}
+              <span class="badge badge-red">NSF/Fee</span>
+            {% elif txn.row_class == 'loan' %}
+              <span class="badge badge-purple">Loan</span>
+            {% else %}
+              <span class="badge badge-slate">Debit</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ================================================================
+       FOOTER
+  ================================================================ -->
+  <footer class="report-footer">
+    <div>Generated by YourCRM Bank Analyzer – {{ generated_at }}</div>
+    <div>CONFIDENTIAL – For authorized use only. Contains sensitive financial information.</div>
+  </footer>
+
+</body>
+</html>

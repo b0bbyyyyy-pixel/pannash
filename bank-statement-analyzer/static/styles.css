@@ -1,0 +1,307 @@
+/* =============================================================
+   Bank Statement Analyzer – Report Stylesheet
+   Professional dark-themed PDF report styling
+   ============================================================= */
+
+/* --- Reset & Base ------------------------------------------ */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: "Segoe UI", Arial, "Helvetica Neue", sans-serif;
+  font-size: 10pt;
+  color: #1e293b;
+  background: #ffffff;
+  line-height: 1.5;
+}
+
+/* --- Page settings for WeasyPrint -------------------------- */
+@page {
+  size: A4 landscape;
+  margin: 12mm 14mm 14mm 14mm;
+
+  @bottom-center {
+    content: "Page " counter(page) " of " counter(pages);
+    font-size: 8pt;
+    color: #64748b;
+  }
+}
+
+/* Keep tables from breaking mid-row */
+tr { page-break-inside: avoid; }
+section { page-break-inside: avoid; }
+
+/* --- Header ------------------------------------------------- */
+.report-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%);
+  color: #f1f5f9;
+  padding: 16px 20px;
+  border-radius: 8px;
+  margin-bottom: 18px;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.header-logo {
+  font-size: 30pt;
+  line-height: 1;
+}
+
+.report-header h1 {
+  font-size: 18pt;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  color: #ffffff;
+}
+
+.header-sub {
+  font-size: 8.5pt;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
+.header-right {
+  text-align: right;
+}
+
+.header-period .label {
+  display: block;
+  font-size: 7.5pt;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.header-period .value {
+  font-size: 10pt;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.header-generated {
+  font-size: 7.5pt;
+  color: #64748b;
+  margin-top: 6px;
+}
+
+/* --- Section titles ---------------------------------------- */
+.section {
+  margin-bottom: 20px;
+}
+
+.section-title {
+  font-size: 12pt;
+  font-weight: 700;
+  color: #0f172a;
+  border-left: 4px solid #3b82f6;
+  padding-left: 10px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.section-badge {
+  font-size: 7.5pt;
+  font-weight: 500;
+  background: #e2e8f0;
+  color: #475569;
+  padding: 2px 8px;
+  border-radius: 20px;
+}
+
+/* --- Summary Cards ----------------------------------------- */
+.cards-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.card {
+  border-radius: 8px;
+  padding: 12px 14px;
+  border: 1px solid transparent;
+}
+
+.card-label {
+  font-size: 7.5pt;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-bottom: 4px;
+}
+
+.card-value {
+  font-size: 16pt;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  line-height: 1.1;
+}
+
+.card-sub {
+  font-size: 7.5pt;
+  margin-top: 4px;
+  opacity: 0.75;
+}
+
+/* Card colour variants */
+.card-green  { background: #f0fdf4; border-color: #bbf7d0; }
+.card-green .card-label  { color: #166534; }
+.card-green .card-value  { color: #15803d; }
+.card-green .card-sub    { color: #4ade80; }
+
+.card-blue   { background: #eff6ff; border-color: #bfdbfe; }
+.card-blue .card-label   { color: #1d4ed8; }
+.card-blue .card-value   { color: #2563eb; }
+
+.card-teal   { background: #f0fdfa; border-color: #99f6e4; }
+.card-teal .card-label   { color: #0f766e; }
+.card-teal .card-value   { color: #0d9488; }
+
+.card-slate  { background: #f8fafc; border-color: #e2e8f0; }
+.card-slate .card-label  { color: #475569; }
+.card-slate .card-value  { color: #334155; }
+
+.card-red    { background: #fef2f2; border-color: #fecaca; }
+.card-red .card-label    { color: #991b1b; }
+.card-red .card-value    { color: #dc2626; }
+
+.card-purple { background: #faf5ff; border-color: #e9d5ff; }
+.card-purple .card-label { color: #6b21a8; }
+.card-purple .card-value { color: #7c3aed; }
+
+/* --- Charts ------------------------------------------------ */
+.charts-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.chart-box {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #0f172a;
+}
+
+.chart-box img {
+  width: 100%;
+  display: block;
+}
+
+/* --- Data Tables ------------------------------------------- */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 8.5pt;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+}
+
+.data-table thead tr {
+  background: #1e293b;
+  color: #f1f5f9;
+}
+
+.data-table thead th {
+  padding: 8px 10px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 7.5pt;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-right: 1px solid #334155;
+}
+
+.data-table thead th:last-child {
+  border-right: none;
+}
+
+.data-table th.num,
+.data-table td.num {
+  text-align: right;
+}
+
+/* Alternating rows */
+.data-table tbody tr.odd  { background: #ffffff; }
+.data-table tbody tr.even { background: #f8fafc; }
+
+.data-table tbody td {
+  padding: 6px 10px;
+  border-bottom: 1px solid #f1f5f9;
+  border-right: 1px solid #f1f5f9;
+  vertical-align: middle;
+}
+
+.data-table tbody td:last-child {
+  border-right: none;
+}
+
+/* Row type highlights */
+.data-table tbody tr.true-deposit { background: #f0fdf4; }
+.data-table tbody tr.nsf          { background: #fef2f2; }
+.data-table tbody tr.loan         { background: #faf5ff; }
+
+/* Total row */
+.total-row {
+  background: #eff6ff !important;
+  font-weight: 700;
+}
+
+/* Loan row highlight */
+.loan-row { background: #faf5ff; }
+
+/* --- Colour helpers ---------------------------------------- */
+.green { color: #16a34a; font-weight: 600; }
+.red   { color: #dc2626; font-weight: 600; }
+
+/* Mono font for dates */
+.mono { font-family: "Courier New", monospace; font-size: 8pt; }
+
+/* Truncate long descriptions */
+.desc {
+  max-width: 280px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* --- Badges ------------------------------------------------ */
+.badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 20px;
+  font-size: 7pt;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge-green  { background: #dcfce7; color: #166534; }
+.badge-teal   { background: #ccfbf1; color: #0f766e; }
+.badge-red    { background: #fee2e2; color: #991b1b; }
+.badge-purple { background: #ede9fe; color: #6d28d9; }
+.badge-slate  { background: #e2e8f0; color: #475569; }
+
+/* --- Footer ----------------------------------------------- */
+.report-footer {
+  margin-top: 24px;
+  padding: 10px 14px;
+  background: #0f172a;
+  color: #64748b;
+  font-size: 7.5pt;
+  border-radius: 6px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}

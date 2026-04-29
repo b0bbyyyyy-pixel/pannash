@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bank Statement Analyzer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --navy: #0f172a; --navy2: #1e293b; --navy3: #334155;
+      --blue: #3b82f6; --blue2: #2563eb; --blue-bright: #60a5fa;
+      --green: #22c55e; --green-dark: #16a34a;
+      --red: #ef4444; --red-dark: #dc2626;
+      --purple: #8b5cf6; --teal: #14b8a6;
+      --slate: #94a3b8; --slate2: #64748b;
+      --white: #f8fafc; --border: #1e3a5f;
+    }
+    body { background:var(--navy); color:var(--white); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; min-height:100vh; display:flex; flex-direction:column; }
+
+    /* Header */
+    header { padding:16px 32px; background:linear-gradient(90deg,#0f172a,#1e3a5f); border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px; }
+    header h1 { font-size:1.2rem; font-weight:700; }
+    header span { font-size:0.78rem; color:var(--slate); }
+    .logo { font-size:1.5rem; }
+
+    main { flex:1; max-width:1000px; width:100%; margin:0 auto; padding:32px 20px; }
+
+    /* Drop zone */
+    #drop-zone {
+      border:2px dashed var(--navy3); border-radius:14px; padding:44px 24px;
+      text-align:center; cursor:pointer; transition:border-color .2s,background .2s;
+      background:var(--navy2); position:relative;
+    }
+    #drop-zone.drag-over { border-color:var(--blue); background:#1a2d4a; }
+    #drop-zone.has-files { border-color:var(--green); background:#0d2117; }
+    #drop-zone input[type="file"] { position:absolute; inset:0; opacity:0; cursor:pointer; width:100%; height:100%; }
+    .drop-icon { font-size:2.8rem; margin-bottom:10px; }
+    .drop-title { font-size:1.05rem; font-weight:600; margin-bottom:5px; }
+    .drop-sub { font-size:0.83rem; color:var(--slate); }
+    .drop-hint { margin-top:8px; font-size:0.75rem; color:var(--slate2); }
+
+    /* File list */
+    #file-list { margin-top:14px; display:flex; flex-wrap:wrap; gap:8px; }
+    .file-pill {
+      display:flex; align-items:center; gap:6px;
+      padding:5px 10px 5px 12px; background:var(--navy3);
+      border-radius:20px; font-size:0.78rem; color:var(--white);
+    }
+    .file-pill .pill-name { max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .file-pill .pill-size { color:var(--slate); font-size:0.72rem; }
+    .file-pill .pill-remove {
+      background:none; border:none; color:var(--slate); cursor:pointer;
+      font-size:0.9rem; line-height:1; padding:0 0 0 4px; transition:color .15s;
+    }
+    .file-pill .pill-remove:hover { color:var(--red); }
+    .file-pill.err { background:#450a0a; }
+    .file-pill.ok  { background:#14532d; }
+
+    /* Analyze button */
+    #analyze-btn {
+      display:block; width:100%; margin-top:16px; padding:14px;
+      background:linear-gradient(135deg,#2563eb,#1d4ed8);
+      color:#fff; border:none; border-radius:12px; font-size:1rem;
+      font-weight:700; cursor:pointer; transition:opacity .2s,transform .1s;
+    }
+    #analyze-btn:hover:not(:disabled) { opacity:.9; transform:translateY(-1px); }
+    #analyze-btn:disabled { opacity:.4; cursor:not-allowed; transform:none; }
+
+    /* Status / progress */
+    #status-bar { margin-top:14px; display:none; flex-direction:column; gap:6px; padding:14px 16px; background:var(--navy2); border-radius:10px; border:1px solid var(--border); }
+    .status-row { display:flex; align-items:center; gap:10px; }
+    .spinner { width:18px; height:18px; border:3px solid var(--navy3); border-top-color:var(--blue); border-radius:50%; animation:spin .7s linear infinite; flex-shrink:0; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    #status-text { font-size:0.85rem; color:var(--slate); }
+    #progress-bar-wrap { height:4px; background:var(--navy3); border-radius:4px; overflow:hidden; }
+    #progress-bar { height:100%; background:var(--blue); border-radius:4px; transition:width .3s; width:0%; }
+
+    /* Error */
+    #error-box { display:none; margin-top:14px; padding:14px 16px; background:#2d0f0f; border:1px solid #7f1d1d; border-radius:10px; color:#fca5a5; font-size:0.85rem; line-height:1.6; }
+
+    /* Results */
+    #results { display:none; margin-top:30px; }
+
+    .sec-title {
+      font-size:0.72rem; font-weight:700; text-transform:uppercase;
+      letter-spacing:1.2px; color:var(--slate2); margin-bottom:10px;
+      border-left:3px solid var(--blue); padding-left:8px;
+    }
+
+    /* Metric cards */
+    .cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:10px; margin-bottom:10px; }
+    .cards-5 { grid-template-columns:repeat(5,1fr); }
+    .cards-4 { grid-template-columns:repeat(4,1fr); margin-bottom:24px; }
+    .card { background:var(--navy2); border:1px solid var(--border); border-radius:12px; padding:14px; }
+    .card-label { font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:.6px; color:var(--slate); margin-bottom:5px; }
+    .card-value { font-size:1.45rem; font-weight:800; line-height:1.1; letter-spacing:-0.4px; }
+    .card-sub { font-size:0.72rem; color:var(--slate2); margin-top:3px; }
+    .c-green .card-value  { color:var(--green); }
+    .c-blue  .card-value  { color:var(--blue-bright); }
+    .c-teal  .card-value  { color:var(--teal); }
+    .c-red   .card-value  { color:var(--red); }
+    .c-purple .card-value { color:var(--purple); }
+
+    /* Download */
+    #download-btn {
+      display:flex; align-items:center; justify-content:center; gap:10px;
+      width:100%; padding:13px; background:linear-gradient(135deg,#16a34a,#15803d);
+      color:#fff; border:none; border-radius:12px; font-size:0.95rem; font-weight:700;
+      cursor:pointer; margin-bottom:26px; transition:opacity .2s,transform .1s;
+    }
+    #download-btn:hover { opacity:.9; transform:translateY(-1px); }
+
+    /* Per-file accordion */
+    .per-file-wrap { margin-bottom:26px; }
+    .per-file-item { background:var(--navy2); border:1px solid var(--border); border-radius:10px; margin-bottom:8px; overflow:hidden; }
+    .per-file-header {
+      display:flex; align-items:center; gap:10px; padding:12px 16px;
+      cursor:pointer; user-select:none;
+    }
+    .per-file-header:hover { background:#243554; }
+    .per-file-icon { font-size:1rem; }
+    .per-file-name { font-size:0.87rem; font-weight:600; flex:1; }
+    .per-file-period { font-size:0.75rem; color:var(--slate); }
+    .per-file-chevron { color:var(--slate); transition:transform .2s; font-size:0.8rem; }
+    .per-file-item.open .per-file-chevron { transform:rotate(180deg); }
+    .per-file-body { display:none; padding:12px 16px; border-top:1px solid var(--border); }
+    .per-file-item.open .per-file-body { display:block; }
+    .mini-cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:8px; }
+    .mini-card { background:var(--navy3); border-radius:8px; padding:10px 12px; }
+    .mini-card .mc-label { font-size:0.68rem; color:var(--slate); font-weight:700; text-transform:uppercase; margin-bottom:3px; }
+    .mini-card .mc-value { font-size:1.05rem; font-weight:700; }
+
+    /* Monthly revenue */
+    .rev-table { width:100%; border-collapse:collapse; font-size:0.83rem; margin-bottom:24px; }
+    .rev-table th { text-align:left; padding:8px 12px; background:var(--navy3); color:var(--slate); font-size:0.7rem; text-transform:uppercase; letter-spacing:.6px; }
+    .rev-table th:not(:first-child),.rev-table td:not(:first-child) { text-align:right; }
+    .rev-table td { padding:8px 12px; border-bottom:1px solid var(--navy3); }
+    .rev-table tr:nth-child(even) td { background:var(--navy2); }
+    .rev-table tr:last-child td { border-bottom:none; font-weight:700; }
+    .rev-amt { color:var(--green); font-weight:600; }
+    .bar-bg { background:var(--navy3); border-radius:4px; height:6px; overflow:hidden; display:inline-block; width:80px; vertical-align:middle; margin-left:6px; }
+    .bar-fg { height:100%; background:var(--green); border-radius:4px; }
+
+    /* Transactions */
+    .txn-wrap { overflow-x:auto; border-radius:10px; border:1px solid var(--border); margin-bottom:10px; }
+    .txn-table { width:100%; border-collapse:collapse; font-size:0.8rem; }
+    .txn-table th { padding:9px 12px; background:var(--navy3); color:var(--slate); font-size:0.68rem; text-transform:uppercase; letter-spacing:.6px; white-space:nowrap; }
+    .txn-table th,.txn-table td { text-align:right; }
+    .txn-table th:nth-child(2),.txn-table td:nth-child(2) { text-align:left; }
+    .txn-table th:first-child,.txn-table td:first-child { text-align:left; }
+    .txn-table td { padding:6px 12px; border-bottom:1px solid #1a2744; vertical-align:middle; }
+    .txn-table tr:last-child td { border-bottom:none; }
+    .txn-table tr.true-deposit td { background:#0d2117; }
+    .txn-table tr.nsf td { background:#2d0f0f; }
+    .txn-table tr.loan td { background:#1e1030; }
+    .txn-table tr.deposit td { background:#0a1f2e; }
+    .txn-table tr:not(.true-deposit):not(.nsf):not(.loan):not(.deposit):nth-child(even) td { background:var(--navy2); }
+    .amt-p { color:var(--green); font-weight:600; font-variant-numeric:tabular-nums; }
+    .amt-n { color:var(--red);   font-weight:600; font-variant-numeric:tabular-nums; }
+    .badge { display:inline-block; padding:2px 7px; border-radius:20px; font-size:0.66rem; font-weight:700; white-space:nowrap; }
+    .b-green  { background:#14532d; color:#4ade80; }
+    .b-red    { background:#450a0a; color:#f87171; }
+    .b-purple { background:#2e1065; color:#c4b5fd; }
+    .b-teal   { background:#042f2e; color:#2dd4bf; }
+    .b-slate  { background:#1e293b; color:#94a3b8; }
+
+    #show-more-btn { display:block; width:100%; margin-top:10px; padding:10px; background:transparent; border:1px solid var(--navy3); color:var(--slate); border-radius:8px; cursor:pointer; font-size:0.8rem; }
+    #show-more-btn:hover { background:var(--navy2); }
+
+    .period-pill { display:inline-block; padding:3px 12px; background:var(--navy2); border:1px solid var(--border); border-radius:20px; font-size:0.78rem; color:var(--slate); margin-bottom:18px; }
+    .period-pill strong { color:var(--white); }
+
+    .warn-box { padding:10px 14px; background:#451a03; border:1px solid #92400e; border-radius:8px; color:#fcd34d; font-size:0.82rem; margin-bottom:16px; }
+
+    .ai-chip {
+      display:inline-block; margin-left:6px; padding:1px 7px; border-radius:4px;
+      font-size:0.65rem; font-weight:800; vertical-align:middle;
+      background:#fef3c7; color:#92400e; border:1px solid #f59e0b;
+    }
+
+    footer { text-align:center; padding:14px; font-size:0.72rem; color:var(--slate2); border-top:1px solid var(--border); }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">📊</div>
+  <div><h1>Bank Statement Analyzer <span>for CRM</span></h1></div>
+</header>
+
+<main>
+  <!-- Drop zone -->
+  <div id="drop-zone">
+    <input type="file" id="file-input" accept=".pdf,.csv" multiple />
+    <div class="drop-icon">📂</div>
+    <div class="drop-title">Drag &amp; drop your bank statements here</div>
+    <div class="drop-sub">PDF or CSV — drop multiple files at once for a combined report</div>
+    <div class="drop-hint">Click to browse or drag files anywhere onto this area</div>
+  </div>
+  <div id="file-list"></div>
+
+  <button id="analyze-btn" disabled>Analyze Statements</button>
+
+  <div id="status-bar">
+    <div class="status-row">
+      <div class="spinner"></div>
+      <div id="status-text">Parsing statements…</div>
+    </div>
+    <div id="progress-bar-wrap"><div id="progress-bar"></div></div>
+  </div>
+
+  <div id="error-box"></div>
+
+  <!-- Results -->
+  <div id="results">
+    <!-- AI-assisted warning banner (hidden by default) -->
+    <div id="ai-banner" style="display:none; background:#fffbeb; border:1px solid #f59e0b; border-radius:8px; padding:12px 18px; margin-bottom:18px; align-items:flex-start; gap:12px; flex-direction:row;">
+      <span style="font-size:1.4em; flex-shrink:0;">⚠️</span>
+      <div>
+        <strong style="color:#92400e;">AI-assisted — please verify numbers</strong>
+        <div id="ai-banner-detail" style="font-size:0.85em; color:#78350f; margin-top:4px; line-height:1.45;"></div>
+      </div>
+    </div>
+
+    <div class="period-pill">Period: <strong id="r-period">—</strong></div>
+
+    <div class="sec-title">Combined Summary</div>
+
+    <!-- Top row: 5 deposit/balance averages -->
+    <div class="cards cards-5">
+      <div class="card c-green">
+        <div class="card-label">Avg Monthly Deposits</div>
+        <div class="card-value" id="r-avg-dep">—</div>
+        <div class="card-sub" id="r-avg-dep-sub"></div>
+      </div>
+      <div class="card c-teal">
+        <div class="card-label">Avg Monthly True Deposits</div>
+        <div class="card-value" id="r-avg-true">—</div>
+        <div class="card-sub" id="r-avg-true-sub"></div>
+      </div>
+      <div class="card c-blue">
+        <div class="card-label">Avg Monthly Daily Balance</div>
+        <div class="card-value" id="r-avg-adb">—</div>
+        <div class="card-sub" id="r-avg-adb-sub"></div>
+      </div>
+      <div class="card">
+        <div class="card-label">Avg Monthly Ending Balance</div>
+        <div class="card-value" id="r-avg-ending">—</div>
+        <div class="card-sub" id="r-avg-ending-sub"></div>
+      </div>
+      <div class="card">
+        <div class="card-label">Avg # Monthly Deposits</div>
+        <div class="card-value" id="r-avg-dep-cnt">—</div>
+        <div class="card-sub">deposits per month</div>
+      </div>
+    </div>
+
+    <!-- Bottom row: risk / loan metrics -->
+    <div class="cards cards-4" style="margin-top:10px">
+      <div class="card" id="card-negdays">
+        <div class="card-label">Negative Days</div>
+        <div class="card-value" id="r-negdays">—</div>
+        <div class="card-sub">days below $0</div>
+      </div>
+      <div class="card" id="card-nsf">
+        <div class="card-label">NSF / OD Fees</div>
+        <div class="card-value" id="r-nsf">—</div>
+        <div class="card-sub" id="r-nsf-sub"></div>
+      </div>
+      <div class="card c-purple">
+        <div class="card-label">Loans Found</div>
+        <div class="card-value" id="r-loans">—</div>
+        <div class="card-sub">loan type(s)</div>
+      </div>
+      <div class="card c-purple">
+        <div class="card-label">Avg Monthly Loan Payments</div>
+        <div class="card-value" id="r-loan-pay">—</div>
+        <div class="card-sub" id="r-loan-pay-sub"></div>
+      </div>
+    </div>
+
+    <button id="download-btn">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 15V3m0 12l-4-4m4 4l4-4M2 17l.621 2.485A2 2 0 004.561 21h14.878a2 2 0 001.94-1.515L22 17"/>
+      </svg>
+      Download Combined PDF Report
+    </button>
+
+    <!-- Per-file breakdown -->
+    <div id="per-file-section" style="display:none">
+      <div class="sec-title">Per-File Breakdown</div>
+      <div class="per-file-wrap" id="per-file-wrap"></div>
+    </div>
+
+    <!-- Monthly revenue -->
+    <div id="monthly-section" style="display:none">
+      <div class="sec-title">Monthly Revenue (True Deposits)</div>
+      <table class="rev-table">
+        <thead><tr><th>Month</th><th>Revenue</th><th>% of Total</th><th style="text-align:left;padding-left:18px">Bar</th></tr></thead>
+        <tbody id="rev-tbody"></tbody>
+      </table>
+    </div>
+
+  </div>
+</main>
+
+<footer>YourCRM Bank Analyzer — Files processed in memory only, never stored.</footer>
+
+<script>
+  const dropZone   = document.getElementById('drop-zone');
+  const fileInput  = document.getElementById('file-input');
+  const fileList   = document.getElementById('file-list');
+  const analyzeBtn = document.getElementById('analyze-btn');
+  const statusBar  = document.getElementById('status-bar');
+  const statusText = document.getElementById('status-text');
+  const progressBar = document.getElementById('progress-bar');
+  const errorBox   = document.getElementById('error-box');
+  const results    = document.getElementById('results');
+
+  let selectedFiles = [];   // File objects
+  let pdfBase64     = null;
+  let allTxns       = [];
+  const PREVIEW_COUNT = 60;
+
+  // ── Drag & drop ──────────────────────────────────────────────────
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    addFiles([...e.dataTransfer.files]);
+  });
+  fileInput.addEventListener('change', () => {
+    addFiles([...fileInput.files]);
+    fileInput.value = '';   // reset so same file can be re-added after removal
+  });
+
+  function addFiles(newFiles) {
+    const valid = newFiles.filter(f => f.name.match(/\.(pdf|csv)$/i));
+    const bad   = newFiles.filter(f => !f.name.match(/\.(pdf|csv)$/i));
+    if (bad.length) showError(`Skipped ${bad.length} unsupported file(s). Only PDF and CSV accepted.`);
+
+    valid.forEach(f => {
+      if (!selectedFiles.find(x => x.name === f.name && x.size === f.size)) {
+        selectedFiles.push(f);
+      }
+    });
+    renderFileList();
+    errorBox.style.display = 'none';
+    results.style.display  = 'none';
+  }
+
+  function removeFile(idx) {
+    selectedFiles.splice(idx, 1);
+    renderFileList();
+  }
+
+  function renderFileList() {
+    fileList.innerHTML = '';
+    selectedFiles.forEach((f, i) => {
+      const pill = document.createElement('div');
+      pill.className = 'file-pill';
+      pill.innerHTML = `
+        <span>📄</span>
+        <span class="pill-name" title="${f.name}">${f.name}</span>
+        <span class="pill-size">${(f.size/1024).toFixed(0)} KB</span>
+        <button class="pill-remove" onclick="removeFile(${i})" title="Remove">✕</button>`;
+      fileList.appendChild(pill);
+    });
+    dropZone.classList.toggle('has-files', selectedFiles.length > 0);
+    analyzeBtn.disabled = selectedFiles.length === 0;
+    analyzeBtn.textContent = selectedFiles.length > 1
+      ? `Analyze ${selectedFiles.length} Statements`
+      : 'Analyze Statement';
+  }
+
+  // ── Submit ────────────────────────────────────────────────────────
+  analyzeBtn.addEventListener('click', async () => {
+    if (!selectedFiles.length) return;
+    setLoading(true, 10);
+    errorBox.style.display = 'none';
+    results.style.display  = 'none';
+    pdfBase64 = null;
+
+    const fd   = new FormData();
+    const endpoint = selectedFiles.length === 1 ? '/analyze' : '/analyze-multi';
+
+    selectedFiles.forEach(f => fd.append('files' in new FormData() ? 'files' : 'files', f));
+    // FastAPI expects field name "files" for List[UploadFile], "file" for single
+    const fd2 = new FormData();
+    if (selectedFiles.length === 1) {
+      fd2.append('file', selectedFiles[0]);
+    } else {
+      selectedFiles.forEach(f => fd2.append('files', f));
+    }
+
+    statusText.textContent = selectedFiles.length > 1
+      ? `Processing ${selectedFiles.length} statements…`
+      : 'Parsing statement…';
+    setProgress(30);
+
+    try {
+      const resp = await fetch(endpoint, { method: 'POST', body: fd2 });
+      setProgress(70);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || `Server error ${resp.status}`);
+
+      setProgress(90);
+      statusText.textContent = 'Building PDF report…';
+      pdfBase64 = data.pdf_base64;
+
+      // Warn about any failed files
+      if (data.file_errors && data.file_errors.length) {
+        const names = data.file_errors.map(e => `${e.filename}: ${e.error}`).join('\n');
+        showError(`⚠️ ${data.file_errors.length} file(s) could not be parsed:\n${names}`, true);
+      }
+
+      renderResults(data);
+      setLoading(false, 100);
+      results.style.display = 'block';
+    } catch (err) {
+      setLoading(false, 0);
+      showError(err.message || 'Unexpected error. Check your files are valid bank statements.');
+    }
+  });
+
+  // ── PDF download ──────────────────────────────────────────────────
+  document.getElementById('download-btn').addEventListener('click', () => {
+    if (!pdfBase64) return;
+    const bytes = atob(pdfBase64);
+    const arr   = new Uint8Array(bytes.length);
+    for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+    const blob = new Blob([arr], { type: 'application/pdf' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url;
+    a.download = selectedFiles.length > 1 ? 'combined_analysis.pdf'
+      : (selectedFiles[0]?.name.replace(/\.[^.]+$/,'') + '_analysis.pdf');
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  // ── Render ─────────────────────────────────────────────────────────
+  function fmt(v) {
+    if (v == null) return '—';
+    const n = parseFloat(v);
+    return (n < 0 ? '-' : '') + '$' + Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  }
+  function fmtSigned(v) {
+    if (v == null) return '—';
+    const n = parseFloat(v);
+    return (n < 0 ? '-' : '+') + '$' + Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  }
+
+  function renderResults(data) {
+    const m = data.metrics;
+    const months = m.num_months || 1;
+
+    // ── AI-assisted banner ────────────────────────────────────────────
+    const aiBanner = document.getElementById('ai-banner');
+    const showAi = !!(data.ai_assisted || m.ai_assisted);
+    if (showAi) {
+      aiBanner.style.display = 'flex';
+      const files = m.ai_assisted_files || [];
+      const baseMsg = (data.ai_assisted_message || m.ai_assisted_message || '').trim();
+      const filesNote = files.length ? ` Affected file(s): ${files.join(', ')}.` : '';
+      document.getElementById('ai-banner-detail').textContent =
+        (baseMsg || 'Built-in parsers did not fully recognize this format; transactions were extracted with AI. Spot-check totals and balances against your originals.') + filesNote;
+    } else {
+      aiBanner.style.display = 'none';
+    }
+
+    document.getElementById('r-period').textContent = m.period_label || '—';
+
+    // ── Top row: monthly averages ─────────────────────────────────
+    document.getElementById('r-avg-dep').textContent      = fmt(m.avg_monthly_deposits);
+    document.getElementById('r-avg-dep-sub').textContent  = `over ${months} month${months===1?'':'s'}`;
+
+    document.getElementById('r-avg-true').textContent     = fmt(m.avg_monthly_true_deposits);
+    document.getElementById('r-avg-true-sub').textContent = `over ${months} month${months===1?'':'s'}`;
+
+    document.getElementById('r-avg-adb').textContent      = fmt(m.avg_monthly_daily_balance);
+    document.getElementById('r-avg-adb-sub').textContent  = `avg of monthly averages`;
+
+    document.getElementById('r-avg-ending').textContent     = fmt(m.avg_monthly_ending_balance);
+    document.getElementById('r-avg-ending-sub').textContent = `avg month-end balance`;
+
+    document.getElementById('r-avg-dep-cnt').textContent  = (m.avg_monthly_deposit_count||0).toFixed(1);
+
+    // ── Bottom row: risk / loans ──────────────────────────────────
+    document.getElementById('r-negdays').textContent   = m.negative_days ?? '—';
+    document.getElementById('r-nsf').textContent       = m.nsf_count ?? '—';
+    document.getElementById('r-nsf-sub').textContent   = fmt(m.nsf_total) + ' total fees';
+    document.getElementById('r-loans').textContent     = (m.loans||[]).length;
+    document.getElementById('r-loan-pay').textContent     = fmt(m.monthly_loan_payments);
+    document.getElementById('r-loan-pay-sub').textContent = `${fmt(m.total_loan_payments)} total`;
+
+    document.getElementById('card-negdays').className = 'card ' + ((m.negative_days||0) > 0 ? 'c-red' : '');
+    document.getElementById('card-nsf').className     = 'card ' + ((m.nsf_count||0) > 0 ? 'c-red' : '');
+
+    // Per-file breakdown accordion
+    const perFileSec  = document.getElementById('per-file-section');
+    const perFileWrap = document.getElementById('per-file-wrap');
+    const perFile     = data.per_file || [];
+    if (perFile.length > 1) {
+      perFileSec.style.display = 'block';
+      perFileWrap.innerHTML = '';
+      perFile.forEach((pf, idx) => {
+        const pm = pf.metrics;
+        const item = document.createElement('div');
+        item.className = 'per-file-item';
+        item.innerHTML = `
+          <div class="per-file-header" onclick="togglePF(this)">
+            <span class="per-file-icon">📄</span>
+            <span class="per-file-name">${pf.filename}${pm.ai_assisted ? '<span class="ai-chip" title="AI-assisted extraction">AI</span>' : ''}</span>
+            <span class="per-file-period">${pm.period_label||''}</span>
+            <span class="per-file-chevron">▼</span>
+          </div>
+          <div class="per-file-body">
+            <div class="mini-cards">
+              <div class="mini-card"><div class="mc-label">Ending Balance</div><div class="mc-value" style="color:var(--green)">${fmt(pm.ending_balance)}</div></div>
+              <div class="mini-card"><div class="mc-label">Avg Daily Bal</div><div class="mc-value" style="color:var(--blue-bright)">${fmt(pm.avg_daily_balance)}</div></div>
+              <div class="mini-card"><div class="mc-label">True Deposits</div><div class="mc-value" style="color:var(--teal)">${fmt(pm.true_deposits)}</div></div>
+              <div class="mini-card"><div class="mc-label">NSF Count</div><div class="mc-value" style="color:${(pm.nsf_count||0)>0?'var(--red)':'var(--white)'}">${pm.nsf_count||0}</div></div>
+              <div class="mini-card"><div class="mc-label">Neg Days</div><div class="mc-value" style="color:${(pm.negative_days||0)>0?'var(--red)':'var(--white)'}">${pm.negative_days||0}</div></div>
+              <div class="mini-card"><div class="mc-label">Withdrawals</div><div class="mc-value">${fmt(pm.total_withdrawals)}</div></div>
+            </div>
+          </div>`;
+        perFileWrap.appendChild(item);
+      });
+    } else {
+      perFileSec.style.display = 'none';
+    }
+
+    // Monthly revenue
+    const monthly = m.monthly_revenue || [];
+    const monthSec = document.getElementById('monthly-section');
+    if (monthly.length) {
+      monthSec.style.display = 'block';
+      const total = m.true_deposits || 1;
+      const tbody = document.getElementById('rev-tbody');
+      tbody.innerHTML = '';
+      monthly.forEach(r => {
+        const pct = (r.amount / total * 100).toFixed(1);
+        tbody.insertAdjacentHTML('beforeend',`
+          <tr>
+            <td>${r.month}</td>
+            <td class="rev-amt">${fmt(r.amount)}</td>
+            <td>${pct}%</td>
+            <td style="text-align:left;padding-left:18px">
+              <div class="bar-bg"><div class="bar-fg" style="width:${parseFloat(pct)}%"></div></div>
+            </td>
+          </tr>`);
+      });
+      // Total row
+      tbody.insertAdjacentHTML('beforeend',`
+        <tr>
+          <td><strong>Total</strong></td>
+          <td class="rev-amt"><strong>${fmt(m.true_deposits)}</strong></td>
+          <td><strong>100%</strong></td>
+          <td></td>
+        </tr>`);
+    } else {
+      monthSec.style.display = 'none';
+    }
+
+  }
+
+  function togglePF(header) {
+    header.closest('.per-file-item').classList.toggle('open');
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────
+  function setLoading(on, pct) {
+    analyzeBtn.disabled     = on || selectedFiles.length === 0;
+    statusBar.style.display = on ? 'flex' : 'none';
+    if (!on) progressBar.style.width = '0%';
+  }
+  function setProgress(pct) { progressBar.style.width = pct + '%'; }
+  function showError(msg, soft = false) {
+    errorBox.innerHTML     = msg.replace(/\n/g,'<br>');
+    errorBox.style.display = 'block';
+    if (!soft) results.style.display = 'none';
+  }
+</script>
+</body>
+</html>
