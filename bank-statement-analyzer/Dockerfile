@@ -6,23 +6,20 @@
 # Ollama is NOT bundled here – run it separately and set OLLAMA_HOST.
 # =====================================================================
 
-FROM python:3.12-slim
+# Bookworm: stable Debian; avoid python:3.12-slim on cutting-edge where apt names drift.
+# Do not put `#` comments inside a continued RUN line — the shell treats them as end-of-command.
+FROM python:3.12-slim-bookworm
 
-# --- System dependencies for WeasyPrint (Cairo, Pango, GDK-Pixbuf) --
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # WeasyPrint rendering stack
     libcairo2 \
     libpango-1.0-0 \
     libpangocairo-1.0-0 \
-    libgdk-pixbuf2.0-0 \
+    libgdk-pixbuf-2.0-0 \
     libffi-dev \
     shared-mime-info \
-    # PDF parsing helpers
     ghostscript \
     poppler-utils \
-    # camelot / tabula java runtime (optional – comment out to save ~250 MB)
     default-jre-headless \
-    # misc
     gcc \
     curl \
     && rm -rf /var/lib/apt/lists/*

@@ -1,19 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-// Use service role key to bypass RLS
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+export const dynamic = 'force-dynamic';
+
+function getSupabase(): SupabaseClient {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) {
+    throw new Error('Missing NEXT_PUBLIC_SUPABASE_URL or Supabase key for reset-loop');
+  }
+  return createClient(url, key);
+}
 
 /**
  * Reset leads for looping
  * Runs periodically (e.g., every 14 days or monthly) to reset sent leads back to pending
  * This allows continuous outreach to the same lead list
  */
-export async function POST(req: NextRequest) {
+export async function POST(_req: NextRequest) {
   try {
+    const supabase = getSupabase();
     // Get all active campaigns
     const { data: campaigns, error: campaignsError } = await supabase
       .from('campaigns')
