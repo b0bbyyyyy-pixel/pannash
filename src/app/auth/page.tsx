@@ -1,83 +1,73 @@
 'use client';
 
 import { useState } from 'react';
-import { createBrowserClient } from '@supabase/ssr';
-// Trigger redeploy for env vars
+import { supabase } from '@/lib/supabase';
 
 export default function AuthPage() {
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [activeAction, setActiveAction] = useState<'signin' | 'signup' | null>(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
-
-  const handleAuth = async (e: React.FormEvent) => {
+  const handleAuth = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    const submitter = (e.nativeEvent as SubmitEvent).submitter;
+    const intent =
+      submitter instanceof HTMLButtonElement && submitter.value === 'signup' ? 'signup' : 'signin';
+    setActiveAction(intent);
     setLoading(true);
     setError('');
     setSuccess('');
 
-    if (mode === 'signup') {
-      // Sign up new user
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          emailRedirectTo: `${window.location.origin}/onboarding`,
-        },
-      });
+    try {
+      if (intent === 'signup') {
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            emailRedirectTo: `${window.location.origin}/onboarding`,
+          },
+        });
 
-      if (error) {
-        setError(error.message);
-        setLoading(false);
-      } else if (data?.user) {
-        // Check if email confirmation is required
-        if (data.user.identities && data.user.identities.length === 0) {
-          // User already exists
-          setError('An account with this email already exists. Please sign in instead.');
-          setLoading(false);
-        } else if (data.session) {
-          // Email confirmation disabled - user is logged in immediately
-          setSuccess('Account created! Redirecting...');
-          setTimeout(() => {
-            window.location.href = '/onboarding';
-          }, 1000);
+        if (error) {
+          setError(error.message);
+        } else if (data?.user) {
+          if (data.user.identities && data.user.identities.length === 0) {
+            setError('An account with this email already exists. Please sign in instead.');
+          } else if (data.session) {
+            setSuccess('Account created! Redirecting...');
+            setTimeout(() => {
+              window.location.href = '/onboarding';
+            }, 1000);
+          } else {
+            setSuccess('Account created! Please check your email to verify your account, then sign in.');
+            setTimeout(() => {
+              setSuccess('');
+            }, 5000);
+          }
         } else {
-          // Email confirmation required
-          setSuccess('Account created! Please check your email to verify your account, then sign in.');
-          setLoading(false);
-          // Switch to sign in mode after 3 seconds
-          setTimeout(() => {
-            setMode('signin');
-            setSuccess('');
-          }, 5000);
+          setError('Something went wrong. Please try again.');
         }
       } else {
-        setError('Something went wrong. Please try again.');
-        setLoading(false);
-      }
-    } else {
-      // Sign in existing user
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+        const { error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
 
-      if (error) {
-        setError(error.message);
-        setLoading(false);
-      } else {
-        setSuccess('Signed in! Redirecting...');
-        setTimeout(() => {
-          window.location.href = '/dashboard';
-        }, 500);
+        if (error) {
+          setError(error.message);
+        } else {
+          setSuccess('Signed in! Redirecting...');
+          setTimeout(() => {
+            window.location.href = '/dashboard';
+          }, 500);
+        }
       }
+    } finally {
+      setLoading(false);
+      setActiveAction(null);
     }
   };
 
@@ -123,11 +113,7 @@ export default function AuthPage() {
               minLength={6}
               className="w-full px-3 py-2 bg-[#2a2a2a] border border-[#555] rounded-md text-[#f5f1e8] placeholder-[#777] focus:outline-none focus:ring-1 focus:ring-[#f5f1e8] focus:border-[#f5f1e8] transition-all text-sm"
             />
-            {mode === 'signup' && (
-              <p className="mt-1.5 text-[10px] text-[#999]">
-                Must be at least 6 characters
-              </p>
-            )}
+            <p className="mt-1.5 text-[10px] text-[#999]">Use at least 6 characters.</p>
           </div>
 
           {error && (
@@ -142,39 +128,24 @@ export default function AuthPage() {
             </div>
           )}
 
-          {/* Mode Toggle Buttons */}
           <div className="flex gap-2 pt-2">
             <button
               type="submit"
+              name="auth"
+              value="signin"
               disabled={loading}
-              onClick={() => {
-                setMode('signin');
-                setError('');
-                setSuccess('');
-              }}
-              className={`flex-1 px-4 py-2 rounded-md text-xs font-medium transition-all ${
-                mode === 'signin'
-                  ? 'bg-[#f5f1e8] text-[#1a1a1a]'
-                  : 'bg-transparent text-[#999] border border-[#555] hover:border-[#777]'
-              }`}
+              className="flex-1 px-4 py-2.5 rounded-md text-sm font-semibold bg-[#f5f1e8] text-[#1a1a1a] hover:bg-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {loading && mode === 'signin' ? 'Signing In...' : 'Sign In'}
+              {loading && activeAction === 'signin' ? 'Signing in…' : 'Sign in'}
             </button>
             <button
               type="submit"
+              name="auth"
+              value="signup"
               disabled={loading}
-              onClick={() => {
-                setMode('signup');
-                setError('');
-                setSuccess('');
-              }}
-              className={`flex-1 px-4 py-2 rounded-md text-xs font-medium transition-all ${
-                mode === 'signup'
-                  ? 'bg-[#f5f1e8] text-[#1a1a1a]'
-                  : 'bg-transparent text-[#999] border border-[#555] hover:border-[#777]'
-              }`}
+              className="flex-1 px-4 py-2.5 rounded-md text-sm font-semibold bg-transparent text-[#f5f1e8] border border-[#555] hover:border-[#777] hover:bg-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {loading && mode === 'signup' ? 'Creating Account...' : 'Sign Up'}
+              {loading && activeAction === 'signup' ? 'Creating account…' : 'Sign up'}
             </button>
           </div>
         </form>

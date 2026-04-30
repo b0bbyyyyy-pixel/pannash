@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, BarChart, Bar, ComposedChart, Cell } from 'recharts';
+import type { BankStatementAnalysisSnapshot } from '@/lib/bankAnalyzer';
+import BankStatementAnalyzerPanel from '@/components/BankStatementAnalyzerPanel';
 
 interface UnderwritingData {
   // Merchant Info
@@ -54,6 +55,9 @@ interface UnderwritingData {
   hasCalculated?: boolean;
   lastUpdated?: string;
   leadMaxAddedPoints?: number;
+
+  /** Bank Statement Analyzer snapshot (metrics without heavy chart series); optional PDF is session-only */
+  bankStatementAnalysis?: BankStatementAnalysisSnapshot;
 }
 
 interface UnderwritingSuiteProps {
@@ -656,105 +660,6 @@ export default function UnderwritingSuite({
   const riskScore = calculateRiskScore();
   const riskScoreTextClass =
     riskScore >= 70 ? 'text-emerald-700' : riskScore >= 50 ? 'text-amber-700' : 'text-red-700';
-
-  // Monthly payment for charts: per-period = totalRepay / termLength (same as offer card); scale to monthly using the offer’s frequency
-  const calculateMonthlyPayment = (revenue: number) => {
-    if (selectedOffer && adjustedAmount > 0) {
-      const totalRepay = adjustedAmount * negotiatedFactorRate;
-      const termLength = selectedOffer.termLength || 250;
-      const perPeriod = totalRepay / termLength;
-      const freq = selectedOffer.paymentFrequency || 'Daily';
-      switch (freq) {
-        case 'Daily':
-          return perPeriod * 22;
-        case 'Weekly':
-          return perPeriod * 4.33;
-        case 'Bi-Weekly':
-          return perPeriod * 2.17;
-        case 'Monthly':
-        default:
-          return perPeriod;
-      }
-    }
-    if (hasCalculated && holdbackPercent > 0 && revenue > 0) {
-      return revenue * (holdbackPercent / 100);
-    }
-    return 0;
-  };
-
-  // Generate revenue trend line chart data
-  const generateRevenueTrendData = () => {
-    const avgMonthlyRevenue = (month1Revenue + month2Revenue + month3Revenue) / 3;
-    const projectedRevenue = avgMonthlyRevenue || month1Revenue || month2Revenue || month3Revenue || 0;
-    
-    return [
-      { 
-        month: 'Month 1', 
-        revenue: month1Revenue || 0, 
-        projection: month1Revenue || 0,
-        payment: calculateMonthlyPayment(month1Revenue || projectedRevenue)
-      },
-      { 
-        month: 'Month 2', 
-        revenue: month2Revenue || 0, 
-        projection: month2Revenue || 0,
-        payment: calculateMonthlyPayment(month2Revenue || projectedRevenue)
-      },
-      { 
-        month: 'Month 3', 
-        revenue: month3Revenue || 0, 
-        projection: month3Revenue || 0,
-        payment: calculateMonthlyPayment(month3Revenue || projectedRevenue)
-      },
-      { 
-        month: 'Projected', 
-        revenue: null, 
-        projection: projectedRevenue,
-        payment: calculateMonthlyPayment(projectedRevenue)
-      }
-    ];
-  };
-
-  // Generate cash flow impact bar chart data - showing impact on key metrics
-  const generateCashFlowImpactData = () => {
-    const avgMonthlyRevenue = (month1Revenue + month2Revenue + month3Revenue) / 3 || 
-                              month1Revenue || month2Revenue || month3Revenue || 0;
-    const monthlyPayment = calculateMonthlyPayment(avgMonthlyRevenue);
-    
-    // Calculate impact on cash flow (retained after payment)
-    const cashFlowAfterPayment = avgMonthlyRevenue - monthlyPayment;
-    
-    // Calculate impact on daily balance (estimate payment reduces it proportionally)
-    const dailyPaymentImpact = monthlyPayment / 22; // ~22 business days
-    const avgDailyBalanceAfter = Math.max(0, avgDailyBalance - (dailyPaymentImpact * 10)); // Impact over ~10 days
-    
-    // Calculate impact on ending balance (payment reduces monthly)
-    const endingBalanceAfter = Math.max(0, endingBalance - monthlyPayment);
-    
-    return [
-      {
-        name: 'Monthly Cash Flow',
-        before: avgMonthlyRevenue,
-        after: cashFlowAfterPayment,
-        impact: monthlyPayment
-      },
-      {
-        name: 'Avg Daily Balance',
-        before: avgDailyBalance,
-        after: avgDailyBalanceAfter,
-        impact: avgDailyBalance - avgDailyBalanceAfter
-      },
-      {
-        name: 'Ending Balance',
-        before: endingBalance,
-        after: endingBalanceAfter,
-        impact: monthlyPayment
-      }
-    ];
-  };
-
-  const revenueTrendData = generateRevenueTrendData();
-  const cashFlowImpactData = generateCashFlowImpactData();
 
   const handleCalculate = () => {
     setHasCalculated(true);
@@ -1481,169 +1386,16 @@ export default function UnderwritingSuite({
                   );
                 })()}
 
-                {/* Revenue Trend Line Chart */}
-                <div className="bg-gradient-to-br from-purple-50 to-pink-50 border-2 border-purple-200 rounded-xl p-6 mb-6 shadow-lg">
-                  <h3 className="text-xl font-bold text-gray-900 mb-2">Revenue Trend Analysis</h3>
-                  <p className="text-sm text-gray-600 mb-4">Track revenue patterns and forecast future performance</p>
-                  <ResponsiveContainer width="100%" height={300}>
-                    <LineChart 
-                      data={revenueTrendData}
-                      margin={{ top: 10, right: 30, left: 20, bottom: 10 }}
-                    >
-                      <defs>
-                        <linearGradient id="colorUv" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.8}/>
-                          <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0.1}/>
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e9d5ff" />
-                      <XAxis 
-                        dataKey="month" 
-                        tick={{ fill: '#6b21a8', fontWeight: 600 }}
-                        axisLine={{ stroke: '#c084fc' }}
-                      />
-                      <YAxis 
-                        tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
-                        tick={{ fill: '#6b21a8', fontWeight: 500 }}
-                        axisLine={{ stroke: '#c084fc' }}
-                      />
-                      <Tooltip 
-                        formatter={(value: any) => typeof value === 'number' ? `$${value.toLocaleString()}` : value}
-                        contentStyle={{ 
-                          backgroundColor: '#ffffff', 
-                          border: '2px solid #8b5cf6',
-                          borderRadius: '8px',
-                          boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
-                          fontWeight: 600
-                        }}
-                      />
-                      <Legend />
-                      <Line 
-                        type="monotone" 
-                        dataKey="revenue" 
-                        stroke="#8b5cf6" 
-                        strokeWidth={4} 
-                        dot={{ r: 6, fill: '#8b5cf6', strokeWidth: 2, stroke: '#fff' }}
-                        activeDot={{ r: 8 }}
-                        name="Actual Revenue"
-                        connectNulls={false}
-                      />
-                      <Line 
-                        type="monotone" 
-                        dataKey="projection" 
-                        stroke="#ec4899" 
-                        strokeWidth={3} 
-                        strokeDasharray="8 4"
-                        dot={{ r: 4, fill: '#ec4899' }}
-                        name="Projection"
-                      />
-                      {(selectedOffer || hasCalculated) && (
-                        <Line 
-                          type="monotone" 
-                          dataKey="payment" 
-                          stroke="#ef4444" 
-                          strokeWidth={3} 
-                          strokeDasharray="4 4"
-                          dot={{ r: 5, fill: '#ef4444', strokeWidth: 2, stroke: '#fff' }}
-                          name="Monthly Payment"
-                        />
-                      )}
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-
-                {/* Financial Impact Analysis Chart - Dark Theme */}
-                <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-gray-900 border-2 border-slate-700 rounded-xl p-6 mb-6 shadow-2xl">
-                  <h3 className="text-2xl font-bold text-white mb-2">Financial Impact Analysis</h3>
-                  <p className="text-sm text-slate-300 mb-4">See how payments affect your key financial metrics</p>
-                  <ResponsiveContainer width="100%" height={420}>
-                    <BarChart 
-                      data={cashFlowImpactData}
-                      margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
-                    >
-                      <defs>
-                        <linearGradient id="colorBefore" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#1e293b" stopOpacity={1}/>
-                          <stop offset="95%" stopColor="#334155" stopOpacity={0.95}/>
-                        </linearGradient>
-                        <linearGradient id="colorAfter" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.95}/>
-                          <stop offset="95%" stopColor="#059669" stopOpacity={0.9}/>
-                        </linearGradient>
-                        
-                        {/* Glow effects */}
-                        <filter id="glow">
-                          <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
-                          <feMerge>
-                            <feMergeNode in="coloredBlur"/>
-                            <feMergeNode in="SourceGraphic"/>
-                          </feMerge>
-                        </filter>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#475569" opacity={0.3} />
-                      <XAxis 
-                        dataKey="name" 
-                        tick={{ fill: '#cbd5e1', fontWeight: 700, fontSize: 12 }}
-                        axisLine={{ stroke: '#64748b', strokeWidth: 2 }}
-                      />
-                      <YAxis 
-                        tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
-                        tick={{ fill: '#cbd5e1', fontWeight: 600, fontSize: 12 }}
-                        axisLine={{ stroke: '#64748b', strokeWidth: 2 }}
-                      />
-                      <Tooltip 
-                        formatter={(value: any) => typeof value === 'number' ? `$${value.toLocaleString()}` : value}
-                        contentStyle={{ 
-                          backgroundColor: '#1e293b', 
-                          border: '2px solid #475569',
-                          borderRadius: '12px',
-                          boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
-                          fontWeight: 700,
-                          color: '#f1f5f9'
-                        }}
-                        labelStyle={{ color: '#f1f5f9', fontWeight: 700 }}
-                        cursor={{ fill: 'rgba(148, 163, 184, 0.15)' }}
-                      />
-                      <Legend 
-                        wrapperStyle={{ color: '#cbd5e1', fontWeight: 600 }}
-                        iconType="circle"
-                      />
-                      <Bar 
-                        dataKey="before" 
-                        fill="url(#colorBefore)"
-                        radius={[8, 8, 0, 0]}
-                        maxBarSize={80}
-                        name="Before Payment"
-                        stroke="#475569"
-                        strokeWidth={2}
-                        filter="url(#glow)"
-                      />
-                      <Bar 
-                        dataKey="after" 
-                        fill="url(#colorAfter)"
-                        radius={[8, 8, 0, 0]}
-                        maxBarSize={80}
-                        name="After Payment"
-                        stroke="#065f46"
-                        strokeWidth={2}
-                        filter="url(#glow)"
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                  {cashFlowImpactData[0]?.before > 0 && (
-                    <div className="mt-4 grid grid-cols-3 gap-3">
-                      {cashFlowImpactData.map((item, idx) => (
-                        <div key={idx} className="bg-slate-800/50 border border-slate-600 rounded-lg p-3 text-center">
-                          <p className="text-xs font-semibold text-slate-400 mb-1">{item.name}</p>
-                          <p className="text-lg font-black text-red-400">
-                            -{item.impact > 0 ? `$${Math.round(item.impact / 1000)}k` : '$0'}
-                          </p>
-                          <p className="text-xs text-slate-500">Impact</p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                <BankStatementAnalyzerPanel
+                  leadId={leadId}
+                  bankStatementAnalysis={data.bankStatementAnalysis}
+                  onApplyBankFields={(patch) =>
+                    setData((d) => ({
+                      ...d,
+                      ...patch,
+                    }))
+                  }
+                />
 
               </>
             )}
