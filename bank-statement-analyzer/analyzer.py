@@ -299,6 +299,11 @@ def _parse_pdf_fallback(file_bytes: bytes) -> pd.DataFrame:
         if _df is not None and not _df.empty:
             return _df
 
+    if "pebank.com" in _p1.lower():
+        _df = _parse_pebank_pdf(file_bytes)
+        if _df is not None and not _df.empty:
+            return _df
+
     if "Wells Fargo" in _p1 or "wellsfargo.com" in _p1.lower():
         _df = _parse_wellsfargo_pdf(file_bytes)
         if _df is not None and not _df.empty:
@@ -1190,6 +1195,253 @@ def _parse_usbank_pdf(file_bytes: bytes) -> "pd.DataFrame | None":
     bal = int((df["description"] == "__daily_balance_sentinel__").sum())
     log.info("US Bank parser: %d transactions + %d balance sentinels, %s → %s",
              txn, bal, df["date"].min().date(), df["date"].max().date())
+    return df
+
+
+def _parse_pebank_pdf(file_bytes: bytes) -> "pd.DataFrame | None":
+    """
+    PE Bank (pebank.com) business checking PDFs.
+
+    Sections: Deposits, Electronic Credits, Other Credits (credits),
+    Electronic Debits (debits), Checks Cleared (three checks per line).
+    Activity lines: MM/DD/YYYY description... $amount
+    Skip Account Summary, Daily Balances, and trailing #check image pages.
+    """
+    import io as _io
+    import logging
+
+    try:
+        import pdfplumber
+    except ImportError:
+        return None
+
+    log = logging.getLogger(__name__)
+
+    TXN_DATE = re.compile(r"^(\d{2}/\d{2}/\d{4})\s+(.+)$")
+    AMT_TAIL = re.compile(r"\$([\d,]+\.\d{2})\s*$")
+    CHECK_TRIPLE = re.compile(
+        r"(\d+\*?)\s+(\d{2}/\d{2}/\d{4})\s+\$([\d,]+\.\d{2})"
+    )
+    STMT_END = re.compile(r"Statement Ending\s+(\d{2}/\d{2}/\d{4})", re.I)
+
+    lines: list[str] = []
+    try:
+        with pdfplumber.open(_io.BytesIO(file_bytes)) as pdf:
+            for page in pdf.pages:
+                t = page.extract_text(x_tolerance=3, y_tolerance=3) or ""
+                lines.extend(t.splitlines())
+    except Exception as exc:
+        log.warning("PE Bank parser: pdf open failed: %s", exc)
+        return None
+
+    stmt_end: Optional[datetime] = None
+    for raw in lines[:25]:
+        m = STMT_END.search(raw)
+        if m:
+            try:
+                stmt_end = datetime.strptime(m.group(1), "%m/%d/%Y")
+            except ValueError:
+                pass
+            break
+
+    start_idx: Optional[int] = None
+    for i, raw in enumerate(lines):
+        if raw.strip() != "Deposits":
+            continue
+        for j in range(i + 1, min(i + 5, len(lines))):
+            l2 = lines[j].strip()
+            if not l2:
+                continue
+            if "Date" in l2 and "Description" in l2 and "Amount" in l2:
+                start_idx = j + 1
+                break
+        if start_idx is not None:
+            break
+
+    if start_idx is None:
+        log.warning("PE Bank parser: no Deposits section found")
+        return None
+
+    rows: list[dict] = []
+    mode = "credit"
+    expect_header = False
+
+    def _is_noise(line: str) -> bool:
+        ls = line.strip()
+        if not ls:
+            return True
+        low = ls.lower()
+        if "checking account statements" in low and not TXN_DATE.match(ls):
+            return True
+        if re.match(r"^[0-9A-F]{32}\s+\d{8}", ls):
+            return True
+        if "statement ending" in low and ls.startswith("TOTAL "):
+            return True
+        if ls.startswith("BUSINESS CHECKING") and "xxxxxx" in low:
+            return True
+        if ls == "(continued)":
+            return True
+        if ls.startswith("* Indicates skipped"):
+            return True
+        if re.fullmatch(r"\d{6,8}", ls):
+            return True
+        if re.match(r"^#\d", ls):
+            return True
+        if re.fullmatch(r"\d{13}", ls):
+            return True
+        return False
+
+    def _section_tag(ls: str) -> "str | None":
+        s = ls.strip()
+        s = re.sub(r"\s*\(continued\)\s*$", "", s, flags=re.IGNORECASE).strip()
+        low = s.lower()
+        if low == "deposits":
+            return "credit"
+        if low == "electronic credits":
+            return "credit"
+        if low == "other credits":
+            return "credit"
+        if low == "electronic debits":
+            return "debit"
+        if low == "checks cleared":
+            return "checks_hdr"
+        if low == "daily balances":
+            return "stop"
+        return None
+
+    def _summary_skip(date_s: str, desc: str) -> bool:
+        dl = desc.lower()
+        if any(
+            x in dl
+            for x in (
+                "beginning balance",
+                "ending balance",
+                "credit(s) this period",
+                "debit(s) this period",
+                "minimum balance",
+                "average ledger",
+            )
+        ):
+            return True
+        return False
+
+    def _parse_checks_line(s: str) -> None:
+        for m in CHECK_TRIPLE.finditer(s):
+            ds = m.group(2)
+            amt = float(m.group(3).replace(",", ""))
+            nbr = m.group(1).rstrip("*")
+            rows.append(
+                {
+                    "date": datetime.strptime(ds, "%m/%d/%Y"),
+                    "description": f"Check {nbr}",
+                    "amount": -abs(amt),
+                    "balance": float("nan"),
+                }
+            )
+
+    def _append_txn(date_s: str, desc: str, amt_raw: str, sign: int) -> None:
+        if _summary_skip(date_s, desc):
+            return
+        amt = float(amt_raw.replace(",", ""))
+        rows.append(
+            {
+                "date": datetime.strptime(date_s, "%m/%d/%Y"),
+                "description": desc.strip(),
+                "amount": abs(amt) * sign,
+                "balance": float("nan"),
+            }
+        )
+
+    i = start_idx
+    while i < len(lines):
+        raw = lines[i]
+        ls = raw.strip()
+        if _is_noise(ls):
+            i += 1
+            continue
+
+        tag = _section_tag(ls)
+        if tag == "stop":
+            break
+        if tag == "checks_hdr":
+            i += 1
+            while i < len(lines):
+                ls2 = lines[i].strip()
+                if _is_noise(ls2):
+                    i += 1
+                    continue
+                tag2 = _section_tag(lines[i])
+                if tag2 in ("credit", "debit", "checks_hdr", "stop"):
+                    break
+                if "Check Nbr" in ls2 and "Date" in ls2 and "Amount" in ls2:
+                    i += 1
+                    continue
+                if CHECK_TRIPLE.search(ls2):
+                    _parse_checks_line(lines[i])
+                i += 1
+            continue
+        if tag == "credit":
+            mode = "credit"
+            expect_header = True
+            i += 1
+            continue
+        if tag == "debit":
+            mode = "debit"
+            expect_header = True
+            i += 1
+            continue
+
+        if expect_header:
+            if "Date" in ls and "Amount" in ls:
+                expect_header = False
+                i += 1
+                continue
+
+        sign = 1 if mode == "credit" else -1
+
+        m = TXN_DATE.match(ls)
+        if not m:
+            sm = re.match(r"^Service Charges\s+\$([\d,]+\.\d{2})\s*$", ls, re.I)
+            if sm and stmt_end and rows:
+                rows.append(
+                    {
+                        "date": stmt_end,
+                        "description": "Service Charges",
+                        "amount": -float(sm.group(1).replace(",", "")),
+                        "balance": float("nan"),
+                    }
+                )
+            elif rows and ls and not ls.startswith("Check Nbr"):
+                rows[-1]["description"] = (rows[-1]["description"] + " " + ls).strip()
+            i += 1
+            continue
+
+        date_s, rest = m.group(1), m.group(2).strip()
+        am = AMT_TAIL.search(rest)
+        if not am:
+            i += 1
+            continue
+        desc = rest[: am.start()].strip()
+        if _summary_skip(date_s, desc):
+            i += 1
+            continue
+        _append_txn(date_s, desc, am.group(1), sign)
+        i += 1
+
+    if not rows:
+        return None
+
+    df = pd.DataFrame(rows)
+    df["date"] = pd.to_datetime(df["date"])
+    df["amount"] = df["amount"].astype(float)
+    df = df.sort_values("date").reset_index(drop=True)
+
+    log.info(
+        "PE Bank parser: %d transactions, %s → %s",
+        len(df),
+        df["date"].min().date(),
+        df["date"].max().date(),
+    )
     return df
 
 
