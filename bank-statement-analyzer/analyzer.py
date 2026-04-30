@@ -1198,6 +1198,39 @@ def _parse_usbank_pdf(file_bytes: bytes) -> "pd.DataFrame | None":
     return df
 
 
+def _pebank_collect_daily_balance_sentinels(lines: list[str]) -> list[dict]:
+    """
+    Parse PE Bank 'Daily Balances' grid (three date→$balance pairs per line
+    until Service Charge Summary). Returns rows for _reconstruct_daily_balances.
+    """
+    BAL_PAIR = re.compile(r"(\d{2}/\d{2}/\d{4})\s+\$([\d,]+\.\d{2})")
+    in_daily = False
+    out: list[dict] = []
+    for raw in lines:
+        ls = raw.strip()
+        low = ls.lower()
+        if low == "daily balances":
+            in_daily = True
+            continue
+        if not in_daily:
+            continue
+        if "service charge summary" in low:
+            break
+        if ls.startswith("#") or "checking account statements" in low:
+            break
+        if "date" in low and "amount" in low and len(ls) < 80:
+            # Column header: "Date Amount Date Amount ..."
+            continue
+        for m in BAL_PAIR.finditer(ls):
+            try:
+                d = datetime.strptime(m.group(1), "%m/%d/%Y")
+                bal = float(m.group(2).replace(",", ""))
+                out.append({"date": d, "balance": bal})
+            except ValueError:
+                pass
+    return out
+
+
 def _parse_pebank_pdf(file_bytes: bytes) -> "pd.DataFrame | None":
     """
     PE Bank (pebank.com) business checking PDFs.
@@ -1205,7 +1238,9 @@ def _parse_pebank_pdf(file_bytes: bytes) -> "pd.DataFrame | None":
     Sections: Deposits, Electronic Credits, Other Credits (credits),
     Electronic Debits (debits), Checks Cleared (three checks per line).
     Activity lines: MM/DD/YYYY description... $amount
-    Skip Account Summary, Daily Balances, and trailing #check image pages.
+    Skip Account Summary (until Deposits) and trailing #check image pages.
+    Uses the Daily Balances grid as balance sentinels so ADB / negative days
+    are not reconstructed from cumsum-from-zero (which is wrong for this bank).
     """
     import io as _io
     import logging
@@ -1428,6 +1463,16 @@ def _parse_pebank_pdf(file_bytes: bytes) -> "pd.DataFrame | None":
         _append_txn(date_s, desc, am.group(1), sign)
         i += 1
 
+    for br in _pebank_collect_daily_balance_sentinels(lines):
+        rows.append(
+            {
+                "date": br["date"],
+                "amount": 0.0,
+                "description": "__daily_balance_sentinel__",
+                "balance": br["balance"],
+            }
+        )
+
     if not rows:
         return None
 
@@ -1436,9 +1481,12 @@ def _parse_pebank_pdf(file_bytes: bytes) -> "pd.DataFrame | None":
     df["amount"] = df["amount"].astype(float)
     df = df.sort_values("date").reset_index(drop=True)
 
+    n_txn = int((df["description"] != "__daily_balance_sentinel__").sum())
+    n_bal = int((df["description"] == "__daily_balance_sentinel__").sum())
     log.info(
-        "PE Bank parser: %d transactions, %s → %s",
-        len(df),
+        "PE Bank parser: %d transactions + %d daily balance points, %s → %s",
+        n_txn,
+        n_bal,
         df["date"].min().date(),
         df["date"].max().date(),
     )
