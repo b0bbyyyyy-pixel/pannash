@@ -1212,17 +1212,7 @@ export default function UnderwritingSuite({
 
           {/* Center - Analysis & Charts */}
           <div className="flex-1 p-6 overflow-y-auto">
-            {!hasCalculated ? (
-              <div className="flex flex-col items-center justify-center min-h-[12rem] text-center mb-6">
-                <h3 className="text-xl font-semibold text-gray-900 mb-2">Ready to Calculate</h3>
-                <p className="text-gray-600 max-w-md">
-                  Enter the merchant's financial data in the left panel and click "Calculate Offer" to see recommended terms and analysis.
-                </p>
-              </div>
-            ) : (
-              <>
-                {/* Calculate display values - use selected offer if available, otherwise use calculated recommendation */}
-                {(() => {
+            {(() => {
                   let displayAmount: number;
                   let displayFactorRate: number;
                   let displayAPR: string;
@@ -1388,9 +1378,6 @@ export default function UnderwritingSuite({
                     </>
                   );
                 })()}
-
-              </>
-            )}
 
             <BankStatementAnalyzerPanel
               leadId={leadId}
