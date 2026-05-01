@@ -21,6 +21,28 @@ export function compactMetricsForStorage(metrics: Record<string, unknown>): Reco
 
 type MonthlyRevRow = { month?: string; amount?: number };
 
+/** Average # of deposit transactions per month (matches analyzer avg_monthly_deposit_count). */
+function resolveAvgMonthlyDepositCount(metrics: Record<string, unknown>): number {
+  const fromApi = Number(metrics.avg_monthly_deposit_count);
+  if (Number.isFinite(fromApi) && fromApi >= 0) {
+    return Math.round(fromApi * 10) / 10;
+  }
+  const summary = metrics.monthly_summary;
+  if (Array.isArray(summary) && summary.length > 0) {
+    let sum = 0;
+    for (const row of summary) {
+      sum += Number((row as { deposit_count?: number }).deposit_count) || 0;
+    }
+    return Math.round((sum / summary.length) * 10) / 10;
+  }
+  const total = Number(metrics.deposit_count) || 0;
+  const n = Number(metrics.num_months);
+  if (n > 0 && total > 0) {
+    return Math.round((total / n) * 10) / 10;
+  }
+  return 0;
+}
+
 /** Map last three calendar months of true-deposit revenue (oldest → month1 … newest → month3). */
 export function mapAnalyzerMetricsToUnderwritingFields(metrics: Record<string, unknown>): {
   month1Revenue: number;
@@ -45,6 +67,6 @@ export function mapAnalyzerMetricsToUnderwritingFields(metrics: Record<string, u
     avgDailyBalance: Number(metrics.avg_daily_balance) || 0,
     endingBalance: Number(metrics.ending_balance) || 0,
     nsfCount: Number(metrics.nsf_count) || 0,
-    depositsCount: Number(metrics.deposit_count) || 0,
+    depositsCount: resolveAvgMonthlyDepositCount(metrics),
   };
 }

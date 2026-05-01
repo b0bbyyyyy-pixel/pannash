@@ -23,8 +23,15 @@ const KEY_MAP: Record<string, keyof Pick<ParsedLeadPaste, 'name' | 'email' | 'ph
   email: 'email',
   'e-mail': 'email',
   mail: 'email',
+  'email address': 'email',
+  'e-mail address': 'email',
   phone: 'phone',
   mobile: 'phone',
+  'mobile number': 'phone',
+  'cell number': 'phone',
+  'phone number': 'phone',
+  'home phone': 'phone',
+  'work phone': 'phone',
   cell: 'phone',
   tel: 'phone',
   telephone: 'phone',
@@ -33,7 +40,37 @@ const KEY_MAP: Record<string, keyof Pick<ParsedLeadPaste, 'name' | 'email' | 'ph
   organization: 'company',
   org: 'company',
   'company name': 'company',
+  'business name': 'company',
 };
+
+/** Section headers — not real company names (avoid winning the "first company-like line" heuristic). */
+const COMPANY_SECTION_NOISE =
+  /^(business information|contact information|personal information|company information|general information|additional information)$/i;
+
+/**
+ * Forms often paste with missing line breaks: "Kimberly WallaceMobile Number:\n252..."
+ * Insert breaks before known labels when glued to a letter/digit.
+ */
+function normalizeGluedLabels(raw: string): string {
+  let t = raw.replace(/\r\n/g, '\n');
+  // Longer labels first so "Email Address" wins over "Email"
+  const labels = [
+    'Mobile Number:',
+    'Cell Number:',
+    'Phone Number:',
+    'Email Address:',
+    'Business Name:',
+    'Company Name:',
+    'Full Name:',
+    'Email:',
+    'Phone:',
+  ];
+  for (const label of labels) {
+    const esc = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    t = t.replace(new RegExp(`([a-zA-Z0-9])${esc}`, 'gi'), `$1\n${label}`);
+  }
+  return t;
+}
 
 function findEmails(text: string): string[] {
   return text.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g) || [];
@@ -96,6 +133,17 @@ function normKey(k: string): string {
     .replace(/\s+/g, ' ');
 }
 
+/** Line is only a field label (value on next line): "Full Name:", "Mobile Number:" */
+function isLabelOnlyLine(line: string): boolean {
+  const t = line.trim();
+  return t.length >= 2 && t.length < 90 && /[:：]\s*$/.test(t);
+}
+
+/** Not a real company — generic section heading */
+function isCompanyNoiseSection(line: string): boolean {
+  return COMPANY_SECTION_NOISE.test(line.trim());
+}
+
 /**
  * Main entry: parse pasted blob into lead fields.
  */
@@ -103,7 +151,7 @@ export function parseLeadPasteText(raw: string): ParsedLeadPaste {
   const result: ParsedLeadPaste = { name: '', email: '', phone: '', company: '', remainder: '' };
   if (!raw || !raw.trim()) return result;
 
-  const text = raw.replace(/\r\n/g, '\n').trim();
+  const text = normalizeGluedLabels(raw).replace(/\r\n/g, '\n').trim();
 
   if (/BEGIN:VCARD/i.test(text)) {
     const vc = parseVcard(text);
@@ -130,21 +178,22 @@ export function parseLeadPasteText(raw: string): ParsedLeadPaste {
       continue;
     }
 
-    const m = line.match(/^\*?([^\s:：*]+)\s*[:：=]\s*(.+)$/);
+    // Multi-word labels: "Full Name:", "Business Name:", "Mobile Number:"
+    const m = line.match(/^\*?(.+?)\s*[:：=]\s*(.*)$/);
     if (m) {
-      const k = normKey(m[1]);
+      const k = normKey(m[1].replace(/[:：*]+$/, '').trim());
       const v = m[2].trim();
-      if (!v) continue;
       if (k === 'first name' || k === 'firstname') {
-        result.name = result.name ? `${v} ${result.name}`.trim() : v;
+        if (v) result.name = result.name ? `${v} ${result.name}`.trim() : v;
         continue;
       }
       if (k === 'last name' || k === 'lastname') {
-        result.name = result.name ? `${result.name} ${v}`.trim() : v;
+        if (v) result.name = result.name ? `${result.name} ${v}`.trim() : v;
         continue;
       }
       const field = KEY_MAP[k];
       if (field) {
+        if (!v) continue;
         if (field === 'email') {
           const em = findEmails(v);
           if (em[0]) result.email = em[0];
@@ -195,6 +244,7 @@ export function parseLeadPasteText(raw: string): ParsedLeadPaste {
       for (const cell of row) {
         if (cell === result.name || (result.email && cell.includes(result.email))) continue;
         if (hasEmail(cell)) continue;
+        if (isCompanyNoiseSection(cell)) continue;
         if (!result.company && cell.length > 1 && cell !== result.phone) {
           if (looksLikeCompany(cell) || (row.length <= 4 && !result.name)) {
             result.company = result.company || cell;
@@ -208,8 +258,11 @@ export function parseLeadPasteText(raw: string): ParsedLeadPaste {
   if (lines.length > 1) {
     for (const line of lines) {
       if (hasEmail(line)) continue;
+      if (isLabelOnlyLine(line)) continue;
       if (/^[\d+().\-\s]{7,20}$/.test(line.replace(/\s/g, '')) && !/[a-z@]/i.test(line)) continue;
-      if (/^(name|email|phone|company|first|last|tel|mobile)\s*[:：=]/i.test(line)) continue;
+      if (/^(name|email|phone|company|first|last|tel|mobile|full|business|contact)\b.*[:：=]/i.test(line)) {
+        continue;
+      }
       if (!result.name && looksLikeName(line) && !COMPANY_HINTS.test(line)) {
         result.name = line;
         break;
@@ -218,6 +271,10 @@ export function parseLeadPasteText(raw: string): ParsedLeadPaste {
     for (const line of lines) {
       if (line === result.name) continue;
       if (hasEmail(line)) continue;
+      if (isLabelOnlyLine(line)) continue;
+      if (isCompanyNoiseSection(line)) continue;
+      if (/^(mobile|cell|phone|email|fax)(\s+number)?\s*[:：]?\s*$/i.test(line.trim())) continue;
+      if (/^mobile number$/i.test(line.trim())) continue;
       if (line.replace(/\D/g, '').length >= 7 && !/[a-z@]{2,}/i.test(line)) continue;
       if (!result.company && line !== result.name) {
         if (looksLikeCompany(line) || (line.length > 12 && /[a-zA-Z]/.test(line))) {
@@ -240,6 +297,7 @@ export function parseLeadPasteText(raw: string): ParsedLeadPaste {
       if (line.includes(s) || s.includes(line)) u = true;
     }
     if (!u && !line.match(/^(name|email|phone|company)\s*[:=]/i)) {
+      if (isLabelOnlyLine(line) || isCompanyNoiseSection(line)) continue;
       if (![result.name, result.email, result.company].some((x) => x && line === x)) {
         remainder.push(line);
       }

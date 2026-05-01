@@ -1078,7 +1078,9 @@ export default function UnderwritingSuite({
                 </div>
                 
                 <div>
-                  <label className="block text-xs text-gray-600 mb-1">Average Monthly Deposits</label>
+                  <label className="block text-xs text-gray-600 mb-1">
+                    Avg deposit count / month
+                  </label>
                   <input
                     type="number"
                     value={data.depositsCount || ''}
@@ -1087,8 +1089,9 @@ export default function UnderwritingSuite({
                     min="0"
                     max="100"
                     placeholder="10"
+                    step="0.1"
                   />
-                  <p className="text-xs text-gray-500 mt-1">Average deposits per month</p>
+                  <p className="text-xs text-gray-500 mt-1">Average number of deposit transactions per month</p>
                 </div>
                 
                 <div className="pt-3 border-t border-gray-300 space-y-3">
@@ -1210,7 +1213,7 @@ export default function UnderwritingSuite({
           {/* Center - Analysis & Charts */}
           <div className="flex-1 p-6 overflow-y-auto">
             {!hasCalculated ? (
-              <div className="flex flex-col items-center justify-center h-96 text-center">
+              <div className="flex flex-col items-center justify-center min-h-[12rem] text-center mb-6">
                 <h3 className="text-xl font-semibold text-gray-900 mb-2">Ready to Calculate</h3>
                 <p className="text-gray-600 max-w-md">
                   Enter the merchant's financial data in the left panel and click "Calculate Offer" to see recommended terms and analysis.
@@ -1347,13 +1350,18 @@ export default function UnderwritingSuite({
                         </div>
                       </div>
                       
-                      {/* 4 Smaller Boxes — Credit Score & Time in Business always show (inputs), rest need actual offer */}
+                      {/* 4 Smaller Boxes — Credit Score & Time in Business adjacent; rest need actual offer for APR/Revenue */}
                       <div className="grid grid-cols-4 gap-4 mb-6">
                         <div className="bg-white border border-gray-200 rounded-lg p-4">
                           <div className="text-sm text-gray-600 mb-2 font-medium">Credit Score</div>
                           <div className="text-3xl font-bold text-gray-900">{creditScore}</div>
                         </div>
-                        
+
+                        <div className="bg-white border border-gray-200 rounded-lg p-4">
+                          <div className="text-sm text-gray-600 mb-2 font-medium">Time in Business</div>
+                          <div className="text-3xl font-bold text-gray-900">{timeInBusinessLabel}</div>
+                        </div>
+
                         <div className="bg-white border border-gray-200 rounded-lg p-4">
                           <div className="text-sm text-gray-600 mb-2 font-medium">Loan APR</div>
                           {hasActualOffer ? (
@@ -1362,12 +1370,7 @@ export default function UnderwritingSuite({
                             <div className="text-3xl font-bold text-gray-300">—</div>
                           )}
                         </div>
-                        
-                        <div className="bg-white border border-gray-200 rounded-lg p-4">
-                          <div className="text-sm text-gray-600 mb-2 font-medium">Time in Business</div>
-                          <div className="text-3xl font-bold text-gray-900">{timeInBusinessLabel}</div>
-                        </div>
-                        
+
                         <div className="bg-white border border-gray-200 rounded-lg p-4">
                           <div className="text-sm text-gray-600 mb-2 font-medium">Revenue After Payment</div>
                           {hasActualOffer ? (
@@ -1386,19 +1389,19 @@ export default function UnderwritingSuite({
                   );
                 })()}
 
-                <BankStatementAnalyzerPanel
-                  leadId={leadId}
-                  bankStatementAnalysis={data.bankStatementAnalysis}
-                  onApplyBankFields={(patch) =>
-                    setData((d) => ({
-                      ...d,
-                      ...patch,
-                    }))
-                  }
-                />
-
               </>
             )}
+
+            <BankStatementAnalyzerPanel
+              leadId={leadId}
+              bankStatementAnalysis={data.bankStatementAnalysis}
+              onApplyBankFields={(patch) =>
+                setData((d) => ({
+                  ...d,
+                  ...patch,
+                }))
+              }
+            />
           </div>
 
           {/* Right Panel - Actual Offers Received */}
