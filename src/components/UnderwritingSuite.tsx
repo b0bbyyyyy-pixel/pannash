@@ -63,9 +63,11 @@ interface UnderwritingData {
 interface UnderwritingSuiteProps {
   leadId: string;
   leadName: string;
+  leadNotes?: string | null;
   initialData?: UnderwritingData;
   onClose: () => void;
   onSave: (data: UnderwritingData) => Promise<void>;
+  onNotesUpdate?: (notes: string) => Promise<void>;
 }
 
 const DEFAULT_DATA: UnderwritingData = {
@@ -200,9 +202,11 @@ const INDUSTRIES = [
 export default function UnderwritingSuite({
   leadId,
   leadName,
+  leadNotes,
   initialData,
   onClose,
   onSave,
+  onNotesUpdate,
 }: UnderwritingSuiteProps) {
   const [data, setData] = useState<UnderwritingData>({ ...DEFAULT_DATA, ...initialData });
   const commissionPointsMax = COMMISSION_ADDED_POINTS_MAX;
@@ -245,6 +249,10 @@ export default function UnderwritingSuite({
   const [newOfferLocTermMonths, setNewOfferLocTermMonths] = useState('');
   const [newOfferLocPaymentFreq, setNewOfferLocPaymentFreq] = useState('Monthly');
   const [offersNotes, setOffersNotes] = useState(initialData?.offersNotes || '');
+  const [notesExpanded, setNotesExpanded] = useState(false);
+  const [notesEditing, setNotesEditing] = useState(false);
+  const [notesEditValue, setNotesEditValue] = useState(leadNotes ?? '');
+  const [notesSaving, setNotesSaving] = useState(false);
   
   // Selected offer for negotiation
   const [selectedOfferId, setSelectedOfferId] = useState<string | null>(initialData?.selectedOfferId || null);
@@ -2145,16 +2153,84 @@ export default function UnderwritingSuite({
               </div>
             </div>
             
-            {/* Notes Section */}
+            {/* Notes Section — auto-populated from the lead's CRM notes, editable */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Additional Notes</label>
-              <textarea
-                value={offersNotes}
-                onChange={(e) => setOffersNotes(e.target.value)}
-                placeholder="Enter notes about offers, lender terms, or other details..."
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm resize-none focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
-                rows={6}
-              />
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-sm font-medium text-gray-700">Lead Notes</label>
+                <div className="flex items-center gap-2">
+                  {!notesEditing && notesEditValue.trim().length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setNotesExpanded(v => !v)}
+                      className="text-xs text-[#5a7fc7] hover:underline"
+                    >
+                      {notesExpanded ? 'Collapse' : 'Expand'}
+                    </button>
+                  )}
+                  {!notesEditing ? (
+                    <button
+                      type="button"
+                      onClick={() => { setNotesEditing(true); setNotesExpanded(true); }}
+                      className="text-xs text-[#5a7fc7] hover:underline"
+                    >
+                      Edit
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={notesSaving}
+                        onClick={async () => {
+                          if (!onNotesUpdate) { setNotesEditing(false); return; }
+                          setNotesSaving(true);
+                          try {
+                            await onNotesUpdate(notesEditValue);
+                          } finally {
+                            setNotesSaving(false);
+                            setNotesEditing(false);
+                          }
+                        }}
+                        className="text-xs px-2 py-0.5 bg-[#5a7fc7] text-white rounded hover:bg-[#4a6fb7] disabled:opacity-50"
+                      >
+                        {notesSaving ? 'Saving…' : 'Save'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={notesSaving}
+                        onClick={() => { setNotesEditValue(leadNotes ?? ''); setNotesEditing(false); }}
+                        className="text-xs text-gray-500 hover:text-gray-700"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+              {notesEditing ? (
+                <textarea
+                  autoFocus
+                  value={notesEditValue}
+                  onChange={e => setNotesEditValue(e.target.value)}
+                  className="w-full px-3 py-2 border border-[#5a7fc7] rounded-md text-sm resize-y focus:outline-none focus:ring-2 focus:ring-[#5a7fc7] bg-white text-gray-700"
+                  rows={6}
+                />
+              ) : notesEditValue.trim().length > 0 ? (
+                <div
+                  className={`w-full px-3 py-2 border border-gray-200 rounded-md text-sm bg-[#f8f9fc] text-gray-700 whitespace-pre-wrap break-words overflow-y-auto transition-all ${notesExpanded ? '' : 'max-h-28'}`}
+                  style={{ minHeight: '4.5rem' }}
+                >
+                  {notesEditValue.trim()}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => { setNotesEditing(true); setNotesExpanded(true); }}
+                  className="w-full px-3 py-2 border border-dashed border-gray-200 rounded-md text-sm text-gray-400 italic text-left hover:border-[#5a7fc7] hover:text-[#5a7fc7] transition-colors"
+                  style={{ minHeight: '4.5rem' }}
+                >
+                  No notes yet — click to add
+                </button>
+              )}
             </div>
             
             {/* Quick Comparison */}

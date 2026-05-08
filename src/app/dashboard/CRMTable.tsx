@@ -1193,6 +1193,21 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     }
   };
 
+  const handleSaveLeadNotes = async (leadId: string, notes: string) => {
+    // Optimistically update local state
+    setLeads(prev => prev.map(l => l.id === leadId ? { ...l, notes } : l));
+    const res = await fetch('/api/leads/update-crm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ leadId, field: 'notes', value: notes }),
+      credentials: 'include',
+    });
+    if (!res.ok) {
+      console.error('Failed to save lead notes:', await res.text());
+      router.refresh();
+    }
+  };
+
   const handleCopyLead = async (lead: Lead, destinationMonth: string) => {
     try {
       const res = await fetch('/api/leads/copy', {
@@ -4464,9 +4479,11 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         key={showUnderwritingSuite.leadId}
         leadId={showUnderwritingSuite.leadId}
         leadName={showUnderwritingSuite.leadName}
+        leadNotes={leads.find(l => l.id === showUnderwritingSuite.leadId)?.notes}
         initialData={leads.find(l => l.id === showUnderwritingSuite.leadId)?.underwriting_data}
         onClose={() => setShowUnderwritingSuite(null)}
         onSave={(data) => handleSaveUnderwriting(showUnderwritingSuite.leadId, data)}
+        onNotesUpdate={(notes) => handleSaveLeadNotes(showUnderwritingSuite.leadId, notes)}
       />
     )}
     </>
