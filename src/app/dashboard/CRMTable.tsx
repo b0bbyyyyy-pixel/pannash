@@ -1046,15 +1046,69 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   };
 
   const replacePlaceholders = (text: string, lead: Lead) => {
-    // Get first name from full name (before first space)
     const firstName = lead.name.split(' ')[0] || lead.name;
-    
+    const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`;
+
+    // Resolve offer + negotiated fields from underwriting_data
+    const ud = (lead as any).underwriting_data as any;
+    const actualOffers: any[] = ud?.actualOffers || [];
+    const selectedOffer = actualOffers.find((o: any) => o.id === ud?.selectedOfferId) || null;
+
+    // Convert payment count → approximate months based on frequency
+    const paymentsToMonths = (payments: number, freq: string): string => {
+      const f = (freq || 'Daily').toLowerCase();
+      let months: number;
+      if (f === 'monthly') months = payments;
+      else if (f === 'weekly') months = payments / 4.33;
+      else if (f === 'bi-weekly') months = payments / 2.17;
+      else months = payments / 21; // daily (business days)
+      const rounded = Math.round(months);
+      return `${payments} payments (~${rounded} mo)`;
+    };
+
+    let offer_amount = '';
+    let offer_payment = '';
+    let offer_term = '';
+    let offer_total_repayment = '';
+    let negotiated_amount = '';
+    let negotiated_payment = '';
+    let negotiated_term = '';
+    let negotiated_total_repayment = '';
+
+    if (selectedOffer) {
+      const termLen = selectedOffer.termLength || 250;
+      const freq = selectedOffer.paymentFrequency || 'Daily';
+      const totalRepay = selectedOffer.amount * selectedOffer.factorRate;
+      offer_amount = fmt(selectedOffer.amount);
+      offer_payment = `${fmt(totalRepay / termLen)}/${freq.toLowerCase()}`;
+      offer_term = paymentsToMonths(termLen, freq);
+      offer_total_repayment = fmt(totalRepay);
+
+      const adjAmt = ud?.adjustedAmount ?? selectedOffer.amount;
+      const buyRate = selectedOffer.buyRate ?? 1.2;
+      const addedPts = ud?.negotiationAddedPoints ?? 0;
+      const negFactor = buyRate + addedPts / 100;
+      const negTotal = adjAmt * negFactor;
+      negotiated_amount = fmt(adjAmt);
+      negotiated_payment = `${fmt(negTotal / termLen)}/${freq.toLowerCase()}`;
+      negotiated_term = paymentsToMonths(termLen, freq);
+      negotiated_total_repayment = fmt(negTotal);
+    }
+
     const replacements: { [key: string]: string } = {
-      firstName: firstName,
+      firstName,
       name: lead.name,
       email: lead.email || '',
       phone: lead.phone || '',
       company: lead.company || '',
+      offer_amount,
+      offer_payment,
+      offer_term,
+      offer_total_repayment,
+      negotiated_amount,
+      negotiated_payment,
+      negotiated_term,
+      negotiated_total_repayment,
     };
 
     let result = text;
@@ -1067,12 +1121,21 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   };
 
   const replacePlaceholdersWithExamples = (text: string) => {
+    const hl = (v: string) => `<span class="bg-yellow-100 px-1 rounded">${v}</span>`;
     const exampleReplacements: { [key: string]: string } = {
-      firstName: '<span class="bg-yellow-100 px-1 rounded">John</span>',
-      name: '<span class="bg-yellow-100 px-1 rounded">John Smith</span>',
-      email: '<span class="bg-yellow-100 px-1 rounded">john@example.com</span>',
-      phone: '<span class="bg-yellow-100 px-1 rounded">(555) 123-4567</span>',
-      company: '<span class="bg-yellow-100 px-1 rounded">Acme Corp</span>',
+      firstName: hl('John'),
+      name: hl('John Smith'),
+      email: hl('john@example.com'),
+      phone: hl('(555) 123-4567'),
+      company: hl('Acme Corp'),
+      offer_amount: hl('$50,000'),
+      offer_payment: hl('$285/daily'),
+      offer_term: hl('175 payments (~8 mo)'),
+      offer_total_repayment: hl('$60,000'),
+      negotiated_amount: hl('$45,000'),
+      negotiated_payment: hl('$270/daily'),
+      negotiated_term: hl('175 payments (~8 mo)'),
+      negotiated_total_repayment: hl('$56,250'),
     };
 
     let result = text;
@@ -3464,42 +3527,23 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                             >
                               + Field ▼
                             </button>
-                            <div className="absolute left-0 mt-1 bg-white border border-[#e5e5e5] rounded-md shadow-lg z-10 hidden group-hover:block min-w-[150px]">
-                              <button
-                                type="button"
-                                onClick={() => insertPlaceholder('firstName')}
-                                className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]"
-                              >
-                                First Name
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => insertPlaceholder('name')}
-                                className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]"
-                              >
-                                Full Name
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => insertPlaceholder('company')}
-                                className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]"
-                              >
-                                Company
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => insertPlaceholder('email')}
-                                className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]"
-                              >
-                                Email
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => insertPlaceholder('phone')}
-                                className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]"
-                              >
-                                Phone
-                              </button>
+                            <div className="absolute left-0 mt-1 bg-white border border-[#e5e5e5] rounded-md shadow-lg z-10 hidden group-hover:block min-w-[180px] max-h-72 overflow-y-auto">
+                              <p className="px-3 pt-2 pb-1 text-[10px] font-semibold text-[#9b9b9b] uppercase tracking-wider">Lead</p>
+                              <button type="button" onClick={() => insertPlaceholder('firstName')} className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]">First Name</button>
+                              <button type="button" onClick={() => insertPlaceholder('name')} className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]">Full Name</button>
+                              <button type="button" onClick={() => insertPlaceholder('company')} className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]">Company</button>
+                              <button type="button" onClick={() => insertPlaceholder('email')} className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]">Email</button>
+                              <button type="button" onClick={() => insertPlaceholder('phone')} className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]">Phone</button>
+                              <p className="px-3 pt-2 pb-1 text-[10px] font-semibold text-[#9b9b9b] uppercase tracking-wider border-t border-[#f0f0f0] mt-1">Selected Offer</p>
+                              <button type="button" onClick={() => insertPlaceholder('offer_amount')} className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]">Amount</button>
+                              <button type="button" onClick={() => insertPlaceholder('offer_payment')} className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]">Payment</button>
+                              <button type="button" onClick={() => insertPlaceholder('offer_term')} className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]">Term Length</button>
+                              <button type="button" onClick={() => insertPlaceholder('offer_total_repayment')} className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]">Total Repayment</button>
+                              <p className="px-3 pt-2 pb-1 text-[10px] font-semibold text-[#9b9b9b] uppercase tracking-wider border-t border-[#f0f0f0] mt-1">Negotiated Offer</p>
+                              <button type="button" onClick={() => insertPlaceholder('negotiated_amount')} className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]">Amount</button>
+                              <button type="button" onClick={() => insertPlaceholder('negotiated_payment')} className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]">Payment</button>
+                              <button type="button" onClick={() => insertPlaceholder('negotiated_term')} className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]">Term Length</button>
+                              <button type="button" onClick={() => insertPlaceholder('negotiated_total_repayment')} className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]">Total Repayment</button>
                             </div>
                           </div>
                         </div>
@@ -3733,42 +3777,23 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                         >
                           + Field ▼
                         </button>
-                        <div className="absolute left-0 mt-1 bg-white border border-[#e5e5e5] rounded-md shadow-lg z-10 hidden group-hover:block min-w-[150px]">
-                          <button
-                            type="button"
-                            onClick={() => insertPlaceholder('firstName')}
-                            className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]"
-                          >
-                            First Name
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => insertPlaceholder('name')}
-                            className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]"
-                          >
-                            Full Name
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => insertPlaceholder('company')}
-                            className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]"
-                          >
-                            Company
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => insertPlaceholder('email')}
-                            className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]"
-                          >
-                            Email
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => insertPlaceholder('phone')}
-                            className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]"
-                          >
-                            Phone
-                          </button>
+                        <div className="absolute left-0 mt-1 bg-white border border-[#e5e5e5] rounded-md shadow-lg z-10 hidden group-hover:block min-w-[180px] max-h-72 overflow-y-auto">
+                          <p className="px-3 pt-2 pb-1 text-[10px] font-semibold text-[#9b9b9b] uppercase tracking-wider">Lead</p>
+                          <button type="button" onClick={() => insertPlaceholder('firstName')} className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]">First Name</button>
+                          <button type="button" onClick={() => insertPlaceholder('name')} className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]">Full Name</button>
+                          <button type="button" onClick={() => insertPlaceholder('company')} className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]">Company</button>
+                          <button type="button" onClick={() => insertPlaceholder('email')} className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]">Email</button>
+                          <button type="button" onClick={() => insertPlaceholder('phone')} className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]">Phone</button>
+                          <p className="px-3 pt-2 pb-1 text-[10px] font-semibold text-[#9b9b9b] uppercase tracking-wider border-t border-[#f0f0f0] mt-1">Selected Offer</p>
+                          <button type="button" onClick={() => insertPlaceholder('offer_amount')} className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]">Amount</button>
+                          <button type="button" onClick={() => insertPlaceholder('offer_payment')} className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]">Payment</button>
+                          <button type="button" onClick={() => insertPlaceholder('offer_term')} className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]">Term Length</button>
+                          <button type="button" onClick={() => insertPlaceholder('offer_total_repayment')} className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]">Total Repayment</button>
+                          <p className="px-3 pt-2 pb-1 text-[10px] font-semibold text-[#9b9b9b] uppercase tracking-wider border-t border-[#f0f0f0] mt-1">Negotiated Offer</p>
+                          <button type="button" onClick={() => insertPlaceholder('negotiated_amount')} className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]">Amount</button>
+                          <button type="button" onClick={() => insertPlaceholder('negotiated_payment')} className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]">Payment</button>
+                          <button type="button" onClick={() => insertPlaceholder('negotiated_term')} className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]">Term Length</button>
+                          <button type="button" onClick={() => insertPlaceholder('negotiated_total_repayment')} className="block w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f5]">Total Repayment</button>
                         </div>
                       </div>
                       <span className="text-xs text-[#6b6b6b] flex items-center ml-2">
