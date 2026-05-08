@@ -250,6 +250,7 @@ export default function UnderwritingSuite({
   const [newOfferLocPaymentFreq, setNewOfferLocPaymentFreq] = useState('Monthly');
   const [offersNotes, setOffersNotes] = useState(initialData?.offersNotes || '');
   const [notesExpanded, setNotesExpanded] = useState(false);
+  const [addOfferOpen, setAddOfferOpen] = useState(false);
   const [notesEditing, setNotesEditing] = useState(false);
   const [notesEditValue, setNotesEditValue] = useState(leadNotes ?? '');
   const [notesSaving, setNotesSaving] = useState(false);
@@ -1959,9 +1960,22 @@ export default function UnderwritingSuite({
             )}
             
             {/* Add New Offer Form */}
-            <div className="bg-white border border-gray-300 rounded-lg p-4 mb-4">
-              <h3 className="text-sm font-medium text-gray-900 mb-3">Add Competitor Offer</h3>
-              <div className="space-y-3">
+            <div className="bg-white border border-gray-300 rounded-lg mb-4 overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setAddOfferOpen(v => !v)}
+                className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-50 transition-colors"
+              >
+                <span className="text-sm font-medium text-gray-900">Add Competitor Offer</span>
+                <svg
+                  className={`w-4 h-4 text-gray-500 transition-transform ${addOfferOpen ? 'rotate-180' : ''}`}
+                  fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              {addOfferOpen && (
+              <div className="px-4 pb-4 space-y-3 border-t border-gray-100">
 
                 {/* Offer type toggle */}
                 <div className="flex rounded-md overflow-hidden border border-gray-300 text-xs font-medium">
@@ -2145,12 +2159,13 @@ export default function UnderwritingSuite({
                   />
                 </div>
                 <button
-                  onClick={addActualOffer}
+                  onClick={() => { addActualOffer(); setAddOfferOpen(false); }}
                   className="w-full px-3 py-2 bg-[#5a7fc7] text-white rounded-md text-sm font-medium hover:bg-[#4a6fb7] transition-colors"
                 >
                   + Add Offer
                 </button>
               </div>
+              )}
             </div>
             
             {/* Notes Section — auto-populated from the lead's CRM notes, editable */}
