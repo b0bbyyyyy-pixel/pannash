@@ -122,9 +122,10 @@ interface CRMTableProps {
   availableMonths: MonthData[];
   onLeadUpdate: (leadId: string, updates: Partial<Lead>) => void;
   onLeadCreate: (lead: Lead) => void;
+  highlightLeadId?: string | null;
 }
 
-export default function CRMTable({ leads: initialLeads, monthKey, stages, columns, emailTemplates, textTemplates, emailFrequencies, textFrequencies, availableMonths, onLeadUpdate, onLeadCreate }: CRMTableProps) {
+export default function CRMTable({ leads: initialLeads, monthKey, stages, columns, emailTemplates, textTemplates, emailFrequencies, textFrequencies, availableMonths, onLeadUpdate, onLeadCreate, highlightLeadId }: CRMTableProps) {
   const [leads, setLeads] = useState(initialLeads);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
@@ -4392,11 +4393,12 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
             {leads.map((lead) => {
               const stageConfig = stages.find(s => s.value === lead.stage) || stages[2];
               const { backgroundColor: bgColor, color: textColor } = parseStageInlineColors(stageConfig.color);
-              
+              const isHighlighted = highlightLeadId === lead.id;
               return (
                 <tr 
-                  key={lead.id} 
-                  className="border-b border-[#f0f0f0] hover:bg-[#fafafa] transition-colors"
+                  key={lead.id}
+                  id={`lead-row-${lead.id}`}
+                  className={`border-b border-[#f0f0f0] hover:bg-[#fafafa] transition-colors${isHighlighted ? ' ring-2 ring-inset ring-[#5a7fc7] bg-[#eff4ff]' : ''}`}
                   onContextMenu={(e) => {
                     // Only show context menu if not clicking on an interactive element
                     const target = e.target as HTMLElement;
