@@ -314,6 +314,11 @@ def _parse_pdf_fallback(file_bytes: bytes) -> pd.DataFrame:
         if _df is not None and not _df.empty:
             return _df
 
+    if "Truist" in _p1 or "truist.com" in _p1.lower() or "4TRUIST" in _p1:
+        _df = _parse_truist_pdf(file_bytes)
+        if _df is not None and not _df.empty:
+            return _df
+
     all_text_pages: list[str] = []
     table_rows: list[dict]    = []
 
@@ -2540,6 +2545,110 @@ def _parse_zions_text(text: str) -> "pd.DataFrame | None":
 
     logger.info("Zions text parser found %d transactions", len(rows))
     df = pd.DataFrame(rows)
+    return df
+
+
+def _parse_truist_pdf(file_bytes: bytes) -> "pd.DataFrame | None":
+    """
+    Parser for Truist Bank (Business / Simple Business Checking) PDF statements.
+
+    Truist layout (all pages):
+      - Header: "For MM/DD/YYYY" gives the statement period end date (→ year)
+      - Account summary block (skip — summary totals only)
+      - Optional Checks section:  DATE CHECK # AMOUNT($)
+      - Other withdrawals, debits and service charges  → negative amounts
+      - Deposits, credits and interest                 → positive amounts
+
+    Each transaction line format:
+      MM/DD  DESCRIPTION … AMOUNT
+      e.g.  02/02 DEBIT CARD PURCHASE STARBUCKS STORE 02 01-29 TRINITY FL 3739 17.00
+            02/02 TRUIST ONLINE TRANSFER MOBILE TO ****7797 - 200.00
+            01/22 14570383 700.00  (check)
+    """
+    log = logging.getLogger(__name__)
+
+    try:
+        full_text = _extract_full_pdf_text(file_bytes)
+    except Exception as exc:
+        log.warning("Truist parser: could not extract text: %s", exc)
+        return None
+
+    lines = full_text.splitlines()
+
+    # 1. Extract statement year from "For MM/DD/YYYY"
+    period_re = re.compile(r"\bFor\s+\d{1,2}/\d{1,2}/(\d{4})\b", re.IGNORECASE)
+    year = datetime.now().year
+    for line in lines[:60]:
+        m = period_re.search(line)
+        if m:
+            year = int(m.group(1))
+            break
+    log.info("Truist parser: detected statement year %d", year)
+
+    # 2. Transaction line: MM/DD  <description (greedy)>  AMOUNT
+    # Greedy middle group ensures the trailing float is always the amount.
+    TXN_RE = re.compile(r"^(\d{1,2}/\d{2})\s+(.+)\s+([\d,]+\.\d{2})\s*$")
+
+    # Section headers — pdfplumber sometimes compresses whitespace/commas out,
+    # so match flexibly with regex (e.g. "Otherwithdrawals,debitsandservice…")
+    DEBIT_SECTION_RE  = re.compile(r"^other\s*withdrawals", re.IGNORECASE)
+    CREDIT_SECTION_RE = re.compile(r"^deposits,?\s*credits", re.IGNORECASE)
+
+    current_sign: "int | None" = None
+    rows: list[dict] = []
+
+    for raw in lines:
+        line = raw.strip()
+        if not line:
+            continue
+        ll = line.lower()
+
+        # Section header detection — set sign context
+        if DEBIT_SECTION_RE.match(line) or ll == "checks":
+            current_sign = -1
+            continue
+        if CREDIT_SECTION_RE.match(line):
+            current_sign = +1
+            continue
+
+        # Not yet in a transaction section
+        if current_sign is None:
+            continue
+
+        m = TXN_RE.match(line)
+        if not m:
+            continue
+
+        mmdd    = m.group(1)
+        desc    = m.group(2).strip().rstrip(" -").strip()
+        amt_str = m.group(3)
+
+        try:
+            amt = float(amt_str.replace(",", "")) * current_sign
+        except ValueError:
+            continue
+
+        month, day = mmdd.split("/")
+        try:
+            dt = datetime(year, int(month), int(day))
+        except ValueError:
+            continue
+
+        rows.append({"date": dt, "description": desc, "amount": amt})
+
+    if not rows:
+        log.warning("Truist parser: no transactions found")
+        return None
+
+    df = pd.DataFrame(rows)
+    df["date"]    = pd.to_datetime(df["date"])
+    df["amount"]  = df["amount"].astype(float)
+    df["balance"] = float("nan")
+    df = df.sort_values("date").reset_index(drop=True)
+    log.info(
+        "Truist parser: %d transactions, %s → %s",
+        len(df), df["date"].min().date(), df["date"].max().date(),
+    )
     return df
 
 
