@@ -9,6 +9,7 @@ export type BankStatementAnalysisSnapshot = {
   ai_assisted_message?: string | null;
   displayMetrics: Record<string, unknown>;
   per_file?: Array<{ filename: string; metrics: Record<string, unknown> }>;
+  transactions?: Array<{ date: string; description: string; amount: number; balance?: number | null; row_class?: string }>;
 };
 
 const LARGE_METRIC_KEYS = new Set(['daily_balances_chart']);

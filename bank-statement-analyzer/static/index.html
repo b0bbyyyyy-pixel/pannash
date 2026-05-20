@@ -58,7 +58,7 @@
 
     /* Analyze button */
     #analyze-btn {
-      display:block; width:100%; margin-top:16px; padding:14px;
+      display:block; width:100%; margin-top:14px; padding:14px;
       background:linear-gradient(135deg,#2563eb,#1d4ed8);
       color:#fff; border:none; border-radius:12px; font-size:1rem;
       font-weight:700; cursor:pointer; transition:opacity .2s,transform .1s;
@@ -67,7 +67,7 @@
     #analyze-btn:disabled { opacity:.4; cursor:not-allowed; transform:none; }
 
     /* Status / progress */
-    #status-bar { margin-top:14px; display:none; flex-direction:column; gap:6px; padding:14px 16px; background:var(--navy2); border-radius:10px; border:1px solid var(--border); }
+    #status-bar { display:none; flex-direction:column; gap:6px; padding:14px 16px; background:var(--navy2); border-radius:10px; border:1px solid var(--border); }
     .status-row { display:flex; align-items:center; gap:10px; }
     .spinner { width:18px; height:18px; border:3px solid var(--navy3); border-top-color:var(--blue); border-radius:50%; animation:spin .7s linear infinite; flex-shrink:0; }
     @keyframes spin { to { transform:rotate(360deg); } }
@@ -76,7 +76,7 @@
     #progress-bar { height:100%; background:var(--blue); border-radius:4px; transition:width .3s; width:0%; }
 
     /* Error */
-    #error-box { display:none; margin-top:14px; padding:14px 16px; background:#2d0f0f; border:1px solid #7f1d1d; border-radius:10px; color:#fca5a5; font-size:0.85rem; line-height:1.6; }
+    #error-box { display:none; padding:14px 16px; background:#2d0f0f; border:1px solid #7f1d1d; border-radius:10px; color:#fca5a5; font-size:0.85rem; line-height:1.6; margin-top:10px; }
 
     /* Results */
     #results { display:none; margin-top:30px; }
@@ -189,29 +189,7 @@
 </header>
 
 <main>
-  <!-- Drop zone -->
-  <div id="drop-zone">
-    <input type="file" id="file-input" accept=".pdf,.csv" multiple />
-    <div class="drop-icon">📂</div>
-    <div class="drop-title">Drag &amp; drop your bank statements here</div>
-    <div class="drop-sub">PDF or CSV — drop multiple files at once for a combined report</div>
-    <div class="drop-hint">Click to browse or drag files anywhere onto this area</div>
-  </div>
-  <div id="file-list"></div>
-
-  <button id="analyze-btn" disabled>Analyze Statements</button>
-
-  <div id="status-bar">
-    <div class="status-row">
-      <div class="spinner"></div>
-      <div id="status-text">Parsing statements…</div>
-    </div>
-    <div id="progress-bar-wrap"><div id="progress-bar"></div></div>
-  </div>
-
-  <div id="error-box"></div>
-
-  <!-- Results -->
+  <!-- Results (hidden until analysis completes) -->
   <div id="results">
     <!-- AI-assisted warning banner (hidden by default) -->
     <div id="ai-banner" style="display:none; background:#fffbeb; border:1px solid #f59e0b; border-radius:8px; padding:12px 18px; margin-bottom:18px; align-items:flex-start; gap:12px; flex-direction:row;">
@@ -302,6 +280,29 @@
     </div>
 
   </div>
+
+  <!-- Drop zone — always anchored at the bottom -->
+  <div id="drop-zone" style="margin-top:30px">
+    <input type="file" id="file-input" accept=".pdf,.csv" multiple />
+    <div class="drop-icon">📂</div>
+    <div class="drop-title">Drag &amp; drop your bank statements here</div>
+    <div class="drop-sub">PDF or CSV — drop multiple files at once for a combined report</div>
+    <div class="drop-hint">Click to browse or drag files anywhere onto this area</div>
+  </div>
+  <div id="file-list"></div>
+
+  <div id="status-bar" style="margin-top:14px">
+    <div class="status-row">
+      <div class="spinner"></div>
+      <div id="status-text">Parsing statements…</div>
+    </div>
+    <div id="progress-bar-wrap"><div id="progress-bar"></div></div>
+  </div>
+
+  <div id="error-box"></div>
+
+  <button id="analyze-btn" disabled>Analyze Statements</button>
+
 </main>
 
 <footer>YourCRM Bank Analyzer — Files processed in memory only, never stored.</footer>

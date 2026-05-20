@@ -6,6 +6,7 @@ import {
   compactMetricsForStorage,
   mapAnalyzerMetricsToUnderwritingFields,
 } from '@/lib/bankAnalyzer';
+import CashFlowSankeyChart, { type TxnRow } from '@/components/CashFlowSankeyChart';
 
 type UnderwritingPatch = {
   month1Revenue: number;
@@ -31,6 +32,7 @@ type AnalyzeSuccessJson = {
   filename?: string;
   per_file?: PerFileRow[];
   file_errors?: Array<{ filename?: string; error?: string }>;
+  transactions?: TxnRow[];
 };
 
 function fmtCurrency(v: unknown): string {
@@ -131,6 +133,8 @@ export default function BankStatementAnalyzerPanel({
   }, [leadId]);
 
   const displayMetrics = (livePayload?.metrics ?? bankStatementAnalysis?.displayMetrics ?? null) as AnalyzeMetrics | null;
+  const sankeyTxns: TxnRow[] =
+    (livePayload?.transactions ?? bankStatementAnalysis?.transactions ?? []) as TxnRow[];
   const hasResults = displayMetrics != null && Object.keys(displayMetrics).length > 0;
   const aiFlag = !!(livePayload?.ai_assisted ?? displayMetrics?.ai_assisted);
   const aiFiles = (displayMetrics?.ai_assisted_files as string[] | undefined) ?? [];
@@ -207,6 +211,7 @@ export default function BankStatementAnalyzerPanel({
         ai_assisted_message: data.ai_assisted_message ?? (data.metrics.ai_assisted_message as string | null) ?? null,
         displayMetrics: compactMetricsForStorage(data.metrics as Record<string, unknown>),
         per_file: data.per_file,
+        transactions: data.transactions ?? [],
       };
       onApplyBankFields({ ...bankPatch, bankStatementAnalysis: snapshot });
       setProgress(100);
@@ -245,125 +250,20 @@ export default function BankStatementAnalyzerPanel({
 
   return (
     <div className="mb-6 rounded-xl border border-gray-200 bg-white p-6 text-gray-900 shadow-sm">
-      <div className="mb-4 border-b border-gray-200 pb-3">
+      {/* ── Sankey chart — shown whenever transactions are available (fresh or persisted) ── */}
+      {sankeyTxns.length > 0 && (
+        <CashFlowSankeyChart transactions={sankeyTxns} />
+      )}
+
+      <div className={`border-b border-gray-200 pb-3 ${sankeyTxns.length > 0 ? 'mt-2 mb-4' : 'mb-4'}`}>
         <h3 className="text-lg font-bold text-gray-900">Bank Statement Analyzer</h3>
         <p className="text-xs text-gray-600">
           Same flow as the standalone tool — uploads stay in memory unless you save the deal.
         </p>
       </div>
 
-      <div
-        className={`relative cursor-pointer rounded-xl border-2 border-dashed px-6 py-10 text-center transition-colors ${
-          dragOver
-            ? 'border-[#5a7fc7] bg-blue-50/80'
-            : files.length
-              ? 'border-emerald-500/70 bg-emerald-50/40'
-              : 'border-gray-300 bg-gray-50'
-        }`}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragOver(true);
-        }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDragOver(false);
-          addFiles([...e.dataTransfer.files]);
-        }}
-        onClick={() => inputRef.current?.click()}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            inputRef.current?.click();
-          }
-        }}
-        role="button"
-        tabIndex={0}
-      >
-        <input
-          ref={inputRef}
-          type="file"
-          accept=".pdf,.csv"
-          multiple
-          className="absolute inset-0 cursor-pointer opacity-0 w-full h-full"
-          onChange={(e) => {
-            const list = e.target.files;
-            if (list?.length) addFiles([...list]);
-            e.target.value = '';
-          }}
-        />
-        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-400" aria-hidden>
-          <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
-          </svg>
-        </div>
-        <div className="font-semibold text-gray-900">Drag & drop bank statements here</div>
-        <div className="mt-1 text-sm text-gray-600">PDF or CSV — multiple files combine into one report</div>
-        <div className="mt-2 text-xs text-gray-500">Click to browse</div>
-      </div>
-
-      {files.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {files.map((f, i) => (
-            <div
-              key={`${f.name}-${i}`}
-              className="flex items-center gap-2 rounded-full border border-gray-200 bg-gray-100 px-3 py-1 text-xs text-gray-800"
-            >
-              <span className="max-w-[160px] truncate" title={f.name}>
-                {f.name}
-              </span>
-              <span className="text-gray-500">{(f.size / 1024).toFixed(0)} KB</span>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  removeAt(i);
-                }}
-                className="pl-1 text-gray-500 hover:text-red-600"
-                aria-label={`Remove ${f.name}`}
-              >
-                ✕
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <button
-        type="button"
-        disabled={!files.length || loading}
-        onClick={onAnalyze}
-        className="mt-4 w-full rounded-md bg-[#5a7fc7] py-3.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#4a6fb7] disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        {files.length > 1 ? `Analyze ${files.length} Statements` : 'Analyze Statement'}
-      </button>
-
-      {loading && (
-        <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-4">
-          <div className="flex items-center gap-3">
-            <div className="h-[18px] w-[18px] shrink-0 animate-spin rounded-full border-2 border-gray-200 border-t-[#5a7fc7]" />
-            <span className="text-sm text-gray-600">Parsing statements and building metrics…</span>
-          </div>
-          <div className="mt-2 h-1 overflow-hidden rounded bg-gray-200">
-            <div className="h-full rounded bg-[#5a7fc7] transition-all" style={{ width: `${progress}%` }} />
-          </div>
-        </div>
-      )}
-
-      {error && (
-        <div className="mt-3 whitespace-pre-wrap rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-          {error}
-        </div>
-      )}
-
-      {softWarning && (
-        <div className="mt-3 whitespace-pre-wrap rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          {softWarning}
-        </div>
-      )}
-
       {hasResults && m && (
-        <div className="mt-8 space-y-6">
+        <div className="mb-6 space-y-6">
           {aiFlag && (
             <div className="flex gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-950">
               <div>
@@ -664,6 +564,117 @@ export default function BankStatementAnalyzerPanel({
           </p>
         </div>
       )}
+
+      {/* ── Drop zone — always at the bottom ── */}
+      <div
+        className={`relative cursor-pointer rounded-xl border-2 border-dashed px-6 py-10 text-center transition-colors ${
+          dragOver
+            ? 'border-[#5a7fc7] bg-blue-50/80'
+            : files.length
+              ? 'border-emerald-500/70 bg-emerald-50/40'
+              : 'border-gray-300 bg-gray-50'
+        } ${hasResults ? 'mt-6' : ''}`}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          addFiles([...e.dataTransfer.files]);
+        }}
+        onClick={() => inputRef.current?.click()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            inputRef.current?.click();
+          }
+        }}
+        role="button"
+        tabIndex={0}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".pdf,.csv"
+          multiple
+          className="absolute inset-0 cursor-pointer opacity-0 w-full h-full"
+          onChange={(e) => {
+            const list = e.target.files;
+            if (list?.length) addFiles([...list]);
+            e.target.value = '';
+          }}
+        />
+        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-400" aria-hidden>
+          <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
+          </svg>
+        </div>
+        <div className="font-semibold text-gray-900">Drag & drop bank statements here</div>
+        <div className="mt-1 text-sm text-gray-600">PDF or CSV — multiple files combine into one report</div>
+        <div className="mt-2 text-xs text-gray-500">Click to browse</div>
+      </div>
+
+      {files.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {files.map((f, i) => (
+            <div
+              key={`${f.name}-${i}`}
+              className="flex items-center gap-2 rounded-full border border-gray-200 bg-gray-100 px-3 py-1 text-xs text-gray-800"
+            >
+              <span className="max-w-[160px] truncate" title={f.name}>
+                {f.name}
+              </span>
+              <span className="text-gray-500">{(f.size / 1024).toFixed(0)} KB</span>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  removeAt(i);
+                }}
+                className="pl-1 text-gray-500 hover:text-red-600"
+                aria-label={`Remove ${f.name}`}
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {loading && (
+        <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-4">
+          <div className="flex items-center gap-3">
+            <div className="h-[18px] w-[18px] shrink-0 animate-spin rounded-full border-2 border-gray-200 border-t-[#5a7fc7]" />
+            <span className="text-sm text-gray-600">Parsing statements and building metrics…</span>
+          </div>
+          <div className="mt-2 h-1 overflow-hidden rounded bg-gray-200">
+            <div className="h-full rounded bg-[#5a7fc7] transition-all" style={{ width: `${progress}%` }} />
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <div className="mt-3 whitespace-pre-wrap rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          {error}
+        </div>
+      )}
+
+      {softWarning && (
+        <div className="mt-3 whitespace-pre-wrap rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          {softWarning}
+        </div>
+      )}
+
+      <button
+        type="button"
+        disabled={!files.length || loading}
+        onClick={onAnalyze}
+        className="mt-4 w-full rounded-md bg-[#5a7fc7] py-3.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#4a6fb7] disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        {files.length > 1 ? `Analyze ${files.length} Statements` : 'Analyze Statement'}
+      </button>
     </div>
   );
 }
