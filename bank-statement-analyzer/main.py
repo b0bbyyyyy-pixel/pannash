@@ -13,11 +13,13 @@ Endpoints:
 from __future__ import annotations
 
 import base64
+import json
 import logging
+import math
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import List
+from typing import Any, List
 
 # Load .env file so OPENAI_API_KEY (and other secrets) are available
 try:
@@ -47,6 +49,26 @@ logging.basicConfig(
     datefmt="%Y-%m-%dT%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# NaN-safe JSON helper
+# ---------------------------------------------------------------------------
+def _sanitize(v: Any) -> Any:
+    """Recursively replace NaN/Infinity floats with 0 so JSON serialisation never fails."""
+    if isinstance(v, float):
+        return 0.0 if not math.isfinite(v) else v
+    if isinstance(v, dict):
+        return {k: _sanitize(val) for k, val in v.items()}
+    if isinstance(v, list):
+        return [_sanitize(i) for i in v]
+    return v
+
+
+def _safe_json_response(data: Any) -> Response:
+    """Serialize to JSON, replacing NaN/Infinity with 0 (safe for browsers)."""
+    raw = json.dumps(_sanitize(data))
+    return Response(content=raw, media_type="application/json")
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +191,7 @@ async def analyze_statement(file: UploadFile = File(...)):
     elapsed = time.perf_counter() - t0
     stem    = (file.filename or "statement").rsplit(".", 1)[0]
 
-    return JSONResponse({
+    return _safe_json_response({
         "success":      True,
         "elapsed_ms":   round(elapsed * 1000),
         "filename":     f"{stem}_analysis.pdf",
@@ -212,7 +234,7 @@ async def analyze_multi(files: List[UploadFile] = File(...)):
     except ValueError as exc:
         raise HTTPException(422, str(exc))
     except Exception as exc:
-        logger.exception("Error in multi-file analysis")
+        logger.exception("Error in multi-file analysis: %s", exc)
         raise HTTPException(500, f"Analysis failed: {exc}")
 
     metrics    = result["metrics"]
@@ -230,7 +252,7 @@ async def analyze_multi(files: List[UploadFile] = File(...)):
     logger.info("Multi-analysis complete in %.2fs – %d files, %d transactions",
                 elapsed, len(per_file), len(df))
 
-    return JSONResponse({
+    return _safe_json_response({
         "success":       True,
         "elapsed_ms":    round(elapsed * 1000),
         "files_processed": len(per_file),

@@ -3074,6 +3074,22 @@ def _compute_metrics(df: pd.DataFrame, daily_balances: pd.Series) -> dict:
         for d, b in daily_balances.items()
     ]
 
+    # ---- Sanitize: replace NaN / Infinity with 0 -----------------------
+    # Python's json.dumps raises ValueError on float('nan') / float('inf'),
+    # which causes a 500.  Walk the metrics dict and replace all bad floats.
+    import math as _math
+
+    def _clean(v):
+        if isinstance(v, float) and (_math.isnan(v) or _math.isinf(v)):
+            return 0.0
+        if isinstance(v, dict):
+            return {k: _clean(val) for k, val in v.items()}
+        if isinstance(v, list):
+            return [_clean(i) for i in v]
+        return v
+
+    metrics = {k: _clean(v) for k, v in metrics.items()}
+
     return metrics
 
 
