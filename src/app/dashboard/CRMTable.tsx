@@ -239,7 +239,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   const [selectedTextTemplate, setSelectedTextTemplate] = useState<string>('');
   
   // Underwriting suite state
-  const [showUnderwritingSuite, setShowUnderwritingSuite] = useState<{ leadId: string; leadName: string } | null>(null);
+  const [showUnderwritingSuite, setShowUnderwritingSuite] = useState<{ leadId: string; leadName: string; businessName?: string | null; phone?: string | null } | null>(null);
   const router = useRouter();
 
   // Open stage popover: position + which lead. Native <select> cannot style each <option> on Windows/Chrome.
@@ -2625,7 +2625,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         
         return (
           <button
-            onClick={() => setShowUnderwritingSuite({ leadId: lead.id, leadName: lead.name })}
+            onClick={() => setShowUnderwritingSuite({ leadId: lead.id, leadName: lead.name, businessName: lead.company, phone: lead.phone })}
             className={`w-full px-2 py-1 text-xs rounded transition-colors font-medium ${
               isFunded 
                 ? 'bg-green-600 text-white border border-green-700 hover:bg-green-700' 
@@ -4504,6 +4504,8 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         key={showUnderwritingSuite.leadId}
         leadId={showUnderwritingSuite.leadId}
         leadName={showUnderwritingSuite.leadName}
+        businessName={showUnderwritingSuite.businessName}
+        phone={showUnderwritingSuite.phone}
         leadNotes={leads.find(l => l.id === showUnderwritingSuite.leadId)?.notes}
         initialData={leads.find(l => l.id === showUnderwritingSuite.leadId)?.underwriting_data}
         onClose={() => setShowUnderwritingSuite(null)}

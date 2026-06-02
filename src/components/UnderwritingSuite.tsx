@@ -63,12 +63,76 @@ interface UnderwritingData {
 interface UnderwritingSuiteProps {
   leadId: string;
   leadName: string;
+  businessName?: string | null;
+  phone?: string | null;
   leadNotes?: string | null;
   initialData?: UnderwritingData;
   onClose: () => void;
   onSave: (data: UnderwritingData) => Promise<void>;
   onNotesUpdate?: (notes: string) => Promise<void>;
 }
+
+// ── SOS Registry URLs by state abbreviation ─────────────────────────────────
+const SOS_URLS: Record<string, string> = {
+  AL: 'https://arc-sos.state.al.us/cgi/corpname.mbr/input',
+  AK: 'https://myalaska.state.ak.us/business/soskb/Corp.asp',
+  AZ: 'https://ecorp.azcc.gov/EntitySearch/Index',
+  AR: 'https://www.sos.arkansas.gov/corps/search_all.php',
+  CA: 'https://bizfileonline.sos.ca.gov/search/business',
+  CO: 'https://www.sos.state.co.us/biz/BusinessEntityCriteriaExt.do',
+  CT: 'https://service.ct.gov/business/s/onlinebusinesssearch',
+  DE: 'https://icis.corp.delaware.gov/Ecorp/EntitySearch/NameSearch.aspx',
+  DC: 'https://corponline.dcra.dc.gov/Home.aspx',
+  FL: 'https://search.sunbiz.org/Inquiry/CorporationSearch/ByName',
+  GA: 'https://ecorp.sos.ga.gov/BusinessSearch',
+  HI: 'https://hbe.ehawaii.gov/documents/search.html',
+  ID: 'https://sosbiz.idaho.gov/search/business',
+  IL: 'https://www.ilsos.gov/corporatellc/',
+  IN: 'https://bsd.sos.in.gov/publicbusinesssearch',
+  IA: 'https://sos.iowa.gov/search/business/search.aspx',
+  KS: 'https://www.sos.ks.gov/eforms/businessentity/search.do',
+  KY: 'https://web.sos.ky.gov/ftsearch/',
+  LA: 'https://coraweb.sos.la.gov/commercialSearch/CommercialSearch.aspx',
+  ME: 'https://apps.web.maine.gov/cgi-bin/online/corp/Corp_Search.pl',
+  MD: 'https://egov.maryland.gov/businessexpress/entitysearch',
+  MA: 'https://corp.sec.state.ma.us/CorpWeb/CorpSearch/CorpSearch.aspx',
+  MI: 'https://cofs.lara.michigan.gov/SearchApi/Search/Search',
+  MN: 'https://mblsportal.sos.state.mn.us/Business/Search',
+  MS: 'https://business.sos.ms.gov/BusinessSearch',
+  MO: 'https://bsd.sos.mo.gov/BusinessEntity/BESearch.aspx',
+  MT: 'https://biz.sosmt.gov/search',
+  NE: 'https://www.nebraska.gov/sos/corp/corpsearch.cgi',
+  NV: 'https://esos.nv.gov/EntitySearch/OnlineEntitySearch',
+  NH: 'https://quickstart.sos.nh.gov/online/Business',
+  NJ: 'https://www.njportal.com/DOR/BusinessNameSearch/',
+  NM: 'https://portal.sos.state.nm.us/BFS/online/CorporationBusinessSearch',
+  NY: 'https://apps.dos.ny.gov/publicInquiry/',
+  NC: 'https://www.sosnc.gov/online_services/search/by_title/_Business_Registration',
+  ND: 'https://firststop.sos.nd.gov/search/business',
+  OH: 'https://businesssearch.ohiosos.gov/',
+  OK: 'https://www.sos.ok.gov/corp/corpInquiryFind.aspx',
+  OR: 'https://sos.oregon.gov/business/Pages/find.aspx',
+  PA: 'https://www.corporations.pa.gov/search/corpsearch',
+  RI: 'https://business.sos.ri.gov/CorpWeb/CorpSearch/CorpSearch.aspx',
+  SC: 'https://businessfilings.sc.gov/BusinessFiling/Entity/Search',
+  SD: 'https://sosenterprise.sd.gov/BusinessServices/Business/FilingSearch.aspx',
+  TN: 'https://tnbear.tn.gov/Ecommerce/FilingSearch.aspx',
+  TX: 'https://direct.sos.state.tx.us/corp/corpInquiry-ind.asp',
+  UT: 'https://corporations.utah.gov/search/',
+  VT: 'https://bizfilings.vermont.gov/online/Filings/PrSearchAction',
+  VA: 'https://cis.scc.virginia.gov/',
+  WA: 'https://ccfs.sos.wa.gov/#/BusinessSearch',
+  WV: 'https://apps.wv.gov/sos/businessentitysearch/',
+  WI: 'https://www.wdfi.org/apps/CorpSearch/Search.aspx',
+  WY: 'https://wyobiz.wyo.gov/Business/FilingSearch.aspx',
+};
+
+const US_STATES = [
+  'AL','AK','AZ','AR','CA','CO','CT','DE','DC','FL','GA','HI','ID','IL','IN',
+  'IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH',
+  'NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT',
+  'VT','VA','WA','WV','WI','WY',
+];
 
 const DEFAULT_DATA: UnderwritingData = {
   timeInBusiness: 0,
@@ -202,6 +266,8 @@ const INDUSTRIES = [
 export default function UnderwritingSuite({
   leadId,
   leadName,
+  businessName,
+  phone,
   leadNotes,
   initialData,
   onClose,
@@ -211,6 +277,88 @@ export default function UnderwritingSuite({
   const [data, setData] = useState<UnderwritingData>({ ...DEFAULT_DATA, ...initialData });
   const commissionPointsMax = COMMISSION_ADDED_POINTS_MAX;
   const [saving, setSaving] = useState(false);
+
+  // ── SOS Lookup popup ──────────────────────────────────────────────────────
+  const [sosOpen, setSosOpen] = useState(false);
+  const [sosCopied, setSosCopied] = useState(false);
+  const detectedState = (() => {
+    if (!phone) return null;
+    const digits = phone.replace(/\D/g, '');
+    const ac = digits.length === 11 && digits.startsWith('1')
+      ? digits.substring(1, 4)
+      : digits.length === 10 ? digits.substring(0, 3) : null;
+    if (!ac) return null;
+    const map: Record<string, string> = {
+      '205':'AL','251':'AL','256':'AL','334':'AL','659':'AL','938':'AL',
+      '907':'AK','480':'AZ','520':'AZ','602':'AZ','623':'AZ','928':'AZ',
+      '479':'AR','501':'AR','870':'AR','209':'CA','213':'CA','279':'CA',
+      '310':'CA','323':'CA','341':'CA','408':'CA','415':'CA','424':'CA',
+      '442':'CA','510':'CA','530':'CA','559':'CA','562':'CA','619':'CA',
+      '626':'CA','628':'CA','650':'CA','657':'CA','661':'CA','669':'CA',
+      '707':'CA','714':'CA','747':'CA','760':'CA','805':'CA','818':'CA',
+      '820':'CA','831':'CA','858':'CA','909':'CA','916':'CA','925':'CA',
+      '949':'CA','951':'CA','303':'CO','719':'CO','720':'CO','970':'CO',
+      '983':'CO','203':'CT','475':'CT','860':'CT','959':'CT','302':'DE',
+      '239':'FL','305':'FL','321':'FL','352':'FL','386':'FL','407':'FL',
+      '448':'FL','561':'FL','727':'FL','754':'FL','772':'FL','786':'FL',
+      '813':'FL','850':'FL','863':'FL','904':'FL','941':'FL','954':'FL',
+      '229':'GA','404':'GA','470':'GA','478':'GA','678':'GA','706':'GA',
+      '762':'GA','770':'GA','912':'GA','943':'GA','808':'HI','208':'ID',
+      '986':'ID','217':'IL','224':'IL','309':'IL','312':'IL','331':'IL',
+      '447':'IL','464':'IL','618':'IL','630':'IL','708':'IL','773':'IL',
+      '779':'IL','815':'IL','847':'IL','872':'IL','219':'IN','260':'IN',
+      '317':'IN','463':'IN','574':'IN','765':'IN','812':'IN','930':'IN',
+      '319':'IA','515':'IA','563':'IA','641':'IA','712':'IA','316':'KS',
+      '620':'KS','785':'KS','913':'KS','270':'KY','364':'KY','502':'KY',
+      '606':'KY','859':'KY','225':'LA','318':'LA','337':'LA','504':'LA',
+      '985':'LA','207':'ME','240':'MD','301':'MD','410':'MD','443':'MD',
+      '667':'MD','339':'MA','351':'MA','413':'MA','508':'MA','617':'MA',
+      '774':'MA','781':'MA','857':'MA','978':'MA','231':'MI','248':'MI',
+      '269':'MI','313':'MI','517':'MI','586':'MI','616':'MI','734':'MI',
+      '810':'MI','906':'MI','947':'MI','989':'MI','218':'MN','320':'MN',
+      '507':'MN','612':'MN','651':'MN','763':'MN','952':'MN','228':'MS',
+      '601':'MS','662':'MS','769':'MS','314':'MO','417':'MO','573':'MO',
+      '636':'MO','660':'MO','816':'MO','406':'MT','308':'NE','402':'NE',
+      '531':'NE','702':'NV','725':'NV','775':'NV','603':'NH','201':'NJ',
+      '551':'NJ','609':'NJ','640':'NJ','732':'NJ','848':'NJ','856':'NJ',
+      '862':'NJ','908':'NJ','973':'NJ','505':'NM','575':'NM','212':'NY',
+      '315':'NY','332':'NY','347':'NY','363':'NY','516':'NY','518':'NY',
+      '585':'NY','607':'NY','631':'NY','646':'NY','680':'NY','716':'NY',
+      '718':'NY','838':'NY','845':'NY','914':'NY','917':'NY','929':'NY',
+      '252':'NC','336':'NC','704':'NC','743':'NC','828':'NC','910':'NC',
+      '919':'NC','980':'NC','984':'NC','701':'ND','216':'OH','220':'OH',
+      '234':'OH','283':'OH','326':'OH','330':'OH','380':'OH','419':'OH',
+      '440':'OH','513':'OH','567':'OH','614':'OH','740':'OH','937':'OH',
+      '405':'OK','539':'OK','572':'OK','580':'OK','918':'OK','458':'OR',
+      '503':'OR','541':'OR','971':'OR','215':'PA','223':'PA','267':'PA',
+      '272':'PA','412':'PA','445':'PA','484':'PA','570':'PA','582':'PA',
+      '610':'PA','717':'PA','724':'PA','814':'PA','878':'PA','401':'RI',
+      '803':'SC','843':'SC','854':'SC','864':'SC','605':'SD','423':'TN',
+      '615':'TN','629':'TN','731':'TN','865':'TN','901':'TN','931':'TN',
+      '210':'TX','214':'TX','254':'TX','281':'TX','325':'TX','346':'TX',
+      '361':'TX','409':'TX','430':'TX','432':'TX','469':'TX','512':'TX',
+      '682':'TX','713':'TX','726':'TX','737':'TX','806':'TX','817':'TX',
+      '830':'TX','832':'TX','903':'TX','915':'TX','936':'TX','940':'TX',
+      '945':'TX','956':'TX','972':'TX','979':'TX','385':'UT','435':'UT',
+      '801':'UT','802':'VT','276':'VA','434':'VA','540':'VA','571':'VA',
+      '703':'VA','757':'VA','804':'VA','206':'WA','253':'WA','360':'WA',
+      '425':'WA','509':'WA','564':'WA','202':'DC','304':'WV','681':'WV',
+      '262':'WI','274':'WI','414':'WI','534':'WI','608':'WI','715':'WI',
+      '920':'WI','307':'WY',
+    };
+    return map[ac] ?? null;
+  })();
+  const [sosState, setSosState] = useState<string>(detectedState ?? 'FL');
+
+  const handleSosSearch = () => {
+    if (businessName) {
+      navigator.clipboard.writeText(businessName).catch(() => {});
+      setSosCopied(true);
+      setTimeout(() => setSosCopied(false), 2000);
+    }
+    const url = SOS_URLS[sosState];
+    if (url) window.open(url, '_blank', 'noopener,noreferrer');
+  };
   const [hasCalculated, setHasCalculated] = useState(initialData?.hasCalculated || false);
   
   // Actual offers received tracking
@@ -866,10 +1014,94 @@ export default function UnderwritingSuite({
       <div className="bg-white rounded-lg shadow-2xl w-full max-w-[1600px] h-[90vh] flex flex-col">
         {/* Header */}
         <div className="border-b border-gray-200 p-6 flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Underwriting Suite</h1>
-            <p className="text-sm text-gray-600 mt-1">{leadName}</p>
+          <div className="flex items-start gap-4">
+            {/* Business name + person + SOS */}
+            <div>
+              <div className="flex items-center gap-6">
+                <h1 className="text-2xl font-bold text-gray-900 leading-tight">
+                  {businessName || 'No Business Name'}
+                </h1>
+                <div className="relative ml-4 shrink-0 flex items-center gap-2">
+                  <button
+                    onClick={() => setSosOpen(o => !o)}
+                    title="SOS Registry Lookup"
+                    className="px-1.5 py-0.5 border border-gray-300 text-gray-500 hover:bg-gray-100 rounded text-[11px] font-semibold tracking-wide transition-colors"
+                  >
+                    SOS
+                  </button>
+                  <button
+                    onClick={() => {
+                      const q = encodeURIComponent(`"${businessName || ''}" ${sosState} reviews`);
+                      window.open(`https://www.google.com/search?q=${q}`, '_blank', 'noopener,noreferrer');
+                    }}
+                    title="Google this business"
+                    className="px-1.5 py-0.5 border border-gray-300 text-gray-500 hover:bg-gray-100 rounded text-[11px] font-semibold tracking-wide transition-colors"
+                  >
+                    Google
+                  </button>
+
+              {/* SOS Popup */}
+              {sosOpen && (
+                <div className="absolute left-0 top-full mt-2 w-80 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 p-4">
+                  <div className="flex justify-end mb-1">
+                    <button onClick={() => setSosOpen(false)} className="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
+                  </div>
+
+                  {/* Business name preview */}
+                  <div className="bg-gray-50 rounded-lg px-3 py-2 mb-3">
+                    <p className="text-xs text-gray-500 mb-0.5">Business Name</p>
+                    <p className="text-sm font-semibold text-gray-900 truncate">{businessName || '(no business name)'}</p>
+                  </div>
+
+                  {/* State selector */}
+                  <div className="mb-3">
+                    <label className="block text-xs text-gray-600 mb-1">
+                      State
+                      {detectedState && (
+                        <span className="ml-1.5 text-blue-600 font-medium">(detected from phone: {detectedState})</span>
+                      )}
+                    </label>
+                    <select
+                      value={sosState}
+                      onChange={e => setSosState(e.target.value)}
+                      className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-400"
+                    >
+                      {US_STATES.map(s => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Action button */}
+                  <button
+                    onClick={handleSosSearch}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gray-900 hover:bg-gray-700 text-white rounded-lg text-sm font-semibold transition-colors"
+                  >
+                    {sosCopied ? (
+                      <>
+                        <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                        Copied! Opening {sosState} SOS…
+                      </>
+                    ) : (
+                      <>
+                        <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-4 10h6a2 2 0 002-2v-8a2 2 0 00-2-2h-6a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                        Copy Name &amp; Open {sosState} SOS
+                      </>
+                    )}
+                  </button>
+                  <p className="text-xs text-gray-400 mt-2 text-center">Business name is copied to clipboard so you can paste it directly into the search bar.</p>
+                </div>
+              )}
+                </div>
+              </div>
+              <p className="text-sm text-gray-500 mt-0.5">{leadName}</p>
+            </div>
           </div>
+
           <div className="flex gap-3">
             <button
               onClick={handleSave}
