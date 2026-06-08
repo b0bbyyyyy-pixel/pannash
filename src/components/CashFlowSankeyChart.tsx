@@ -190,6 +190,8 @@ const TREND_LINES = [
 
 function TrendChart({ txns }: { txns: TxnRow[] }) {
   const data = useMemo(() => buildMonthlyTrends(txns), [txns]);
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
+
   if (data.length < 2) return null;
 
   const W = 600, H = 160;
@@ -207,6 +209,9 @@ function TrendChart({ txns }: { txns: TxnRow[] }) {
   const polyline = (key: typeof TREND_LINES[0]['key']) =>
     data.map((d, i) => `${xPos(i)},${yPos(d[key])}`).join(' ');
 
+  const fmtFull = (n: number) =>
+    '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+
   const fmtK = (n: number) => {
     const abs = Math.abs(n);
     if (abs >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
@@ -214,7 +219,6 @@ function TrendChart({ txns }: { txns: TxnRow[] }) {
     return `$${Math.round(n)}`;
   };
 
-  // Y-axis ticks
   const ticks = 4;
   const yTicks = Array.from({ length: ticks + 1 }, (_, i) => minV + (i / ticks) * (maxV - minV));
 
@@ -231,45 +235,97 @@ function TrendChart({ txns }: { txns: TxnRow[] }) {
           ))}
         </div>
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" preserveAspectRatio="xMidYMid meet" className="overflow-visible">
-        {/* Y-axis gridlines + labels */}
-        {yTicks.map((v, i) => {
-          const y = yPos(v);
-          return (
-            <g key={i}>
-              <line x1={PAD.left} y1={y} x2={W - PAD.right} y2={y} stroke="rgba(255,255,255,0.07)" strokeWidth={1} />
-              <text x={PAD.left - 4} y={y} textAnchor="end" dominantBaseline="middle" fontSize={9} fill="rgba(255,255,255,0.3)">
-                {fmtK(v)}
+
+      <div className="relative">
+        <svg viewBox={`0 0 ${W} ${H}`} width="100%" preserveAspectRatio="xMidYMid meet" className="overflow-visible">
+          {/* Y-axis gridlines + labels */}
+          {yTicks.map((v, i) => {
+            const y = yPos(v);
+            return (
+              <g key={i}>
+                <line x1={PAD.left} y1={y} x2={W - PAD.right} y2={y} stroke="rgba(255,255,255,0.07)" strokeWidth={1} />
+                <text x={PAD.left - 4} y={y} textAnchor="end" dominantBaseline="middle" fontSize={9} fill="rgba(255,255,255,0.3)">
+                  {fmtK(v)}
+                </text>
+              </g>
+            );
+          })}
+
+          {/* Hover vertical line */}
+          {hoveredIdx !== null && (
+            <line
+              x1={xPos(hoveredIdx)} y1={PAD.top}
+              x2={xPos(hoveredIdx)} y2={PAD.top + chartH}
+              stroke="rgba(255,255,255,0.2)" strokeWidth={1} strokeDasharray="3,3"
+            />
+          )}
+
+          {/* Lines */}
+          {TREND_LINES.map(l => (
+            <polyline
+              key={l.key}
+              points={polyline(l.key)}
+              fill="none"
+              stroke={l.color}
+              strokeWidth={2}
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+          ))}
+
+          {/* Dots + x labels + invisible hit areas */}
+          {data.map((d, i) => (
+            <g key={d.month}>
+              {TREND_LINES.map(l => (
+                <circle
+                  key={l.key}
+                  cx={xPos(i)} cy={yPos(d[l.key])}
+                  r={hoveredIdx === i ? 5 : 3}
+                  fill={l.color}
+                  style={{ transition: 'r 0.1s' }}
+                />
+              ))}
+              <text x={xPos(i)} y={H - 4} textAnchor="middle" fontSize={9} fill="rgba(255,255,255,0.4)">
+                {d.label}
               </text>
+              {/* Wide invisible hit rect for easy hovering */}
+              <rect
+                x={xPos(i) - 20} y={PAD.top}
+                width={40} height={chartH + 8}
+                fill="transparent"
+                onMouseEnter={() => setHoveredIdx(i)}
+                onMouseLeave={() => setHoveredIdx(null)}
+                style={{ cursor: 'crosshair' }}
+              />
             </g>
+          ))}
+        </svg>
+
+        {/* Tooltip */}
+        {hoveredIdx !== null && (() => {
+          const d = data[hoveredIdx];
+          const isRight = hoveredIdx >= data.length / 2;
+          return (
+            <div
+              className="pointer-events-none absolute top-0 z-10 min-w-[160px] rounded-lg border border-white/10 bg-[#1e293b] px-3 py-2.5 shadow-xl text-xs"
+              style={{ left: isRight ? undefined : `calc(${(xPos(hoveredIdx) / W) * 100}% + 10px)`, right: isRight ? `calc(${((W - xPos(hoveredIdx)) / W) * 100}% + 10px)` : undefined }}
+            >
+              <div className="font-bold text-white mb-1.5">{d.label}</div>
+              {TREND_LINES.map(l => (
+                <div key={l.key} className="flex items-center justify-between gap-4 mb-0.5">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: l.color }} />
+                    <span className="text-white/50">{l.label}</span>
+                  </div>
+                  <span className="font-semibold tabular-nums" style={{ color: l.color }}>
+                    {fmtFull(d[l.key])}
+                  </span>
+                </div>
+              ))}
+            </div>
           );
-        })}
-
-        {/* Lines */}
-        {TREND_LINES.map(l => (
-          <polyline
-            key={l.key}
-            points={polyline(l.key)}
-            fill="none"
-            stroke={l.color}
-            strokeWidth={2}
-            strokeLinejoin="round"
-            strokeLinecap="round"
-          />
-        ))}
-
-        {/* Dots + x labels */}
-        {data.map((d, i) => (
-          <g key={d.month}>
-            {TREND_LINES.map(l => (
-              <circle key={l.key} cx={xPos(i)} cy={yPos(d[l.key])} r={3} fill={l.color} />
-            ))}
-            <text x={xPos(i)} y={H - 4} textAnchor="middle" fontSize={9} fill="rgba(255,255,255,0.4)">
-              {d.label}
-            </text>
-          </g>
-        ))}
-      </svg>
+        })()}
+      </div>
     </div>
   );
 }
