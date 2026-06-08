@@ -14,6 +14,7 @@ interface UnderwritingData {
   month1Revenue: number;
   month2Revenue: number;
   month3Revenue: number;
+  month4Revenue: number;
   avgDailyBalance: number;
   endingBalance: number;
   nsfCount: number;
@@ -141,6 +142,7 @@ const DEFAULT_DATA: UnderwritingData = {
   month1Revenue: 0,
   month2Revenue: 0,
   month3Revenue: 0,
+  month4Revenue: 0,
   avgDailyBalance: 0,
   endingBalance: 0,
   nsfCount: 0,
@@ -499,6 +501,7 @@ export default function UnderwritingSuite({
   const month1Revenue = Number(data.month1Revenue) || 0;
   const month2Revenue = Number(data.month2Revenue) || 0;
   const month3Revenue = Number(data.month3Revenue) || 0;
+  const month4Revenue = Number(data.month4Revenue) || 0;
   const avgDailyBalance = Number(data.avgDailyBalance) || 0;
   const endingBalance = Number(data.endingBalance) || 0;
   const nsfCount = Number(data.nsfCount) || 0;
@@ -507,12 +510,18 @@ export default function UnderwritingSuite({
   const otherMCAMonthlyPayment = Number(data.otherMCAMonthlyPayment) || 0;
   const otherMCAOutstandingBalance = Number(data.otherMCAOutstandingBalance) || 0;
   
-  // Calculate average monthly revenue
-  const avgMonthlyRevenue = (month1Revenue + month2Revenue + month3Revenue) / 3;
+  // Calculate average monthly revenue (only count months that have data)
+  const revenueMonthValues = [month1Revenue, month2Revenue, month3Revenue, month4Revenue].filter((r) => r > 0);
+  const avgMonthlyRevenue = revenueMonthValues.length > 0
+    ? (month1Revenue + month2Revenue + month3Revenue + month4Revenue) / revenueMonthValues.length
+    : 0;
   // Underwriting rule of thumb: advance size is tied to the *weakest* month, not the average
-  const revenueMonthValues = [month1Revenue, month2Revenue, month3Revenue].filter((r) => r > 0);
   const lowestMonthlyRevenue = revenueMonthValues.length > 0 ? Math.min(...revenueMonthValues) : 0;
-  const revenueStability = month1Revenue > 0 && month2Revenue > 0 && month3Revenue > 0 
+  const allFour = month1Revenue > 0 && month2Revenue > 0 && month3Revenue > 0 && month4Revenue > 0;
+  const allThree = month1Revenue > 0 && month2Revenue > 0 && month3Revenue > 0;
+  const revenueStability = allFour
+    ? 1 - (Math.abs(month1Revenue - month2Revenue) + Math.abs(month2Revenue - month3Revenue) + Math.abs(month3Revenue - month4Revenue)) / (month1Revenue + month2Revenue + month3Revenue + month4Revenue)
+    : allThree
     ? 1 - (Math.abs(month1Revenue - month2Revenue) + Math.abs(month2Revenue - month3Revenue)) / (month1Revenue + month2Revenue + month3Revenue)
     : 0.5;
   
@@ -1196,7 +1205,7 @@ export default function UnderwritingSuite({
 
             {/* Bank Statement Data */}
             <div className="mb-6">
-              <h3 className="text-sm font-medium text-gray-700 mb-3">Bank Statements (Last 3 Months)</h3>
+              <h3 className="text-sm font-medium text-gray-700 mb-3">Bank Statements (Last 4 Months)</h3>
               <div className="space-y-3">
                 <div>
                   <div className="flex justify-between items-center mb-1">
@@ -1258,6 +1267,26 @@ export default function UnderwritingSuite({
                   </div>
                 </div>
                 
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-xs text-gray-600">Month 4 Revenue</label>
+                    <span className="text-sm font-semibold text-gray-900">${Math.round(data.month4Revenue || 0).toLocaleString()}</span>
+                  </div>
+                  <input
+                    type="range"
+                    value={data.month4Revenue || 0}
+                    onChange={(e) => setData({ ...data, month4Revenue: Number(e.target.value) })}
+                    min="0"
+                    max="500000"
+                    step="500"
+                    className="w-full h-2 bg-blue-100 rounded-lg appearance-none cursor-pointer accent-[#5a7fc7]"
+                  />
+                  <div className="flex justify-between text-xs text-gray-500 mt-1">
+                    <span>$0</span>
+                    <span>$500k</span>
+                  </div>
+                </div>
+
                 <div className="pt-2 border-t border-gray-300">
                   <div className="text-xs text-gray-600 mb-1">Average Monthly Revenue</div>
                   <div className="text-lg font-bold text-gray-900">

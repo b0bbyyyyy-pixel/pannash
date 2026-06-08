@@ -146,6 +146,134 @@ function buildFlow(txns: TxnRow[], monthFilter: string | null): FlowData {
   };
 }
 
+// ─── Monthly trend data builder ───────────────────────────────────────────────
+
+type MonthTrend = {
+  month: string;       // "YYYY-MM"
+  label: string;       // "Feb 26"
+  revenue: number;
+  avgDailyBalance: number;
+  endingBalance: number;
+};
+
+function buildMonthlyTrends(txns: TxnRow[]): MonthTrend[] {
+  const byMonth: Record<string, TxnRow[]> = {};
+  for (const t of txns) {
+    const m = t.date.slice(0, 7);
+    (byMonth[m] = byMonth[m] ?? []).push(t);
+  }
+  return Object.keys(byMonth).sort().map((m) => {
+    const rows = byMonth[m];
+    const revenue = rows.filter(r => r.amount > 0).reduce((s, r) => s + r.amount, 0);
+    const balRows = rows.filter(r => r.balance != null && isFinite(r.balance as number));
+    const avgDailyBalance = balRows.length
+      ? balRows.reduce((s, r) => s + (r.balance as number), 0) / balRows.length
+      : 0;
+    const endingBalance = balRows.length ? (balRows[balRows.length - 1].balance as number) : 0;
+    return {
+      month: m,
+      label: new Date(m + '-15').toLocaleString('en-US', { month: 'short', year: '2-digit' }),
+      revenue,
+      avgDailyBalance,
+      endingBalance,
+    };
+  });
+}
+
+// ─── Trend line chart ─────────────────────────────────────────────────────────
+
+const TREND_LINES = [
+  { key: 'revenue'         as const, label: 'Revenue',           color: '#10b981' },
+  { key: 'avgDailyBalance' as const, label: 'Avg Daily Balance', color: '#818cf8' },
+  { key: 'endingBalance'   as const, label: 'Ending Balance',    color: '#f59e0b' },
+];
+
+function TrendChart({ txns }: { txns: TxnRow[] }) {
+  const data = useMemo(() => buildMonthlyTrends(txns), [txns]);
+  if (data.length < 2) return null;
+
+  const W = 600, H = 160;
+  const PAD = { top: 20, bottom: 28, left: 56, right: 16 };
+  const chartW = W - PAD.left - PAD.right;
+  const chartH = H - PAD.top - PAD.bottom;
+
+  const allVals = TREND_LINES.flatMap(l => data.map(d => d[l.key]));
+  const minV = Math.min(0, ...allVals);
+  const maxV = Math.max(...allVals) * 1.05 || 1;
+
+  const xPos = (i: number) => PAD.left + (i / (data.length - 1)) * chartW;
+  const yPos = (v: number) => PAD.top + chartH - ((v - minV) / (maxV - minV)) * chartH;
+
+  const polyline = (key: typeof TREND_LINES[0]['key']) =>
+    data.map((d, i) => `${xPos(i)},${yPos(d[key])}`).join(' ');
+
+  const fmtK = (n: number) => {
+    const abs = Math.abs(n);
+    if (abs >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+    if (abs >= 1_000) return `$${Math.round(n / 1_000)}k`;
+    return `$${Math.round(n)}`;
+  };
+
+  // Y-axis ticks
+  const ticks = 4;
+  const yTicks = Array.from({ length: ticks + 1 }, (_, i) => minV + (i / ticks) * (maxV - minV));
+
+  return (
+    <div className="px-4 pb-4 border-t border-white/10 pt-3">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[11px] font-bold uppercase tracking-wide text-white/40">Month-over-Month Trends</span>
+        <div className="flex items-center gap-3">
+          {TREND_LINES.map(l => (
+            <div key={l.key} className="flex items-center gap-1">
+              <div className="w-5 h-0.5 rounded" style={{ background: l.color }} />
+              <span className="text-[10px] text-white/50">{l.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" preserveAspectRatio="xMidYMid meet" className="overflow-visible">
+        {/* Y-axis gridlines + labels */}
+        {yTicks.map((v, i) => {
+          const y = yPos(v);
+          return (
+            <g key={i}>
+              <line x1={PAD.left} y1={y} x2={W - PAD.right} y2={y} stroke="rgba(255,255,255,0.07)" strokeWidth={1} />
+              <text x={PAD.left - 4} y={y} textAnchor="end" dominantBaseline="middle" fontSize={9} fill="rgba(255,255,255,0.3)">
+                {fmtK(v)}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Lines */}
+        {TREND_LINES.map(l => (
+          <polyline
+            key={l.key}
+            points={polyline(l.key)}
+            fill="none"
+            stroke={l.color}
+            strokeWidth={2}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+        ))}
+
+        {/* Dots + x labels */}
+        {data.map((d, i) => (
+          <g key={d.month}>
+            {TREND_LINES.map(l => (
+              <circle key={l.key} cx={xPos(i)} cy={yPos(d[l.key])} r={3} fill={l.color} />
+            ))}
+            <text x={xPos(i)} y={H - 4} textAnchor="middle" fontSize={9} fill="rgba(255,255,255,0.4)">
+              {d.label}
+            </text>
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const fmt     = (n: number) => '$' + Math.abs(n).toLocaleString('en-US', { maximumFractionDigits: 0 });
@@ -464,6 +592,8 @@ export default function CashFlowSankeyChart({ transactions }: { transactions: Tx
             showPct={showPct} wrapRef={wrapRef}
           />
         </div>
+
+        <TrendChart txns={transactions} />
       </div>
 
       {/* ── Full-screen modal ─────────────────────────────────────────────── */}
@@ -515,6 +645,7 @@ export default function CashFlowSankeyChart({ transactions }: { transactions: Tx
                 svgWidth={modalWidth} chartH={Math.max(500, (nodes.length - 1) * 48)}
                 showPct={showPct} wrapRef={modalWrapRef}
               />
+              <TrendChart txns={transactions} />
             </div>
 
             {/* Legend */}
