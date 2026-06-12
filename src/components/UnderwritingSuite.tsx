@@ -352,6 +352,89 @@ export default function UnderwritingSuite({
   })();
   const [sosState, setSosState] = useState<string>(detectedState ?? 'FL');
 
+  // ── Pitch Script popup ───────────────────────────────────────────────────────
+  const DEFAULT_PITCH_TEMPLATES = [
+    {
+      id: 'opening',
+      name: 'Opening the Offer',
+      body: `Hey {contactName}, this is [Your Name] calling. How are you doing today?
+
+Great — so I wanted to reach out because I've been working on putting together some funding options for {businessName}, and I actually have some good news.
+
+I've got an offer on the table for {offerAmount} from {lenderName}. The factor rate is {factorRate}, which works out to a total payback of {totalRepayment}, and your daily payment would be around {dailyPayment}.
+
+Based on your average monthly revenue of {avgRevenue}, this leaves you with plenty of room to operate. Does that sound like something you'd want to move forward with?`,
+    },
+    {
+      id: 'followup',
+      name: 'Following Up on Sent Offer',
+      body: `Hey {contactName}, it's [Your Name] again — just following up on the offer I sent over for {businessName}.
+
+I know you're busy, so I'll keep this quick. We have {offerAmount} available through {lenderName} at a {factorRate} factor rate. Daily payment comes out to about {dailyPayment}.
+
+I want to make sure you have everything you need to make a decision. Do you have any questions about the terms, or is there anything holding you back?`,
+    },
+    {
+      id: 'counter',
+      name: 'Negotiating / Counter Offer',
+      body: `I hear you, {contactName} — and I appreciate you being straight with me.
+
+Let me see what I can do on my end. The offer from {lenderName} is at {offerAmount} with a {factorRate} factor rate, and I want to make sure this works for {businessName}.
+
+If we can move forward today, I may be able to work on getting the terms a bit more favorable for you. What would make this a yes for you right now?`,
+    },
+    {
+      id: 'closing',
+      name: 'Closing the Deal',
+      body: `Awesome, {contactName} — I'm glad we could make this work.
+
+Just to confirm the details: {offerAmount} through {lenderName}, factor rate of {factorRate}, total payback of {totalRepayment}, and your daily payment is {dailyPayment}.
+
+I'm going to send over the contract to {businessName} right now. Once you sign, funding typically hits within 24–48 hours. Does the email address I have on file work for sending those docs?`,
+    },
+    {
+      id: 'objection',
+      name: 'Handling "I Need to Think About It"',
+      body: `Totally understand, {contactName} — this is a big decision and I respect that.
+
+Can I ask, is there a specific part of the offer you're unsure about? The {offerAmount} from {lenderName} at a {factorRate} rate — is it the payment amount, the factor rate, or something else?
+
+I ask because I want to make sure you have all the information you need. And honestly, offers like this don't stay on the table forever — {lenderName} can pull this if we don't move within the next day or two. I'd hate to see {businessName} miss out.`,
+    },
+  ];
+
+  type PitchTemplate = { id: string; name: string; body: string };
+  const [showPitchModal, setShowPitchModal] = useState(false);
+  const [pitchTemplates, setPitchTemplates] = useState<PitchTemplate[]>(DEFAULT_PITCH_TEMPLATES);
+  const [selectedPitchId, setSelectedPitchId] = useState<string>('opening');
+  const [editingPitchId, setEditingPitchId] = useState<string | null>(null);
+  const [pitchEditName, setPitchEditName] = useState('');
+  const [pitchEditBody, setPitchEditBody] = useState('');
+  const [pitchCopied, setPitchCopied] = useState(false);
+  const [showNewPitchForm, setShowNewPitchForm] = useState(false);
+  const [newPitchName, setNewPitchName] = useState('');
+  const [newPitchBody, setNewPitchBody] = useState('');
+
+  const resolvePitchScript = (body: string) => {
+    const offer = selectedOffer2;
+    const amt = offer?.amount ?? 0;
+    const fr = offer?.factorRate ?? 1;
+    const totalRepay = amt * fr;
+    const dailyPay = offer?.termLength && offer.termLength > 0
+      ? totalRepay / offer.termLength
+      : totalRepay / 250;
+    const fmt = (n: number) => '$' + Math.round(n).toLocaleString();
+    return body
+      .replace(/\{contactName\}/g, leadName || 'there')
+      .replace(/\{businessName\}/g, businessName || 'your business')
+      .replace(/\{offerAmount\}/g, fmt(amt))
+      .replace(/\{lenderName\}/g, offer?.lenderName || '[Lender]')
+      .replace(/\{factorRate\}/g, fr.toFixed(2))
+      .replace(/\{totalRepayment\}/g, fmt(totalRepay))
+      .replace(/\{dailyPayment\}/g, fmt(dailyPay))
+      .replace(/\{avgRevenue\}/g, fmt(avgMonthlyRevenue));
+  };
+
   const handleSosSearch = () => {
     if (businessName) {
       navigator.clipboard.writeText(businessName).catch(() => {});
@@ -407,6 +490,7 @@ export default function UnderwritingSuite({
   
   // Selected offer for negotiation
   const [selectedOfferId, setSelectedOfferId] = useState<string | null>(initialData?.selectedOfferId || null);
+  const selectedOffer2 = actualOffers.find(o => o.id === selectedOfferId) ?? actualOffers[0] ?? null;
   const [adjustedAmount, setAdjustedAmount] = useState<number>(initialData?.adjustedAmount || 0);
   const [negotiationAddedPoints, setNegotiationAddedPoints] = useState(() => {
     const cap = COMMISSION_ADDED_POINTS_MAX;
@@ -1019,6 +1103,7 @@ export default function UnderwritingSuite({
   };
 
   return (
+    <>
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-2xl w-full max-w-[1600px] h-[90vh] flex flex-col">
         {/* Header */}
@@ -1663,7 +1748,15 @@ export default function UnderwritingSuite({
 
           {/* Right Panel - Actual Offers Received */}
           <div className="w-96 border-l border-gray-200 p-6 overflow-y-auto bg-gray-50">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Actual Offers Received</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-gray-900">Actual Offers Received</h2>
+              <button
+                onClick={() => setShowPitchModal(true)}
+                className="px-3 py-1.5 bg-white hover:bg-gray-50 text-gray-800 border border-gray-300 rounded-md text-sm font-medium transition-colors"
+              >
+                Pitch
+              </button>
+            </div>
             
             {/* Saved Offers List - Now at top */}
             {actualOffers.length > 0 && (
@@ -2539,5 +2632,169 @@ export default function UnderwritingSuite({
         </div>
       </div>
     </div>
+
+    {/* ── Pitch Script Modal ──────────────────────────────────────────────── */}
+    {showPitchModal && (
+      <div
+        className="fixed inset-0 bg-black/60 flex items-center justify-center z-[70] p-4"
+        onClick={() => { setShowPitchModal(false); setEditingPitchId(null); setShowNewPitchForm(false); }}
+      >
+        <div
+          className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
+          onClick={e => e.stopPropagation()}
+        >
+          {/* Modal Header */}
+          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">Pitch Scripts</h2>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {selectedOffer2
+                  ? `Using: ${selectedOffer2.lenderName} — $${Math.round(selectedOffer2.amount).toLocaleString()} @ ${selectedOffer2.factorRate}x`
+                  : 'No offer selected — select an offer in the panel to populate deal values'}
+              </p>
+            </div>
+            <button onClick={() => { setShowPitchModal(false); setEditingPitchId(null); setShowNewPitchForm(false); }}
+              className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+          </div>
+
+          <div className="flex flex-1 overflow-hidden">
+            {/* Left — template list */}
+            <div className="w-56 border-r border-gray-200 flex flex-col bg-gray-50">
+              <div className="flex-1 overflow-y-auto py-2">
+                {pitchTemplates.map(t => (
+                  <button
+                    key={t.id}
+                    onClick={() => { setSelectedPitchId(t.id); setEditingPitchId(null); setShowNewPitchForm(false); }}
+                    className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${selectedPitchId === t.id ? 'bg-[#5a7fc7] text-white font-semibold' : 'text-gray-700 hover:bg-gray-100'}`}
+                  >
+                    {t.name}
+                  </button>
+                ))}
+              </div>
+              <div className="p-3 border-t border-gray-200">
+                <button
+                  onClick={() => { setShowNewPitchForm(true); setEditingPitchId(null); setNewPitchName(''); setNewPitchBody(''); }}
+                  className="w-full px-3 py-1.5 border border-dashed border-gray-300 text-gray-500 hover:border-[#5a7fc7] hover:text-[#5a7fc7] rounded-md text-xs font-medium transition-colors"
+                >
+                  + New Template
+                </button>
+              </div>
+            </div>
+
+            {/* Right — script view / edit */}
+            <div className="flex-1 flex flex-col overflow-hidden">
+              {showNewPitchForm ? (
+                <div className="flex-1 overflow-y-auto p-5 space-y-3">
+                  <h3 className="font-semibold text-gray-800 text-sm">New Template</h3>
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">Template Name</label>
+                    <input value={newPitchName} onChange={e => setNewPitchName(e.target.value)}
+                      placeholder="e.g., Renewal Pitch"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]" />
+                  </div>
+                  <div className="flex-1">
+                    <label className="block text-xs text-gray-600 mb-1">Script Body
+                      <span className="ml-2 text-gray-400 font-normal">Use: {'{contactName}'} {'{businessName}'} {'{offerAmount}'} {'{lenderName}'} {'{factorRate}'} {'{totalRepayment}'} {'{dailyPayment}'} {'{avgRevenue}'}</span>
+                    </label>
+                    <textarea value={newPitchBody} onChange={e => setNewPitchBody(e.target.value)}
+                      rows={12} placeholder="Write your script here..."
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7] resize-none" />
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        if (!newPitchName.trim() || !newPitchBody.trim()) return;
+                        const newT: PitchTemplate = { id: Date.now().toString(), name: newPitchName.trim(), body: newPitchBody.trim() };
+                        setPitchTemplates(prev => [...prev, newT]);
+                        setSelectedPitchId(newT.id);
+                        setShowNewPitchForm(false);
+                      }}
+                      className="px-4 py-2 bg-[#5a7fc7] text-white rounded-md text-sm font-medium hover:bg-[#4a6fb7]"
+                    >Save Template</button>
+                    <button onClick={() => setShowNewPitchForm(false)}
+                      className="px-4 py-2 border border-gray-300 text-gray-600 rounded-md text-sm hover:bg-gray-50">Cancel</button>
+                  </div>
+                </div>
+              ) : editingPitchId ? (() => {
+                const tpl = pitchTemplates.find(t => t.id === editingPitchId)!;
+                return (
+                  <div className="flex-1 overflow-y-auto p-5 space-y-3">
+                    <h3 className="font-semibold text-gray-800 text-sm">Edit Template</h3>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Template Name</label>
+                      <input value={pitchEditName} onChange={e => setPitchEditName(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]" />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Script Body</label>
+                      <textarea value={pitchEditBody} onChange={e => setPitchEditBody(e.target.value)}
+                        rows={14} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7] resize-none" />
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          setPitchTemplates(prev => prev.map(t => t.id === editingPitchId ? { ...t, name: pitchEditName, body: pitchEditBody } : t));
+                          setEditingPitchId(null);
+                        }}
+                        className="px-4 py-2 bg-[#5a7fc7] text-white rounded-md text-sm font-medium hover:bg-[#4a6fb7]"
+                      >Save Changes</button>
+                      <button onClick={() => setEditingPitchId(null)}
+                        className="px-4 py-2 border border-gray-300 text-gray-600 rounded-md text-sm hover:bg-gray-50">Cancel</button>
+                      <button
+                        onClick={() => {
+                          setPitchTemplates(prev => {
+                            const remaining = prev.filter(t => t.id !== editingPitchId);
+                            if (remaining.length > 0) setSelectedPitchId(remaining[0].id);
+                            return remaining;
+                          });
+                          setEditingPitchId(null);
+                        }}
+                        className="ml-auto px-4 py-2 text-red-500 hover:text-red-700 text-sm"
+                      >Delete</button>
+                    </div>
+                  </div>
+                );
+              })() : (() => {
+                const tpl = pitchTemplates.find(t => t.id === selectedPitchId) ?? pitchTemplates[0];
+                if (!tpl) return null;
+                const resolved = resolvePitchScript(tpl.body);
+                return (
+                  <div className="flex-1 flex flex-col overflow-hidden">
+                    {/* Script display */}
+                    <div className="flex-1 overflow-y-auto p-5">
+                      <div className="whitespace-pre-wrap text-sm text-gray-800 leading-relaxed bg-gray-50 border border-gray-200 rounded-lg p-4">
+                        {resolved}
+                      </div>
+                    </div>
+                    {/* Action bar */}
+                    <div className="flex items-center gap-2 px-5 py-3 border-t border-gray-200 bg-white">
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(resolved).catch(() => {});
+                          setPitchCopied(true);
+                          setTimeout(() => setPitchCopied(false), 2000);
+                        }}
+                        className="flex items-center gap-1.5 px-4 py-2 bg-[#5a7fc7] hover:bg-[#4a6fb7] text-white rounded-md text-sm font-medium transition-colors"
+                      >
+                        {pitchCopied ? (
+                          <><svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>Copied!</>
+                        ) : (
+                          <><svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-4 10h6a2 2 0 002-2v-8a2 2 0 00-2-2h-6a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>Copy Script</>
+                        )}
+                      </button>
+                      <button
+                        onClick={() => { setPitchEditName(tpl.name); setPitchEditBody(tpl.body); setEditingPitchId(tpl.id); }}
+                        className="px-4 py-2 border border-gray-300 text-gray-600 hover:bg-gray-50 rounded-md text-sm font-medium transition-colors"
+                      >Edit Template</button>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
