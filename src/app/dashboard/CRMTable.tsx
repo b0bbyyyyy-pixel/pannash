@@ -1335,9 +1335,9 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     if (selectedText) {
       let formattedText = '';
       if (format === 'bold') {
-        formattedText = text.substring(0, start) + `**${selectedText}**` + text.substring(end);
+        formattedText = text.substring(0, start) + `<strong>${selectedText}</strong>` + text.substring(end);
       } else if (format === 'italic') {
-        formattedText = text.substring(0, start) + `*${selectedText}*` + text.substring(end);
+        formattedText = text.substring(0, start) + `<em>${selectedText}</em>` + text.substring(end);
       }
 
       setShowExpandedTextModal({ ...showExpandedTextModal, value: formattedText });
@@ -1345,7 +1345,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
       // Restore cursor position after formatting
       setTimeout(() => {
         if (textarea) {
-          const newCursorPos = start + (format === 'bold' ? 2 : 1) + selectedText.length;
+          const newCursorPos = start + (format === 'bold' ? 8 : 4) + selectedText.length;
           textarea.focus();
           textarea.setSelectionRange(newCursorPos, newCursorPos);
         }
@@ -1390,12 +1390,16 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     return formatted;
   };
 
-  // Strip markdown syntax for plain text display (used when truncating)
+  // Strip markdown/HTML syntax for plain text display (used when truncating)
   const stripMarkdown = (text: string) => {
     if (!text) return text;
     
-    // Remove **bold** markers
-    let plain = text.replace(/\*\*([^*]+)\*\*/g, '$1');
+    // Remove <strong> and <em> HTML tags
+    let plain = text.replace(/<strong>(.*?)<\/strong>/gi, '$1');
+    plain = plain.replace(/<em>(.*?)<\/em>/gi, '$1');
+    
+    // Also remove legacy **bold** markers
+    plain = plain.replace(/\*\*([^*]+)\*\*/g, '$1');
     
     // Remove *italic* markers
     plain = plain.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '$1');
@@ -2937,14 +2941,14 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
               <button
                 onClick={() => applyFormatting('bold')}
                 className="px-3 py-1.5 border border-[#e5e5e5] rounded text-sm font-bold hover:bg-[#f5f5f5] transition-colors"
-                title="Bold (wrap with **text**)"
+                title="Bold — select text then click B"
               >
                 B
               </button>
               <button
                 onClick={() => applyFormatting('italic')}
                 className="px-3 py-1.5 border border-[#e5e5e5] rounded text-sm italic hover:bg-[#f5f5f5] transition-colors"
-                title="Italic (wrap with *text*)"
+                title="Italic — select text then click I"
               >
                 I
               </button>
@@ -2959,7 +2963,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
               value={showExpandedTextModal.value}
               onChange={(e) => setShowExpandedTextModal({ ...showExpandedTextModal, value: e.target.value })}
               className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm min-h-[200px] resize-y font-mono"
-              placeholder={`Enter ${showExpandedTextModal.label.toLowerCase()} here...\n\nFormatting:\n**bold text**\n*italic text*\nURLs are automatically clickable`}
+              placeholder={`Enter ${showExpandedTextModal.label.toLowerCase()} here...\n\nSelect text and click B or I to format.\nURLs are automatically clickable.`}
               autoFocus
             />
             

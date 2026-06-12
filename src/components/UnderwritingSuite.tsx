@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { BankStatementAnalysisSnapshot } from '@/lib/bankAnalyzer';
 import BankStatementAnalyzerPanel from '@/components/BankStatementAnalyzerPanel';
 
@@ -353,60 +353,11 @@ export default function UnderwritingSuite({
   const [sosState, setSosState] = useState<string>(detectedState ?? 'FL');
 
   // ── Pitch Script popup ───────────────────────────────────────────────────────
-  const DEFAULT_PITCH_TEMPLATES = [
-    {
-      id: 'opening',
-      name: 'Opening the Offer',
-      body: `Hey {contactName}, this is [Your Name] calling. How are you doing today?
-
-Great — so I wanted to reach out because I've been working on putting together some funding options for {businessName}, and I actually have some good news.
-
-I've got an offer on the table for {offerAmount} from {lenderName}. The factor rate is {factorRate}, which works out to a total payback of {totalRepayment}, and your daily payment would be around {dailyPayment}.
-
-Based on your average monthly revenue of {avgRevenue}, this leaves you with plenty of room to operate. Does that sound like something you'd want to move forward with?`,
-    },
-    {
-      id: 'followup',
-      name: 'Following Up on Sent Offer',
-      body: `Hey {contactName}, it's [Your Name] again — just following up on the offer I sent over for {businessName}.
-
-I know you're busy, so I'll keep this quick. We have {offerAmount} available through {lenderName} at a {factorRate} factor rate. Daily payment comes out to about {dailyPayment}.
-
-I want to make sure you have everything you need to make a decision. Do you have any questions about the terms, or is there anything holding you back?`,
-    },
-    {
-      id: 'counter',
-      name: 'Negotiating / Counter Offer',
-      body: `I hear you, {contactName} — and I appreciate you being straight with me.
-
-Let me see what I can do on my end. The offer from {lenderName} is at {offerAmount} with a {factorRate} factor rate, and I want to make sure this works for {businessName}.
-
-If we can move forward today, I may be able to work on getting the terms a bit more favorable for you. What would make this a yes for you right now?`,
-    },
-    {
-      id: 'closing',
-      name: 'Closing the Deal',
-      body: `Awesome, {contactName} — I'm glad we could make this work.
-
-Just to confirm the details: {offerAmount} through {lenderName}, factor rate of {factorRate}, total payback of {totalRepayment}, and your daily payment is {dailyPayment}.
-
-I'm going to send over the contract to {businessName} right now. Once you sign, funding typically hits within 24–48 hours. Does the email address I have on file work for sending those docs?`,
-    },
-    {
-      id: 'objection',
-      name: 'Handling "I Need to Think About It"',
-      body: `Totally understand, {contactName} — this is a big decision and I respect that.
-
-Can I ask, is there a specific part of the offer you're unsure about? The {offerAmount} from {lenderName} at a {factorRate} rate — is it the payment amount, the factor rate, or something else?
-
-I ask because I want to make sure you have all the information you need. And honestly, offers like this don't stay on the table forever — {lenderName} can pull this if we don't move within the next day or two. I'd hate to see {businessName} miss out.`,
-    },
-  ];
-
   type PitchTemplate = { id: string; name: string; body: string };
   const [showPitchModal, setShowPitchModal] = useState(false);
-  const [pitchTemplates, setPitchTemplates] = useState<PitchTemplate[]>(DEFAULT_PITCH_TEMPLATES);
-  const [selectedPitchId, setSelectedPitchId] = useState<string>('opening');
+  const [pitchTemplates, setPitchTemplates] = useState<PitchTemplate[]>([]);
+  const [pitchLoading, setPitchLoading] = useState(false);
+  const [selectedPitchId, setSelectedPitchId] = useState<string | null>(null);
   const [editingPitchId, setEditingPitchId] = useState<string | null>(null);
   const [pitchEditName, setPitchEditName] = useState('');
   const [pitchEditBody, setPitchEditBody] = useState('');
@@ -414,6 +365,44 @@ I ask because I want to make sure you have all the information you need. And hon
   const [showNewPitchForm, setShowNewPitchForm] = useState(false);
   const [newPitchName, setNewPitchName] = useState('');
   const [newPitchBody, setNewPitchBody] = useState('');
+  const [pitchSaving, setPitchSaving] = useState(false);
+  const pitchEditRef = useRef<HTMLTextAreaElement>(null);
+  const pitchNewRef = useRef<HTMLTextAreaElement>(null);
+
+  // Load pitch templates from the server once
+  useEffect(() => {
+    const load = async () => {
+      setPitchLoading(true);
+      try {
+        const res = await fetch('/api/pitch-templates', { credentials: 'include' });
+        if (res.ok) {
+          const data = await res.json();
+          const tpls: PitchTemplate[] = data.templates || [];
+          setPitchTemplates(tpls);
+          if (tpls.length > 0) setSelectedPitchId(tpls[0].id);
+        }
+      } catch { /* silently ignore */ }
+      setPitchLoading(false);
+    };
+    load();
+  }, []);
+
+  const insertPitchPlaceholder = (
+    ref: React.RefObject<HTMLTextAreaElement | null>,
+    setter: (v: string) => void,
+    current: string,
+    placeholder: string
+  ) => {
+    const el = ref.current;
+    const tag = `{{${placeholder}}}`;
+    if (!el) { setter(current + tag); return; }
+    const start = el.selectionStart;
+    setter(current.substring(0, start) + tag + current.substring(start));
+    setTimeout(() => {
+      el.focus();
+      el.setSelectionRange(start + tag.length, start + tag.length);
+    }, 0);
+  };
 
   const resolvePitchScript = (body: string) => {
     const offer = selectedOffer2;
@@ -425,14 +414,21 @@ I ask because I want to make sure you have all the information you need. And hon
       : totalRepay / 250;
     const fmt = (n: number) => '$' + Math.round(n).toLocaleString();
     return body
-      .replace(/\{contactName\}/g, leadName || 'there')
-      .replace(/\{businessName\}/g, businessName || 'your business')
-      .replace(/\{offerAmount\}/g, fmt(amt))
-      .replace(/\{lenderName\}/g, offer?.lenderName || '[Lender]')
-      .replace(/\{factorRate\}/g, fr.toFixed(2))
-      .replace(/\{totalRepayment\}/g, fmt(totalRepay))
-      .replace(/\{dailyPayment\}/g, fmt(dailyPay))
-      .replace(/\{avgRevenue\}/g, fmt(avgMonthlyRevenue));
+      .replace(/\{\{contactName\}\}/g, leadName || 'there')
+      .replace(/\{\{name\}\}/g, leadName || 'there')
+      .replace(/\{\{businessName\}\}/g, businessName || 'your business')
+      .replace(/\{\{company\}\}/g, businessName || 'your business')
+      .replace(/\{\{offerAmount\}\}/g, fmt(amt))
+      .replace(/\{\{offer_amount\}\}/g, fmt(amt))
+      .replace(/\{\{lenderName\}\}/g, offer?.lenderName || '[Lender]')
+      .replace(/\{\{factorRate\}\}/g, fr.toFixed(2))
+      .replace(/\{\{totalRepayment\}\}/g, fmt(totalRepay))
+      .replace(/\{\{offer_total_repayment\}\}/g, fmt(totalRepay))
+      .replace(/\{\{dailyPayment\}\}/g, fmt(dailyPay))
+      .replace(/\{\{offer_payment\}\}/g, fmt(dailyPay))
+      .replace(/\{\{avgRevenue\}\}/g, fmt(avgMonthlyRevenue))
+      .replace(/\{\{phone\}\}/g, phone || '')
+      .replace(/\{\{sosState\}\}/g, sosState || '');
   };
 
   const handleSosSearch = () => {
@@ -2650,7 +2646,7 @@ I ask because I want to make sure you have all the information you need. And hon
               <p className="text-xs text-gray-500 mt-0.5">
                 {selectedOffer2
                   ? `Using: ${selectedOffer2.lenderName} — $${Math.round(selectedOffer2.amount).toLocaleString()} @ ${selectedOffer2.factorRate}x`
-                  : 'No offer selected — select an offer in the panel to populate deal values'}
+                  : 'No offer selected — select an offer to populate deal values'}
               </p>
             </div>
             <button onClick={() => { setShowPitchModal(false); setEditingPitchId(null); setShowNewPitchForm(false); }}
@@ -2661,7 +2657,11 @@ I ask because I want to make sure you have all the information you need. And hon
             {/* Left — template list */}
             <div className="w-56 border-r border-gray-200 flex flex-col bg-gray-50">
               <div className="flex-1 overflow-y-auto py-2">
-                {pitchTemplates.map(t => (
+                {pitchLoading ? (
+                  <p className="px-4 py-3 text-xs text-gray-400">Loading…</p>
+                ) : pitchTemplates.length === 0 ? (
+                  <p className="px-4 py-3 text-xs text-gray-400">No templates yet. Create one below.</p>
+                ) : pitchTemplates.map(t => (
                   <button
                     key={t.id}
                     onClick={() => { setSelectedPitchId(t.id); setEditingPitchId(null); setShowNewPitchForm(false); }}
@@ -2692,31 +2692,61 @@ I ask because I want to make sure you have all the information you need. And hon
                       placeholder="e.g., Renewal Pitch"
                       className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]" />
                   </div>
-                  <div className="flex-1">
-                    <label className="block text-xs text-gray-600 mb-1">Script Body
-                      <span className="ml-2 text-gray-400 font-normal">Use: {'{contactName}'} {'{businessName}'} {'{offerAmount}'} {'{lenderName}'} {'{factorRate}'} {'{totalRepayment}'} {'{dailyPayment}'} {'{avgRevenue}'}</span>
-                    </label>
-                    <textarea value={newPitchBody} onChange={e => setNewPitchBody(e.target.value)}
-                      rows={12} placeholder="Write your script here..."
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">Script Body</label>
+                    {/* Field picker toolbar */}
+                    <div className="flex gap-2 mb-2">
+                      <div className="relative group">
+                        <button type="button" className="px-3 py-1 bg-white border border-gray-200 rounded text-xs hover:bg-gray-50 transition-colors">+ Field ▼</button>
+                        <div className="absolute left-0 mt-1 bg-white border border-gray-200 rounded-md shadow-lg z-10 hidden group-hover:block min-w-[180px] max-h-64 overflow-y-auto">
+                          <p className="px-3 pt-2 pb-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Contact</p>
+                          <button type="button" onClick={() => insertPitchPlaceholder(pitchNewRef, setNewPitchBody, newPitchBody, 'name')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Full Name</button>
+                          <button type="button" onClick={() => insertPitchPlaceholder(pitchNewRef, setNewPitchBody, newPitchBody, 'company')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Company</button>
+                          <button type="button" onClick={() => insertPitchPlaceholder(pitchNewRef, setNewPitchBody, newPitchBody, 'phone')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Phone</button>
+                          <p className="px-3 pt-2 pb-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Deal</p>
+                          <button type="button" onClick={() => insertPitchPlaceholder(pitchNewRef, setNewPitchBody, newPitchBody, 'offerAmount')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Offer Amount</button>
+                          <button type="button" onClick={() => insertPitchPlaceholder(pitchNewRef, setNewPitchBody, newPitchBody, 'lenderName')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Lender Name</button>
+                          <button type="button" onClick={() => insertPitchPlaceholder(pitchNewRef, setNewPitchBody, newPitchBody, 'factorRate')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Factor Rate</button>
+                          <button type="button" onClick={() => insertPitchPlaceholder(pitchNewRef, setNewPitchBody, newPitchBody, 'totalRepayment')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Total Repayment</button>
+                          <button type="button" onClick={() => insertPitchPlaceholder(pitchNewRef, setNewPitchBody, newPitchBody, 'dailyPayment')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Daily Payment</button>
+                          <button type="button" onClick={() => insertPitchPlaceholder(pitchNewRef, setNewPitchBody, newPitchBody, 'avgRevenue')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Avg Monthly Revenue</button>
+                        </div>
+                      </div>
+                    </div>
+                    <textarea ref={pitchNewRef} value={newPitchBody} onChange={e => setNewPitchBody(e.target.value)}
+                      rows={12} placeholder="Write your script here…"
                       className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7] resize-none" />
                   </div>
                   <div className="flex gap-2">
                     <button
-                      onClick={() => {
+                      disabled={pitchSaving}
+                      onClick={async () => {
                         if (!newPitchName.trim() || !newPitchBody.trim()) return;
-                        const newT: PitchTemplate = { id: Date.now().toString(), name: newPitchName.trim(), body: newPitchBody.trim() };
-                        setPitchTemplates(prev => [...prev, newT]);
-                        setSelectedPitchId(newT.id);
-                        setShowNewPitchForm(false);
+                        setPitchSaving(true);
+                        try {
+                          const res = await fetch('/api/pitch-templates', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            credentials: 'include',
+                            body: JSON.stringify({ name: newPitchName.trim(), body: newPitchBody.trim() }),
+                          });
+                          if (res.ok) {
+                            const data = await res.json();
+                            const newT: PitchTemplate = data.template;
+                            setPitchTemplates(prev => [...prev, newT]);
+                            setSelectedPitchId(newT.id);
+                            setShowNewPitchForm(false);
+                          }
+                        } catch { /* ignore */ }
+                        setPitchSaving(false);
                       }}
-                      className="px-4 py-2 bg-[#5a7fc7] text-white rounded-md text-sm font-medium hover:bg-[#4a6fb7]"
-                    >Save Template</button>
+                      className="px-4 py-2 bg-[#5a7fc7] text-white rounded-md text-sm font-medium hover:bg-[#4a6fb7] disabled:opacity-50"
+                    >{pitchSaving ? 'Saving…' : 'Save Template'}</button>
                     <button onClick={() => setShowNewPitchForm(false)}
                       className="px-4 py-2 border border-gray-300 text-gray-600 rounded-md text-sm hover:bg-gray-50">Cancel</button>
                   </div>
                 </div>
               ) : editingPitchId ? (() => {
-                const tpl = pitchTemplates.find(t => t.id === editingPitchId)!;
                 return (
                   <div className="flex-1 overflow-y-auto p-5 space-y-3">
                     <h3 className="font-semibold text-gray-800 text-sm">Edit Template</h3>
@@ -2727,27 +2757,65 @@ I ask because I want to make sure you have all the information you need. And hon
                     </div>
                     <div>
                       <label className="block text-xs text-gray-600 mb-1">Script Body</label>
-                      <textarea value={pitchEditBody} onChange={e => setPitchEditBody(e.target.value)}
+                      {/* Field picker toolbar */}
+                      <div className="flex gap-2 mb-2">
+                        <div className="relative group">
+                          <button type="button" className="px-3 py-1 bg-white border border-gray-200 rounded text-xs hover:bg-gray-50 transition-colors">+ Field ▼</button>
+                          <div className="absolute left-0 mt-1 bg-white border border-gray-200 rounded-md shadow-lg z-10 hidden group-hover:block min-w-[180px] max-h-64 overflow-y-auto">
+                            <p className="px-3 pt-2 pb-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Contact</p>
+                            <button type="button" onClick={() => insertPitchPlaceholder(pitchEditRef, setPitchEditBody, pitchEditBody, 'name')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Full Name</button>
+                            <button type="button" onClick={() => insertPitchPlaceholder(pitchEditRef, setPitchEditBody, pitchEditBody, 'company')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Company</button>
+                            <button type="button" onClick={() => insertPitchPlaceholder(pitchEditRef, setPitchEditBody, pitchEditBody, 'phone')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Phone</button>
+                            <p className="px-3 pt-2 pb-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Deal</p>
+                            <button type="button" onClick={() => insertPitchPlaceholder(pitchEditRef, setPitchEditBody, pitchEditBody, 'offerAmount')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Offer Amount</button>
+                            <button type="button" onClick={() => insertPitchPlaceholder(pitchEditRef, setPitchEditBody, pitchEditBody, 'lenderName')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Lender Name</button>
+                            <button type="button" onClick={() => insertPitchPlaceholder(pitchEditRef, setPitchEditBody, pitchEditBody, 'factorRate')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Factor Rate</button>
+                            <button type="button" onClick={() => insertPitchPlaceholder(pitchEditRef, setPitchEditBody, pitchEditBody, 'totalRepayment')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Total Repayment</button>
+                            <button type="button" onClick={() => insertPitchPlaceholder(pitchEditRef, setPitchEditBody, pitchEditBody, 'dailyPayment')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Daily Payment</button>
+                            <button type="button" onClick={() => insertPitchPlaceholder(pitchEditRef, setPitchEditBody, pitchEditBody, 'avgRevenue')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Avg Monthly Revenue</button>
+                          </div>
+                        </div>
+                      </div>
+                      <textarea ref={pitchEditRef} value={pitchEditBody} onChange={e => setPitchEditBody(e.target.value)}
                         rows={14} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7] resize-none" />
                     </div>
                     <div className="flex gap-2">
                       <button
-                        onClick={() => {
-                          setPitchTemplates(prev => prev.map(t => t.id === editingPitchId ? { ...t, name: pitchEditName, body: pitchEditBody } : t));
-                          setEditingPitchId(null);
+                        disabled={pitchSaving}
+                        onClick={async () => {
+                          setPitchSaving(true);
+                          try {
+                            const res = await fetch('/api/pitch-templates', {
+                              method: 'PUT',
+                              headers: { 'Content-Type': 'application/json' },
+                              credentials: 'include',
+                              body: JSON.stringify({ id: editingPitchId, name: pitchEditName, body: pitchEditBody }),
+                            });
+                            if (res.ok) {
+                              const data = await res.json();
+                              setPitchTemplates(prev => prev.map(t => t.id === editingPitchId ? data.template : t));
+                              setEditingPitchId(null);
+                            }
+                          } catch { /* ignore */ }
+                          setPitchSaving(false);
                         }}
-                        className="px-4 py-2 bg-[#5a7fc7] text-white rounded-md text-sm font-medium hover:bg-[#4a6fb7]"
-                      >Save Changes</button>
+                        className="px-4 py-2 bg-[#5a7fc7] text-white rounded-md text-sm font-medium hover:bg-[#4a6fb7] disabled:opacity-50"
+                      >{pitchSaving ? 'Saving…' : 'Save Changes'}</button>
                       <button onClick={() => setEditingPitchId(null)}
                         className="px-4 py-2 border border-gray-300 text-gray-600 rounded-md text-sm hover:bg-gray-50">Cancel</button>
                       <button
-                        onClick={() => {
-                          setPitchTemplates(prev => {
-                            const remaining = prev.filter(t => t.id !== editingPitchId);
-                            if (remaining.length > 0) setSelectedPitchId(remaining[0].id);
-                            return remaining;
-                          });
-                          setEditingPitchId(null);
+                        onClick={async () => {
+                          try {
+                            await fetch(`/api/pitch-templates?id=${editingPitchId}`, {
+                              method: 'DELETE', credentials: 'include',
+                            });
+                            setPitchTemplates(prev => {
+                              const remaining = prev.filter(t => t.id !== editingPitchId);
+                              setSelectedPitchId(remaining.length > 0 ? remaining[0].id : null);
+                              return remaining;
+                            });
+                            setEditingPitchId(null);
+                          } catch { /* ignore */ }
                         }}
                         className="ml-auto px-4 py-2 text-red-500 hover:text-red-700 text-sm"
                       >Delete</button>
@@ -2756,17 +2824,19 @@ I ask because I want to make sure you have all the information you need. And hon
                 );
               })() : (() => {
                 const tpl = pitchTemplates.find(t => t.id === selectedPitchId) ?? pitchTemplates[0];
-                if (!tpl) return null;
+                if (!tpl) return (
+                  <div className="flex-1 flex items-center justify-center text-sm text-gray-400">
+                    Create your first template using the button on the left.
+                  </div>
+                );
                 const resolved = resolvePitchScript(tpl.body);
                 return (
                   <div className="flex-1 flex flex-col overflow-hidden">
-                    {/* Script display */}
                     <div className="flex-1 overflow-y-auto p-5">
                       <div className="whitespace-pre-wrap text-sm text-gray-800 leading-relaxed bg-gray-50 border border-gray-200 rounded-lg p-4">
                         {resolved}
                       </div>
                     </div>
-                    {/* Action bar */}
                     <div className="flex items-center gap-2 px-5 py-3 border-t border-gray-200 bg-white">
                       <button
                         onClick={() => {
