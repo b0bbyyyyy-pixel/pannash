@@ -635,19 +635,20 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     setShowScheduleTextModal(leadId);
   };
 
-  const handleScheduleText = async (leadId: string) => {
+  const handleScheduleText = async (leadId: string, sendNow: boolean = false) => {
     if (!scheduledTextContent.trim()) {
       alert('Please enter a text message');
       return;
     }
-    if (!scheduledTextDate) {
+    if (!sendNow && !scheduledTextDate) {
       alert('Please select a date');
       return;
     }
 
-    // Combine date and time
-    const scheduledDateTime = new Date(`${scheduledTextDate}T${scheduledTextTime}`);
-    const scheduledTimeISO = scheduledDateTime.toISOString();
+    // Combine date and time (or use now)
+    const scheduledTimeISO = sendNow
+      ? new Date().toISOString()
+      : new Date(`${scheduledTextDate}T${scheduledTextTime}`).toISOString();
 
     // Optimistically update local state
     setLeads(prev => prev.map(lead => 
@@ -655,7 +656,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         ...lead, 
         scheduled_text_content: scheduledTextContent,
         scheduled_text_time: scheduledTimeISO,
-        scheduled_text_frequency: scheduledTextFrequency
+        scheduled_text_frequency: sendNow ? 'once' : scheduledTextFrequency
       } : lead
     ));
 
@@ -663,7 +664,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     onLeadUpdate(leadId, { 
       scheduled_text_content: scheduledTextContent,
       scheduled_text_time: scheduledTimeISO,
-      scheduled_text_frequency: scheduledTextFrequency
+      scheduled_text_frequency: sendNow ? 'once' : scheduledTextFrequency
     });
 
     try {
@@ -674,7 +675,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
           leadId, 
           content: scheduledTextContent,
           scheduledTime: scheduledTimeISO,
-          frequency: scheduledTextFrequency
+          frequency: sendNow ? 'once' : scheduledTextFrequency
         }),
         credentials: 'include',
       });
@@ -3355,6 +3356,18 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                     </span>
                   )}
                 </div>
+              </div>
+
+              {/* Send Now */}
+              <div className="border-t border-[#e5e5e5] pt-4">
+                <button
+                  onClick={() => showScheduleTextModal && handleScheduleText(showScheduleTextModal, true)}
+                  disabled={!scheduledTextContent.trim()}
+                  className="w-full px-4 py-3 bg-[#00cc00] text-white rounded-md text-sm font-medium hover:bg-[#00b300] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  📨 Send Now (Copy & Paste)
+                </button>
+                <div className="text-center text-xs text-[#6b6b6b] my-3">— OR SCHEDULE FOR LATER —</div>
               </div>
 
               {/* Date and Time Selection */}
