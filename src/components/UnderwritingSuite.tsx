@@ -428,7 +428,9 @@ export default function UnderwritingSuite({
       .replace(/\{\{offer_payment\}\}/g, fmt(dailyPay))
       .replace(/\{\{avgRevenue\}\}/g, fmt(avgMonthlyRevenue))
       .replace(/\{\{phone\}\}/g, phone || '')
-      .replace(/\{\{sosState\}\}/g, sosState || '');
+      .replace(/\{\{sosState\}\}/g, sosState || '')
+      .replace(/\{\{creditScore\}\}/g, String(data.creditScore || creditScore || ''));
+  
   };
 
   const handleSosSearch = () => {
@@ -2632,7 +2634,7 @@ export default function UnderwritingSuite({
     {/* ── Pitch Script Modal ──────────────────────────────────────────────── */}
     {showPitchModal && (
       <div
-        className="fixed inset-0 bg-black/60 flex items-center justify-center z-[70] p-4"
+        className="fixed inset-0 bg-black/50 flex items-center justify-center z-[70] p-4"
         onClick={() => { setShowPitchModal(false); setEditingPitchId(null); setShowNewPitchForm(false); }}
       >
         <div
@@ -2703,6 +2705,7 @@ export default function UnderwritingSuite({
                           <button type="button" onClick={() => insertPitchPlaceholder(pitchNewRef, setNewPitchBody, newPitchBody, 'name')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Full Name</button>
                           <button type="button" onClick={() => insertPitchPlaceholder(pitchNewRef, setNewPitchBody, newPitchBody, 'company')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Company</button>
                           <button type="button" onClick={() => insertPitchPlaceholder(pitchNewRef, setNewPitchBody, newPitchBody, 'phone')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Phone</button>
+                          <button type="button" onClick={() => insertPitchPlaceholder(pitchNewRef, setNewPitchBody, newPitchBody, 'creditScore')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Credit Score</button>
                           <p className="px-3 pt-2 pb-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Deal</p>
                           <button type="button" onClick={() => insertPitchPlaceholder(pitchNewRef, setNewPitchBody, newPitchBody, 'offerAmount')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Offer Amount</button>
                           <button type="button" onClick={() => insertPitchPlaceholder(pitchNewRef, setNewPitchBody, newPitchBody, 'lenderName')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Lender Name</button>
@@ -2766,6 +2769,7 @@ export default function UnderwritingSuite({
                             <button type="button" onClick={() => insertPitchPlaceholder(pitchEditRef, setPitchEditBody, pitchEditBody, 'name')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Full Name</button>
                             <button type="button" onClick={() => insertPitchPlaceholder(pitchEditRef, setPitchEditBody, pitchEditBody, 'company')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Company</button>
                             <button type="button" onClick={() => insertPitchPlaceholder(pitchEditRef, setPitchEditBody, pitchEditBody, 'phone')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Phone</button>
+                            <button type="button" onClick={() => insertPitchPlaceholder(pitchEditRef, setPitchEditBody, pitchEditBody, 'creditScore')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Credit Score</button>
                             <p className="px-3 pt-2 pb-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Deal</p>
                             <button type="button" onClick={() => insertPitchPlaceholder(pitchEditRef, setPitchEditBody, pitchEditBody, 'offerAmount')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Offer Amount</button>
                             <button type="button" onClick={() => insertPitchPlaceholder(pitchEditRef, setPitchEditBody, pitchEditBody, 'lenderName')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Lender Name</button>
@@ -2832,11 +2836,58 @@ export default function UnderwritingSuite({
                 const resolved = resolvePitchScript(tpl.body);
                 return (
                   <div className="flex-1 flex flex-col overflow-hidden">
-                    <div className="flex-1 overflow-y-auto p-5">
+                    <div className="flex-1 overflow-y-auto p-5 space-y-4">
+                      {/* Script */}
                       <div className="whitespace-pre-wrap text-sm text-gray-800 leading-relaxed bg-gray-50 border border-gray-200 rounded-lg p-4">
                         {resolved}
                       </div>
+
+                      {/* Lead Notes */}
+                      <div className="border border-gray-200 rounded-lg overflow-hidden">
+                        <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 border-b border-gray-200">
+                          <span className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Lead Notes</span>
+                          {!notesEditing && (
+                            <button
+                              onClick={() => { setNotesEditing(true); setNotesExpanded(true); }}
+                              className="text-xs text-[#5a7fc7] hover:text-[#4a6fb7]"
+                            >Edit</button>
+                          )}
+                        </div>
+                        {notesEditing ? (
+                          <div className="p-3">
+                            <textarea
+                              value={notesEditValue}
+                              onChange={e => setNotesEditValue(e.target.value)}
+                              rows={4}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7] resize-none"
+                              placeholder="Add notes…"
+                              autoFocus
+                            />
+                            <div className="flex gap-2 mt-2">
+                              <button
+                                disabled={notesSaving}
+                                onClick={async () => {
+                                  setNotesSaving(true);
+                                  try { await onNotesUpdate?.(notesEditValue); } catch { /* ignore */ }
+                                  setNotesSaving(false);
+                                  setNotesEditing(false);
+                                }}
+                                className="px-3 py-1.5 bg-[#5a7fc7] text-white rounded-md text-xs font-medium hover:bg-[#4a6fb7] disabled:opacity-50"
+                              >{notesSaving ? 'Saving…' : 'Save'}</button>
+                              <button
+                                onClick={() => { setNotesEditing(false); setNotesEditValue(leadNotes ?? ''); }}
+                                className="px-3 py-1.5 border border-gray-300 text-gray-600 rounded-md text-xs hover:bg-gray-50"
+                              >Cancel</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="px-4 py-3 text-sm text-gray-700 whitespace-pre-wrap min-h-[48px]">
+                            {notesEditValue.trim() || <span className="text-gray-400 italic">No notes — click Edit to add</span>}
+                          </div>
+                        )}
+                      </div>
                     </div>
+
                     <div className="flex items-center gap-2 px-5 py-3 border-t border-gray-200 bg-white">
                       <button
                         onClick={() => {
