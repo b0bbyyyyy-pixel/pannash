@@ -44,11 +44,12 @@ function resolveAvgMonthlyDepositCount(metrics: Record<string, unknown>): number
   return 0;
 }
 
-/** Map last three calendar months of true-deposit revenue (oldest → month1 … newest → month3). */
+/** Map last four calendar months of true-deposit revenue (oldest → month1 … newest → month4). */
 export function mapAnalyzerMetricsToUnderwritingFields(metrics: Record<string, unknown>): {
   month1Revenue: number;
   month2Revenue: number;
   month3Revenue: number;
+  month4Revenue: number;
   avgDailyBalance: number;
   endingBalance: number;
   nsfCount: number;
@@ -56,15 +57,17 @@ export function mapAnalyzerMetricsToUnderwritingFields(metrics: Record<string, u
 } {
   const mr = Array.isArray(metrics.monthly_revenue) ? [...(metrics.monthly_revenue as MonthlyRevRow[])] : [];
   mr.sort((a, b) => String(a.month ?? '').localeCompare(String(b.month ?? '')));
-  const last3 = mr.slice(-3);
-  const m1 = Number(last3[0]?.amount) || 0;
-  const m2 = Number(last3[1]?.amount) || 0;
-  const m3 = Number(last3[2]?.amount) || 0;
+  const last4 = mr.slice(-4);
+  const m1 = Number(last4[0]?.amount) || 0;
+  const m2 = Number(last4[1]?.amount) || 0;
+  const m3 = Number(last4[2]?.amount) || 0;
+  const m4 = Number(last4[3]?.amount) || 0;
 
   return {
     month1Revenue: m1,
     month2Revenue: m2,
     month3Revenue: m3,
+    month4Revenue: m4,
     avgDailyBalance: Number(metrics.avg_daily_balance) || 0,
     endingBalance: Number(metrics.ending_balance) || 0,
     nsfCount: Number(metrics.nsf_count) || 0,

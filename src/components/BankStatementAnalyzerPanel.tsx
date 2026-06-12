@@ -12,6 +12,7 @@ type UnderwritingPatch = {
   month1Revenue: number;
   month2Revenue: number;
   month3Revenue: number;
+  month4Revenue: number;
   avgDailyBalance: number;
   endingBalance: number;
   nsfCount: number;
