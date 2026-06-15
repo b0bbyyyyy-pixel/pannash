@@ -429,7 +429,18 @@ export default function UnderwritingSuite({
       .replace(/\{\{avgRevenue\}\}/g, fmt(avgMonthlyRevenue))
       .replace(/\{\{phone\}\}/g, phone || '')
       .replace(/\{\{sosState\}\}/g, sosState || '')
-      .replace(/\{\{creditScore\}\}/g, String(data.creditScore || creditScore || ''));
+      .replace(/\{\{creditScore\}\}/g, String(data.creditScore || creditScore || ''))
+      .replace(/\{\{timeInBusiness\}\}/g, (() => {
+        const mo = Math.round(timeInBusiness || 0);
+        const yrs = Math.floor(mo / 12);
+        const rem = mo % 12;
+        if (yrs === 0) return `${rem} month${rem !== 1 ? 's' : ''}`;
+        if (rem === 0) return `${yrs} year${yrs !== 1 ? 's' : ''}`;
+        return `${yrs} year${yrs !== 1 ? 's' : ''} ${rem} month${rem !== 1 ? 's' : ''}`;
+      })())
+      .replace(/\{\{avgDailyBalance\}\}/g, '$' + Math.round(avgDailyBalance).toLocaleString())
+      .replace(/\{\{endingBalance\}\}/g, '$' + Math.round(endingBalance).toLocaleString())
+      .replace(/\{\{negativeDays\}\}/g, String(nsfCount || 0));
   
   };
 
@@ -1110,9 +1121,10 @@ export default function UnderwritingSuite({
             {/* Business name + person + SOS */}
             <div>
               <div className="flex items-center gap-6">
-                <h1 className="text-2xl font-bold text-gray-900 leading-tight">
-                  {businessName || 'No Business Name'}
-                </h1>
+                <h1
+                  className="text-2xl font-bold text-gray-900 leading-tight"
+                  dangerouslySetInnerHTML={{ __html: businessName || 'No Business Name' }}
+                />
                 <div className="relative ml-4 shrink-0 flex items-center gap-2">
                   <button
                     onClick={() => setSosOpen(o => !o)}
@@ -2706,6 +2718,11 @@ export default function UnderwritingSuite({
                           <button type="button" onClick={() => insertPitchPlaceholder(pitchNewRef, setNewPitchBody, newPitchBody, 'company')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Company</button>
                           <button type="button" onClick={() => insertPitchPlaceholder(pitchNewRef, setNewPitchBody, newPitchBody, 'phone')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Phone</button>
                           <button type="button" onClick={() => insertPitchPlaceholder(pitchNewRef, setNewPitchBody, newPitchBody, 'creditScore')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Credit Score</button>
+                          <button type="button" onClick={() => insertPitchPlaceholder(pitchNewRef, setNewPitchBody, newPitchBody, 'timeInBusiness')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Time in Business</button>
+                          <p className="px-3 pt-2 pb-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Banking</p>
+                          <button type="button" onClick={() => insertPitchPlaceholder(pitchNewRef, setNewPitchBody, newPitchBody, 'avgDailyBalance')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Avg Daily Balance</button>
+                          <button type="button" onClick={() => insertPitchPlaceholder(pitchNewRef, setNewPitchBody, newPitchBody, 'endingBalance')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Ending Balance</button>
+                          <button type="button" onClick={() => insertPitchPlaceholder(pitchNewRef, setNewPitchBody, newPitchBody, 'negativeDays')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Negative Days</button>
                           <p className="px-3 pt-2 pb-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Deal</p>
                           <button type="button" onClick={() => insertPitchPlaceholder(pitchNewRef, setNewPitchBody, newPitchBody, 'offerAmount')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Offer Amount</button>
                           <button type="button" onClick={() => insertPitchPlaceholder(pitchNewRef, setNewPitchBody, newPitchBody, 'lenderName')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Lender Name</button>
@@ -2770,6 +2787,11 @@ export default function UnderwritingSuite({
                             <button type="button" onClick={() => insertPitchPlaceholder(pitchEditRef, setPitchEditBody, pitchEditBody, 'company')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Company</button>
                             <button type="button" onClick={() => insertPitchPlaceholder(pitchEditRef, setPitchEditBody, pitchEditBody, 'phone')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Phone</button>
                             <button type="button" onClick={() => insertPitchPlaceholder(pitchEditRef, setPitchEditBody, pitchEditBody, 'creditScore')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Credit Score</button>
+                            <button type="button" onClick={() => insertPitchPlaceholder(pitchEditRef, setPitchEditBody, pitchEditBody, 'timeInBusiness')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Time in Business</button>
+                            <p className="px-3 pt-2 pb-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Banking</p>
+                            <button type="button" onClick={() => insertPitchPlaceholder(pitchEditRef, setPitchEditBody, pitchEditBody, 'avgDailyBalance')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Avg Daily Balance</button>
+                            <button type="button" onClick={() => insertPitchPlaceholder(pitchEditRef, setPitchEditBody, pitchEditBody, 'endingBalance')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Ending Balance</button>
+                            <button type="button" onClick={() => insertPitchPlaceholder(pitchEditRef, setPitchEditBody, pitchEditBody, 'negativeDays')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Negative Days</button>
                             <p className="px-3 pt-2 pb-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Deal</p>
                             <button type="button" onClick={() => insertPitchPlaceholder(pitchEditRef, setPitchEditBody, pitchEditBody, 'offerAmount')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Offer Amount</button>
                             <button type="button" onClick={() => insertPitchPlaceholder(pitchEditRef, setPitchEditBody, pitchEditBody, 'lenderName')} className="block w-full text-left px-3 py-2 text-xs hover:bg-gray-50">Lender Name</button>
