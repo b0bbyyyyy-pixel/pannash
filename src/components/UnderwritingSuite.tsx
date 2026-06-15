@@ -413,35 +413,36 @@ export default function UnderwritingSuite({
       ? totalRepay / offer.termLength
       : totalRepay / 250;
     const fmt = (n: number) => '$' + Math.round(n).toLocaleString();
+    const b = (v: string) => `<strong>${v}</strong>`;
+    const tibLabel = (() => {
+      const mo = Math.round(timeInBusiness || 0);
+      const yrs = Math.floor(mo / 12);
+      const rem = mo % 12;
+      if (yrs === 0) return `${rem} month${rem !== 1 ? 's' : ''}`;
+      if (rem === 0) return `${yrs} year${yrs !== 1 ? 's' : ''}`;
+      return `${yrs} year${yrs !== 1 ? 's' : ''} ${rem} month${rem !== 1 ? 's' : ''}`;
+    })();
     return body
       .replace(/\{\{contactName\}\}/g, leadName || 'there')
       .replace(/\{\{name\}\}/g, leadName || 'there')
       .replace(/\{\{businessName\}\}/g, businessName || 'your business')
       .replace(/\{\{company\}\}/g, businessName || 'your business')
-      .replace(/\{\{offerAmount\}\}/g, fmt(amt))
-      .replace(/\{\{offer_amount\}\}/g, fmt(amt))
-      .replace(/\{\{lenderName\}\}/g, offer?.lenderName || '[Lender]')
-      .replace(/\{\{factorRate\}\}/g, fr.toFixed(2))
-      .replace(/\{\{totalRepayment\}\}/g, fmt(totalRepay))
-      .replace(/\{\{offer_total_repayment\}\}/g, fmt(totalRepay))
-      .replace(/\{\{dailyPayment\}\}/g, fmt(dailyPay))
-      .replace(/\{\{offer_payment\}\}/g, fmt(dailyPay))
-      .replace(/\{\{avgRevenue\}\}/g, fmt(avgMonthlyRevenue))
       .replace(/\{\{phone\}\}/g, phone || '')
       .replace(/\{\{sosState\}\}/g, sosState || '')
-      .replace(/\{\{creditScore\}\}/g, String(data.creditScore || creditScore || ''))
-      .replace(/\{\{timeInBusiness\}\}/g, (() => {
-        const mo = Math.round(timeInBusiness || 0);
-        const yrs = Math.floor(mo / 12);
-        const rem = mo % 12;
-        if (yrs === 0) return `${rem} month${rem !== 1 ? 's' : ''}`;
-        if (rem === 0) return `${yrs} year${yrs !== 1 ? 's' : ''}`;
-        return `${yrs} year${yrs !== 1 ? 's' : ''} ${rem} month${rem !== 1 ? 's' : ''}`;
-      })())
-      .replace(/\{\{avgDailyBalance\}\}/g, '$' + Math.round(avgDailyBalance).toLocaleString())
-      .replace(/\{\{endingBalance\}\}/g, '$' + Math.round(endingBalance).toLocaleString())
-      .replace(/\{\{negativeDays\}\}/g, String(nsfCount || 0));
-  
+      .replace(/\{\{creditScore\}\}/g, b(String(data.creditScore || creditScore || '')))
+      .replace(/\{\{timeInBusiness\}\}/g, b(tibLabel))
+      .replace(/\{\{avgDailyBalance\}\}/g, b('$' + Math.round(avgDailyBalance).toLocaleString()))
+      .replace(/\{\{endingBalance\}\}/g, b('$' + Math.round(endingBalance).toLocaleString()))
+      .replace(/\{\{negativeDays\}\}/g, b(String(nsfCount || 0)))
+      .replace(/\{\{offerAmount\}\}/g, b(fmt(amt)))
+      .replace(/\{\{offer_amount\}\}/g, b(fmt(amt)))
+      .replace(/\{\{lenderName\}\}/g, b(offer?.lenderName || '[Lender]'))
+      .replace(/\{\{factorRate\}\}/g, b(fr.toFixed(2)))
+      .replace(/\{\{totalRepayment\}\}/g, b(fmt(totalRepay)))
+      .replace(/\{\{offer_total_repayment\}\}/g, b(fmt(totalRepay)))
+      .replace(/\{\{dailyPayment\}\}/g, b(fmt(dailyPay)))
+      .replace(/\{\{offer_payment\}\}/g, b(fmt(dailyPay)))
+      .replace(/\{\{avgRevenue\}\}/g, b(fmt(avgMonthlyRevenue)));
   };
 
   const handleSosSearch = () => {
@@ -2860,9 +2861,10 @@ export default function UnderwritingSuite({
                   <div className="flex-1 flex flex-col overflow-hidden">
                     <div className="flex-1 overflow-y-auto p-5 space-y-4">
                       {/* Script */}
-                      <div className="whitespace-pre-wrap text-sm text-gray-800 leading-relaxed bg-gray-50 border border-gray-200 rounded-lg p-4">
-                        {resolved}
-                      </div>
+                      <div
+                        className="whitespace-pre-wrap text-sm text-gray-800 leading-relaxed bg-gray-50 border border-gray-200 rounded-lg p-4"
+                        dangerouslySetInnerHTML={{ __html: resolved }}
+                      />
 
                       {/* Lead Notes */}
                       <div className="border border-gray-200 rounded-lg overflow-hidden">
