@@ -253,7 +253,7 @@ export default function BankStatementAnalyzerPanel({
     <div className="mb-6 rounded-xl border border-gray-200 bg-white p-6 text-gray-900 shadow-sm">
       {/* ── Sankey chart — shown whenever transactions are available (fresh or persisted) ── */}
       {sankeyTxns.length > 0 && (
-        <CashFlowSankeyChart transactions={sankeyTxns} />
+        <CashFlowSankeyChart transactions={sankeyTxns} metrics={displayMetrics} />
       )}
 
       <div className={`border-b border-gray-200 pb-3 ${sankeyTxns.length > 0 ? 'mt-2 mb-4' : 'mb-4'}`}>

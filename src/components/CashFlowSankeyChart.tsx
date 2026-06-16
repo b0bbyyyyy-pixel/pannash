@@ -498,7 +498,13 @@ function SankeyDiagram({
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function CashFlowSankeyChart({ transactions }: { transactions: TxnRow[] }) {
+export default function CashFlowSankeyChart({
+  transactions,
+  metrics,
+}: {
+  transactions: TxnRow[];
+  metrics?: Record<string, unknown> | null;
+}) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const modalWrapRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState(false);
@@ -579,6 +585,21 @@ export default function CashFlowSankeyChart({ transactions }: { transactions: Tx
   );
 
   const perMonthLabel = kpis.isAvg ? 'avg/month' : undefined;
+
+  // ── Debt-to-Income calculation ─────────────────────────────────────────────
+  const monthlyDebt = Math.abs(Number(metrics?.monthly_loan_payments) || 0);
+  const monthlyIncome = Number(metrics?.true_deposit_avg)
+    || Number(metrics?.avg_monthly_revenue)
+    || (kpis.totalIn / Math.max(1, kpis.months));
+  const dtiRatio = monthlyIncome > 0 ? monthlyDebt / monthlyIncome : 0;
+  const dtiPct = (dtiRatio * 100).toFixed(1) + '%';
+  const dtiColor = dtiRatio <= 0.25
+    ? 'text-emerald-300'
+    : dtiRatio <= 0.40
+    ? 'text-amber-300'
+    : 'text-red-400';
+  const dtiLabel = dtiRatio <= 0.25 ? 'healthy' : dtiRatio <= 0.40 ? 'moderate' : 'high risk';
+
   const KPIBar = () => (
     <div className="flex flex-wrap gap-2 px-4 py-3 border-b border-white/10">
       <KPICard
@@ -599,8 +620,29 @@ export default function CashFlowSankeyChart({ transactions }: { transactions: Tx
         sub={kpis.net >= 0 ? 'surplus' : 'deficit'}
         color={kpis.net >= 0 ? 'text-emerald-300' : 'text-red-400'}
       />
-      <KPICard label="Monthly Burn"   value={fmt(kpis.burnRate)} sub={perMonthLabel ?? 'this month'} color="text-amber-400" />
-      <KPICard label="Biggest Leak"   value={fmt(kpis.biggestLeak.amount)} sub={kpis.biggestLeak.cat} color="text-orange-400" />
+      <KPICard label="Monthly Burn" value={fmt(kpis.burnRate)} sub={perMonthLabel ?? 'this month'} color="text-amber-400" />
+      <KPICard label="Biggest Leak" value={fmt(kpis.biggestLeak.amount)} sub={kpis.biggestLeak.cat} color="text-orange-400" />
+      {/* ── DTI — prominent highlighted card ── */}
+      <div className={`flex flex-col justify-between rounded-lg px-3 py-2 min-w-[100px] border ${
+        dtiRatio <= 0.25 ? 'border-emerald-500/40 bg-emerald-500/10' :
+        dtiRatio <= 0.40 ? 'border-amber-400/40 bg-amber-400/10' :
+        'border-red-500/40 bg-red-500/10'
+      }`}>
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-white/50 mb-0.5">
+          Debt-to-Income
+        </div>
+        <div className={`text-xl font-extrabold tabular-nums leading-tight ${dtiColor}`}>
+          {monthlyDebt > 0 ? dtiPct : '—'}
+        </div>
+        <div className={`text-[10px] mt-0.5 font-medium ${dtiColor}`}>
+          {monthlyDebt > 0 ? dtiLabel : 'no debt detected'}
+        </div>
+        {monthlyDebt > 0 && (
+          <div className="text-[9px] text-white/30 mt-0.5">
+            {fmt(monthlyDebt)}/mo debt · {fmt(Math.round(monthlyIncome))}/mo income
+          </div>
+        )}
+      </div>
     </div>
   );
 
