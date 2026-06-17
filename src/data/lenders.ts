@@ -30,6 +30,8 @@ export interface LenderCriteria {
   negDaysMax?: number;
   minDeposits?: number;
   hardPullSoleProps?: boolean;
+  /** True = lender broadly restricts ALL sole proprietors */
+  restrictsSoleProps?: boolean;
   restrictedStates: string[];
   /** Lowercase keywords matched against industry value */
   restrictedIndustryKeywords: string[];
@@ -126,6 +128,7 @@ export const LENDERS: LenderCriteria[] = [
     minFico: 650,
     minPosition: 1,
     maxPosition: 10,
+    restrictsSoleProps: true,
     restrictedStates: ['SD', 'ND', 'NV', 'VT'],
     restrictedIndustryKeywords: ['non-profit', 'auto dealership', 'trucking', 'real estate', 'travel agency', 'firearms', 'agriculture', 'farming', 'cannabis'],
     notes: 'General Construction: TIB 7yrs. Restricted: Non-Profits, Sole Props, SD, ND, NV, VT, Auto Sales, Trucking, Real Estate, New Construction & Remodeling, Travel Agencies, Firearms, Farming, Cannabis, Schools.',
@@ -168,6 +171,7 @@ export const LENDERS: LenderCriteria[] = [
     minFico: 500,
     minPosition: 1,
     maxPosition: 2,
+    restrictsSoleProps: true,
     restrictedStates: [],
     restrictedIndustryKeywords: ['non-profit', 'auto dealership', 'trucking', 'real estate', 'property management', 'legal', 'accounting', 'insurance', 'staffing', 'travel agency', 'retail - grocery', 'gas', 'pharmacy', 'cannabis'],
     notes: 'Restaurants & Construction: TIB 2yrs. Restricted: Non-Profits, Sole Props, Auto Sales, Trucking & All Transportation, Real Estate, Property Mgmt, Law Firms, Accounting, Insurance, Staffing, Travel Agencies, Grocery, Convenience & Liquor, Gas Stations, Solar, Pharmacies, Cannabis, Smoke Shops.',
@@ -216,6 +220,7 @@ export const LENDERS: LenderCriteria[] = [
     minFico: 550,
     minPosition: 1,
     maxPosition: 3,
+    restrictsSoleProps: true,
     restrictedStates: [],
     restrictedIndustryKeywords: ['auto dealership', 'trucking', 'insurance', 'real estate', 'property management', 'mortgage'],
     notes: 'Restricted: Sole Props, Trucking, Home Builders (Ground-up Construction), Auto Sales, Mortgage Brokers, Insurance, Financial, Real Estate & Property Mgmt, Pawn Shops, Jewelers, Funeral Homes, Bail Bonds, Cannabis.',
@@ -228,6 +233,7 @@ export const LENDERS: LenderCriteria[] = [
     minFico: 0,
     minPosition: 1,
     maxPosition: 2,
+    restrictsSoleProps: true,
     restrictedStates: ['TX'],
     restrictedIndustryKeywords: ['non-profit', 'auto dealership', 'insurance', 'real estate', 'trucking', 'accounting', 'cleaning', 'janitorial', 'gas station'],
     notes: 'No FICO listed. Restricted: Non-Profits, TX, Home-Based Companies, Sole Props, Auto Sales, Construction & Specialty Contractors, Accounting, Insurance, Real Estate, Trucking & Transportation, Nail Salons, Gas Stations, Cleaning Svs: 10yrs TIB.',
@@ -242,6 +248,7 @@ export const LENDERS: LenderCriteria[] = [
     minFico: 400,
     minPosition: 1,
     maxPosition: 3,
+    restrictsSoleProps: true,
     restrictedStates: [],
     restrictedIndustryKeywords: ['non-profit', 'auto dealership', 'trucking', 'cannabis'],
     notes: 'Restricted: Sole Props, All Transportation, Auto Sales, Cannabis.',
@@ -416,6 +423,7 @@ export const LENDERS: LenderCriteria[] = [
     minFico: 580,
     minPosition: 1,
     maxPosition: 10,
+    restrictsSoleProps: true,
     restrictedStates: ['CA', 'MT', 'NV', 'ND', 'RI', 'SD', 'VT'],
     restrictedIndustryKeywords: ['agriculture', 'farming', 'financial services', 'insurance', 'real estate', 'trucking', 'mining'],
     notes: 'Restricted: CA, MT, NV, ND, RI, SD, VT, Sole Props, Partnerships, Agriculture & Farming, Finance, Insurance, Real Estate, Leasing Svs, Transportation & Warehousing, Mining.',
@@ -440,6 +448,7 @@ export const LENDERS: LenderCriteria[] = [
     minFico: 500,
     minPosition: 1,
     maxPosition: 3,
+    restrictsSoleProps: true,
     restrictedStates: ['TX'],
     restrictedIndustryKeywords: ['auto dealership', 'trucking', 'legal', 'marketing', 'cannabis'],
     notes: 'Restricted: TX, Sole Props, Auto Sales, Trucking, Law Firms, Attorneys, Multi-Level Marketing, Solar, Credit Repair, All Lending Svs, Debt & Collections, Smoke Shops, Cannabis.',

@@ -33,11 +33,12 @@ function buildSeedRows(userId: string) {
     max_position: l.maxPosition,
     neg_days_max: l.negDaysMax ?? null,
     min_deposits: l.minDeposits ?? null,
-    hard_pull_sole_props: l.hardPullSoleProps ?? false,
-    restricted_states: l.restrictedStates,
-    restricted_industry_keywords: l.restrictedIndustryKeywords,
-    notes: l.notes,
-    is_active: true,
+      hard_pull_sole_props: l.hardPullSoleProps ?? false,
+      restricts_sole_props: l.restrictsSoleProps ?? false,
+      restricted_states: l.restrictedStates,
+      restricted_industry_keywords: l.restrictedIndustryKeywords,
+      notes: l.notes,
+      is_active: true,
   }));
 }
 

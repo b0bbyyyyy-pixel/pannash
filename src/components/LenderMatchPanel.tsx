@@ -12,6 +12,7 @@ interface LenderMatchPanelProps {
   industry: string;
   nsfCount: number;
   depositsCount: number;
+  isSoleProp: boolean;
 }
 
 type MatchStatus = 'qualified' | 'not_qualified';
@@ -48,6 +49,7 @@ function dbToLenderCriteria(r: LenderRecord): LenderCriteria & { id: string } {
     negDaysMax: r.neg_days_max ?? undefined,
     minDeposits: r.min_deposits ?? undefined,
     hardPullSoleProps: r.hard_pull_sole_props,
+    restrictsSoleProps: r.restricts_sole_props ?? false,
     restrictedStates: r.restricted_states ?? [],
     restrictedIndustryKeywords: r.restricted_industry_keywords ?? [],
     notes: r.notes ?? '',
@@ -106,6 +108,11 @@ function computeMatch(lender: LenderCriteria, props: LenderMatchPanelProps): Len
     const lower = props.industry.toLowerCase();
     const hit = lender.restrictedIndustryKeywords.find((kw) => lower.includes(kw));
     if (hit) reasons.push({ label: `Industry: "${props.industry}" is restricted`, pass: false });
+  }
+
+  // Sole prop check
+  if (props.isSoleProp && lender.restrictsSoleProps) {
+    reasons.push({ label: 'Sole Proprietors restricted by this lender', pass: false });
   }
 
   if (lender.negDaysMax !== undefined) {
@@ -167,7 +174,7 @@ export default function LenderMatchPanel(props: LenderMatchPanelProps) {
   const matches = useMemo(
     () => lenders.map((l) => computeMatch(l, props)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [lenders, props.timeInBusiness, props.creditScore, props.avgMonthlyRevenue, props.currentPositions, props.businessState, props.industry, props.nsfCount, props.depositsCount]
+    [lenders, props.timeInBusiness, props.creditScore, props.avgMonthlyRevenue, props.currentPositions, props.businessState, props.industry, props.nsfCount, props.depositsCount, props.isSoleProp]
   );
 
   const qualifiedCount = matches.filter((m) => m.status === 'qualified').length;

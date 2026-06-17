@@ -16,6 +16,7 @@ export interface LenderRecord {
   neg_days_max: number | null;
   min_deposits: number | null;
   hard_pull_sole_props: boolean;
+  restricts_sole_props: boolean;
   restricted_states: string[];
   restricted_industry_keywords: string[];
   notes: string;
@@ -385,7 +386,7 @@ export default function LenderSettingsModal({ onClose, onRefresh }: Props) {
                   </FormField>
                 </div>
 
-                <div className="flex gap-6">
+                <div className="flex flex-wrap gap-x-6 gap-y-2">
                   <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
                     <input type="checkbox" checked={form.no_credit_pull} onChange={(e) => setForm({ ...form, no_credit_pull: e.target.checked })} className="w-4 h-4 rounded" />
                     No Credit Pull
@@ -393,6 +394,10 @@ export default function LenderSettingsModal({ onClose, onRefresh }: Props) {
                   <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
                     <input type="checkbox" checked={form.hard_pull_sole_props} onChange={(e) => setForm({ ...form, hard_pull_sole_props: e.target.checked })} className="w-4 h-4 rounded" />
                     Hard Pull on Sole Props
+                  </label>
+                  <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+                    <input type="checkbox" checked={(form as FormState & { restricts_sole_props?: boolean }).restricts_sole_props ?? false} onChange={(e) => setForm({ ...form, restricts_sole_props: e.target.checked } as FormState)} className="w-4 h-4 rounded" />
+                    Restricts All Sole Props
                   </label>
                   <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
                     <input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} className="w-4 h-4 rounded" />

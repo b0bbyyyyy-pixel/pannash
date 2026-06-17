@@ -20,6 +20,7 @@ interface UnderwritingData {
   endingBalance: number;
   nsfCount: number;
   depositsCount: number;
+  isSoleProp?: boolean;
   hasOtherMCALoans: boolean;
   mcaPositionCount?: number;
   otherMCAMonthlyPayment: number;
@@ -150,6 +151,7 @@ const DEFAULT_DATA: UnderwritingData = {
   endingBalance: 0,
   nsfCount: 0,
   depositsCount: 0,
+  isSoleProp: false,
   hasOtherMCALoans: false,
   mcaPositionCount: 0,
   otherMCAMonthlyPayment: 0,
@@ -1334,6 +1336,19 @@ export default function UnderwritingSuite({
                     placeholder="650"
                   />
                 </div>
+
+                <div className="pt-1">
+                  <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer hover:text-gray-900">
+                    <input
+                      type="checkbox"
+                      checked={data.isSoleProp || false}
+                      onChange={(e) => setData({ ...data, isSoleProp: e.target.checked })}
+                      className="w-4 h-4 text-[#5a7fc7] focus:ring-[#5a7fc7] border-gray-300 rounded"
+                    />
+                    <span>Sole Proprietor</span>
+                  </label>
+                  <p className="text-xs text-gray-400 mt-0.5 ml-6">Some lenders restrict sole props</p>
+                </div>
               </div>
             </div>
 
@@ -1584,6 +1599,7 @@ export default function UnderwritingSuite({
               industry={data.industry || ''}
               nsfCount={data.nsfCount || 0}
               depositsCount={data.depositsCount || 0}
+              isSoleProp={data.isSoleProp || false}
             />
 
             {/* Expected Offer */}
