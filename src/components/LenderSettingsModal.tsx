@@ -106,10 +106,12 @@ export default function LenderSettingsModal({ onClose, onRefresh }: Props) {
   const [filterTier, setFilterTier] = useState<number | 'all'>('all');
   const [error, setError] = useState('');
 
-  const load = useCallback(async () => {
+  const [resetting, setResetting] = useState(false);
+
+  const load = useCallback(async (url = '/api/lenders') => {
     setLoading(true);
     try {
-      const res = await fetch('/api/lenders');
+      const res = await fetch(url);
       const json = await res.json();
       setLenders(json.lenders ?? []);
     } catch {
@@ -119,7 +121,22 @@ export default function LenderSettingsModal({ onClose, onRefresh }: Props) {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  const resetToDefaults = async () => {
+    if (!confirm('This will delete all your custom lender edits and restore the original 41 lenders. Continue?')) return;
+    setResetting(true);
+    setError('');
+    try {
+      await load('/api/lenders?reset=true');
+      onRefresh();
+      setEditingId(null);
+    } catch {
+      setError('Reset failed.');
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  useEffect(() => { load('/api/lenders'); }, [load]);
 
   const startEdit = (lender: LenderRecord) => {
     setEditingId(lender.id);
@@ -252,6 +269,14 @@ export default function LenderSettingsModal({ onClose, onRefresh }: Props) {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                 </svg>
                 Add Lender
+              </button>
+              <button
+                onClick={resetToDefaults}
+                disabled={resetting}
+                className="px-3 py-1.5 text-xs font-medium bg-amber-100 text-amber-800 border border-amber-300 rounded-md hover:bg-amber-200 transition-colors disabled:opacity-50"
+                title="Delete all lenders and restore original defaults"
+              >
+                {resetting ? 'Resetting…' : '↺ Reset to Defaults'}
               </button>
             </div>
 

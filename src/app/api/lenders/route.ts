@@ -19,12 +19,47 @@ function makeClient(cookieStore: Awaited<ReturnType<typeof cookies>>) {
   );
 }
 
-// GET — fetch all lenders; auto-seed from defaults if none exist
-export async function GET() {
+function buildSeedRows(userId: string) {
+  return LENDERS.map((l) => ({
+    user_id: userId,
+    name: l.name,
+    tier: l.tier,
+    min_monthly_revenue: l.minMonthlyRevenue,
+    min_tib_months: l.minTIBMonths,
+    min_fico: l.minFico,
+    tib_fico_tiers: l.tibFicoTiers ?? null,
+    no_credit_pull: l.noCreditPull ?? false,
+    min_position: l.minPosition,
+    max_position: l.maxPosition,
+    neg_days_max: l.negDaysMax ?? null,
+    min_deposits: l.minDeposits ?? null,
+    hard_pull_sole_props: l.hardPullSoleProps ?? false,
+    restricted_states: l.restrictedStates,
+    restricted_industry_keywords: l.restrictedIndustryKeywords,
+    notes: l.notes,
+    is_active: true,
+  }));
+}
+
+// GET — fetch all lenders; auto-seed from defaults if none exist; ?reset=true re-seeds
+export async function GET(request: NextRequest) {
   const cookieStore = await cookies();
   const supabase = makeClient(cookieStore);
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const reset = new URL(request.url).searchParams.get('reset') === 'true';
+
+  if (reset) {
+    // Delete all existing lenders for this user, then re-seed from defaults
+    await supabase.from('lenders').delete().eq('user_id', user.id);
+    const { data: seeded, error: seedErr } = await supabase
+      .from('lenders')
+      .insert(buildSeedRows(user.id))
+      .select();
+    if (seedErr) return NextResponse.json({ error: seedErr.message }, { status: 500 });
+    return NextResponse.json({ lenders: seeded ?? [] });
+  }
 
   const { data, error } = await supabase
     .from('lenders')
@@ -37,31 +72,10 @@ export async function GET() {
 
   // Auto-seed default lenders on first load
   if (!data || data.length === 0) {
-    const seedRows = LENDERS.map((l) => ({
-      user_id: user.id,
-      name: l.name,
-      tier: l.tier,
-      min_monthly_revenue: l.minMonthlyRevenue,
-      min_tib_months: l.minTIBMonths,
-      min_fico: l.minFico,
-      tib_fico_tiers: l.tibFicoTiers ?? null,
-      no_credit_pull: l.noCreditPull ?? false,
-      min_position: l.minPosition,
-      max_position: l.maxPosition,
-      neg_days_max: l.negDaysMax ?? null,
-      min_deposits: l.minDeposits ?? null,
-      hard_pull_sole_props: l.hardPullSoleProps ?? false,
-      restricted_states: l.restrictedStates,
-      restricted_industry_keywords: l.restrictedIndustryKeywords,
-      notes: l.notes,
-      is_active: true,
-    }));
-
     const { data: seeded, error: seedErr } = await supabase
       .from('lenders')
-      .insert(seedRows)
+      .insert(buildSeedRows(user.id))
       .select();
-
     if (seedErr) return NextResponse.json({ error: seedErr.message }, { status: 500 });
     return NextResponse.json({ lenders: seeded ?? [] });
   }
