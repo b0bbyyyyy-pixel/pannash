@@ -253,12 +253,13 @@ const INDUSTRIES = [
   'Childcare/Daycare',
   'Pet Services',
   
-  // Automotive
+  // Automotive & Fuel
   'Auto Dealership - New',
   'Auto Dealership - Used',
   'Auto Detailing',
   'Car Wash',
   'Tire Shop',
+  'Gas Station / Convenience Store',
   
   // Other Industries
   'Agriculture/Farming',

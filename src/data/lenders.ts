@@ -193,7 +193,7 @@ export const LENDERS: LenderCriteria[] = [
     minPosition: 1,
     maxPosition: 3,
     restrictedStates: [],
-    restrictedIndustryKeywords: ['non-profit', 'auto dealership', 'trucking', 'insurance', 'real estate', 'legal', 'financial services', 'firearms', 'cannabis'],
+    restrictedIndustryKeywords: ['non-profit', 'auto dealership', 'trucking', 'insurance', 'real estate', 'legal', 'financial services', 'gas station', 'firearms', 'cannabis'],
     notes: 'Restricted: Non-Profits, Auto Sales, Trucking, Transportation, General Construction, Insurance, Real Estate, Law Firms, Financial Services, Gas Stations, Firearms, Pawn Shops, Bail Bonds, Churches, Cannabis.',
   },
   {
@@ -229,7 +229,7 @@ export const LENDERS: LenderCriteria[] = [
     minPosition: 1,
     maxPosition: 2,
     restrictedStates: ['TX'],
-    restrictedIndustryKeywords: ['non-profit', 'auto dealership', 'insurance', 'real estate', 'trucking', 'accounting', 'cleaning', 'janitorial'],
+    restrictedIndustryKeywords: ['non-profit', 'auto dealership', 'insurance', 'real estate', 'trucking', 'accounting', 'cleaning', 'janitorial', 'gas station'],
     notes: 'No FICO listed. Restricted: Non-Profits, TX, Home-Based Companies, Sole Props, Auto Sales, Construction & Specialty Contractors, Accounting, Insurance, Real Estate, Trucking & Transportation, Nail Salons, Gas Stations, Cleaning Svs: 10yrs TIB.',
   },
 
@@ -318,7 +318,7 @@ export const LENDERS: LenderCriteria[] = [
     minPosition: 1,
     maxPosition: 4,
     restrictedStates: [],
-    restrictedIndustryKeywords: ['auto dealership', 'travel agency', 'legal', 'cannabis'],
+    restrictedIndustryKeywords: ['auto dealership', 'travel agency', 'legal', 'gas station', 'cannabis'],
     notes: 'Construction & Subcontractors: 100K/mo. Trucking: Conditional. Restricted: Auto Sales, Gas Stations, Travel Agencies, Law Firms, Check Cashing, Pawn Shops, Cannabis.',
   },
   {
@@ -342,7 +342,7 @@ export const LENDERS: LenderCriteria[] = [
     minPosition: 1,
     maxPosition: 6,
     restrictedStates: ['NY', 'HI'],
-    restrictedIndustryKeywords: ['non-profit', 'auto dealership', 'trucking', 'real estate', 'insurance', 'legal', 'cannabis'],
+    restrictedIndustryKeywords: ['non-profit', 'auto dealership', 'trucking', 'real estate', 'insurance', 'legal', 'gas station', 'cannabis'],
     notes: 'TX: 150K+ only. 1st pos: No Construction, Insurance, or Law Firms. Restricted: NY, HI, Non-Profits, Auto Sales & Rentals, Trucking, Real Estate, Gas Stations, Credit Repair, Collections, Bail Bonds, Cannabis, Churches.',
   },
   {
@@ -355,7 +355,7 @@ export const LENDERS: LenderCriteria[] = [
     maxPosition: 2,
     negDaysMax: 5,
     restrictedStates: ['NY', 'CA'],
-    restrictedIndustryKeywords: ['non-profit', 'auto dealership', 'roofing', 'trucking', 'real estate', 'property management', 'firearms', 'cannabis'],
+    restrictedIndustryKeywords: ['non-profit', 'auto dealership', 'roofing', 'trucking', 'real estate', 'property management', 'gas station', 'firearms', 'cannabis'],
     notes: 'Max 5 negative days. Restricted: Non-Profits, NY, Sole Props in CA, Auto Sales, Gas Stations, Roofing, Trucking, Real Estate, Property Management, Pool Svs, Jewelers, Check Cashing, Firearms, Bail Bonds, Cannabis.',
   },
   {
@@ -367,7 +367,7 @@ export const LENDERS: LenderCriteria[] = [
     minPosition: 1,
     maxPosition: 10,
     restrictedStates: ['CT', 'MA', 'ND', 'TX'],
-    restrictedIndustryKeywords: ['non-profit', 'auto dealership', 'real estate', 'insurance', 'property management', 'travel agency', 'accounting', 'legal', 'staffing', 'financial services', 'agriculture', 'farming', 'firearms', 'cannabis'],
+    restrictedIndustryKeywords: ['non-profit', 'auto dealership', 'real estate', 'insurance', 'property management', 'travel agency', 'accounting', 'legal', 'staffing', 'financial services', 'agriculture', 'farming', 'gas station', 'firearms', 'cannabis'],
     notes: 'Construction: 50K/mo, TIB 6yrs. Restricted: Non-Profits, CT, MA, ND, TX, Sole Props in CA, Auto Sales, Real Estate, Insurance, Property Mgmt, Travel Agencies, Accounting, Law Firms, Consulting, Staffing, Financial, Produce, Gas Stations, Smoke Shops, Auctions, Pawn Shops, Firearms, Bail Bonds, Cannabis.',
   },
   {
@@ -405,7 +405,7 @@ export const LENDERS: LenderCriteria[] = [
     minPosition: 1,
     maxPosition: 4,
     restrictedStates: ['UT', 'TX', 'FL'],
-    restrictedIndustryKeywords: ['auto dealership', 'trucking', 'agriculture', 'farming', 'firearms'],
+    restrictedIndustryKeywords: ['auto dealership', 'trucking', 'agriculture', 'farming', 'gas station', 'firearms'],
     notes: 'Construction: 600 FICO. Restricted: Miami, UT, TX, Auto Sales, Trucking, Gas Stations, Bail Bonds, Pawn Shops, Mortgage Brokers, Farming, Firearms.',
   },
   {
@@ -453,7 +453,7 @@ export const LENDERS: LenderCriteria[] = [
     minPosition: 2,
     maxPosition: 5,
     restrictedStates: ['TX'],
-    restrictedIndustryKeywords: ['non-profit', 'auto dealership', 'trucking', 'cannabis'],
+    restrictedIndustryKeywords: ['non-profit', 'auto dealership', 'trucking', 'gas station', 'cannabis'],
     notes: 'NOT A 1ST POSITION LENDER (2-5 pos). CA & NY: 150K/mo, 600 FICO, 4 pos max. Restricted: TX, Non-Profits, Auto Sales, Check Cashing, Gas Stations, Pawn Shops, Debt & Bankruptcy Svs, Auctions, Trucking: 150K.',
   },
   {
@@ -551,7 +551,7 @@ export const LENDERS: LenderCriteria[] = [
     minPosition: 1,
     maxPosition: 5,
     restrictedStates: ['QC'],
-    restrictedIndustryKeywords: ['auto dealership', 'insurance', 'staffing', 'legal', 'agriculture', 'farming'],
+    restrictedIndustryKeywords: ['auto dealership', 'insurance', 'staffing', 'legal', 'agriculture', 'farming', 'gas station'],
     notes: 'Does not fund Quebec. Restricted: Auto Sales, Gas Stations, Investment & Mortgage Brokers, Energy Companies, Insurance, Tax Companies, Staffing, Vape Shops, Law Firms & Attorneys, Farms, Produce.',
   },
 ];
