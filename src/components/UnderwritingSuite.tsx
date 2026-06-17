@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import type { BankStatementAnalysisSnapshot } from '@/lib/bankAnalyzer';
 import BankStatementAnalyzerPanel from '@/components/BankStatementAnalyzerPanel';
+import LenderMatchPanel from '@/components/LenderMatchPanel';
 
 interface UnderwritingData {
   // Merchant Info
@@ -20,9 +21,11 @@ interface UnderwritingData {
   nsfCount: number;
   depositsCount: number;
   hasOtherMCALoans: boolean;
+  mcaPositionCount?: number;
   otherMCAMonthlyPayment: number;
   otherMCALenders: string;
   otherMCAOutstandingBalance?: number;
+  businessState?: string;
   
   // Additional Info
   requestedAmount: number;
@@ -148,9 +151,11 @@ const DEFAULT_DATA: UnderwritingData = {
   nsfCount: 0,
   depositsCount: 0,
   hasOtherMCALoans: false,
+  mcaPositionCount: 0,
   otherMCAMonthlyPayment: 0,
   otherMCALenders: '',
   otherMCAOutstandingBalance: 0,
+  businessState: '',
   requestedAmount: 0,
   purposeOfFunds: '',
 };
@@ -370,6 +375,14 @@ export default function UnderwritingSuite({
   const pitchNewRef = useRef<HTMLTextAreaElement>(null);
 
   // Load pitch templates from the server once
+  // Auto-populate businessState from phone area code on first load (if not already set)
+  useEffect(() => {
+    if (!data.businessState && detectedState) {
+      setData((prev) => ({ ...prev, businessState: detectedState }));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     const load = async () => {
       setPitchLoading(true);
@@ -1283,6 +1296,30 @@ export default function UnderwritingSuite({
                     ))}
                   </select>
                 </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs text-gray-600">Business State</label>
+                    {detectedState && data.businessState && data.businessState !== detectedState && (
+                      <button
+                        onClick={() => setData({ ...data, businessState: detectedState })}
+                        className="text-[10px] text-blue-500 hover:text-blue-700 underline"
+                      >
+                        Reset to {detectedState}
+                      </button>
+                    )}
+                  </div>
+                  <select
+                    value={data.businessState || ''}
+                    onChange={(e) => setData({ ...data, businessState: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                  >
+                    <option value="">— Select State —</option>
+                    {US_STATES.map((st) => (
+                      <option key={st} value={st}>{st}</option>
+                    ))}
+                  </select>
+                </div>
                 
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">Credit Score</label>
@@ -1465,7 +1502,7 @@ export default function UnderwritingSuite({
                     <input
                       type="checkbox"
                       checked={data.hasOtherMCALoans || false}
-                      onChange={(e) => setData({ ...data, hasOtherMCALoans: e.target.checked, otherMCAMonthlyPayment: e.target.checked ? data.otherMCAMonthlyPayment : 0 })}
+                      onChange={(e) => setData({ ...data, hasOtherMCALoans: e.target.checked, mcaPositionCount: e.target.checked ? (data.mcaPositionCount || 1) : 0, otherMCAMonthlyPayment: e.target.checked ? data.otherMCAMonthlyPayment : 0 })}
                       className="mr-2 w-4 h-4 text-[#5a7fc7] focus:ring-[#5a7fc7] border-gray-300 rounded"
                     />
                     <span>Has Other MCA Loans</span>
@@ -1473,6 +1510,22 @@ export default function UnderwritingSuite({
                   
                   {data.hasOtherMCALoans && (
                     <div className="ml-6 bg-orange-50 border border-orange-200 rounded-md p-3 space-y-3">
+                      <div>
+                        <label className="block text-xs text-gray-700 mb-1 font-medium">Number of Current Positions</label>
+                        <select
+                          value={data.mcaPositionCount ?? 1}
+                          onChange={(e) => setData({ ...data, mcaPositionCount: Number(e.target.value) })}
+                          className="w-full px-3 py-2 border border-orange-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                        >
+                          <option value={1}>1 position (1st MCA)</option>
+                          <option value={2}>2 positions (stacked × 2)</option>
+                          <option value={3}>3 positions (stacked × 3)</option>
+                          <option value={4}>4 positions (stacked × 4)</option>
+                          <option value={5}>5+ positions</option>
+                        </select>
+                        <p className="text-xs text-gray-600 mt-1">How many active MCA positions does the business currently have?</p>
+                      </div>
+
                       <div>
                         <label className="block text-xs text-gray-700 mb-1 font-medium">MCA Lender Names</label>
                         <input
@@ -1499,7 +1552,6 @@ export default function UnderwritingSuite({
                         <p className="text-xs text-gray-600 mt-1">Total monthly payment for all existing MCA loans</p>
                       </div>
 
-                      {/* Outstanding Balance — manual entry */}
                       <div>
                         <label className="block text-xs text-gray-700 mb-1 font-medium">
                           Remaining Balance
@@ -1520,6 +1572,18 @@ export default function UnderwritingSuite({
                 </div>
               </div>
             </div>
+
+            {/* Lender Match Panel */}
+            <LenderMatchPanel
+              timeInBusiness={data.timeInBusiness || 0}
+              creditScore={data.creditScore || 0}
+              avgMonthlyRevenue={avgMonthlyRevenue}
+              currentPositions={data.hasOtherMCALoans ? (data.mcaPositionCount ?? 1) : 0}
+              businessState={data.businessState || ''}
+              industry={data.industry || ''}
+              nsfCount={data.nsfCount || 0}
+              depositsCount={data.depositsCount || 0}
+            />
 
             {/* Expected Offer */}
             <div className="mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-lg p-4">
