@@ -63,6 +63,12 @@ interface UnderwritingData {
 
   /** Bank Statement Analyzer snapshot (metrics without heavy chart series); optional PDF is session-only */
   bankStatementAnalysis?: BankStatementAnalysisSnapshot;
+
+  /** Credit report parsed fields — persisted so re-upload isn't needed on reopen */
+  creditAvailableCredit?: number;
+  creditUtilization?: number;
+  creditInquiries?: number;
+  creditLates?: number;
 }
 
 interface UnderwritingSuiteProps {
@@ -521,7 +527,16 @@ export default function UnderwritingSuite({
     inquiries: number;
     lates: number;
   }
-  const [creditReportMeta, setCreditReportMeta] = useState<CreditReportMeta | null>(null);
+  const [creditReportMeta, setCreditReportMeta] = useState<CreditReportMeta | null>(
+    initialData?.creditAvailableCredit != null
+      ? {
+          availableCredit: initialData.creditAvailableCredit,
+          utilization:     initialData.creditUtilization     ?? 0,
+          inquiries:       initialData.creditInquiries       ?? 0,
+          lates:           initialData.creditLates           ?? 0,
+        }
+      : null
+  );
   const [creditReportParsing, setCreditReportParsing] = useState(false);
   const [creditReportDragOver, setCreditReportDragOver] = useState(false);
   const creditReportInputRef = useRef<HTMLInputElement>(null);
@@ -663,13 +678,21 @@ export default function UnderwritingSuite({
       await pdf.destroy();
 
       const result = parseCreditReportText(fullText);
-      if (result.score) setData((d) => ({ ...d, creditScore: result.score }));
-      setCreditReportMeta({
+      const meta: CreditReportMeta = {
         availableCredit: result.availableCredit,
-        utilization: result.utilization,
-        inquiries: result.inquiries,
-        lates: result.lates,
-      });
+        utilization:     result.utilization,
+        inquiries:       result.inquiries,
+        lates:           result.lates,
+      };
+      setCreditReportMeta(meta);
+      setData((d) => ({
+        ...d,
+        ...(result.score ? { creditScore: result.score } : {}),
+        creditAvailableCredit: meta.availableCredit,
+        creditUtilization:     meta.utilization,
+        creditInquiries:       meta.inquiries,
+        creditLates:           meta.lates,
+      }));
     } catch (err) {
       console.error('[credit-report]', err);
       alert('Could not parse credit report. Make sure it is a text-based PDF.');
