@@ -513,7 +513,171 @@ export default function UnderwritingSuite({
   const [notesEditing, setNotesEditing] = useState(false);
   const [notesEditValue, setNotesEditValue] = useState(leadNotes ?? '');
   const [notesSaving, setNotesSaving] = useState(false);
-  
+
+  // ── Credit Report Parsing (client-side via PDF.js) ───────────────────────
+  interface CreditReportMeta {
+    availableCredit: number;
+    utilization: number;
+    inquiries: number;
+    lates: number;
+  }
+  const [creditReportMeta, setCreditReportMeta] = useState<CreditReportMeta | null>(null);
+  const [creditReportParsing, setCreditReportParsing] = useState(false);
+  const [creditReportDragOver, setCreditReportDragOver] = useState(false);
+  const creditReportInputRef = useRef<HTMLInputElement>(null);
+
+  function parseCreditReportText(text: string) {
+    // ── Score ────────────────────────────────────────────────────────────────
+    const scoreMatch = text.match(/SCORE\s+(\d{3,4})/i);
+    const score = scoreMatch ? parseInt(scoreMatch[1]) : 0;
+
+    // ── Inquiries ────────────────────────────────────────────────────────────
+    // PDF.js may split "XP" and "10/18/25" into separate text items / lines,
+    // so we search the raw text block between INQUIRIES and DISCLAIMER rather
+    // than checking line starts.
+    const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+    const inquiriesCharIdx = text.search(/\bINQUIRIES\b/i);
+    const disclaimerCharIdx = text.search(/\bDISCLAIMER\b|\bSOURCE OF INFORMATION\b/i);
+    let inquiries = 0;
+    if (inquiriesCharIdx > -1) {
+      const section = disclaimerCharIdx > inquiriesCharIdx
+        ? text.slice(inquiriesCharIdx, disclaimerCharIdx)
+        : text.slice(inquiriesCharIdx);
+      // Each hard inquiry has a bureau code (XP/EQ/TU/EX) followed closely by a date
+      const inqMatches = section.match(/\b(XP|EQ|TU|EX)\b[\s\S]{0,30}?\d{2}\/\d{2}\/\d{2,4}/gi);
+      inquiries = inqMatches ? inqMatches.length : 0;
+    }
+
+    // ── Account blocks ───────────────────────────────────────────────────────
+    // Split the text into one block per trade-line entry.
+    // Each account starts with a single ECOA letter + space + borrower letter at
+    // the beginning of a line (e.g. "I B AMEX …").  We capture everything up to
+    // the next such marker so we can examine each account independently,
+    // regardless of how PDF.js laid out the columns.
+    const blockSplitRe = /(?:^|\n)\s*[ICB]\s+[BJASCTUPMXI]\s+(?=[A-Z])/g;
+    const blockStarts: number[] = [];
+    let bm: RegExpExecArray | null;
+    while ((bm = blockSplitRe.exec(text)) !== null) blockStarts.push(bm.index);
+
+    const blocks: string[] = blockStarts.map((start, i) =>
+      text.slice(start, i + 1 < blockStarts.length ? blockStarts[i + 1] : text.length)
+    );
+
+    let lates = 0;
+    let totalRevLimit = 0;
+    let totalRevBalance = 0;
+
+    for (const block of blocks) {
+      // Only true revolving (REV) accounts count toward utilization/available credit.
+      // CHARGE accounts (e.g. credit-builder apps like Kikoff) are excluded.
+      const isRevolving = /\bREV\b/i.test(block);
+      // Open vs closed
+      const isClosed = /\b(CLOSED|PAID\b|CHARGED OFF|COLLECTION|INACTIVE)\b/i.test(block);
+
+      // Extract every dollar amount in the block in order
+      const dollars = [...block.matchAll(/\$(\d[\d,]*)/g)]
+        .map((m) => parseInt(m[1].replace(/,/g, '')))
+        .filter((n) => n > 0);
+
+      // The four-number sequence MO_REV / 30-day / 60-day / 90+ always precedes
+      // the account status keyword.  Use the smallest window that matches.
+      const numSeq = block.match(
+        /\b(\d{1,3})\s+(\d{1,3})\s+(\d{1,3})\s+(\d{1,3})\s+(?:DELINQ|CUR\b|CLOSED|PAID\b|AS AGREED|CHARGED|COLLECT)/i
+      );
+      if (numSeq) {
+        // groups: [1]=MO_REV  [2]=30-day  [3]=60-day  [4]=90+
+        lates += (parseInt(numSeq[2]) || 0) + (parseInt(numSeq[3]) || 0) + (parseInt(numSeq[4]) || 0);
+      }
+
+      if (isRevolving && !isClosed && dollars.length >= 1) {
+        // First dollar = credit limit, second dollar = current balance (0 if missing)
+        const limit   = dollars[0];
+        const balance = dollars.length >= 2 ? dollars[1] : 0;
+        totalRevLimit   += limit;
+        totalRevBalance += balance;
+      }
+    }
+
+    return {
+      score,
+      availableCredit: Math.max(0, totalRevLimit - totalRevBalance),
+      utilization: totalRevLimit > 0 ? Math.round((totalRevBalance / totalRevLimit) * 100) : 0,
+      inquiries,
+      lates,
+    };
+  }
+
+  // Load PDF.js from CDN once and cache it on window to avoid webpack bundling issues
+  async function loadPdfJs(): Promise<{
+    getDocument: (src: { data: Uint8Array }) => { promise: Promise<{
+      numPages: number;
+      getPage: (n: number) => Promise<{ getTextContent: () => Promise<{ items: unknown[] }> }>;
+      destroy: () => Promise<void>;
+    }> };
+    GlobalWorkerOptions: { workerSrc: string };
+  }> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const w = window as any;
+    if (w.__pdfjsLib) return w.__pdfjsLib;
+    return new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+      script.onload = () => {
+        const lib = w.pdfjsLib;
+        lib.GlobalWorkerOptions.workerSrc =
+          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        w.__pdfjsLib = lib;
+        resolve(lib);
+      };
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+  }
+
+  async function handleCreditReportUpload(file: File) {
+    if (!file || file.type !== 'application/pdf') return;
+    setCreditReportParsing(true);
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const uint8 = new Uint8Array(arrayBuffer);
+
+      const pdfjsLib = await loadPdfJs();
+      const pdf = await pdfjsLib.getDocument({ data: uint8 }).promise;
+      let fullText = '';
+
+      for (let p = 1; p <= pdf.numPages; p++) {
+        const page = await pdf.getPage(p);
+        const content = await page.getTextContent();
+        let prevY: number | null = null;
+        for (const rawItem of content.items) {
+          const item = rawItem as { str: string; transform: number[] };
+          if (typeof item.str === 'string') {
+            const y = item.transform[5];
+            if (prevY !== null && Math.abs(y - prevY) > 2) fullText += '\n';
+            fullText += item.str + ' ';
+            prevY = y;
+          }
+        }
+        fullText += '\n\n';
+      }
+      await pdf.destroy();
+
+      const result = parseCreditReportText(fullText);
+      if (result.score) setData((d) => ({ ...d, creditScore: result.score }));
+      setCreditReportMeta({
+        availableCredit: result.availableCredit,
+        utilization: result.utilization,
+        inquiries: result.inquiries,
+        lates: result.lates,
+      });
+    } catch (err) {
+      console.error('[credit-report]', err);
+      alert('Could not parse credit report. Make sure it is a text-based PDF.');
+    } finally {
+      setCreditReportParsing(false);
+    }
+  }
+
   // Selected offer for negotiation
   const [selectedOfferId, setSelectedOfferId] = useState<string | null>(initialData?.selectedOfferId || null);
   const selectedOffer2 = actualOffers.find(o => o.id === selectedOfferId) ?? actualOffers[0] ?? null;
@@ -1335,6 +1499,65 @@ export default function UnderwritingSuite({
                     max="850"
                     placeholder="650"
                   />
+                  {/* Credit Report Upload */}
+                  <input
+                    ref={creditReportInputRef}
+                    type="file"
+                    accept="application/pdf"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) handleCreditReportUpload(f);
+                      e.target.value = '';
+                    }}
+                  />
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => !creditReportParsing && creditReportInputRef.current?.click()}
+                    onKeyDown={(e) => e.key === 'Enter' && !creditReportParsing && creditReportInputRef.current?.click()}
+                    onDragOver={(e) => { e.preventDefault(); if (!creditReportParsing) setCreditReportDragOver(true); }}
+                    onDragLeave={() => setCreditReportDragOver(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setCreditReportDragOver(false);
+                      if (creditReportParsing) return;
+                      const f = e.dataTransfer.files?.[0];
+                      if (f && f.type === 'application/pdf') handleCreditReportUpload(f);
+                    }}
+                    className={`mt-1.5 w-full flex items-center justify-center gap-1.5 px-2 py-1.5 text-xs border border-dashed rounded cursor-pointer transition-colors select-none
+                      ${creditReportParsing ? 'opacity-50 cursor-not-allowed border-gray-300 text-gray-400' :
+                        creditReportDragOver ? 'border-[#5a7fc7] bg-blue-50 text-[#5a7fc7]' :
+                        'border-gray-300 text-gray-500 hover:border-[#5a7fc7] hover:text-[#5a7fc7]'}`}
+                  >
+                    {creditReportParsing ? (
+                      <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+                      </svg>
+                    ) : creditReportDragOver ? (
+                      <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3"/>
+                      </svg>
+                    ) : (
+                      <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                      </svg>
+                    )}
+                    {creditReportParsing ? 'Parsing…' : creditReportDragOver ? 'Drop to parse' : creditReportMeta ? 'Re-upload Credit Report' : 'Upload Credit Report PDF'}
+                  </div>
+                  {creditReportMeta && (
+                    <div className="mt-1.5 grid grid-cols-2 gap-1 text-xs">
+                      <span className="text-gray-500">Avail. Credit</span>
+                      <span className="font-medium text-gray-800 text-right">${creditReportMeta.availableCredit.toLocaleString()}</span>
+                      <span className="text-gray-500">Utilization</span>
+                      <span className={`font-medium text-right ${creditReportMeta.utilization > 80 ? 'text-red-600' : creditReportMeta.utilization > 50 ? 'text-yellow-600' : 'text-green-600'}`}>{creditReportMeta.utilization}%</span>
+                      <span className="text-gray-500">Inquiries</span>
+                      <span className="font-medium text-gray-800 text-right">{creditReportMeta.inquiries}</span>
+                      <span className="text-gray-500">Lates</span>
+                      <span className={`font-medium text-right ${creditReportMeta.lates > 0 ? 'text-red-600' : 'text-green-600'}`}>{creditReportMeta.lates}</span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="pt-1">
@@ -1792,6 +2015,18 @@ export default function UnderwritingSuite({
                         <div className="bg-white border border-gray-200 rounded-lg p-4">
                           <div className="text-sm text-gray-600 mb-2 font-medium">Credit Score</div>
                           <div className="text-3xl font-bold text-gray-900">{creditScore}</div>
+                          {creditReportMeta && (
+                            <div className="mt-2 grid grid-cols-2 gap-x-2 gap-y-0.5 text-xs border-t border-gray-100 pt-2">
+                              <span className="text-gray-400">Avail.</span>
+                              <span className="font-semibold text-gray-700 text-right">${(creditReportMeta.availableCredit/1000).toFixed(1)}k</span>
+                              <span className="text-gray-400">Util.</span>
+                              <span className={`font-semibold text-right ${creditReportMeta.utilization > 80 ? 'text-red-600' : creditReportMeta.utilization > 50 ? 'text-yellow-600' : 'text-green-600'}`}>{creditReportMeta.utilization}%</span>
+                              <span className="text-gray-400">Inq.</span>
+                              <span className="font-semibold text-gray-700 text-right">{creditReportMeta.inquiries}</span>
+                              <span className="text-gray-400">Lates</span>
+                              <span className={`font-semibold text-right ${creditReportMeta.lates > 0 ? 'text-red-600' : 'text-green-600'}`}>{creditReportMeta.lates}</span>
+                            </div>
+                          )}
                         </div>
 
                         <div className="bg-white border border-gray-200 rounded-lg p-4">
