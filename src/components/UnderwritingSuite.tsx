@@ -2015,18 +2015,6 @@ export default function UnderwritingSuite({
                         <div className="bg-white border border-gray-200 rounded-lg p-4">
                           <div className="text-sm text-gray-600 mb-2 font-medium">Credit Score</div>
                           <div className="text-3xl font-bold text-gray-900">{creditScore}</div>
-                          {creditReportMeta && (
-                            <div className="mt-2 grid grid-cols-2 gap-x-2 gap-y-0.5 text-xs border-t border-gray-100 pt-2">
-                              <span className="text-gray-400">Avail.</span>
-                              <span className="font-semibold text-gray-700 text-right">${(creditReportMeta.availableCredit/1000).toFixed(1)}k</span>
-                              <span className="text-gray-400">Util.</span>
-                              <span className={`font-semibold text-right ${creditReportMeta.utilization > 80 ? 'text-red-600' : creditReportMeta.utilization > 50 ? 'text-yellow-600' : 'text-green-600'}`}>{creditReportMeta.utilization}%</span>
-                              <span className="text-gray-400">Inq.</span>
-                              <span className="font-semibold text-gray-700 text-right">{creditReportMeta.inquiries}</span>
-                              <span className="text-gray-400">Lates</span>
-                              <span className={`font-semibold text-right ${creditReportMeta.lates > 0 ? 'text-red-600' : 'text-green-600'}`}>{creditReportMeta.lates}</span>
-                            </div>
-                          )}
                         </div>
 
                         <div className="bg-white border border-gray-200 rounded-lg p-4">
