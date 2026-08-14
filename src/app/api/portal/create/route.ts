@@ -37,6 +37,7 @@ export async function POST(req: NextRequest) {
     const coreRow = {
       token,
       user_id: user.id,
+      is_active: true,
       lead_id: leadId || null,
       lead_name: leadName || null,
       offer_amount: offerAmount,

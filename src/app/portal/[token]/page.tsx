@@ -20,7 +20,7 @@ export default async function PortalPage({
     .from('client_offer_portals')
     .select('*')
     .eq('token', token)
-    .eq('is_active', true)
+    .neq('is_active', false)
     .single();
 
   if (error || !data) {
