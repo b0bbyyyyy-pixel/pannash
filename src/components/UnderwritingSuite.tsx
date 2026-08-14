@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import type { BankStatementAnalysisSnapshot } from '@/lib/bankAnalyzer';
 import BankStatementAnalyzerPanel from '@/components/BankStatementAnalyzerPanel';
 import LenderMatchPanel from '@/components/LenderMatchPanel';
+import ClientPortalModal from '@/components/ClientPortalModal';
 
 interface UnderwritingData {
   // Merchant Info
@@ -516,6 +517,7 @@ export default function UnderwritingSuite({
   const [offersNotes, setOffersNotes] = useState(initialData?.offersNotes || '');
   const [notesExpanded, setNotesExpanded] = useState(false);
   const [addOfferOpen, setAddOfferOpen] = useState(false);
+  const [portalOffer, setPortalOffer] = useState<typeof actualOffers[number] | null>(null);
   const [notesEditing, setNotesEditing] = useState(false);
   const [notesEditValue, setNotesEditValue] = useState(leadNotes ?? '');
   const [notesSaving, setNotesSaving] = useState(false);
@@ -2406,21 +2408,31 @@ export default function UnderwritingSuite({
                                   </div>
                                 </>
                               )}
-                              {offer.url && (
-                                <div className="pt-2 border-t border-gray-200 mt-2">
+                              <div className="pt-2 border-t border-gray-200 mt-2 flex items-center gap-4 flex-wrap">
+                                {offer.url && (
                                   <a
                                     href={offer.url}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="text-[#5a7fc7] hover:text-[#4a6fb7] font-medium flex items-center gap-1"
+                                    className="text-[#5a7fc7] hover:text-[#4a6fb7] font-medium flex items-center gap-1 text-sm"
                                   >
                                     View Offer
                                     <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                                     </svg>
                                   </a>
-                                </div>
-                              )}
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => setPortalOffer(offer)}
+                                  className="flex items-center gap-1.5 text-sm font-medium text-emerald-700 hover:text-emerald-800 transition-colors"
+                                >
+                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                                  </svg>
+                                  Send Offer to Client
+                                </button>
+                              </div>
                             </div>
                             
                             {/* LOC Draw Panel */}
@@ -3267,6 +3279,17 @@ export default function UnderwritingSuite({
         </div>
       </div>
     )}
+
+      {/* Client Portal Modal */}
+      {portalOffer && (
+        <ClientPortalModal
+          offer={portalOffer}
+          leadId={leadId}
+          leadName={leadName || businessName || 'Client'}
+          avgMonthlyRevenue={avgMonthlyRevenue > 0 ? avgMonthlyRevenue : undefined}
+          onClose={() => setPortalOffer(null)}
+        />
+      )}
     </>
   );
 }

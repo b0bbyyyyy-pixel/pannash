@@ -41,6 +41,7 @@ export async function POST(req: NextRequest) {
         company: company || null,
         notes: notes || null,
         list_id: list_id || null,
+        last_contact: new Date().toISOString(),
       })
       .select()
       .single();

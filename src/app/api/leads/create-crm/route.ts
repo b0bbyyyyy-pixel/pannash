@@ -49,10 +49,12 @@ export async function POST(req: NextRequest) {
         company: company || null,
         stage: 'Offers/Follow up',
         value: 0,
-        timer_type: 'No Timer',
+        last_contact: new Date().toISOString(),
+        timer_type: 'Display Date',
+        timer_end_date: new Date().toISOString(),
         auto_email_frequency: 'Off',
         auto_text_frequency: 'Off',
-        month_key: monthKey || new Date().toISOString().slice(0, 7), // YYYY-MM format
+        month_key: monthKey || new Date().toISOString().slice(0, 7),
         max_added_points: cap,
       })
       .select()
