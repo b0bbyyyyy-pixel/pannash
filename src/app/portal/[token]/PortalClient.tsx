@@ -29,6 +29,7 @@ interface Portal {
   term_options: TermOption[] | null;
   avg_monthly_revenue: number | null;
   show_revenue_percent: boolean;
+  fee_disclaimer: string | null;
 }
 
 interface Props {
@@ -259,9 +260,11 @@ export default function PortalClient({ portal, token }: Props) {
           )}
         </div>
 
-        <p className="text-xs text-gray-400 text-center leading-relaxed">
-          There are no hidden fees. The loan fee shown is the only additional cost.
-        </p>
+        {portal.fee_disclaimer && (
+          <p className="text-xs text-gray-400 text-center leading-relaxed">
+            {portal.fee_disclaimer}
+          </p>
+        )}
 
         {/* CTA */}
         <button

@@ -74,19 +74,27 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
   // Term options
   const baseTerms = offer.termLength ?? 52;
   const baseFreq = offer.paymentFrequency ?? 'Weekly';
-  const [showTermOptions, setShowTermOptions] = useState(false);
+  const [showTermOptions, setShowTermOptions] = useState(true);
   const [termOptions, setTermOptions] = useState<TermOption[]>([
     { id: '1', label: `${baseTerms} ${baseFreq.toLowerCase()} payments`, payments: baseTerms, factorRate: offer.factorRate },
   ]);
   const [previewTermId, setPreviewTermId] = useState('1');
 
+  // Fee disclaimer (editable, shown below details card)
+  const [feeDisclaimer, setFeeDisclaimer] = useState<string>(
+    saved?.feeDisclaimer ?? 'There are no hidden fees. The loan fee shown is the only additional cost.'
+  );
+
   // Generated link state
   const [generating, setGenerating] = useState(false);
   const [generatedToken, setGeneratedToken] = useState<string | null>(null);
+  const [generatedAt, setGeneratedAt] = useState<string | null>(null);
 
   // Activity log
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
+  const [expiringOld, setExpiringOld] = useState(false);
+  const [expiredCount, setExpiredCount] = useState<number | null>(null);
 
   // Preview slider amount
   const [previewAmount, setPreviewAmount] = useState(offer.amount);
@@ -124,9 +132,9 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
     saveDefaults({
       title, introMessage, minAmountPct,
       showFactor, showTotalRepayment, showPayment, showRevenuePercent,
-      customCta, thankYouMessage, expiryDays,
+      customCta, thankYouMessage, expiryDays, feeDisclaimer,
     });
-  }, [title, introMessage, minAmountPct, showFactor, showTotalRepayment, showPayment, showRevenuePercent, customCta, thankYouMessage, expiryDays]);
+  }, [title, introMessage, minAmountPct, showFactor, showTotalRepayment, showPayment, showRevenuePercent, customCta, thankYouMessage, expiryDays, feeDisclaimer]);
 
   const fetchLogs = useCallback(async () => {
     if (!generatedToken) return;
@@ -171,6 +179,7 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
           showPayment,
           showRevenuePercent: showRevenuePercent && !!avgMonthlyRevenue,
           avgMonthlyRevenue: avgMonthlyRevenue ?? null,
+          feeDisclaimer: feeDisclaimer.trim() || null,
           customCta,
           thankYouMessage,
           expiresAt,
@@ -182,6 +191,7 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed');
       setGeneratedToken(json.token);
+      setGeneratedAt(new Date().toISOString());
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error';
       alert(`Failed to generate link: ${msg}`);
@@ -469,6 +479,20 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
                 </div>
 
                 <div>
+                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
+                    Disclaimer / Fine Print
+                    <span className="ml-1 normal-case font-normal text-gray-400">(leave blank to hide)</span>
+                  </label>
+                  <textarea
+                    value={feeDisclaimer}
+                    onChange={(e) => setFeeDisclaimer(e.target.value)}
+                    rows={2}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm resize-none"
+                    placeholder="e.g. There are no hidden fees…"
+                  />
+                </div>
+
+                <div>
                   <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Link Expiry (days)</label>
                   <input
                     type="number"
@@ -660,6 +684,11 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
                       )}
                     </div>
 
+                    {feeDisclaimer.trim() && (
+                      <p className="text-center text-gray-400 leading-snug" style={{ fontSize: '9px' }}>
+                        {feeDisclaimer}
+                      </p>
+                    )}
                     <button className="w-full py-3.5 bg-blue-600 text-white text-sm font-bold rounded-xl">
                       {customCta || 'I Accept This Offer'} — {fmt(Math.round(previewAmount))}
                     </button>
@@ -673,31 +702,79 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
           )}
 
           {tab === 'activity' && (
-            <div className="flex-1 overflow-y-auto p-6">
-              <div className="flex items-center justify-between mb-4">
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              {/* Header row */}
+              <div className="flex items-center justify-between">
                 <h3 className="font-semibold text-gray-800">Activity Log</h3>
-                <button
-                  onClick={fetchLogs}
-                  disabled={loadingLogs || !generatedToken}
-                  className="text-sm text-blue-600 hover:text-blue-700 disabled:text-gray-400"
-                >
-                  {loadingLogs ? 'Refreshing…' : '↻ Refresh'}
-                </button>
+                <div className="flex items-center gap-3">
+                  {generatedToken && leadId && (
+                    <>
+                      {expiredCount !== null && (
+                        <span className="text-xs text-green-600 font-medium">✓ {expiredCount} expired</span>
+                      )}
+                      <button
+                        onClick={async () => {
+                          setExpiringOld(true);
+                          setExpiredCount(null);
+                          try {
+                            const res = await fetch('/api/portal/expire-old', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ leadId, keepToken: generatedToken }),
+                            });
+                            if (res.ok) {
+                              const d = await res.json();
+                              setExpiredCount(d.deactivated ?? 0);
+                            }
+                          } finally {
+                            setExpiringOld(false);
+                          }
+                        }}
+                        disabled={expiringOld}
+                        className="text-xs text-amber-600 hover:text-amber-700 disabled:opacity-50"
+                        title="Deactivate all older links for this lead"
+                      >
+                        {expiringOld ? 'Expiring…' : 'Expire Old Links'}
+                      </button>
+                    </>
+                  )}
+                  <button
+                    onClick={fetchLogs}
+                    disabled={loadingLogs || !generatedToken}
+                    className="text-sm text-blue-600 hover:text-blue-700 disabled:text-gray-400"
+                  >
+                    {loadingLogs ? 'Refreshing…' : '↻ Refresh'}
+                  </button>
+                </div>
               </div>
 
+              {/* Log entries */}
               {!generatedToken ? (
                 <div className="text-center py-16 text-gray-400">
                   <p className="text-4xl mb-3">📊</p>
                   <p>Generate a link first to see activity</p>
                 </div>
-              ) : logs.length === 0 ? (
-                <div className="text-center py-16 text-gray-400">
-                  <p className="text-4xl mb-3">⏳</p>
-                  <p>No activity yet</p>
-                  <p className="text-sm mt-1">Share the link — events will appear here</p>
-                </div>
               ) : (
                 <div className="space-y-3">
+                  {/* Always show link generation as first event */}
+                  {generatedAt && (
+                    <div className="flex items-start gap-3 p-4 bg-blue-50 rounded-xl border border-blue-100">
+                      <span className="px-2 py-0.5 rounded-full text-xs font-medium flex-shrink-0 bg-blue-100 text-blue-700">
+                        Link Generated
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs text-gray-600">Secure portal link created</p>
+                        <div className="text-xs text-gray-400 mt-0.5">{formatTime(generatedAt)}</div>
+                      </div>
+                    </div>
+                  )}
+                  {logs.length === 0 && (
+                    <div className="text-center py-8 text-gray-400">
+                      <p className="text-sm">No client interactions yet</p>
+                      <p className="text-xs mt-1">Activity appears here when the client opens the link or uses the slider</p>
+                      <p className="text-xs mt-2 text-gray-300">If you&apos;ve already shared it, make sure the Supabase RLS SQL has been run</p>
+                    </div>
+                  )}
                   {logs.map((log) => {
                     const ev = eventLabel(log.event_type);
                     return (

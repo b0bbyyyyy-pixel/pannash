@@ -28,6 +28,7 @@ export async function POST(req: NextRequest) {
       title, introMessage, minAmount,
       showFactor, showTotalRepayment, showPayment,
       showRevenuePercent, avgMonthlyRevenue,
+      feeDisclaimer,
       customCta, thankYouMessage, expiresAt,
       showTermOptions, termOptions,
     } = body;
@@ -51,6 +52,7 @@ export async function POST(req: NextRequest) {
       show_factor: showFactor ?? false,
       show_total_repayment: showTotalRepayment ?? true,
       show_payment: showPayment ?? true,
+      fee_disclaimer: feeDisclaimer ?? null,
       custom_cta: customCta || 'I Accept This Offer',
       thank_you_message: thankYouMessage || 'Thank you! We will be in touch shortly.',
       expires_at: expiresAt || null,

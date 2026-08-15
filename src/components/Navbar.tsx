@@ -65,6 +65,16 @@ export default function Navbar({ userName }: NavbarProps) {
             >
               Leads
             </Link>
+            <Link
+              href="/calendar"
+              className={`text-sm font-medium transition-colors ${
+                isActive('/calendar')
+                  ? 'text-[#1a1a1a]'
+                  : 'text-[#6b6b6b] hover:text-[#1a1a1a]'
+              }`}
+            >
+              Calendar
+            </Link>
           </div>
 
           {/* Right Side - User Menu with Gear Icon */}
