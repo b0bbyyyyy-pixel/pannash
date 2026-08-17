@@ -1,6 +1,12 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { createClient } from '@supabase/supabase-js';
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
 interface Offer {
   id: string;
@@ -85,6 +91,18 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
     saved?.feeDisclaimer ?? 'There are no hidden fees. The loan fee shown is the only additional cost.'
   );
 
+  // Link preview (Open Graph) customization
+  const [ogTitle, setOgTitle] = useState<string>(saved?.ogTitle ?? '');
+  const [ogDescription, setOgDescription] = useState<string>(saved?.ogDescription ?? '');
+  const [ogImageUrl, setOgImageUrl] = useState<string>(saved?.ogImageUrl ?? '');
+  const [ogImageUploading, setOgImageUploading] = useState(false);
+  const ogImageInputRef = useRef<HTMLInputElement>(null);
+
+  // Logo shown above the title on the client portal
+  const [logoUrl, setLogoUrl] = useState<string>(saved?.logoUrl ?? '');
+  const [logoUploading, setLogoUploading] = useState(false);
+  const logoInputRef = useRef<HTMLInputElement>(null);
+
   // Generated link state
   const [generating, setGenerating] = useState(false);
   const [generatedToken, setGeneratedToken] = useState<string | null>(null);
@@ -133,8 +151,9 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
       title, introMessage, minAmountPct,
       showFactor, showTotalRepayment, showPayment, showRevenuePercent,
       customCta, thankYouMessage, expiryDays, feeDisclaimer,
+      ogTitle, ogDescription, ogImageUrl, logoUrl,
     });
-  }, [title, introMessage, minAmountPct, showFactor, showTotalRepayment, showPayment, showRevenuePercent, customCta, thankYouMessage, expiryDays, feeDisclaimer]);
+  }, [title, introMessage, minAmountPct, showFactor, showTotalRepayment, showPayment, showRevenuePercent, customCta, thankYouMessage, expiryDays, feeDisclaimer, ogTitle, ogDescription, ogImageUrl, logoUrl]);
 
   const fetchLogs = useCallback(async () => {
     if (!generatedToken) return;
@@ -153,6 +172,46 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
   useEffect(() => {
     if (tab === 'activity' && generatedToken) fetchLogs();
   }, [tab, generatedToken, fetchLogs]);
+
+  async function uploadOgImage(file: File) {
+    setOgImageUploading(true);
+    try {
+      const ext = file.name.split('.').pop();
+      const path = `og-images/${Date.now()}.${ext}`;
+      const { error } = await supabase.storage
+        .from('lead-attachments')
+        .upload(path, file, { upsert: true, contentType: file.type });
+      if (error) throw error;
+      const { data: { publicUrl } } = supabase.storage
+        .from('lead-attachments')
+        .getPublicUrl(path);
+      setOgImageUrl(publicUrl);
+    } catch (err) {
+      alert('Image upload failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setOgImageUploading(false);
+    }
+  }
+
+  async function uploadLogo(file: File) {
+    setLogoUploading(true);
+    try {
+      const ext = file.name.split('.').pop();
+      const path = `portal-logos/${Date.now()}.${ext}`;
+      const { error } = await supabase.storage
+        .from('lead-attachments')
+        .upload(path, file, { upsert: true, contentType: file.type });
+      if (error) throw error;
+      const { data: { publicUrl } } = supabase.storage
+        .from('lead-attachments')
+        .getPublicUrl(path);
+      setLogoUrl(publicUrl);
+    } catch (err) {
+      alert('Logo upload failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setLogoUploading(false);
+    }
+  }
 
   async function generateLink() {
     setGenerating(true);
@@ -180,6 +239,10 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
           showRevenuePercent: showRevenuePercent && !!avgMonthlyRevenue,
           avgMonthlyRevenue: avgMonthlyRevenue ?? null,
           feeDisclaimer: feeDisclaimer.trim() || null,
+          ogTitle: ogTitle.trim() || null,
+          ogDescription: ogDescription.trim() || null,
+          ogImageUrl: ogImageUrl.trim() || null,
+          logoUrl: logoUrl.trim() || null,
           customCta,
           thankYouMessage,
           expiresAt,
@@ -297,6 +360,58 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
                   >
                     Reset
                   </button>
+                </div>
+
+                {/* Logo upload */}
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
+                    Logo
+                    <span className="ml-1 normal-case font-normal text-gray-400">(PNG/SVG, transparent background, min 200px tall, under 2MB)</span>
+                  </label>
+                  <div className="flex gap-2 items-center">
+                    {logoUrl ? (
+                      <div className="flex items-center gap-3 flex-1 px-3 py-2 border border-gray-200 rounded-lg bg-gray-50">
+                        <img src={logoUrl} alt="Logo preview" className="max-h-8 max-w-[120px] object-contain" />
+                        <button
+                          type="button"
+                          onClick={() => setLogoUrl('')}
+                          className="text-xs text-red-500 hover:underline ml-auto"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="flex-1 text-sm text-gray-400 px-3 py-2 border border-gray-200 rounded-lg bg-gray-50">No logo uploaded</p>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => logoInputRef.current?.click()}
+                      disabled={logoUploading}
+                      className="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 flex-shrink-0 flex items-center gap-1"
+                    >
+                      {logoUploading ? (
+                        <span className="text-xs text-gray-400">Uploading…</span>
+                      ) : (
+                        <>
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                          </svg>
+                          Upload
+                        </>
+                      )}
+                    </button>
+                    <input
+                      ref={logoInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) uploadLogo(file);
+                        e.target.value = '';
+                      }}
+                    />
+                  </div>
                 </div>
 
                 <div>
@@ -504,6 +619,108 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
                   />
                 </div>
 
+                {/* iMessage / Link Preview */}
+                <div className="border border-blue-100 rounded-xl p-4 bg-blue-50 space-y-3">
+                  <p className="text-xs font-bold text-blue-700 uppercase tracking-wide">iMessage / Link Preview</p>
+                  <p className="text-xs text-gray-500">Controls what the recipient sees when you text them the link — the bold title, description, and image thumbnail.</p>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
+                      Preview Title
+                      <span className="ml-1 normal-case font-normal text-gray-400">(bold text in preview)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={ogTitle}
+                      onChange={(e) => setOgTitle(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
+                      placeholder={`e.g. Approved Offer — ${leadName || 'Your Business'}`}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
+                      Preview Description
+                      <span className="ml-1 normal-case font-normal text-gray-400">(small text below title)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={ogDescription}
+                      onChange={(e) => setOgDescription(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
+                      placeholder="e.g. Review your funding details and accept your offer."
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
+                      Preview Image
+                      <span className="ml-1 normal-case font-normal text-gray-400">(thumbnail shown in iMessage — best size: 1200×630px, min 300×200px, under 5MB)</span>
+                    </label>
+                    <div className="flex gap-2 items-center">
+                      <input
+                        type="url"
+                        value={ogImageUrl}
+                        onChange={(e) => setOgImageUrl(e.target.value)}
+                        className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
+                        placeholder="Paste image URL or upload →"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => ogImageInputRef.current?.click()}
+                        disabled={ogImageUploading}
+                        className="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 flex-shrink-0 flex items-center gap-1"
+                      >
+                        {ogImageUploading ? (
+                          <span className="text-xs text-gray-400">Uploading…</span>
+                        ) : (
+                          <>
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                            </svg>
+                            Upload
+                          </>
+                        )}
+                      </button>
+                      <input
+                        ref={ogImageInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) uploadOgImage(file);
+                          e.target.value = '';
+                        }}
+                      />
+                    </div>
+                    {ogImageUrl && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <img src={ogImageUrl} alt="OG preview" className="w-10 h-10 rounded-lg object-cover border border-gray-200" />
+                        <button
+                          type="button"
+                          onClick={() => setOgImageUrl('')}
+                          className="text-xs text-red-500 hover:underline"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {/* Live mini-preview */}
+                  {(ogTitle || ogDescription || ogImageUrl) && (
+                    <div className="mt-2 rounded-xl overflow-hidden border border-gray-200 bg-white shadow-sm flex items-center gap-3 p-3">
+                      {ogImageUrl ? (
+                        <img src={ogImageUrl} alt="preview" className="w-12 h-12 rounded-lg object-cover flex-shrink-0" />
+                      ) : (
+                        <div className="w-12 h-12 rounded-lg bg-blue-100 flex items-center justify-center flex-shrink-0 text-lg">💰</div>
+                      )}
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-gray-900 truncate">{ogTitle || 'Your Funding Offer'}</p>
+                        <p className="text-xs text-gray-500 truncate">{ogDescription || 'View and customize your approved funding offer.'}</p>
+                        <p className="text-xs text-gray-400">gostwrk.io</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 {/* Generate / Copy */}
                 <div className="pt-2 space-y-3">
                   {!generatedToken ? (
@@ -591,6 +808,9 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
                   {/* Portal content preview */}
                   <div className="p-5 space-y-4 bg-white">
                     <div>
+                      {logoUrl && (
+                        <img src={logoUrl} alt="Logo" className="mb-3 max-h-10 max-w-[140px] object-contain" />
+                      )}
                       <h1 className="text-xl font-bold text-gray-900">{title || 'Your Funding Offer'}</h1>
                       {leadName && <p className="text-gray-500 text-xs mt-0.5">Hi {leadName.split(' ')[0]},</p>}
                       {introMessage && <p className="text-gray-600 text-xs mt-1 leading-relaxed">{introMessage}</p>}

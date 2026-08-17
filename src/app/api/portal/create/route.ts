@@ -29,6 +29,8 @@ export async function POST(req: NextRequest) {
       showFactor, showTotalRepayment, showPayment,
       showRevenuePercent, avgMonthlyRevenue,
       feeDisclaimer,
+      ogTitle, ogDescription, ogImageUrl,
+      logoUrl,
       customCta, thankYouMessage, expiresAt,
       showTermOptions, termOptions,
     } = body;
@@ -53,9 +55,16 @@ export async function POST(req: NextRequest) {
       show_total_repayment: showTotalRepayment ?? true,
       show_payment: showPayment ?? true,
       fee_disclaimer: feeDisclaimer ?? null,
+      logo_url: logoUrl || null,
       custom_cta: customCta || 'I Accept This Offer',
       thank_you_message: thankYouMessage || 'Thank you! We will be in touch shortly.',
       expires_at: expiresAt || null,
+    };
+
+    const ogRow = {
+      og_title: ogTitle || null,
+      og_description: ogDescription || null,
+      og_image_url: ogImageUrl || null,
     };
 
     const isColError = (e: { message?: string; code?: string }) =>
@@ -64,11 +73,12 @@ export async function POST(req: NextRequest) {
     let data = null;
     let error = null;
 
-    // Attempt 1: all columns (term options + revenue %)
+    // Attempt 1: all columns (og + term options + revenue %)
     ({ data, error } = await supabase
       .from('client_offer_portals')
       .insert({
         ...coreRow,
+        ...ogRow,
         show_term_options: showTermOptions ?? false,
         term_options: termOptions ?? [],
         show_revenue_percent: showRevenuePercent ?? false,
@@ -84,6 +94,7 @@ export async function POST(req: NextRequest) {
         .from('client_offer_portals')
         .insert({
           ...coreRow,
+          ...ogRow,
           show_term_options: showTermOptions ?? false,
           term_options: termOptions ?? [],
         })
@@ -91,9 +102,19 @@ export async function POST(req: NextRequest) {
         .single());
     }
 
-    // Attempt 3: without term option columns either
+    // Attempt 3: without term option columns
     if (error && isColError(error)) {
       console.warn('[portal/create] Retrying without term/revenue columns:', error.message);
+      ({ data, error } = await supabase
+        .from('client_offer_portals')
+        .insert({ ...coreRow, ...ogRow })
+        .select('token, id')
+        .single());
+    }
+
+    // Attempt 4: without OG columns (last resort)
+    if (error && isColError(error)) {
+      console.warn('[portal/create] Retrying without OG columns:', error.message);
       ({ data, error } = await supabase
         .from('client_offer_portals')
         .insert(coreRow)

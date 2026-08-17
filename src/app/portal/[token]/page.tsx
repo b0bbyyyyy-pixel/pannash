@@ -7,7 +7,39 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
-export const metadata: Metadata = { title: 'Your Funding Offer' };
+// Dynamic OG metadata per portal
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ token: string }>;
+}): Promise<Metadata> {
+  const { token } = await params;
+  const { data } = await supabase
+    .from('client_offer_portals')
+    .select('og_title, og_description, og_image_url, title, lead_name')
+    .eq('token', token)
+    .single();
+
+  const ogTitle = data?.og_title || data?.title || 'Your Funding Offer';
+  const ogDesc = data?.og_description || 'View and customize your approved funding offer.';
+  const ogImage = data?.og_image_url || null;
+
+  return {
+    title: ogTitle,
+    description: ogDesc,
+    openGraph: {
+      title: ogTitle,
+      description: ogDesc,
+      ...(ogImage ? { images: [{ url: ogImage, width: 1200, height: 630 }] } : {}),
+    },
+    twitter: {
+      card: ogImage ? 'summary_large_image' : 'summary',
+      title: ogTitle,
+      description: ogDesc,
+      ...(ogImage ? { images: [ogImage] } : {}),
+    },
+  };
+}
 
 export default async function PortalPage({
   params,
@@ -20,7 +52,7 @@ export default async function PortalPage({
     .from('client_offer_portals')
     .select('*')
     .eq('token', token)
-    .neq('is_active', false)  // false = explicitly expired; null/true = active
+    .neq('is_active', false)
     .single();
 
   if (error || !data) {

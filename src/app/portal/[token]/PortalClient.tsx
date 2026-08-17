@@ -30,6 +30,7 @@ interface Portal {
   avg_monthly_revenue: number | null;
   show_revenue_percent: boolean;
   fee_disclaimer: string | null;
+  logo_url: string | null;
 }
 
 interface Props {
@@ -141,6 +142,13 @@ export default function PortalClient({ portal, token }: Props) {
     <div className="min-h-screen bg-white flex flex-col max-w-md mx-auto">
       {/* Header */}
       <div className="px-6 pt-10 pb-4">
+        {portal.logo_url && (
+          <img
+            src={portal.logo_url}
+            alt="Logo"
+            className="mb-5 max-h-16 max-w-[200px] object-contain"
+          />
+        )}
         <h1 className="text-2xl font-bold text-gray-900">{portal.title}</h1>
         {portal.lead_name && (
           <p className="text-gray-500 mt-1 text-sm">Hi {portal.lead_name.split(' ')[0]},</p>
