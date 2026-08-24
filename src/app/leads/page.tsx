@@ -53,17 +53,18 @@ export default async function LeadsPage({
     .eq('user_id', user.id)
     .order('created_at', { ascending: false });
 
-  // By default, hide CRM/dashboard leads (they have month_key set)
-  if (!showCrm) {
-    leadsQuery = leadsQuery.is('month_key', null);
-  }
-
   if (selectedListId) {
     if (selectedListId === 'unlisted') {
+      // Uncategorized: no list AND no CRM month_key (unless showCrm)
       leadsQuery = leadsQuery.is('list_id', null);
+      if (!showCrm) leadsQuery = leadsQuery.is('month_key', null);
     } else {
+      // Specific list: leads with list_id are always contact leads, no extra filter needed
       leadsQuery = leadsQuery.eq('list_id', selectedListId);
     }
+  } else {
+    // "All" view — hide CRM leads unless showCrm is on
+    if (!showCrm) leadsQuery = leadsQuery.not('list_id', 'is', null);
   }
 
   const { data: leads } = await leadsQuery;
@@ -79,7 +80,7 @@ export default async function LeadsPage({
     })
   );
 
-  // Count contact-list leads without a list (exclude CRM leads unless showCrm)
+  // Count uncategorized contact-list leads (no list_id, no month_key unless showCrm)
   let unlistedQuery = supabase
     .from('leads')
     .select('*', { count: 'exact', head: true })
