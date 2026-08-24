@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 import Papa from 'papaparse';
 import { useRouter } from 'next/navigation';
+import JSZip from 'jszip';
 
 interface UploadFormProps {
   selectedListId?: string;
@@ -18,12 +19,18 @@ interface ParsedLead {
 }
 
 export default function UploadForm({ selectedListId }: UploadFormProps) {
-  const [mode, setMode] = useState<'file' | 'paste'>('file');
+  const [mode, setMode] = useState<'file' | 'paste' | 'zip'>('file');
   const [file, setFile] = useState<File | null>(null);
   const [pasteText, setPasteText] = useState('');
   const [parsedPreview, setParsedPreview] = useState<ParsedLead[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  // ZIP pack state
+  const [zipDragging, setZipDragging] = useState(false);
+  const [zipPreview, setZipPreview] = useState<ParsedLead[]>([]);
+  const [zipParsing, setZipParsing] = useState(false);
+  const [zipProgress, setZipProgress] = useState('');
+  const zipInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
   const supabase = createBrowserClient(
@@ -521,6 +528,167 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
     });
   };
 
+  // ── ZIP Deal Pack parser ──────────────────────────────────────────────────
+  const extractTextFromPdf = async (arrayBuffer: ArrayBuffer): Promise<string> => {
+    try {
+      const pdfjsLib = (window as any).pdfjsLib;
+      if (!pdfjsLib) return '';
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let text = '';
+      for (let i = 1; i <= Math.min(pdf.numPages, 3); i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        text += content.items.map((item: any) => item.str).join(' ') + '\n';
+      }
+      return text;
+    } catch { return ''; }
+  };
+
+  const parseAppPdf = (text: string): { name: string; phone: string | null; email: string | null } => {
+    const lines = text.split(/[\n\r]+/).map(l => l.trim()).filter(Boolean);
+    let name = '';
+    let phone: string | null = null;
+    let email: string | null = null;
+
+    // Email
+    const emailMatch = text.match(/[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}/);
+    if (emailMatch) email = emailMatch[0];
+
+    // Phone: 10 digits, US format
+    const phoneMatch = text.match(/\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}/);
+    if (phoneMatch) phone = phoneMatch[0];
+
+    // Name: look for "Owner", "Applicant", "Contact" label then grab next non-company line
+    const nameTriggers = ['owner name', 'applicant name', 'contact name', 'principal name', 'signer name', 'guarantor'];
+    for (let i = 0; i < lines.length; i++) {
+      const lower = lines[i].toLowerCase();
+      if (nameTriggers.some(t => lower.includes(t))) {
+        // Next non-empty line is likely the name
+        const candidate = lines[i + 1] || lines[i + 2] || '';
+        if (candidate && candidate.length < 60 && !/\d{5}/.test(candidate)) {
+          name = candidate;
+          break;
+        }
+      }
+    }
+
+    return { name, phone, email };
+  };
+
+  const handleZipFile = async (zipFile: File) => {
+    setZipParsing(true);
+    setZipPreview([]);
+    setMessage('');
+
+    // Load PDF.js from CDN if not loaded
+    if (!(window as any).pdfjsLib) {
+      await new Promise<void>((resolve) => {
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+        script.onload = () => {
+          (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc =
+            'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+          resolve();
+        };
+        document.head.appendChild(script);
+      });
+    }
+
+    try {
+      const zip = await JSZip.loadAsync(zipFile);
+
+      // Group files by top-level folder (each folder = one business/lead)
+      const folderMap: Record<string, JSZip.JSZipObject[]> = {};
+      zip.forEach((relativePath, zipEntry) => {
+        if (zipEntry.dir) return;
+        // Path format: "root folder/Business Name/file.pdf"
+        const parts = relativePath.split('/');
+        // Skip the outer wrapper folder, use the second level as business name
+        const businessName = parts.length >= 3 ? parts[1] : parts.length === 2 ? parts[0] : null;
+        if (!businessName) return;
+        if (!folderMap[businessName]) folderMap[businessName] = [];
+        folderMap[businessName].push(zipEntry);
+      });
+
+      const businesses = Object.keys(folderMap);
+      const leads: ParsedLead[] = [];
+
+      for (let i = 0; i < businesses.length; i++) {
+        const businessName = businesses[i];
+        setZipProgress(`Parsing ${i + 1} of ${businesses.length}: ${businessName}`);
+
+        const files = folderMap[businessName];
+        // Look for an app/application PDF
+        const appFile = files.find(f => {
+          const fname = f.name.split('/').pop()?.toLowerCase() || '';
+          return fname.includes('app') || fname.includes('application');
+        });
+
+        let parsedName = '';
+        let parsedPhone: string | null = null;
+        let parsedEmail: string | null = null;
+
+        if (appFile) {
+          try {
+            const buf = await appFile.async('arraybuffer');
+            const text = await extractTextFromPdf(buf);
+            if (text) {
+              const parsed = parseAppPdf(text);
+              parsedName = parsed.name;
+              parsedPhone = parsed.phone;
+              parsedEmail = parsed.email;
+            }
+          } catch { /* skip if unreadable */ }
+        }
+
+        leads.push({
+          name: parsedName || '',
+          email: parsedEmail || '',
+          phone: parsedPhone,
+          company: businessName,
+          notes: null,
+        });
+      }
+
+      setZipPreview(leads);
+      setZipProgress('');
+    } catch (err: any) {
+      setMessage(`Error reading ZIP: ${err.message}`);
+    }
+    setZipParsing(false);
+  };
+
+  const handleZipImport = async () => {
+    if (zipPreview.length === 0) return;
+    setLoading(true);
+    setMessage('');
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { setMessage('Not authenticated'); setLoading(false); return; }
+
+    const now = new Date().toISOString();
+    const leads = zipPreview.map(l => ({
+      user_id: user.id,
+      name: l.name || '',
+      email: l.email || '',
+      phone: l.phone || null,
+      company: l.company || null,
+      notes: l.notes || null,
+      list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
+      last_contact: now,
+    }));
+
+    const { error } = await supabase.from('leads').insert(leads);
+    if (error) {
+      setMessage(`Error: ${error.message}`);
+    } else {
+      setMessage(`✓ Imported ${leads.length} lead${leads.length !== 1 ? 's' : ''}`);
+      setZipPreview([]);
+      setTimeout(() => router.refresh(), 800);
+    }
+    setLoading(false);
+  };
+  // ─────────────────────────────────────────────────────────────────────────
+
   return (
     <div className="space-y-4">
       {/* Mode toggle */}
@@ -543,9 +711,18 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
         >
           Paste from Excel
         </button>
+        <button
+          type="button"
+          onClick={() => { setMode('zip'); setMessage(''); }}
+          className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-colors ${
+            mode === 'zip' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Deal Pack ZIP
+        </button>
       </div>
 
-      {mode === 'file' ? (
+      {mode === 'file' && (
         <>
           <div>
             <label className="block text-sm font-bold text-[#1a1a1a] mb-3 tracking-tight">CSV or TXT File</label>
@@ -568,7 +745,9 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
             {loading ? 'Uploading…' : 'Upload Leads'}
           </button>
         </>
-      ) : (
+      )}
+
+      {mode === 'paste' && (
         <>
           <div>
             <p className="text-xs text-gray-500 mb-2">
@@ -629,6 +808,89 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
             className="w-full px-6 py-3 bg-[#1a1a1a] text-white rounded-md font-medium hover:bg-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {loading ? 'Importing…' : parsedPreview.length > 0 ? `Import ${parsedPreview.length} Lead${parsedPreview.length !== 1 ? 's' : ''}` : 'Paste data above'}
+          </button>
+        </>
+      )}
+
+      {mode === 'zip' && (
+        <>
+          {/* Drop zone */}
+          <div
+            onDragOver={e => { e.preventDefault(); setZipDragging(true); }}
+            onDragLeave={() => setZipDragging(false)}
+            onDrop={e => {
+              e.preventDefault();
+              setZipDragging(false);
+              const f = e.dataTransfer.files[0];
+              if (f && f.name.endsWith('.zip')) handleZipFile(f);
+              else setMessage('Please drop a .zip file');
+            }}
+            onClick={() => zipInputRef.current?.click()}
+            className={`flex flex-col items-center justify-center gap-2 py-6 border-2 border-dashed rounded-xl cursor-pointer transition-colors ${
+              zipDragging ? 'border-gray-900 bg-gray-50' : 'border-gray-200 hover:border-gray-400'
+            }`}
+          >
+            <span className="text-2xl">📦</span>
+            <p className="text-sm font-medium text-gray-700">Drop your deal pack ZIP here</p>
+            <p className="text-xs text-gray-400">or click to choose file</p>
+            <input
+              ref={zipInputRef}
+              type="file"
+              accept=".zip"
+              className="hidden"
+              onChange={e => {
+                const f = e.target.files?.[0];
+                if (f) handleZipFile(f);
+              }}
+            />
+          </div>
+
+          {/* Progress */}
+          {zipParsing && (
+            <div className="text-xs text-gray-500 text-center animate-pulse">
+              {zipProgress || 'Reading ZIP…'}
+            </div>
+          )}
+
+          {/* Preview table */}
+          {zipPreview.length > 0 && (
+            <div className="border border-gray-200 rounded-lg overflow-hidden">
+              <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+                <p className="text-xs font-semibold text-gray-700">
+                  {zipPreview.length} business{zipPreview.length !== 1 ? 'es' : ''} found
+                </p>
+                <p className="text-xs text-gray-400">Company name from folder • other fields from app.pdf</p>
+              </div>
+              <div className="max-h-56 overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr>
+                      {['Company', 'Contact Name', 'Phone', 'Email'].map(h => (
+                        <th key={h} className="px-3 py-1.5 text-left font-medium text-gray-500 uppercase tracking-wider">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {zipPreview.map((lead, i) => (
+                      <tr key={i} className="hover:bg-gray-50">
+                        <td className="px-3 py-1.5 font-medium text-gray-900 truncate max-w-[160px]">{lead.company || '—'}</td>
+                        <td className="px-3 py-1.5 text-gray-600 truncate max-w-[100px]">{lead.name || <span className="text-gray-300">not found</span>}</td>
+                        <td className="px-3 py-1.5 text-gray-600 whitespace-nowrap">{lead.phone || <span className="text-gray-300">—</span>}</td>
+                        <td className="px-3 py-1.5 text-gray-600 truncate max-w-[120px]">{lead.email || <span className="text-gray-300">—</span>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <button
+            onClick={handleZipImport}
+            disabled={loading || zipPreview.length === 0}
+            className="w-full px-6 py-3 bg-[#1a1a1a] text-white rounded-md font-medium hover:bg-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {loading ? 'Importing…' : zipPreview.length > 0 ? `Import ${zipPreview.length} Lead${zipPreview.length !== 1 ? 's' : ''}` : 'Drop a ZIP above'}
           </button>
         </>
       )}
