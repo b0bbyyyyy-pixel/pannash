@@ -24,19 +24,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { name, description } = await req.json();
+    const { name, description, folderName, parentListId } = await req.json();
 
     if (!name || typeof name !== 'string') {
       return NextResponse.json({ error: 'Name is required' }, { status: 400 });
     }
 
+    const row: Record<string, unknown> = {
+      user_id: user.id,
+      name,
+      description: description || null,
+    };
+    if (folderName && typeof folderName === 'string' && folderName.trim()) {
+      row.folder_name = folderName.trim();
+    }
+    if (parentListId && typeof parentListId === 'string') {
+      row.parent_list_id = parentListId;
+    }
+
     const { data, error } = await supabase
       .from('lead_lists')
-      .insert({
-        user_id: user.id,
-        name,
-        description: description || null,
-      })
+      .insert(row)
       .select()
       .single();
 

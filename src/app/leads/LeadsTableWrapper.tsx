@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import SearchBar from './SearchBar';
 import LeadsTable from './LeadsTable';
 import UploadForm from './UploadForm';
@@ -11,11 +12,10 @@ interface Lead {
   email: string;
   phone?: string;
   company?: string;
+  last_contact?: string | null;
   email_status?: string;
   email_validation_notes?: string;
-  lead_lists?: {
-    name: string;
-  };
+  lead_lists?: { name: string };
 }
 
 interface LeadsTableWrapperProps {
@@ -39,9 +39,11 @@ export default function LeadsTableWrapper({
 }: LeadsTableWrapperProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [showUpload, setShowUpload] = useState(false);
+  const [validating, setValidating] = useState(false);
+  const [finding, setFinding] = useState(false);
   const uploadRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
 
-  // Close dropdown when clicking outside
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (uploadRef.current && !uploadRef.current.contains(e.target as Node)) {
@@ -52,19 +54,75 @@ export default function LeadsTableWrapper({
     return () => document.removeEventListener('mousedown', handleClick);
   }, [showUpload]);
 
+  const handleValidate = async () => {
+    if (!confirm(`Validate emails for ${selectedListId ? 'this list' : 'all leads'}?`)) return;
+    setValidating(true);
+    try {
+      const res = await fetch('/api/leads/validate-emails', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listId: selectedListId }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        alert(`Validation done!\n✅ Valid: ${data.valid}  ❌ Invalid: ${data.invalid}  🚫 Blocked: ${data.blocked}  ❓ Missing: ${data.missing}`);
+        router.refresh();
+      } else {
+        alert(`Error: ${data.error}`);
+      }
+    } finally { setValidating(false); }
+  };
+
+  const handleFind = async () => {
+    setFinding(true);
+    try {
+      const res = await fetch('/api/leads/find-emails', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listId: selectedListId }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        alert(data.suggestions?.length > 0
+          ? `AI found emails for ${data.suggestions.length} lead(s).`
+          : 'All leads already have valid emails.');
+        router.refresh();
+      } else {
+        alert(`Error: ${data.error}`);
+      }
+    } finally { setFinding(false); }
+  };
+
   return (
     <div className="bg-white border border-gray-200 rounded-lg">
       <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-gray-900">
-            {selectedListName}
-          </h2>
+          <h2 className="text-lg font-semibold text-gray-900">{selectedListName}</h2>
           {selectedListDescription && (
             <p className="text-sm text-gray-500 mt-1">{selectedListDescription}</p>
           )}
         </div>
-        <div className="flex items-center gap-3">
-          {/* Upload dropdown — only shown when a specific list is selected */}
+
+        <div className="flex items-center gap-2">
+          {/* Validate button */}
+          <button
+            onClick={handleValidate}
+            disabled={validating}
+            className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
+          >
+            {validating ? 'Validating…' : 'Validate'}
+          </button>
+
+          {/* Find emails button */}
+          <button
+            onClick={handleFind}
+            disabled={finding}
+            className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
+          >
+            {finding ? 'Finding…' : 'Find'}
+          </button>
+
+          {/* Upload dropdown — only for specific lists */}
           {selectedListId && selectedListId !== 'unlisted' && (
             <div className="relative" ref={uploadRef}>
               <button
@@ -90,7 +148,7 @@ export default function LeadsTableWrapper({
           )}
 
           <SearchBar onSearch={setSearchQuery} />
-          <div className="text-sm text-gray-500">
+          <div className="text-sm text-gray-500 whitespace-nowrap">
             {totalLeads} lead{totalLeads !== 1 ? 's' : ''}
           </div>
         </div>

@@ -9,8 +9,19 @@ interface UploadFormProps {
   selectedListId?: string;
 }
 
+interface ParsedLead {
+  name: string;
+  email: string;
+  phone: string | null;
+  company: string | null;
+  notes: string | null;
+}
+
 export default function UploadForm({ selectedListId }: UploadFormProps) {
+  const [mode, setMode] = useState<'file' | 'paste'>('file');
   const [file, setFile] = useState<File | null>(null);
+  const [pasteText, setPasteText] = useState('');
+  const [parsedPreview, setParsedPreview] = useState<ParsedLead[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const router = useRouter();
@@ -305,6 +316,93 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
     return !hasEmailOrPhone;
   };
 
+  // Parse raw pasted text (tab or comma separated) into leads
+  const parsePastedText = (text: string): ParsedLead[] => {
+    if (!text.trim()) return [];
+
+    // Detect delimiter: if most lines have tabs, use tab; else comma
+    const lines = text.trim().split('\n');
+    const tabCount = lines[0]?.split('\t').length ?? 1;
+    const commaCount = lines[0]?.split(',').length ?? 1;
+    const delimiter = tabCount >= commaCount ? '\t' : ',';
+
+    const result = Papa.parse<string[]>(text.trim(), {
+      delimiter,
+      skipEmptyLines: true,
+      header: false,
+    });
+
+    if (!result.data || result.data.length === 0) return [];
+
+    // Check if first row looks like headers
+    const firstRow = result.data[0] as string[];
+    const headerKeywords = ['name', 'email', 'phone', 'company', 'notes', 'contact', 'first', 'last', 'organization', 'mobile'];
+    const hasHeaders = firstRow.some(v =>
+      headerKeywords.some(k => String(v).trim().toLowerCase().includes(k))
+    );
+
+    const dataRows = hasHeaders ? result.data.slice(1) : result.data;
+
+    if (hasHeaders) {
+      // Build a header-keyed object per row
+      const headers = firstRow.map(h => String(h).trim().toLowerCase());
+      return dataRows
+        .map(row => {
+          const obj: Record<string, string> = {};
+          (row as string[]).forEach((val, i) => { obj[headers[i] || `col${i}`] = String(val || '').trim(); });
+          return smartColumnMapper(obj);
+        })
+        .filter(l => l.name || l.email || l.phone);
+    } else {
+      return dataRows
+        .map(row => positionalColumnMapper((row as string[]).map(v => String(v || '').trim())))
+        .filter(l => l.name || l.email || l.phone);
+    }
+  };
+
+  const handlePasteChange = (text: string) => {
+    setPasteText(text);
+    setMessage('');
+    if (text.trim()) {
+      const parsed = parsePastedText(text);
+      setParsedPreview(parsed);
+    } else {
+      setParsedPreview([]);
+    }
+  };
+
+  const handlePasteUpload = async () => {
+    if (parsedPreview.length === 0) {
+      setMessage('No leads detected. Paste data from Excel first.');
+      return;
+    }
+    setLoading(true);
+    setMessage('');
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { setMessage('Not authenticated'); setLoading(false); return; }
+
+    const leads = parsedPreview.map(l => ({
+      user_id: user.id,
+      name: l.name || (l.email ? l.email.split('@')[0] : 'Unknown'),
+      email: l.email || '',
+      phone: l.phone || null,
+      company: l.company || null,
+      notes: l.notes || null,
+      list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
+    }));
+
+    const { error } = await supabase.from('leads').insert(leads);
+    if (error) {
+      setMessage(`Error: ${error.message}`);
+    } else {
+      setMessage(`✓ Imported ${leads.length} lead${leads.length !== 1 ? 's' : ''}`);
+      setPasteText('');
+      setParsedPreview([]);
+      setTimeout(() => router.refresh(), 800);
+    }
+    setLoading(false);
+  };
+
   const parseFile = (file: File, delimiter: string, user: any) => {
     // First parse without header to check if file has headers
     Papa.parse(file, {
@@ -420,46 +518,119 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
   };
 
   return (
-    <div className="space-y-5">
-      <div>
-        <label className="block text-sm font-bold text-[#1a1a1a] mb-3 tracking-tight">
-          CSV or TXT File
-        </label>
-        <div className="flex items-center gap-4">
-          <label className="px-5 py-2.5 bg-white border border-[#e5e5e5] rounded-md text-[#1a1a1a] text-sm font-medium hover:border-[#1a1a1a] cursor-pointer transition-colors">
-            Choose File
-            <input
-              type="file"
-              accept=".csv,.txt"
-              onChange={handleFileChange}
-              className="hidden"
-            />
-          </label>
-          <span className="text-sm text-[#6b6b6b]">
-            {file ? file.name : 'No file chosen'}
-          </span>
-        </div>
-        <p className="mt-3 text-xs text-[#6b6b6b]">
-          <strong className="text-[#1a1a1a]">Required:</strong> Name, Email (with or without headers)
-        </p>
-        <p className="mt-1 text-xs text-[#6b6b6b]">
-          <strong className="text-[#1a1a1a]">Optional:</strong> Phone, Company, Notes
-        </p>
-        <p className="mt-1 text-xs text-[#999]">
-          Auto-detects: Headers, column order, delimiters, and data patterns
-        </p>
+    <div className="space-y-4">
+      {/* Mode toggle */}
+      <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+        <button
+          type="button"
+          onClick={() => { setMode('file'); setMessage(''); }}
+          className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-colors ${
+            mode === 'file' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Upload File
+        </button>
+        <button
+          type="button"
+          onClick={() => { setMode('paste'); setMessage(''); }}
+          className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-colors ${
+            mode === 'paste' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Paste from Excel
+        </button>
       </div>
 
-      <button
-        onClick={handleUpload}
-        disabled={loading || !file}
-        className="w-full px-6 py-3 bg-[#1a1a1a] text-white rounded-md font-medium hover:bg-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-      >
-        {loading ? 'Uploading...' : 'Upload Leads'}
-      </button>
+      {mode === 'file' ? (
+        <>
+          <div>
+            <label className="block text-sm font-bold text-[#1a1a1a] mb-3 tracking-tight">CSV or TXT File</label>
+            <div className="flex items-center gap-4">
+              <label className="px-5 py-2.5 bg-white border border-[#e5e5e5] rounded-md text-[#1a1a1a] text-sm font-medium hover:border-[#1a1a1a] cursor-pointer transition-colors">
+                Choose File
+                <input type="file" accept=".csv,.txt" onChange={handleFileChange} className="hidden" />
+              </label>
+              <span className="text-sm text-[#6b6b6b]">{file ? file.name : 'No file chosen'}</span>
+            </div>
+            <p className="mt-3 text-xs text-[#6b6b6b]"><strong className="text-[#1a1a1a]">Required:</strong> Name, Email (with or without headers)</p>
+            <p className="mt-1 text-xs text-[#6b6b6b]"><strong className="text-[#1a1a1a]">Optional:</strong> Phone, Company, Notes</p>
+            <p className="mt-1 text-xs text-[#999]">Auto-detects: Headers, column order, delimiters, and data patterns</p>
+          </div>
+          <button
+            onClick={handleUpload}
+            disabled={loading || !file}
+            className="w-full px-6 py-3 bg-[#1a1a1a] text-white rounded-md font-medium hover:bg-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {loading ? 'Uploading…' : 'Upload Leads'}
+          </button>
+        </>
+      ) : (
+        <>
+          <div>
+            <p className="text-xs text-gray-500 mb-2">
+              Select cells in Excel → Copy (⌘C) → Paste below. Works with or without column headers.
+            </p>
+            <textarea
+              value={pasteText}
+              onChange={e => handlePasteChange(e.target.value)}
+              onPaste={e => {
+                // Let the paste happen then immediately parse
+                setTimeout(() => {
+                  const ta = e.target as HTMLTextAreaElement;
+                  handlePasteChange(ta.value);
+                }, 0);
+              }}
+              rows={6}
+              className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-gray-900 resize-none placeholder-gray-300"
+              placeholder={"Name\tEmail\tPhone\tCompany\nJohn Smith\tjohn@acme.com\t555-1234\tAcme LLC\n..."}
+            />
+          </div>
+
+          {/* Live preview */}
+          {parsedPreview.length > 0 && (
+            <div className="border border-gray-200 rounded-lg overflow-hidden">
+              <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+                <p className="text-xs font-semibold text-gray-700">
+                  {parsedPreview.length} lead{parsedPreview.length !== 1 ? 's' : ''} detected
+                </p>
+                <p className="text-xs text-gray-400">Scroll to see all</p>
+              </div>
+              <div className="max-h-48 overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr>
+                      {['Name', 'Email', 'Phone', 'Company'].map(h => (
+                        <th key={h} className="px-3 py-1.5 text-left font-medium text-gray-500 uppercase tracking-wider">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {parsedPreview.map((lead, i) => (
+                      <tr key={i} className="hover:bg-gray-50">
+                        <td className="px-3 py-1.5 text-gray-900 font-medium truncate max-w-[100px]">{lead.name || '—'}</td>
+                        <td className="px-3 py-1.5 text-gray-600 truncate max-w-[140px]">{lead.email || '—'}</td>
+                        <td className="px-3 py-1.5 text-gray-600 whitespace-nowrap">{lead.phone || '—'}</td>
+                        <td className="px-3 py-1.5 text-gray-600 truncate max-w-[120px]">{lead.company || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <button
+            onClick={handlePasteUpload}
+            disabled={loading || parsedPreview.length === 0}
+            className="w-full px-6 py-3 bg-[#1a1a1a] text-white rounded-md font-medium hover:bg-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {loading ? 'Importing…' : parsedPreview.length > 0 ? `Import ${parsedPreview.length} Lead${parsedPreview.length !== 1 ? 's' : ''}` : 'Paste data above'}
+          </button>
+        </>
+      )}
 
       {message && (
-        <div className={`text-sm text-center ${message.includes('✓') || message.includes('Success') ? 'text-[#2a5a2a]' : 'text-[#8a2a2a]'}`}>
+        <div className={`text-sm text-center ${message.startsWith('✓') ? 'text-green-700' : 'text-red-700'}`}>
           {message}
         </div>
       )}

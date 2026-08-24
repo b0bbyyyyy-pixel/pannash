@@ -1,12 +1,16 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useState, useMemo, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 
 interface LeadList {
   id: string;
   name: string;
   description?: string;
+  created_at?: string;
+  folder_name?: string | null;
+  parent_list_id?: string | null;
 }
 
 interface LeadListSelectorProps {
@@ -18,132 +22,285 @@ interface LeadListSelectorProps {
   deleteListWithLeads: (formData: FormData) => Promise<void>;
 }
 
-export default function LeadListSelector({ 
-  lists, 
-  selectedListId, 
+export default function LeadListSelector({
+  lists,
+  selectedListId,
   listCounts,
   unlistedCount,
   deleteList,
-  deleteListWithLeads
+  deleteListWithLeads,
 }: LeadListSelectorProps) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [openFolder, setOpenFolder] = useState<string | null>(null);
+  // Inline sub-list creation
+  const [creatingSubFor, setCreatingSubFor] = useState<string | null>(null);
+  const [newSubName, setNewSubName] = useState('');
+  const [savingSub, setSavingSub] = useState(false);
+  const hoverTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const router = useRouter();
+
+  const getCount = (listId: string) =>
+    listCounts.find(c => c.listId === listId)?.count || 0;
+
+  // Split into top-level lists (no parent) and sub-lists (have parent)
+  const { topLevel, subListsByParent } = useMemo(() => {
+    const top: LeadList[] = [];
+    const subs: Record<string, LeadList[]> = {};
+    for (const list of lists) {
+      if (list.parent_list_id) {
+        if (!subs[list.parent_list_id]) subs[list.parent_list_id] = [];
+        subs[list.parent_list_id].push(list);
+      } else {
+        top.push(list);
+      }
+    }
+    return { topLevel: top, subListsByParent: subs };
+  }, [lists]);
+
+  // Group top-level by folder
+  const { folders, standalone } = useMemo(() => {
+    const folderMap: Record<string, LeadList[]> = {};
+    const stand: LeadList[] = [];
+    for (const list of topLevel) {
+      if (list.folder_name) {
+        if (!folderMap[list.folder_name]) folderMap[list.folder_name] = [];
+        folderMap[list.folder_name].push(list);
+      } else {
+        stand.push(list);
+      }
+    }
+    return { folders: folderMap, standalone: stand };
+  }, [topLevel]);
+
+  // Auto-open folder containing selected list
+  useMemo(() => {
+    if (!selectedListId) return;
+    for (const [folder, items] of Object.entries(folders)) {
+      if (items.some(l => l.id === selectedListId)) {
+        setOpenFolder(folder);
+        break;
+      }
+    }
+    // Also check sub-lists → find parent → find folder
+    for (const [parentId, subs] of Object.entries(subListsByParent)) {
+      if (subs.some(s => s.id === selectedListId)) {
+        setHoveredId(parentId);
+        break;
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleDeleteList = async (listId: string, listName: string) => {
-    const leadCount = getCount(listId);
-    
-    // If list is empty, just delete it
-    if (leadCount === 0) {
-      if (!confirm(`Delete empty list "${listName}"?`)) {
-        return;
-      }
-      
+    const count = getCount(listId);
+    if (count === 0) {
+      if (!confirm(`Delete empty list "${listName}"?`)) return;
+    } else {
+      const ok = confirm(`"${listName}" has ${count} lead(s).\n\nOK → delete list AND all leads.\nCancel → keep leads as Uncategorized.`);
       setDeletingId(listId);
       try {
-        const formData = new FormData();
-        formData.append('listId', listId);
-        await deleteList(formData);
-      } catch (error) {
-        console.error('Error deleting list:', error);
-        alert('Failed to delete list');
-      } finally {
-        setDeletingId(null);
-      }
+        const fd = new FormData();
+        fd.append('listId', listId);
+        if (ok) await deleteListWithLeads(fd);
+        else await deleteList(fd);
+      } finally { setDeletingId(null); }
       return;
     }
-
-    // If list has leads, give user options
-    const userChoice = confirm(
-      `List "${listName}" contains ${leadCount} lead(s).\n\n` +
-      `Click OK to delete the list AND all its leads.\n` +
-      `Click Cancel to keep the leads (they'll become uncategorized).`
-    );
-
     setDeletingId(listId);
     try {
-      const formData = new FormData();
-      formData.append('listId', listId);
-      
-      if (userChoice) {
-        // Delete list AND leads
-        await deleteListWithLeads(formData);
+      const fd = new FormData();
+      fd.append('listId', listId);
+      await deleteList(fd);
+    } finally { setDeletingId(null); }
+  };
+
+  const handleCreateSubList = async (parentId: string) => {
+    if (!newSubName.trim()) return;
+    setSavingSub(true);
+    try {
+      const res = await fetch('/api/lead-lists/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newSubName.trim(), parentListId: parentId }),
+      });
+      if (res.ok) {
+        setCreatingSubFor(null);
+        setNewSubName('');
+        router.refresh();
       } else {
-        // Delete just the list (leads become uncategorized)
-        await deleteList(formData);
+        const d = await res.json();
+        alert(`Error: ${d.error}`);
       }
-    } catch (error) {
-      console.error('Error deleting list:', error);
-      alert('Failed to delete list');
-    } finally {
-      setDeletingId(null);
-    }
+    } finally { setSavingSub(false); }
   };
 
-  const getCount = (listId: string) => {
-    return listCounts.find(c => c.listId === listId)?.count || 0;
+  const startHover = (id: string) => {
+    if (hoverTimeout.current) clearTimeout(hoverTimeout.current);
+    setHoveredId(id);
+  };
+  const endHover = () => {
+    hoverTimeout.current = setTimeout(() => setHoveredId(null), 200);
   };
 
-  return (
-    <div className="mb-6 overflow-x-auto">
-      <div className="flex gap-1 border-b border-[#e5e5e5]">
-        {/* All Leads Tab */}
+  // Renders a single list tab with hover sub-list dropdown
+  function ListTab({ list, inSubRow = false }: { list: LeadList; inSubRow?: boolean }) {
+    const isSelected = selectedListId === list.id;
+    const count = getCount(list.id);
+    const subs = subListsByParent[list.id] || [];
+    const hasSubSelected = subs.some(s => s.id === selectedListId);
+    const isHovered = hoveredId === list.id;
+
+    return (
+      <div
+        className="relative flex items-center group flex-shrink-0"
+        onMouseEnter={() => startHover(list.id)}
+        onMouseLeave={endHover}
+      >
         <Link
-          href="/leads"
-          className={`px-5 py-3 font-medium text-sm border-b-2 transition-colors whitespace-nowrap ${
-            !selectedListId
-              ? 'border-[#1a1a1a] text-[#1a1a1a]'
-              : 'border-transparent text-[#999] hover:text-[#1a1a1a]'
-          }`}
+          href={`/leads?list=${list.id}`}
+          className={`px-4 py-3 text-sm border-b-2 transition-colors whitespace-nowrap ${
+            isSelected || hasSubSelected
+              ? 'border-[#1a1a1a] text-[#1a1a1a] font-semibold'
+              : 'border-transparent text-[#999] hover:text-[#1a1a1a] font-medium'
+          } ${inSubRow ? 'py-2.5' : ''}`}
         >
-          All Leads
-          <span className="ml-2 text-xs text-gray-400">
-            ({lists.reduce((sum, list) => sum + getCount(list.id), 0) + unlistedCount})
-          </span>
+          {list.name}
+          <span className="ml-1.5 text-xs text-gray-400">({count})</span>
+          {subs.length > 0 && (
+            <svg className="inline ml-1 w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          )}
         </Link>
 
-        {/* Unlisted Tab (if any) */}
+        {/* Delete button */}
+        <button
+          onClick={() => handleDeleteList(list.id, list.name)}
+          disabled={deletingId === list.id}
+          className="ml-0.5 px-1 py-1 text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity text-xs"
+        >✕</button>
+
+        {/* Sub-list hover dropdown */}
+        {isHovered && (
+          <div
+            className="absolute top-full left-0 z-50 bg-white border border-gray-200 rounded-xl shadow-xl min-w-[200px] py-1"
+            onMouseEnter={() => startHover(list.id)}
+            onMouseLeave={endHover}
+          >
+            {subs.length > 0 && (
+              <>
+                <p className="px-3 pt-2 pb-1 text-xs font-semibold text-gray-400 uppercase tracking-wide">Sources</p>
+                {subs.map(sub => (
+                  <div key={sub.id} className="flex items-center group/sub">
+                    <Link
+                      href={`/leads?list=${sub.id}`}
+                      className={`flex-1 px-3 py-2 text-sm hover:bg-gray-50 transition-colors ${
+                        selectedListId === sub.id ? 'font-semibold text-gray-900' : 'text-gray-700'
+                      }`}
+                    >
+                      {sub.name}
+                      <span className="ml-1.5 text-xs text-gray-400">({getCount(sub.id)})</span>
+                    </Link>
+                    <button
+                      onClick={() => handleDeleteList(sub.id, sub.name)}
+                      className="pr-2 text-gray-300 hover:text-red-500 opacity-0 group-hover/sub:opacity-100 text-xs"
+                    >✕</button>
+                  </div>
+                ))}
+                <div className="border-t border-gray-100 my-1" />
+              </>
+            )}
+
+            {/* Inline create sub-list */}
+            {creatingSubFor === list.id ? (
+              <div className="px-3 py-2 flex gap-1.5">
+                <input
+                  autoFocus
+                  value={newSubName}
+                  onChange={e => setNewSubName(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') handleCreateSubList(list.id);
+                    if (e.key === 'Escape') { setCreatingSubFor(null); setNewSubName(''); }
+                  }}
+                  placeholder="Source name…"
+                  className="flex-1 px-2 py-1 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-gray-900"
+                />
+                <button
+                  onClick={() => handleCreateSubList(list.id)}
+                  disabled={savingSub || !newSubName.trim()}
+                  className="px-2 py-1 bg-gray-900 text-white rounded-lg text-xs disabled:opacity-50"
+                >
+                  {savingSub ? '…' : 'Add'}
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => { setCreatingSubFor(list.id); setNewSubName(''); }}
+                className="w-full text-left px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 flex items-center gap-1.5 transition-colors"
+              >
+                <span className="text-base leading-none">+</span> New Source
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-6">
+      {/* ── Row 1: Uncategorized | standalone list tabs | folder dropdown tabs ── */}
+      <div className="flex gap-1 border-b border-[#e5e5e5] overflow-x-auto">
+
+        {/* Uncategorized — only if there are genuinely uncategorized leads */}
         {unlistedCount > 0 && (
           <Link
             href="/leads?list=unlisted"
-            className={`px-5 py-3 font-medium text-sm border-b-2 transition-colors whitespace-nowrap ${
+            className={`px-5 py-3 font-medium text-sm border-b-2 transition-colors whitespace-nowrap flex-shrink-0 ${
               selectedListId === 'unlisted'
                 ? 'border-[#1a1a1a] text-[#1a1a1a]'
                 : 'border-transparent text-[#999] hover:text-[#1a1a1a]'
             }`}
           >
             Uncategorized
-            <span className="ml-2 text-xs text-gray-400">
-              ({unlistedCount})
-            </span>
+            <span className="ml-1.5 text-xs text-gray-400">({unlistedCount})</span>
           </Link>
         )}
 
-        {/* Individual List Tabs */}
-        {lists.map((list) => (
-          <div key={list.id} className="flex items-center group">
-            <Link
-              href={`/leads?list=${list.id}`}
-              className={`px-5 py-3 font-medium text-sm border-b-2 transition-colors whitespace-nowrap ${
-                selectedListId === list.id
-                  ? 'border-[#1a1a1a] text-[#1a1a1a]'
-                  : 'border-transparent text-[#999] hover:text-[#1a1a1a]'
+        {/* Standalone list tabs */}
+        {standalone.map(list => <ListTab key={list.id} list={list} />)}
+
+        {/* Folder dropdown tabs */}
+        {Object.keys(folders).map(folder => {
+          const isOpen = openFolder === folder;
+          const folderCount = folders[folder].reduce((s, l) => s + getCount(l.id), 0);
+          const hasSelected = folders[folder].some(l => l.id === selectedListId ||
+            (subListsByParent[l.id] || []).some(s => s.id === selectedListId));
+          return (
+            <button
+              key={folder}
+              onClick={() => setOpenFolder(isOpen ? null : folder)}
+              className={`px-5 py-3 font-medium text-sm border-b-2 transition-colors whitespace-nowrap flex-shrink-0 flex items-center gap-1.5 ${
+                isOpen || hasSelected ? 'border-[#1a1a1a] text-[#1a1a1a]' : 'border-transparent text-[#999] hover:text-[#1a1a1a]'
               }`}
             >
-              {list.name}
-              <span className="ml-2 text-xs text-gray-400">
-                ({getCount(list.id)})
-              </span>
-            </Link>
-            <button
-              onClick={() => handleDeleteList(list.id, list.name)}
-              disabled={deletingId === list.id}
-              className="ml-1 px-2 py-1 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity text-xs disabled:opacity-50"
-              title="Delete list"
-            >
-              ✕
+              📁 {folder}
+              <span className="text-xs text-gray-400">({folderCount})</span>
+              <svg className={`w-3 h-3 transition-transform ${isOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
             </button>
-          </div>
-        ))}
+          );
+        })}
       </div>
+
+      {/* ── Row 2: lists inside the open folder ── */}
+      {openFolder && folders[openFolder] && (
+        <div className="flex gap-1 bg-gray-50 border-b border-[#e5e5e5] overflow-x-auto px-2">
+          {folders[openFolder].map(list => <ListTab key={list.id} list={list} inSubRow />)}
+        </div>
+      )}
     </div>
   );
 }

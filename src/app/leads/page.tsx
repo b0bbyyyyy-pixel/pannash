@@ -2,18 +2,18 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
+import Link from 'next/link';
 import Navbar from '@/components/Navbar';
 import CreateListButton from './CreateListButton';
 import LeadListSelector from './LeadListSelector';
 import LeadsTableWrapper from './LeadsTableWrapper';
-import EmailToolsBar from './EmailToolsBar';
 import AddLeadButton from './AddLeadButton';
 import ExportListButton from './ExportListButton';
 
 export default async function LeadsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ list?: string }>;
+  searchParams: Promise<{ list?: string; showCrm?: string }>;
 }) {
   const params = await searchParams;
   const selectedListId = params.list;
@@ -44,11 +44,19 @@ export default async function LeadsPage({
     .order('created_at', { ascending: false });
 
   // Fetch user's leads (filtered by list if selected)
+  // showCrm param controls whether dashboard CRM leads are visible here
+  const showCrm = params.showCrm === '1';
+
   let leadsQuery = supabase
     .from('leads')
     .select('*, lead_lists(name)')
     .eq('user_id', user.id)
     .order('created_at', { ascending: false });
+
+  // By default, hide CRM/dashboard leads (they have month_key set)
+  if (!showCrm) {
+    leadsQuery = leadsQuery.is('month_key', null);
+  }
 
   if (selectedListId) {
     if (selectedListId === 'unlisted') {
@@ -71,12 +79,14 @@ export default async function LeadsPage({
     })
   );
 
-  // Count leads without a list
-  const { count: unlistedCount } = await supabase
+  // Count contact-list leads without a list (exclude CRM leads unless showCrm)
+  let unlistedQuery = supabase
     .from('leads')
     .select('*', { count: 'exact', head: true })
     .eq('user_id', user.id)
     .is('list_id', null);
+  if (!showCrm) unlistedQuery = unlistedQuery.is('month_key', null);
+  const { count: unlistedCount } = await unlistedQuery;
 
   // Server action to delete lead
   async function deleteLead(formData: FormData) {
@@ -208,6 +218,15 @@ export default async function LeadsPage({
   const totalLeads = leads?.length || 0;
   const selectedList = leadLists?.find(l => l.id === selectedListId);
 
+  // Collect unique folder names for the CreateListButton picker
+  const existingFolders = [
+    ...new Set(
+      (leadLists || [])
+        .map((l: { folder_name?: string | null }) => l.folder_name)
+        .filter((f): f is string => typeof f === 'string' && f.trim() !== '')
+    ),
+  ];
+
   return (
     <div className="min-h-screen bg-[#fafafa]">
       <Navbar userName={user.email?.split('@')[0] || 'User'} />
@@ -228,12 +247,21 @@ export default async function LeadsPage({
               leads={leads || []} 
               listName={selectedList?.name || 'All_Leads'} 
             />
-            <CreateListButton />
+            <CreateListButton existingFolders={existingFolders} />
+            {/* Toggle to show/hide dashboard CRM leads in this list */}
+            <Link
+              href={showCrm ? `/leads${selectedListId ? `?list=${selectedListId}` : ''}` : `/leads?${selectedListId ? `list=${selectedListId}&` : ''}showCrm=1`}
+              className={`px-4 py-2.5 rounded-md text-sm font-medium border transition-colors ${
+                showCrm
+                  ? 'bg-gray-900 text-white border-gray-900'
+                  : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400'
+              }`}
+              title={showCrm ? 'Currently showing dashboard leads — click to hide' : 'Show dashboard leads here'}
+            >
+              {showCrm ? 'Hide Dashboard Leads' : 'Show Dashboard Leads'}
+            </Link>
           </div>
         </div>
-
-        {/* Email Quality Tools */}
-        <EmailToolsBar selectedListId={selectedListId} />
 
         {/* Lead Lists Tabs */}
         <LeadListSelector 
