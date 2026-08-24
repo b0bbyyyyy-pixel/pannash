@@ -411,6 +411,18 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
                         e.target.value = '';
                       }}
                     />
+                    {logoUrl && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          saveDefaults({ title, introMessage, minAmountPct, showFactor, showTotalRepayment, showPayment, showRevenuePercent, customCta, thankYouMessage, expiryDays, feeDisclaimer, ogTitle, ogDescription, ogImageUrl, logoUrl });
+                          alert('Logo saved!');
+                        }}
+                        className="px-3 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-700 flex-shrink-0"
+                      >
+                        Save
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -662,6 +674,16 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
                         className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
                         placeholder="Paste image URL or upload →"
                       />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          saveDefaults({ title, introMessage, minAmountPct, showFactor, showTotalRepayment, showPayment, showRevenuePercent, customCta, thankYouMessage, expiryDays, feeDisclaimer, ogTitle, ogDescription, ogImageUrl, logoUrl });
+                          alert('Image URL saved!');
+                        }}
+                        className="px-3 py-2 bg-gray-900 text-white border border-gray-900 rounded-lg text-sm font-medium hover:bg-gray-700 flex-shrink-0"
+                      >
+                        Save
+                      </button>
                       <button
                         type="button"
                         onClick={() => ogImageInputRef.current?.click()}
