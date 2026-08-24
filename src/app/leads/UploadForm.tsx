@@ -100,8 +100,18 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
   };
 
   const isPhone = (value: string): boolean => {
-    const phoneRegex = /^[\d\s\-\(\)\+\.]{7,}$/;
-    return phoneRegex.test(value);
+    const v = value.trim();
+    // Exclude SSN format (XXX-XX-XXXX or XXX XX XXXX)
+    if (/^\d{3}[-\s]\d{2}[-\s]\d{4}$/.test(v)) return false;
+    // Exclude dates (YYYY-MM-DD or MM/DD/YYYY etc.)
+    if (/^\d{4}[-\/]\d{2}[-\/]\d{2}$/.test(v) || /^\d{2}[-\/]\d{2}[-\/]\d{4}$/.test(v)) return false;
+    // Exclude ZIP codes (exactly 5 digits)
+    if (/^\d{5}$/.test(v)) return false;
+    // Must contain at least 10 digits (standard US phone)
+    const digitsOnly = v.replace(/\D/g, '');
+    if (digitsOnly.length < 10 || digitsOnly.length > 15) return false;
+    // Must look like a phone: only digits, spaces, dashes, parens, dots, plus
+    return /^[\d\s\-\(\)\+\.]+$/.test(v);
   };
 
   const isLikelyName = (value: string): boolean => {
@@ -139,9 +149,9 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
       notes: null,
     };
 
-    // Find email and phone positions (most reliable identifiers)
+    // Find email and ALL phone positions
     let emailIndex = -1;
-    let phoneIndex = -1;
+    const phoneIndices: number[] = [];
 
     row.forEach((value, index) => {
       const trimmed = String(value || '').trim();
@@ -149,12 +159,16 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
         emailIndex = index;
         result.email = trimmed;
       } else if (isPhone(trimmed)) {
-        phoneIndex = index;
-        result.phone = trimmed;
+        phoneIndices.push(index);
       }
     });
 
-    // Find the key anchor point (email or phone, whichever comes first)
+    // Primary phone = first phone found; extras go to notes
+    const phoneIndex = phoneIndices[0] ?? -1;
+    if (phoneIndex !== -1) result.phone = String(row[phoneIndex] || '').trim();
+    const extraPhones = phoneIndices.slice(1).map(i => String(row[i] || '').trim()).filter(Boolean);
+
+    // Find the key anchor point (email or first phone, whichever comes first)
     const keyIndex = Math.min(
       ...[emailIndex, phoneIndex].filter(i => i !== -1)
     );
@@ -218,14 +232,13 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
     }
 
     // Find additional company/notes from columns AFTER email/phone
-    const usedIndices = [emailIndex, phoneIndex, companyIndex, ...namePartIndices].filter(i => i !== -1);
+    const usedIndices = [emailIndex, ...phoneIndices, companyIndex, ...namePartIndices].filter(i => i !== -1);
     const remaining = row
       .map((val, idx) => ({ val: String(val || '').trim(), idx }))
       .filter(item => !usedIndices.includes(item.idx) && item.val);
 
     // If company not found yet, look after email/phone
     if (!result.company && remaining.length > 0) {
-      // Prioritize columns after the key identifiers
       const afterKeyColumns = remaining.filter(item => {
         if (emailIndex !== -1 && phoneIndex !== -1) {
           return item.idx > Math.max(emailIndex, phoneIndex);
@@ -239,18 +252,19 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
 
       if (afterKeyColumns.length > 0) {
         result.company = afterKeyColumns[0].val;
-        if (afterKeyColumns.length > 1) {
-          result.notes = afterKeyColumns.slice(1).map(r => r.val).join(' | ');
-        }
+        const leftover = afterKeyColumns.slice(1).map(r => r.val);
+        result.notes = [...extraPhones, ...leftover].join(' | ') || null;
       } else if (remaining.length > 0) {
         result.company = remaining[0].val;
-        if (remaining.length > 1) {
-          result.notes = remaining.slice(1).map(r => r.val).join(' | ');
-        }
+        const leftover = remaining.slice(1).map(r => r.val);
+        result.notes = [...extraPhones, ...leftover].join(' | ') || null;
+      } else {
+        result.notes = extraPhones.join(' | ') || null;
       }
-    } else if (remaining.length > 0) {
-      // Company already found, remaining columns are notes
-      result.notes = remaining.map(r => r.val).join(' | ');
+    } else {
+      // Company already found, remaining columns + extra phones go to notes
+      const leftover = remaining.map(r => r.val);
+      result.notes = [...extraPhones, ...leftover].join(' | ') || null;
     }
 
     return result;
@@ -259,50 +273,39 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
   // Smart column mapper - finds the right value regardless of column name or order
   const smartColumnMapper = (row: any): any => {
     const rowKeys = Object.keys(row);
-    
-    // Helper to find column by multiple possible names (case-insensitive)
+
     const findColumn = (possibleNames: string[]): string | null => {
       for (const key of rowKeys) {
         const lowerKey = key.toLowerCase().trim();
         if (possibleNames.some(name => lowerKey.includes(name.toLowerCase()))) {
-          return row[key];
+          return String(row[key] || '').trim() || null;
         }
       }
       return null;
     };
 
-    // Map each field with various possible column names
-    const name = findColumn([
-      'name', 'full name', 'fullname', 'contact name', 'contact', 
-      'first name', 'firstname', 'lead name', 'person'
-    ]);
+    // Find ALL phone columns (primary + alternates like "phone2", "alt phone", "mobile")
+    const phoneKeys = rowKeys.filter(key => {
+      const k = key.toLowerCase().trim();
+      return ['phone', 'telephone', 'tel', 'mobile', 'cell', 'contact number'].some(p => k.includes(p));
+    });
+    const phoneValues = phoneKeys.map(k => String(row[k] || '').trim()).filter(v => v && isPhone(v));
+    const primaryPhone = phoneValues[0] || null;
+    const extraPhoneNote = phoneValues.slice(1).join(' | ');
 
-    const email = findColumn([
-      'email', 'e-mail', 'email address', 'emailaddress', 
-      'contact email', 'mail', 'email_address'
-    ]);
+    const name = findColumn(['name', 'full name', 'fullname', 'contact name', 'contact', 'first name', 'firstname', 'lead name', 'person']);
+    const email = findColumn(['email', 'e-mail', 'email address', 'emailaddress', 'contact email', 'mail', 'email_address']);
+    const company = findColumn(['company', 'organization', 'org', 'business', 'company name', 'companyname', 'employer', 'account']);
+    const baseNotes = findColumn(['notes', 'note', 'comments', 'comment', 'description', 'details', 'memo', 'remarks', 'message']);
 
-    const phone = findColumn([
-      'phone', 'telephone', 'tel', 'mobile', 'cell', 
-      'phone number', 'phonenumber', 'contact number', 'phone_number'
-    ]);
-
-    const company = findColumn([
-      'company', 'organization', 'org', 'business', 
-      'company name', 'companyname', 'employer', 'account'
-    ]);
-
-    const notes = findColumn([
-      'notes', 'note', 'comments', 'comment', 'description', 
-      'details', 'memo', 'remarks', 'message'
-    ]);
+    const combinedNotes = [extraPhoneNote, baseNotes].filter(Boolean).join(' | ') || null;
 
     return {
       name: name || '',
       email: email || '',
-      phone: phone || null,
+      phone: primaryPhone,
       company: company || null,
-      notes: notes || null,
+      notes: combinedNotes,
     };
   };
 
@@ -381,6 +384,7 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { setMessage('Not authenticated'); setLoading(false); return; }
 
+    const now = new Date().toISOString();
     const leads = parsedPreview.map(l => ({
       user_id: user.id,
       name: l.name || (l.email ? l.email.split('@')[0] : 'Unknown'),
@@ -389,6 +393,7 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
       company: l.company || null,
       notes: l.notes || null,
       list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
+      last_contact: now,
     }));
 
     const { error } = await supabase.from('leads').insert(leads);
@@ -425,6 +430,7 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
           skipEmptyLines: true,
           delimiter: delimiter,
           complete: async (results) => {
+            const uploadTime = new Date().toISOString();
             let leads;
 
             if (hasHeaders) {
@@ -446,12 +452,13 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
 
                   return {
                     user_id: user.id,
-                    name: mapped.name || mapped.email.split('@')[0], // Use email prefix if no name
+                    name: mapped.name || mapped.email.split('@')[0],
                     email: mapped.email,
                     phone: mapped.phone,
                     company: mapped.company,
                     notes: mapped.notes,
                     list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
+                    last_contact: uploadTime,
                   };
                 })
                 .filter((lead: any) => lead !== null);
@@ -459,30 +466,27 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
               // Use positional mapper for files WITHOUT headers
               leads = results.data
                 .map((row: any, index: number) => {
-                  // row is an array of values
                   const rowArray = Array.isArray(row) ? row : Object.values(row);
                   const mapped = positionalColumnMapper(rowArray);
                   
-                  // Debug logging for first 3 rows
                   if (index < 3) {
                     console.log(`Row ${index + 1} raw:`, rowArray);
                     console.log(`Row ${index + 1} mapped:`, mapped);
                   }
                   
-                  // Skip rows without email (required field)
-                  // Allow name to be empty and we'll use email prefix
                   if (!mapped.email) {
                     return null;
                   }
 
                   return {
                     user_id: user.id,
-                    name: mapped.name || mapped.email.split('@')[0], // Use email prefix if no name
+                    name: mapped.name || mapped.email.split('@')[0],
                     email: mapped.email,
                     phone: mapped.phone,
                     company: mapped.company,
                     notes: mapped.notes,
                     list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
+                    last_contact: uploadTime,
                   };
                 })
                 .filter((lead: any) => lead !== null);

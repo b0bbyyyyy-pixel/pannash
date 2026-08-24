@@ -136,8 +136,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     { key: 'activeTimers', label: 'Active Timers', color: 'text-[#5a7fc7]' },
   ];
 
-  // Default columns if not configured
-  const columns = columnsConfig?.config_data || [
+  // Default columns if not configured; always enforce timer as first visible column
+  const rawColumns = columnsConfig?.config_data || [
     { field: 'timer', label: 'Timer', width: 120, visible: true, expandable: false, allowAttachments: false },
     { field: 'company', label: 'Opportunity', width: 150, visible: true, expandable: false, allowAttachments: false },
     { field: 'name', label: 'Name', width: 150, visible: true, expandable: false, allowAttachments: false },
@@ -152,6 +152,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     { field: 'auto_email_frequency', label: 'Auto Email', width: 140, visible: true, expandable: false, allowAttachments: false },
     { field: 'auto_text_frequency', label: 'Auto Text', width: 140, visible: true, expandable: false, allowAttachments: false },
   ];
+  // Always keep the timer column as the first column regardless of saved config order
+  const timerCol = rawColumns.find((c: any) => c.field === 'timer');
+  const otherCols = rawColumns.filter((c: any) => c.field !== 'timer');
+  const columns = timerCol ? [timerCol, ...otherCols] : rawColumns;
 
   // Fetch templates (with error handling for if table doesn't exist yet)
   let emailTemplates: any[] = [];

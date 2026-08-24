@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
 interface LeadList {
@@ -37,8 +37,20 @@ export default function LeadListSelector({
   const [creatingSubFor, setCreatingSubFor] = useState<string | null>(null);
   const [newSubName, setNewSubName] = useState('');
   const [savingSub, setSavingSub] = useState(false);
+  // Rename state
+  const [renamingListId, setRenamingListId] = useState<string | null>(null);
+  const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; listId?: string; folder?: string } | null>(null);
   const hoverTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const router = useRouter();
+
+  // Close context menu on click outside
+  useEffect(() => {
+    const close = () => setContextMenu(null);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, []);
 
   const getCount = (listId: string) =>
     listCounts.find(c => c.listId === listId)?.count || 0;
@@ -135,6 +147,45 @@ export default function LeadListSelector({
     } finally { setSavingSub(false); }
   };
 
+  const startRenameList = (listId: string, currentName: string) => {
+    setContextMenu(null);
+    setRenamingListId(listId);
+    setRenamingFolder(null);
+    setRenameValue(currentName);
+  };
+
+  const startRenameFolder = (folder: string) => {
+    setContextMenu(null);
+    setRenamingFolder(folder);
+    setRenamingListId(null);
+    setRenameValue(folder);
+  };
+
+  const commitRename = async () => {
+    if (!renameValue.trim()) { cancelRename(); return; }
+    if (renamingListId) {
+      await fetch('/api/lead-lists', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listId: renamingListId, newName: renameValue.trim() }),
+      });
+    } else if (renamingFolder) {
+      await fetch('/api/lead-lists', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ oldFolderName: renamingFolder, newFolderName: renameValue.trim() }),
+      });
+    }
+    cancelRename();
+    router.refresh();
+  };
+
+  const cancelRename = () => {
+    setRenamingListId(null);
+    setRenamingFolder(null);
+    setRenameValue('');
+  };
+
   const startHover = (id: string) => {
     if (hoverTimeout.current) clearTimeout(hoverTimeout.current);
     setHoveredId(id);
@@ -150,36 +201,51 @@ export default function LeadListSelector({
     const subs = subListsByParent[list.id] || [];
     const hasSubSelected = subs.some(s => s.id === selectedListId);
     const isHovered = hoveredId === list.id;
+    const isRenaming = renamingListId === list.id;
 
     return (
       <div
         className="relative flex items-center group flex-shrink-0"
         onMouseEnter={() => startHover(list.id)}
         onMouseLeave={endHover}
+        onContextMenu={e => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, listId: list.id }); }}
       >
-        <Link
-          href={`/leads?list=${list.id}`}
-          className={`px-4 py-3 text-sm border-b-2 transition-colors whitespace-nowrap ${
-            isSelected || hasSubSelected
-              ? 'border-[#1a1a1a] text-[#1a1a1a] font-semibold'
-              : 'border-transparent text-[#999] hover:text-[#1a1a1a] font-medium'
-          } ${inSubRow ? 'py-2.5' : ''}`}
-        >
-          {list.name}
-          <span className="ml-1.5 text-xs text-gray-400">({count})</span>
-          {subs.length > 0 && (
-            <svg className="inline ml-1 w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-            </svg>
-          )}
-        </Link>
+        {isRenaming ? (
+          <input
+            autoFocus
+            value={renameValue}
+            onChange={e => setRenameValue(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') cancelRename(); }}
+            className="px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-gray-900 w-32"
+          />
+        ) : (
+          <Link
+            href={`/leads?list=${list.id}`}
+            className={`px-4 py-3 text-sm border-b-2 transition-colors whitespace-nowrap ${
+              isSelected || hasSubSelected
+                ? 'border-[#1a1a1a] text-[#1a1a1a] font-semibold'
+                : 'border-transparent text-[#999] hover:text-[#1a1a1a] font-medium'
+            } ${inSubRow ? 'py-2.5' : ''}`}
+          >
+            {list.name}
+            <span className="ml-1.5 text-xs text-gray-400">({count})</span>
+            {subs.length > 0 && (
+              <svg className="inline ml-1 w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            )}
+          </Link>
+        )}
 
         {/* Delete button */}
-        <button
-          onClick={() => handleDeleteList(list.id, list.name)}
-          disabled={deletingId === list.id}
-          className="ml-0.5 px-1 py-1 text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity text-xs"
-        >✕</button>
+        {!isRenaming && (
+          <button
+            onClick={() => handleDeleteList(list.id, list.name)}
+            disabled={deletingId === list.id}
+            className="ml-0.5 px-1 py-1 text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity text-xs"
+          >✕</button>
+        )}
 
         {/* Sub-list hover dropdown */}
         {isHovered && (
@@ -277,10 +343,23 @@ export default function LeadListSelector({
           const folderCount = folders[folder].reduce((s, l) => s + getCount(l.id), 0);
           const hasSelected = folders[folder].some(l => l.id === selectedListId ||
             (subListsByParent[l.id] || []).some(s => s.id === selectedListId));
-          return (
+          const isRenamingThisFolder = renamingFolder === folder;
+          return isRenamingThisFolder ? (
+            <div key={folder} className="flex items-center px-2 py-2">
+              <input
+                autoFocus
+                value={renameValue}
+                onChange={e => setRenameValue(e.target.value)}
+                onBlur={commitRename}
+                onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') cancelRename(); }}
+                className="px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-gray-900 w-36"
+              />
+            </div>
+          ) : (
             <button
               key={folder}
               onClick={() => setOpenFolder(isOpen ? null : folder)}
+              onContextMenu={e => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, folder }); }}
               className={`px-5 py-3 font-medium text-sm border-b-2 transition-colors whitespace-nowrap flex-shrink-0 flex items-center gap-1.5 ${
                 isOpen || hasSelected ? 'border-[#1a1a1a] text-[#1a1a1a]' : 'border-transparent text-[#999] hover:text-[#1a1a1a]'
               }`}
@@ -299,6 +378,47 @@ export default function LeadListSelector({
       {openFolder && folders[openFolder] && (
         <div className="flex gap-1 bg-gray-50 border-b border-[#e5e5e5] overflow-x-auto px-2">
           {folders[openFolder].map(list => <ListTab key={list.id} list={list} inSubRow />)}
+        </div>
+      )}
+
+      {/* Right-click context menu */}
+      {contextMenu && (
+        <div
+          className="fixed z-[9999] bg-white border border-gray-200 rounded-xl shadow-xl py-1 min-w-[160px]"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onClick={e => e.stopPropagation()}
+        >
+          {contextMenu.listId && (
+            <>
+              <button
+                onClick={() => {
+                  const list = lists.find(l => l.id === contextMenu.listId);
+                  if (list) startRenameList(list.id, list.name);
+                }}
+                className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+              >
+                ✏️ Rename list
+              </button>
+              <button
+                onClick={() => {
+                  const list = lists.find(l => l.id === contextMenu.listId!);
+                  if (list) handleDeleteList(list.id, list.name);
+                  setContextMenu(null);
+                }}
+                className="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+              >
+                🗑 Delete list
+              </button>
+            </>
+          )}
+          {contextMenu.folder && (
+            <button
+              onClick={() => startRenameFolder(contextMenu.folder!)}
+              className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+            >
+              ✏️ Rename folder
+            </button>
+          )}
         </div>
       )}
     </div>
