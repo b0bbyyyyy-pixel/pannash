@@ -12,6 +12,7 @@ interface Lead {
   company?: string;
   notes?: string | null;
   last_contact?: string | null;
+  created_at?: string | null;
   email_status?: string;
   email_validation_notes?: string;
   lead_lists?: { name: string };
@@ -197,7 +198,7 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
                 className="w-4 h-4 rounded cursor-pointer"
               />
             </th>
-            {['OPPORTUNITY', 'NAME', 'E-MAIL', 'PHONE', 'NOTES', 'LAST CONTACT', 'LIST'].map(h => (
+            {['DATE', 'LAST ATTEMPT', 'OPPORTUNITY', 'NAME', 'E-MAIL', 'PHONE', 'NOTES', 'LIST'].map(h => (
               <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 {h}
               </th>
@@ -221,6 +222,34 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
                   className="w-4 h-4 rounded cursor-pointer"
                   onClick={e => e.stopPropagation()}
                 />
+              </td>
+
+              {/* DATE — upload date, read-only */}
+              <td className="px-4 py-3 text-sm text-gray-400 whitespace-nowrap">
+                {fmt(lead.created_at)}
+              </td>
+
+              {/* LAST ATTEMPT — editable outreach date */}
+              <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">
+                {editingCell?.leadId === lead.id && editingCell?.field === 'last_contact' ? (
+                  <input
+                    type="datetime-local"
+                    value={editValue}
+                    onChange={e => setEditValue(e.target.value)}
+                    onBlur={() => saveEdit(lead.id, 'last_contact')}
+                    onKeyDown={e => { if (e.key === 'Enter') saveEdit(lead.id, 'last_contact'); if (e.key === 'Escape') cancelEdit(); }}
+                    autoFocus
+                    className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none"
+                  />
+                ) : (
+                  <span
+                    onClick={() => startEdit(lead.id, 'last_contact', lead.last_contact ? new Date(lead.last_contact).toISOString().slice(0, 16) : new Date().toISOString().slice(0, 16))}
+                    className="cursor-pointer hover:bg-gray-100 px-2 py-1 rounded block"
+                    title="Click to set last attempt date"
+                  >
+                    {fmt(lead.last_contact) || <span className="text-gray-300 italic">—</span>}
+                  </span>
+                )}
               </td>
 
               {/* OPPORTUNITY (Company) */}
@@ -279,29 +308,6 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
                       ? <span className="text-gray-700">{lead.notes.length > 60 ? lead.notes.slice(0, 60) + '…' : lead.notes}</span>
                       : <span className="text-gray-300 italic">Add note…</span>
                     }
-                  </span>
-                )}
-              </td>
-
-              {/* LAST CONTACT — click to set to now, or edit */}
-              <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">
-                {editingCell?.leadId === lead.id && editingCell?.field === 'last_contact' ? (
-                  <input
-                    type="datetime-local"
-                    value={editValue}
-                    onChange={e => setEditValue(e.target.value)}
-                    onBlur={() => saveEdit(lead.id, 'last_contact')}
-                    onKeyDown={e => { if (e.key === 'Enter') saveEdit(lead.id, 'last_contact'); if (e.key === 'Escape') cancelEdit(); }}
-                    autoFocus
-                    className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none"
-                  />
-                ) : (
-                  <span
-                    onClick={() => startEdit(lead.id, 'last_contact', lead.last_contact ? new Date(lead.last_contact).toISOString().slice(0, 16) : new Date().toISOString().slice(0, 16))}
-                    className="cursor-pointer hover:bg-gray-100 px-2 py-1 rounded block"
-                    title="Click to log contact"
-                  >
-                    {fmt(lead.last_contact)}
                   </span>
                 )}
               </td>
