@@ -10,6 +10,7 @@ interface Lead {
   email: string;
   phone?: string;
   company?: string;
+  notes?: string | null;
   last_contact?: string | null;
   email_status?: string;
   email_validation_notes?: string;
@@ -196,7 +197,7 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
                 className="w-4 h-4 rounded cursor-pointer"
               />
             </th>
-            {['OPPORTUNITY', 'NAME', 'E-MAIL', 'PHONE', 'LAST CONTACT', 'LIST'].map(h => (
+            {['OPPORTUNITY', 'NAME', 'E-MAIL', 'PHONE', 'NOTES', 'LAST CONTACT', 'LIST'].map(h => (
               <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 {h}
               </th>
@@ -254,6 +255,32 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
               {/* PHONE */}
               <td className="px-4 py-3 text-sm text-gray-600">
                 <EditableCell lead={lead} field="phone" value={lead.phone || ''} type="tel" />
+              </td>
+
+              {/* NOTES */}
+              <td className="px-4 py-3 text-sm text-gray-600 max-w-[220px]">
+                {editingCell?.leadId === lead.id && editingCell?.field === 'notes' ? (
+                  <textarea
+                    value={editValue}
+                    onChange={e => setEditValue(e.target.value)}
+                    onBlur={() => saveEdit(lead.id, 'notes')}
+                    onKeyDown={e => { if (e.key === 'Escape') cancelEdit(); if (e.key === 'Enter' && e.metaKey) saveEdit(lead.id, 'notes'); }}
+                    autoFocus
+                    rows={3}
+                    className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 resize-none"
+                  />
+                ) : (
+                  <span
+                    onClick={() => startEdit(lead.id, 'notes', lead.notes || '')}
+                    className="cursor-pointer hover:bg-gray-100 px-2 py-1 rounded block truncate"
+                    title={lead.notes || 'Click to add notes'}
+                  >
+                    {lead.notes
+                      ? <span className="text-gray-700">{lead.notes.length > 60 ? lead.notes.slice(0, 60) + '…' : lead.notes}</span>
+                      : <span className="text-gray-300 italic">Add note…</span>
+                    }
+                  </span>
+                )}
               </td>
 
               {/* LAST CONTACT — click to set to now, or edit */}
