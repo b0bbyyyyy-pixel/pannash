@@ -83,7 +83,10 @@ export default function CalendarClient() {
   // Day notes
   const [dayNotes, setDayNotes] = useState('');
   const [dayNotesSaved, setDayNotesSaved] = useState(true);
+  const [dayNotesSaveError, setDayNotesSaveError] = useState(false);
   const dayNotesDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Ref so the debounce always has the correct date even if panel closes before it fires
+  const editingDateRef = useRef<string | null>(null);
 
   // Event editor
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
@@ -121,25 +124,45 @@ export default function CalendarClient() {
   // Load day notes when selected date changes
   useEffect(() => {
     if (!selectedDate) return;
+    editingDateRef.current = selectedDate;
     setDayNotes('');
     setDayNotesSaved(true);
+    setDayNotesSaveError(false);
     fetch(`/api/calendar/day-notes?date=${selectedDate}`)
-      .then(r => r.json())
-      .then(d => setDayNotes(d.notes ?? ''))
+      .then(async r => {
+        const d = await r.json();
+        if (r.ok) setDayNotes(d.notes ?? '');
+      })
       .catch(() => {});
   }, [selectedDate]);
 
   function handleDayNotesChange(text: string) {
+    const dateToSave = editingDateRef.current;
     setDayNotes(text);
     setDayNotesSaved(false);
+    setDayNotesSaveError(false);
     if (dayNotesDebounce.current) clearTimeout(dayNotesDebounce.current);
     dayNotesDebounce.current = setTimeout(async () => {
-      await fetch('/api/calendar/day-notes', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date: selectedDate, notes: text }),
-      }).catch(() => {});
-      setDayNotesSaved(true);
+      if (!dateToSave) return;
+      try {
+        const res = await fetch('/api/calendar/day-notes', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ date: dateToSave, notes: text }),
+        });
+        if (res.ok) {
+          setDayNotesSaved(true);
+          setDayNotesSaveError(false);
+        } else {
+          const err = await res.json().catch(() => ({}));
+          console.error('[day-notes] save failed:', err);
+          setDayNotesSaveError(true);
+          setDayNotesSaved(true);
+        }
+      } catch {
+        setDayNotesSaveError(true);
+        setDayNotesSaved(true);
+      }
     }, 800);
   }
 
@@ -368,9 +391,13 @@ export default function CalendarClient() {
             <div className="px-4 pt-3 pb-2 border-b border-gray-100">
               <div className="flex items-center justify-between mb-1.5">
                 <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Day Notes</p>
-                <span className={`text-xs transition-opacity ${dayNotesSaved ? 'opacity-0' : 'opacity-100 text-blue-500'}`}>
-                  Saving…
-                </span>
+                {dayNotesSaveError ? (
+                  <span className="text-xs text-red-500">Save failed — check DB setup</span>
+                ) : (
+                  <span className={`text-xs transition-opacity ${dayNotesSaved ? 'opacity-0' : 'opacity-100 text-blue-500'}`}>
+                    Saving…
+                  </span>
+                )}
               </div>
               <textarea
                 value={dayNotes}

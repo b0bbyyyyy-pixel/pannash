@@ -3,7 +3,6 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import Navbar from '@/components/Navbar';
-import UploadForm from './UploadForm';
 import CreateListButton from './CreateListButton';
 import LeadListSelector from './LeadListSelector';
 import LeadsTableWrapper from './LeadsTableWrapper';
@@ -246,61 +245,13 @@ export default async function LeadsPage({
           deleteListWithLeads={deleteListWithLeads}
         />
 
-        {/* Upload Section */}
-        {leadLists && leadLists.length > 0 ? (
-          selectedListId && selectedListId !== 'unlisted' ? (
-            <div className="bg-white border border-[#e5e5e5] rounded-md p-7 mb-8">
-              <h2 className="text-lg font-bold text-[#1a1a1a] mb-5 tracking-tight">
-                Upload Leads
-                {selectedList && (
-                  <span className="ml-2 text-sm font-normal text-[#999]">
-                    to {selectedList.name}
-                  </span>
-                )}
-              </h2>
-              <UploadForm selectedListId={selectedListId} />
-            </div>
-          ) : (
-            <div className="bg-[#fff9e5] border border-[#f0d58a] rounded-md p-10 mb-8 text-center">
-              <div className="max-w-md mx-auto">
-                <h2 className="text-xl font-bold text-[#1a1a1a] mb-2 tracking-tight">
-                  Select a List to Upload Leads
-                </h2>
-                <p className="text-[#6b6b6b] text-sm mb-5">
-                  Click on a list tab above to organize your leads properly. Avoid uncategorized leads by selecting a specific list.
-                </p>
-                <div className="mt-5">
-                  <p className="text-xs text-[#999] mb-3">Need a new category?</p>
-                  <CreateListButton />
-                </div>
-              </div>
-            </div>
-          )
-        ) : (
-          <div className="bg-[#f5f5f5] border-2 border-dashed border-[#d5d5d5] rounded-md p-12 mb-8 text-center">
-            <div className="max-w-md mx-auto">
-              <h2 className="text-2xl font-bold text-[#1a1a1a] mb-3 tracking-tight">
-                Create Your First Lead List
-              </h2>
-              <p className="text-[#6b6b6b] text-sm mb-6">
-                Before uploading leads, create a list to organize them. Lists help you manage different campaigns, sources, or categories.
-              </p>
-              <div className="flex flex-col gap-3 items-center">
-                <CreateListButton />
-                <p className="text-xs text-[#999]">
-                  Examples: "Q1 Prospects", "Warm Leads", "Trade Show Contacts"
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Leads Table */}
         <LeadsTableWrapper
           leads={leads || []}
           selectedListName={selectedList ? selectedList.name : 'All Leads'}
           selectedListDescription={selectedList?.description}
           totalLeads={totalLeads}
+          selectedListId={selectedListId}
           deleteLead={deleteLead}
           deleteMultipleLeads={deleteMultipleLeads}
         />
