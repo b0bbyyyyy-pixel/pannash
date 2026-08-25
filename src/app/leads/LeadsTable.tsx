@@ -271,7 +271,7 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
                     className="cursor-pointer hover:bg-green-50 hover:text-green-700 px-2 py-1 rounded block transition-colors"
                     title="Click to log attempt now · Right-click to pick a custom time"
                   >
-                    {fmt(lead.last_contact) ?? <span className="text-gray-300 italic">Click to log</span>}
+                    {fmt(lead.last_contact) ?? <span className="text-gray-400 italic">No Attempt</span>}
                   </span>
                 )}
               </td>
