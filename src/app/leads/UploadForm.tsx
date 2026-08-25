@@ -634,7 +634,9 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
 
   const parseAppPdf = (text: string): { name: string; phone: string | null; email: string | null } => {
     const lines = text.split(/[\n\r]+/).map(l => l.trim()).filter(Boolean);
-    let name = '';
+    let firstName = '';
+    let lastName = '';
+    let fullName = '';
     let phone: string | null = null;
     let email: string | null = null;
 
@@ -642,56 +644,79 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
     const emailMatch = text.match(/[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}/);
     if (emailMatch) email = emailMatch[0];
 
-    // Phone: 10 digits, US format
+    // Phone
     const phoneMatch = text.match(/\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}/);
     if (phoneMatch) phone = phoneMatch[0];
 
-    // Name patterns — labeled "Key: Value" on same line
-    const nameKeyValue = text.match(
-      /(?:owner|applicant|contact|principal|signer|guarantor|authorized|first|full)\s*(?:name|contact)?\s*[:\-]\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]*){1,3})/i
-    );
-    if (nameKeyValue) name = nameKeyValue[1].trim();
+    // Helper: check if a value looks like a real person name (not company/label)
+    const isPersonName = (s: string) => {
+      if (!s || s.length < 2 || s.length > 60) return false;
+      if (/\b(LLC|Inc|Corp|Ltd|Co\.|DBA|the|and|for|Street|Ave|Blvd|Rd)\b/i.test(s)) return false;
+      if (/\d/.test(s)) return false;
+      if (/^(yes|no|true|false|n\/a|na|none|owner|applicant|contact|name|phone|email|address|city|state|zip|date|sign)$/i.test(s.trim())) return false;
+      return /^[A-Za-z\s'\-\.]+$/.test(s);
+    };
 
-    if (!name) {
-      // Look for label on its own line, value on next line
-      const nameTriggers = [
-        'owner name', 'applicant name', 'contact name', 'principal name',
-        'signer name', 'guarantor name', 'authorized signer', 'full name',
-        'owner', 'applicant', 'contact person', 'primary contact',
-        'first name', 'name of owner',
-      ];
-      for (let i = 0; i < lines.length; i++) {
-        const lower = lines[i].toLowerCase().replace(/[:\-*]/g, '').trim();
-        if (nameTriggers.some(t => lower === t || lower.startsWith(t))) {
-          const candidate = lines[i + 1] || '';
-          if (
-            candidate.length > 2 && candidate.length < 60 &&
-            /^[A-Z]/.test(candidate) &&
-            !/\d{5}/.test(candidate) &&
-            !/^(LLC|Inc|Corp|Ltd|Co\b)/i.test(candidate)
-          ) {
-            name = candidate;
-            break;
-          }
-        }
+    // Build a flat key→value map from annotation lines ("fieldName: value")
+    const kvMap: Record<string, string> = {};
+    for (const line of lines) {
+      const m = line.match(/^([A-Za-z_][A-Za-z0-9_\s\-]*?)\s*:\s*(.+)$/);
+      if (m) {
+        kvMap[m[1].toLowerCase().replace(/[\s_\-]/g, '')] = m[2].trim();
       }
     }
 
-    if (!name) {
-      // Last resort: find any "Firstname Lastname" pattern that isn't a company name
+    // Priority 1: exact annotation field names from common MCA apps
+    const firstNameKeys = ['ownerfirstname','principalfirstname','applicantfirstname','contactfirstname','legalfirstname','firstname','first','fname','signatoryname','guarantorfirstname','ownersfirstname'];
+    const lastNameKeys  = ['ownerlastname','principallastname','applicantlastname','contactlastname','legallastname','lastname','last','lname','guarantorlastname','ownerslastname'];
+    const fullNameKeys  = ['ownername','principalname','applicantname','contactname','fullname','legalname','name','guarantorname','signername','authorizedsigner','ownersfullname','primaryowner'];
+
+    for (const k of firstNameKeys) { if (kvMap[k] && isPersonName(kvMap[k])) { firstName = kvMap[k]; break; } }
+    for (const k of lastNameKeys)  { if (kvMap[k] && isPersonName(kvMap[k])) { lastName  = kvMap[k]; break; } }
+    for (const k of fullNameKeys)  { if (kvMap[k] && isPersonName(kvMap[k])) { fullName  = kvMap[k]; break; } }
+
+    // Priority 2: scan lines for labeled patterns (handles "Owner Name: John Smith")
+    if (!firstName && !fullName) {
+      const fullNameTrigger = /^(?:owner|principal|applicant|contact|guarantor|signer|authorized signer|business owner|legal|full|primary owner|name of owner|individual)[\s\-_]*(?:name|contact)?[\s\-_]*(?:\d)?[:\-=]\s*(.+)$/i;
+      const firstTrigger    = /^(?:first|given|legal first)[\s\-_]*name[:\-=]\s*(.+)$/i;
+      const lastTrigger     = /^(?:last|surname|legal last|family)[\s\-_]*name[:\-=]\s*(.+)$/i;
+
+      for (const line of lines) {
+        if (!fullName) { const m = line.match(fullNameTrigger); if (m && isPersonName(m[1])) fullName = m[1].trim(); }
+        if (!firstName) { const m = line.match(firstTrigger); if (m && isPersonName(m[1])) firstName = m[1].trim(); }
+        if (!lastName)  { const m = line.match(lastTrigger);  if (m && isPersonName(m[1])) lastName  = m[1].trim(); }
+      }
+    }
+
+    // Priority 3: label on one line, value on next line
+    if (!firstName && !fullName) {
+      const triggerWords = ['owner name','principal name','applicant name','contact name','full name','legal name','owner','principal','applicant','signer','guarantor','authorized signer','business owner','primary contact','name of owner','primary owner'];
+      for (let i = 0; i < lines.length - 1; i++) {
+        const lower = lines[i].toLowerCase().replace(/[:\-*#]/g, '').trim();
+        if (triggerWords.some(t => lower === t || lower === t + ' 1')) {
+          const candidate = lines[i + 1];
+          if (isPersonName(candidate)) { fullName = candidate; break; }
+        }
+        if ((lower === 'first name' || lower === 'first') && isPersonName(lines[i + 1])) firstName = lines[i + 1];
+        if ((lower === 'last name'  || lower === 'last')  && isPersonName(lines[i + 1])) lastName  = lines[i + 1];
+      }
+    }
+
+    // Priority 4: last resort — find any standalone "Firstname Lastname" line
+    if (!firstName && !fullName) {
       for (const line of lines) {
         if (
-          /^[A-Z][a-z]+ [A-Z][a-z]+(\s[A-Z][a-z]+)?$/.test(line) &&
-          line.length < 50 &&
-          !/\b(LLC|Inc|Corp|Ltd|Co\.|the|and|for)\b/i.test(line) &&
-          !/\d/.test(line)
+          /^[A-Z][a-z]+(\s[A-Z]\.?)?\s[A-Z][a-z]+$/.test(line.trim()) &&
+          isPersonName(line)
         ) {
-          name = line;
+          fullName = line.trim();
           break;
         }
       }
     }
 
+    // Combine first + last if we got them separately
+    let name = fullName || [firstName, lastName].filter(Boolean).join(' ').trim();
     return { name, phone, email };
   };
 
