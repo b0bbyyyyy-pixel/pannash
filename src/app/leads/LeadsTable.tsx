@@ -33,8 +33,11 @@ interface LeadsTableProps {
 }
 
 function fmt(date: string | null | undefined) {
-  if (!date) return '—';
-  return new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+  if (!date) return null;
+  const d = new Date(date);
+  const datePart = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+  const timePart = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  return `${datePart} ${timePart}`;
 }
 
 export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, searchQuery = '' }: LeadsTableProps) {
@@ -235,7 +238,7 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
                 {fmt(lead.created_at)}
               </td>
 
-              {/* LAST ATTEMPT — editable outreach date */}
+              {/* LAST ATTEMPT — click to stamp now; right-click to pick custom time */}
               <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">
                 {editingCell?.leadId === lead.id && editingCell?.field === 'last_contact' ? (
                   <input
@@ -249,11 +252,26 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
                   />
                 ) : (
                   <span
-                    onClick={() => startEdit(lead.id, 'last_contact', lead.last_contact ? new Date(lead.last_contact).toISOString().slice(0, 16) : new Date().toISOString().slice(0, 16))}
-                    className="cursor-pointer hover:bg-gray-100 px-2 py-1 rounded block"
-                    title="Click to set last attempt date"
+                    onClick={async () => {
+                      const now = new Date().toISOString();
+                      try {
+                        await fetch('/api/leads/update', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ leadId: lead.id, field: 'last_contact', value: now }),
+                        });
+                        router.refresh();
+                      } catch {}
+                    }}
+                    onContextMenu={e => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      startEdit(lead.id, 'last_contact', lead.last_contact ? new Date(lead.last_contact).toISOString().slice(0, 16) : new Date().toISOString().slice(0, 16));
+                    }}
+                    className="cursor-pointer hover:bg-green-50 hover:text-green-700 px-2 py-1 rounded block transition-colors"
+                    title="Click to log attempt now · Right-click to pick a custom time"
                   >
-                    {fmt(lead.last_contact) || <span className="text-gray-300 italic">—</span>}
+                    {fmt(lead.last_contact) ?? <span className="text-gray-300 italic">Click to log</span>}
                   </span>
                 )}
               </td>
