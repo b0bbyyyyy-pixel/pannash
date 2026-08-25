@@ -405,7 +405,6 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
       company: l.company || null,
       notes: l.notes || null,
       list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
-      last_contact: now,
     }));
 
     const { error } = await supabase.from('leads').insert(leads);
@@ -470,7 +469,6 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
                     company: mapped.company,
                     notes: mapped.notes,
                     list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
-                    last_contact: uploadTime,
                   };
                 })
                 .filter((lead: any) => lead !== null);
@@ -498,7 +496,6 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
                     company: mapped.company,
                     notes: mapped.notes,
                     list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
-                    last_contact: uploadTime,
                   };
                 })
                 .filter((lead: any) => lead !== null);
@@ -591,7 +588,6 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
       company: l.company || null,
       notes: l.notes || null,
       list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
-      last_contact: now,
     }));
 
     const { error } = await supabase.from('leads').insert(leads);
@@ -753,7 +749,6 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
       company: l.company || null,
       notes: l.notes || null,
       list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
-      last_contact: now,
     }));
 
     const { error } = await supabase.from('leads').insert(leads);
