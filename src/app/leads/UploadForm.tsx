@@ -5,6 +5,7 @@ import { createBrowserClient } from '@supabase/ssr';
 import Papa from 'papaparse';
 import { useRouter } from 'next/navigation';
 import JSZip from 'jszip';
+import { parseLeadPasteText } from '@/lib/parse-lead-paste';
 
 interface UploadFormProps {
   selectedListId?: string;
@@ -19,12 +20,16 @@ interface ParsedLead {
 }
 
 export default function UploadForm({ selectedListId }: UploadFormProps) {
-  const [mode, setMode] = useState<'file' | 'paste' | 'zip'>('file');
+  const [mode, setMode] = useState<'file' | 'paste' | 'zip' | 'quick'>('file');
   const [file, setFile] = useState<File | null>(null);
   const [pasteText, setPasteText] = useState('');
   const [parsedPreview, setParsedPreview] = useState<ParsedLead[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  // Quick Paste state
+  const [quickText, setQuickText] = useState('');
+  const [quickPreview, setQuickPreview] = useState<ParsedLead[]>([]);
+
   // ZIP pack state
   const [zipDragging, setZipDragging] = useState(false);
   const [zipPreview, setZipPreview] = useState<ParsedLead[]>([]);
@@ -528,6 +533,80 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
     });
   };
 
+  // ── Quick Paste parser ────────────────────────────────────────────────────
+  const parseQuickText = (raw: string): ParsedLead[] => {
+    if (!raw.trim()) return [];
+
+    // Split into individual contact blocks by 2+ blank lines or obvious separators
+    const blocks = raw
+      .split(/\n{2,}|---+|\*\*\*+/)
+      .map(b => b.trim())
+      .filter(b => b.length > 2);
+
+    return blocks.map(block => {
+      const parsed = parseLeadPasteText(block);
+
+      // Build notes from remainder — also grab secondary phone/email if present
+      const notesParts: string[] = [];
+      if (parsed.remainder) notesParts.push(parsed.remainder);
+
+      // Find extra emails beyond the first
+      const allEmails = block.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g) || [];
+      const extraEmails = allEmails.filter(e => e !== parsed.email);
+      if (extraEmails.length) notesParts.push(`Alt email: ${extraEmails.join(', ')}`);
+
+      // Find extra phones beyond the first
+      const allPhones = block.match(/(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})/g) || [];
+      const extraPhones = allPhones.filter(p => !parsed.phone.includes(p.replace(/\D/g, '').slice(-7)));
+      if (extraPhones.length) notesParts.push(`Alt phone: ${extraPhones.join(', ')}`);
+
+      return {
+        name: parsed.name || '',
+        email: parsed.email || '',
+        phone: parsed.phone || null,
+        company: parsed.company || null,
+        notes: notesParts.join(' | ') || null,
+      };
+    }).filter(l => l.name || l.email || l.phone || l.company);
+  };
+
+  const handleQuickChange = (text: string) => {
+    setQuickText(text);
+    setQuickPreview(parseQuickText(text));
+  };
+
+  const handleQuickImport = async () => {
+    if (quickPreview.length === 0) return;
+    setLoading(true);
+    setMessage('');
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { setMessage('Not authenticated'); setLoading(false); return; }
+
+    const now = new Date().toISOString();
+    const leads = quickPreview.map(l => ({
+      user_id: user.id,
+      name: l.name || '',
+      email: l.email || '',
+      phone: l.phone || null,
+      company: l.company || null,
+      notes: l.notes || null,
+      list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
+      last_contact: now,
+    }));
+
+    const { error } = await supabase.from('leads').insert(leads);
+    if (error) {
+      setMessage(`Error: ${error.message}`);
+    } else {
+      setMessage(`✓ Imported ${leads.length} lead${leads.length !== 1 ? 's' : ''}`);
+      setQuickText('');
+      setQuickPreview([]);
+      setTimeout(() => router.refresh(), 800);
+    }
+    setLoading(false);
+  };
+  // ─────────────────────────────────────────────────────────────────────────
+
   // ── ZIP Deal Pack parser ──────────────────────────────────────────────────
   const extractTextFromPdf = async (arrayBuffer: ArrayBuffer): Promise<string> => {
     try {
@@ -720,6 +799,15 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
         >
           Deal Pack ZIP
         </button>
+        <button
+          type="button"
+          onClick={() => { setMode('quick'); setMessage(''); }}
+          className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-colors ${
+            mode === 'quick' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Quick Paste
+        </button>
       </div>
 
       {mode === 'file' && (
@@ -891,6 +979,78 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
             className="w-full px-6 py-3 bg-[#1a1a1a] text-white rounded-md font-medium hover:bg-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {loading ? 'Importing…' : zipPreview.length > 0 ? `Import ${zipPreview.length} Lead${zipPreview.length !== 1 ? 's' : ''}` : 'Drop a ZIP above'}
+          </button>
+        </>
+      )}
+
+      {/* ── Quick Paste panel ── */}
+      {mode === 'quick' && (
+        <>
+          <div>
+            <p className="text-xs text-gray-500 mb-1 leading-relaxed">
+              Paste anything — an email signature, vCard, broker notes, copied rows, or free text.<br />
+              Name, company, email &amp; phone are extracted automatically. <strong>Everything else goes into Notes.</strong><br />
+              Separate multiple contacts with a blank line.
+            </p>
+            <textarea
+              value={quickText}
+              onChange={e => handleQuickChange(e.target.value)}
+              onPaste={e => {
+                setTimeout(() => {
+                  const ta = e.target as HTMLTextAreaElement;
+                  handleQuickChange(ta.value);
+                }, 0);
+              }}
+              rows={8}
+              className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-gray-900 resize-none placeholder-gray-300"
+              placeholder={
+                "John Smith\nThe Big Beard LLC\njohn@example.com\n(513) 291-0726\n362-02-5204 (SSN)\n110 South Washington Blvd\n\nJane Doe\nAcme Corp\njane@acme.com\n..."
+              }
+            />
+          </div>
+
+          {/* Live preview */}
+          {quickPreview.length > 0 && (
+            <div className="border border-gray-200 rounded-lg overflow-hidden">
+              <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+                <p className="text-xs font-semibold text-gray-700">
+                  {quickPreview.length} contact{quickPreview.length !== 1 ? 's' : ''} detected
+                </p>
+                <p className="text-xs text-gray-400">Unmapped data → Notes</p>
+              </div>
+              <div className="max-h-56 overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr>
+                      {['Name', 'Company', 'Phone', 'Email', 'Notes'].map(h => (
+                        <th key={h} className="px-2 py-1.5 text-left font-medium text-gray-500 uppercase tracking-wider">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {quickPreview.map((lead, i) => (
+                      <tr key={i} className={`hover:bg-gray-50 ${!lead.name && !lead.email ? 'opacity-40' : ''}`}>
+                        <td className="px-2 py-1.5 font-medium text-gray-900 max-w-[90px] truncate">{lead.name || <span className="text-gray-300 italic">—</span>}</td>
+                        <td className="px-2 py-1.5 text-gray-600 max-w-[100px] truncate">{lead.company || <span className="text-gray-300">—</span>}</td>
+                        <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">{lead.phone || <span className="text-gray-300">—</span>}</td>
+                        <td className="px-2 py-1.5 text-gray-600 max-w-[120px] truncate">{lead.email || <span className="text-gray-300">—</span>}</td>
+                        <td className="px-2 py-1.5 text-gray-400 max-w-[140px] truncate italic" title={lead.notes || ''}>{lead.notes || <span className="text-gray-200">—</span>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <button
+            onClick={handleQuickImport}
+            disabled={loading || quickPreview.length === 0}
+            className="w-full px-6 py-3 bg-[#1a1a1a] text-white rounded-md font-medium hover:bg-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {loading ? 'Importing…' : quickPreview.length > 0
+              ? `Import ${quickPreview.length} Lead${quickPreview.length !== 1 ? 's' : ''}`
+              : 'Paste contacts above'}
           </button>
         </>
       )}
