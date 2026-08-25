@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import BulkDeleteButton from './BulkDeleteButton';
+import { getPhoneLocation, type PhoneLocationInfo } from '@/lib/phoneLocation';
 
 interface Lead {
   id: string;
@@ -44,6 +45,10 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
   const [promoting, setPromoting] = useState<string | null>(null);
   const [promoteConfirm, setPromoteConfirm] = useState<Lead | null>(null);
   const [promoteMonth, setPromoteMonth] = useState(new Date().toISOString().slice(0, 7));
+  // Phone hover tooltip
+  const [hoveredPhone, setHoveredPhone] = useState<string | null>(null);
+  const [phoneLocationData, setPhoneLocationData] = useState<Record<string, PhoneLocationInfo | null>>({});
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
   const contextRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
@@ -281,9 +286,48 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
                 </div>
               </td>
 
-              {/* PHONE */}
-              <td className="px-4 py-3 text-sm text-gray-600">
-                <EditableCell lead={lead} field="phone" value={lead.phone || ''} type="tel" />
+              {/* PHONE — with location tooltip on hover */}
+              <td className="px-4 py-3 text-sm text-gray-600 relative">
+                {editingCell?.leadId === lead.id && editingCell?.field === 'phone' ? (
+                  <EditableCell lead={lead} field="phone" value={lead.phone || ''} type="tel" />
+                ) : (
+                  <div className="relative inline-block">
+                    <span
+                      onMouseEnter={e => {
+                        if (!lead.phone) return;
+                        const key = lead.id;
+                        if (!phoneLocationData[key]) {
+                          const info = getPhoneLocation(lead.phone, Intl.DateTimeFormat().resolvedOptions().timeZone);
+                          setPhoneLocationData(prev => ({ ...prev, [key]: info }));
+                        }
+                        const rect = (e.target as HTMLElement).getBoundingClientRect();
+                        setTooltipPos({ x: rect.left + rect.width / 2, y: rect.bottom + 6 });
+                        setHoveredPhone(key);
+                      }}
+                      onMouseLeave={() => { setHoveredPhone(null); setTooltipPos(null); }}
+                      onClick={() => startEdit(lead.id, 'phone', lead.phone || '')}
+                      className="cursor-pointer hover:bg-gray-100 px-2 py-1 rounded block whitespace-nowrap"
+                    >
+                      {lead.phone || <span className="text-gray-300">—</span>}
+                    </span>
+                    {hoveredPhone === lead.id && phoneLocationData[lead.id] && tooltipPos && (
+                      <div
+                        className="fixed z-[9999] bg-white border border-gray-200 rounded-lg shadow-xl p-3 whitespace-nowrap pointer-events-none"
+                        style={{ left: tooltipPos.x, top: tooltipPos.y, transform: 'translateX(-50%)' }}
+                      >
+                        <div className="text-xs space-y-0.5">
+                          <div className="font-semibold text-gray-900">
+                            {phoneLocationData[lead.id]!.city}, {phoneLocationData[lead.id]!.state}
+                          </div>
+                          <div className="text-gray-500">
+                            {phoneLocationData[lead.id]!.localTime} ({phoneLocationData[lead.id]!.timeOffset})
+                          </div>
+                        </div>
+                        <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-white border-l border-t border-gray-200 rotate-45" />
+                      </div>
+                    )}
+                  </div>
+                )}
               </td>
 
               {/* NOTES */}
