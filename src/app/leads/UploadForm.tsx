@@ -612,8 +612,21 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
       let text = '';
       for (let i = 1; i <= Math.min(pdf.numPages, 3); i++) {
         const page = await pdf.getPage(i);
+
+        // Extract rendered text
         const content = await page.getTextContent();
         text += content.items.map((item: any) => item.str).join(' ') + '\n';
+
+        // Also extract AcroForm field values (most lender apps are PDF forms)
+        try {
+          const annotations = await page.getAnnotations();
+          for (const ann of annotations) {
+            if (ann.fieldType && ann.fieldValue != null && String(ann.fieldValue).trim()) {
+              const label = ann.fieldName || ann.alternativeText || '';
+              text += `${label}: ${ann.fieldValue}\n`;
+            }
+          }
+        } catch { /* annotations not available on this page */ }
       }
       return text;
     } catch { return ''; }
@@ -633,15 +646,47 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
     const phoneMatch = text.match(/\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}/);
     if (phoneMatch) phone = phoneMatch[0];
 
-    // Name: look for "Owner", "Applicant", "Contact" label then grab next non-company line
-    const nameTriggers = ['owner name', 'applicant name', 'contact name', 'principal name', 'signer name', 'guarantor'];
-    for (let i = 0; i < lines.length; i++) {
-      const lower = lines[i].toLowerCase();
-      if (nameTriggers.some(t => lower.includes(t))) {
-        // Next non-empty line is likely the name
-        const candidate = lines[i + 1] || lines[i + 2] || '';
-        if (candidate && candidate.length < 60 && !/\d{5}/.test(candidate)) {
-          name = candidate;
+    // Name patterns — labeled "Key: Value" on same line
+    const nameKeyValue = text.match(
+      /(?:owner|applicant|contact|principal|signer|guarantor|authorized|first|full)\s*(?:name|contact)?\s*[:\-]\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]*){1,3})/i
+    );
+    if (nameKeyValue) name = nameKeyValue[1].trim();
+
+    if (!name) {
+      // Look for label on its own line, value on next line
+      const nameTriggers = [
+        'owner name', 'applicant name', 'contact name', 'principal name',
+        'signer name', 'guarantor name', 'authorized signer', 'full name',
+        'owner', 'applicant', 'contact person', 'primary contact',
+        'first name', 'name of owner',
+      ];
+      for (let i = 0; i < lines.length; i++) {
+        const lower = lines[i].toLowerCase().replace(/[:\-*]/g, '').trim();
+        if (nameTriggers.some(t => lower === t || lower.startsWith(t))) {
+          const candidate = lines[i + 1] || '';
+          if (
+            candidate.length > 2 && candidate.length < 60 &&
+            /^[A-Z]/.test(candidate) &&
+            !/\d{5}/.test(candidate) &&
+            !/^(LLC|Inc|Corp|Ltd|Co\b)/i.test(candidate)
+          ) {
+            name = candidate;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!name) {
+      // Last resort: find any "Firstname Lastname" pattern that isn't a company name
+      for (const line of lines) {
+        if (
+          /^[A-Z][a-z]+ [A-Z][a-z]+(\s[A-Z][a-z]+)?$/.test(line) &&
+          line.length < 50 &&
+          !/\b(LLC|Inc|Corp|Ltd|Co\.|the|and|for)\b/i.test(line) &&
+          !/\d/.test(line)
+        ) {
+          name = line;
           break;
         }
       }
