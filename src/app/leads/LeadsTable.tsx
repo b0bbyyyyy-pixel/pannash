@@ -44,7 +44,8 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
   const [promoting, setPromoting] = useState<string | null>(null);
   const [promoteConfirm, setPromoteConfirm] = useState<Lead | null>(null);
-  const [promoteMonth, setPromoteMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [promoteMonth, setPromoteMonth] = useState('');
+  const [dashboardTabs, setDashboardTabs] = useState<{ month_key: string; custom_name: string }[]>([]);
   // Phone hover tooltip
   const [hoveredPhone, setHoveredPhone] = useState<string | null>(null);
   const [phoneLocationData, setPhoneLocationData] = useState<Record<string, PhoneLocationInfo | null>>({});
@@ -377,7 +378,19 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
             <p className="text-xs text-gray-400 truncate">{contextMenu.lead.company || contextMenu.lead.email}</p>
           </div>
           <button
-            onClick={() => { setPromoteConfirm(contextMenu.lead); setContextMenu(null); }}
+            onClick={async () => {
+              setPromoteConfirm(contextMenu.lead);
+              setContextMenu(null);
+              // Fetch available dashboard tabs
+              try {
+                const res = await fetch('/api/dashboard/tabs');
+                if (res.ok) {
+                  const data = await res.json();
+                  setDashboardTabs(data.tabs || []);
+                  if (data.tabs?.length > 0) setPromoteMonth(data.tabs[0].month_key);
+                }
+              } catch {}
+            }}
             className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2.5"
           >
             <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -418,13 +431,22 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
               {' '}will be added to your Dashboard pipeline with stage "Offers/Follow up".
             </p>
             <div className="mb-4">
-              <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Month Tab</label>
-              <input
-                type="month"
-                value={promoteMonth}
-                onChange={e => setPromoteMonth(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-              />
+              <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Dashboard Tab</label>
+              {dashboardTabs.length > 0 ? (
+                <select
+                  value={promoteMonth}
+                  onChange={e => setPromoteMonth(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 bg-white"
+                >
+                  {dashboardTabs.map(tab => (
+                    <option key={tab.month_key} value={tab.month_key}>
+                      {tab.custom_name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <p className="text-xs text-gray-400 italic">No dashboard tabs found — create one in your Dashboard first.</p>
+              )}
             </div>
             <div className="flex gap-3">
               <button
