@@ -609,114 +609,169 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
       const pdfjsLib = (window as any).pdfjsLib;
       if (!pdfjsLib) return '';
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      let text = '';
+      const lines: string[] = [];
       for (let i = 1; i <= Math.min(pdf.numPages, 3); i++) {
         const page = await pdf.getPage(i);
 
-        // Extract rendered text
+        // Each text item gets its own line so label/value pairs stay separable
         const content = await page.getTextContent();
-        text += content.items.map((item: any) => item.str).join(' ') + '\n';
+        for (const item of content.items as any[]) {
+          const s = item.str?.trim();
+          if (s) lines.push(s);
+        }
 
-        // Also extract AcroForm field values (most lender apps are PDF forms)
+        // AcroForm field values (PDF form inputs)
         try {
           const annotations = await page.getAnnotations();
           for (const ann of annotations) {
             if (ann.fieldType && ann.fieldValue != null && String(ann.fieldValue).trim()) {
-              const label = ann.fieldName || ann.alternativeText || '';
-              text += `${label}: ${ann.fieldValue}\n`;
+              const label = (ann.fieldName || ann.alternativeText || '').replace(/[_\-]/g, ' ');
+              lines.push(`${label}: ${ann.fieldValue}`);
             }
           }
-        } catch { /* annotations not available on this page */ }
+        } catch { /* no annotations */ }
       }
-      return text;
+      return lines.join('\n');
     } catch { return ''; }
   };
 
   const parseAppPdf = (text: string): { name: string; phone: string | null; email: string | null } => {
-    const lines = text.split(/[\n\r]+/).map(l => l.trim()).filter(Boolean);
-    let firstName = '';
-    let lastName = '';
-    let fullName = '';
+    const lines = text.split(/\n/).map(l => l.trim()).filter(Boolean);
+    let name = '';
     let phone: string | null = null;
     let email: string | null = null;
 
-    // Email
+    // Email - anywhere in text
     const emailMatch = text.match(/[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}/);
     if (emailMatch) email = emailMatch[0];
 
-    // Phone
+    // Phone - 10-digit US format
     const phoneMatch = text.match(/\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}/);
     if (phoneMatch) phone = phoneMatch[0];
 
-    // Helper: check if a value looks like a real person name (not company/label)
+    // Common form-field label words that should never be treated as person names
+    const LABEL_WORDS = new Set([
+      'first','last','full','legal','given','middle','owner','owners','applicant','principal',
+      'contact','guarantor','signer','authorized','primary','business','company','entity',
+      'information','info','detail','section','name','phone','email','address','city','state',
+      'zip','date','birth','sign','signature','yes','no','na','none','fico','score','credit',
+      'ssn','ein','tax','id','type','number','amount','term','rate','form','field','print',
+      'please','enter','input','select','check','note','notes','add','new','other','edit',
+      // Business/industry types
+      'real','estate','realty','property','properties','trucking','transport','transportation',
+      'landscaping','construction','services','service','piano','music','restaurant','retail',
+      'wholesale','medical','dental','legal','consulting','management','financial','insurance',
+      // Common form section labels
+      'year','acquired','started','formed','incorporated','established','founded',
+      'requested','approved','amount','funding','advance','loan','payment','balance',
+      'monthly','annual','weekly','daily','total','net','gross','revenue','income',
+      'position','existing','current','previous','new','additional',
+      // Financial / form section terms
+      'purchase','price','cost','value','sale','sales','deposit','payment','payments',
+      'collateral','equity','asset','assets','liability','liabilities','debt','debts',
+      'profit','loss','cash','flow','market','product','industry','sector','category',
+      // Property / loan form labels
+      'title','holder','lender','balance','loan','advance','acquired','property',
+      'current','lien','judgment','bankruptcy','status','incorporated','website',
+      'qualifying','questions','certify','authorize','undersigned','guarantor',
+      'partner','proprietor','corporation','ownership','percentage',
+    ]);
+
+    const toTitleCase = (s: string) => s.replace(/\b\w/g, c => c.toUpperCase());
+
+    // Strict check for Strategy 4 (no label context — must look like a real name)
     const isPersonName = (s: string) => {
-      if (!s || s.length < 2 || s.length > 60) return false;
-      if (/\b(LLC|Inc|Corp|Ltd|Co\.|DBA|the|and|for|Street|Ave|Blvd|Rd)\b/i.test(s)) return false;
+      if (!s || s.length < 5 || s.length > 60) return false;
+      if (/\b(LLC|Inc|Corp|Ltd|Co\.|DBA|Street|Ave|Blvd|Rd|Dr|Trucking|Landscaping|Construction|Services|Piano|Realty|Real\s+Estate|Real\s+State|Working\s+Capital)\b/i.test(s)) return false;
       if (/\d/.test(s)) return false;
-      if (/^(yes|no|true|false|n\/a|na|none|owner|applicant|contact|name|phone|email|address|city|state|zip|date|sign)$/i.test(s.trim())) return false;
-      return /^[A-Za-z\s'\-\.]+$/.test(s);
+      if (!/^[A-Za-z\s'\-\.]+$/.test(s)) return false;
+      const words = s.trim().split(/\s+/);
+      if (words.length < 2 || words.length > 4) return false;
+      // Require title-case — blocks ALL-CAPS labels and purely lowercase strings
+      if (!words.every(w => /^[A-Z][a-z]/.test(w))) return false;
+      if (words.some(w => LABEL_WORDS.has(w.toLowerCase()))) return false;
+      return true;
     };
 
-    // Build a flat key→value map from annotation lines ("fieldName: value")
-    const kvMap: Record<string, string> = {};
-    for (const line of lines) {
-      const m = line.match(/^([A-Za-z_][A-Za-z0-9_\s\-]*?)\s*:\s*(.+)$/);
-      if (m) {
-        kvMap[m[1].toLowerCase().replace(/[\s_\-]/g, '')] = m[2].trim();
-      }
+    // Looser check for label-triggered strategies (allows lowercase names like "prakash gurung")
+    const isLikelyName = (s: string) => {
+      if (!s || s.length < 4 || s.length > 60) return false;
+      if (/\b(LLC|Inc|Corp|Ltd|Co\.|DBA|Street|Ave|Blvd|Rd|Dr|Trucking|Landscaping|Construction|Services|Piano|Realty|Real\s+Estate|Working\s+Capital)\b/i.test(s)) return false;
+      if (/\d/.test(s)) return false;
+      if (!/^[A-Za-z\s'\-\.]+$/.test(s)) return false;
+      const words = s.trim().split(/\s+/);
+      if (words.length < 2 || words.length > 4) return false;
+      // At least the first character of the whole string must be a letter (not a digit/special)
+      if (!/^[A-Za-z]/.test(s)) return false;
+      if (words.some(w => LABEL_WORDS.has(w.toLowerCase()))) return false;
+      return true;
+    };
+
+    // Strategy 1: Label + value on SAME line, e.g. "Full Name: Melissa Russell"
+    const sameLine = text.match(
+      /(?:full\s+name|owner\s*(?:name|\d)?|principal\s*(?:name)?|applicant\s*(?:name)?|contact\s*(?:name)?|guarantor\s*(?:name)?|authorized\s+signer|primary\s+owner|legal\s+name|name\s+of\s+owner|signer)\s*:?\s+([A-Za-z][A-Za-z\s'\-\.]{3,})/i
+    );
+    if (sameLine) {
+      const candidate = sameLine[1].trim();
+      if (isLikelyName(candidate)) name = toTitleCase(candidate);
     }
 
-    // Priority 1: exact annotation field names from common MCA apps
-    const firstNameKeys = ['ownerfirstname','principalfirstname','applicantfirstname','contactfirstname','legalfirstname','firstname','first','fname','signatoryname','guarantorfirstname','ownersfirstname'];
-    const lastNameKeys  = ['ownerlastname','principallastname','applicantlastname','contactlastname','legallastname','lastname','last','lname','guarantorlastname','ownerslastname'];
-    const fullNameKeys  = ['ownername','principalname','applicantname','contactname','fullname','legalname','name','guarantorname','signername','authorizedsigner','ownersfullname','primaryowner'];
-
-    for (const k of firstNameKeys) { if (kvMap[k] && isPersonName(kvMap[k])) { firstName = kvMap[k]; break; } }
-    for (const k of lastNameKeys)  { if (kvMap[k] && isPersonName(kvMap[k])) { lastName  = kvMap[k]; break; } }
-    for (const k of fullNameKeys)  { if (kvMap[k] && isPersonName(kvMap[k])) { fullName  = kvMap[k]; break; } }
-
-    // Priority 2: scan lines for labeled patterns (handles "Owner Name: John Smith")
-    if (!firstName && !fullName) {
-      const fullNameTrigger = /^(?:owner|principal|applicant|contact|guarantor|signer|authorized signer|business owner|legal|full|primary owner|name of owner|individual)[\s\-_]*(?:name|contact)?[\s\-_]*(?:\d)?[:\-=]\s*(.+)$/i;
-      const firstTrigger    = /^(?:first|given|legal first)[\s\-_]*name[:\-=]\s*(.+)$/i;
-      const lastTrigger     = /^(?:last|surname|legal last|family)[\s\-_]*name[:\-=]\s*(.+)$/i;
-
-      for (const line of lines) {
-        if (!fullName) { const m = line.match(fullNameTrigger); if (m && isPersonName(m[1])) fullName = m[1].trim(); }
-        if (!firstName) { const m = line.match(firstTrigger); if (m && isPersonName(m[1])) firstName = m[1].trim(); }
-        if (!lastName)  { const m = line.match(lastTrigger);  if (m && isPersonName(m[1])) lastName  = m[1].trim(); }
-      }
-    }
-
-    // Priority 3: label on one line, value on next line
-    if (!firstName && !fullName) {
-      const triggerWords = ['owner name','principal name','applicant name','contact name','full name','legal name','owner','principal','applicant','signer','guarantor','authorized signer','business owner','primary contact','name of owner','primary owner'];
+    // Strategy 2: Label line → value on NEXT line (handles "Name\nprakash gurung")
+    if (!name) {
+      const nameLabelRe = /^(name|full\s+name|owner\s*(?:name|\d+)?|principal\s*(?:name)?|applicant\s*(?:name)?|contact\s*(?:name)?|guarantor\s*(?:name)?|authorized\s+signer|primary\s+owner|legal\s+name|name\s+of\s+owner|owner\s+1|owner\s+information)\s*:?\s*$/i;
       for (let i = 0; i < lines.length - 1; i++) {
-        const lower = lines[i].toLowerCase().replace(/[:\-*#]/g, '').trim();
-        if (triggerWords.some(t => lower === t || lower === t + ' 1')) {
-          const candidate = lines[i + 1];
-          if (isPersonName(candidate)) { fullName = candidate; break; }
+        if (nameLabelRe.test(lines[i])) {
+          for (let j = i + 1; j <= Math.min(i + 3, lines.length - 1); j++) {
+            const candidate = lines[j].trim();
+            if (isLikelyName(candidate)) { name = toTitleCase(candidate); break; }
+          }
+          if (name) break;
         }
-        if ((lower === 'first name' || lower === 'first') && isPersonName(lines[i + 1])) firstName = lines[i + 1];
-        if ((lower === 'last name'  || lower === 'last')  && isPersonName(lines[i + 1])) lastName  = lines[i + 1];
       }
     }
 
-    // Priority 4: last resort — find any standalone "Firstname Lastname" line
-    if (!firstName && !fullName) {
-      for (const line of lines) {
-        if (
-          /^[A-Z][a-z]+(\s[A-Z]\.?)?\s[A-Z][a-z]+$/.test(line.trim()) &&
-          isPersonName(line)
-        ) {
-          fullName = line.trim();
+    // Strategy 3: "First Name" / "Last Name" labels, with values possibly several lines later
+    // Handles M&J Robinson pattern: [First Name, Last Name, Ownership, SSN] then [Jerry, Robinson, 100%, ...]
+    if (!name) {
+      const firstRe = /^(?:first\s+name|owner\s+first|legal\s+first\s+name|first)\s*:?\s*$/i;
+      const lastRe  = /^(?:last\s+name|owner\s+last|legal\s+last\s+name|surname|last)\s*:?\s*$/i;
+      let firstIdx = -1, lastIdx = -1;
+      for (let i = 0; i < lines.length; i++) {
+        if (firstIdx < 0 && firstRe.test(lines[i])) firstIdx = i;
+        if (lastIdx  < 0 && lastRe.test(lines[i]))  lastIdx  = i;
+      }
+      if (firstIdx >= 0 && lastIdx >= 0) {
+        const LOOK = 10;
+        let first = '', last = '';
+        // Scan ahead from firstIdx for a single capitalized/lowercase name word
+        for (let j = firstIdx + 1; j <= Math.min(firstIdx + LOOK, lines.length - 1); j++) {
+          const w = lines[j].trim();
+          if (/^[A-Za-z]{2,}$/.test(w) && !LABEL_WORDS.has(w.toLowerCase()) && !/^\d+$/.test(w)) {
+            first = w; break;
+          }
+        }
+        // Scan ahead from lastIdx for a single name word (different from first)
+        for (let j = lastIdx + 1; j <= Math.min(lastIdx + LOOK, lines.length - 1); j++) {
+          const w = lines[j].trim();
+          if (/^[A-Za-z]{2,}$/.test(w) && !LABEL_WORDS.has(w.toLowerCase()) && w !== first && !/^\d+$/.test(w)) {
+            last = w; break;
+          }
+        }
+        if (first && last) name = toTitleCase(`${first} ${last}`);
+      }
+    }
+
+    // Strategy 4: Standalone title-case "Firstname Lastname" line (no label context)
+    if (!name) {
+      for (let i = 0; i < lines.length; i++) {
+        const l = lines[i].trim();
+        if (/^[A-Z][a-z]{1,}(\s[A-Z]\.?)?\s[A-Z][a-z]{2,}$/.test(l) && isPersonName(l)) {
+          name = l;
           break;
         }
       }
     }
 
-    // Combine first + last if we got them separately
-    let name = fullName || [firstName, lastName].filter(Boolean).join(' ').trim();
     return { name, phone, email };
   };
 
@@ -777,20 +832,25 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
           try {
             const buf = await appFile.async('arraybuffer');
             const text = await extractTextFromPdf(buf);
+            console.log(`[ZIP] ${businessName} — extracted text:\n`, text.slice(0, 1500));
             if (text) {
               const parsed = parseAppPdf(text);
+              console.log(`[ZIP] ${businessName} — parsed:`, parsed);
               parsedName = parsed.name;
               parsedPhone = parsed.phone;
               parsedEmail = parsed.email;
             }
-          } catch { /* skip if unreadable */ }
+          } catch (e) { console.error(`[ZIP] ${businessName} extract error:`, e); }
         }
+
+        // Strip date suffix from folder name (e.g. "GPS LANDSCAPING LLC 08_20_2026" → "GPS LANDSCAPING LLC")
+        const companyName = businessName.replace(/\s+\d{2}_\d{2}_\d{4}$/, '').trim();
 
         leads.push({
           name: parsedName || '',
           email: parsedEmail || '',
           phone: parsedPhone,
-          company: businessName,
+          company: companyName,
           notes: null,
         });
       }
