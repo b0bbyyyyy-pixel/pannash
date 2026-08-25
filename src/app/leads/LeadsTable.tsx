@@ -277,17 +277,17 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
               </td>
 
               {/* OPPORTUNITY (Company) */}
-              <td className="px-4 py-3 text-sm text-gray-700 font-medium">
+              <td className="px-4 py-3 text-sm text-gray-700 font-medium" onContextMenu={e => e.stopPropagation()}>
                 <EditableCell lead={lead} field="company" value={lead.company || ''} />
               </td>
 
               {/* NAME */}
-              <td className="px-4 py-3 text-sm font-semibold text-gray-900">
+              <td className="px-4 py-3 text-sm font-semibold text-gray-900" onContextMenu={e => e.stopPropagation()}>
                 <EditableCell lead={lead} field="name" value={lead.name} />
               </td>
 
               {/* EMAIL */}
-              <td className="px-4 py-3 text-sm text-gray-600">
+              <td className="px-4 py-3 text-sm text-gray-600" onContextMenu={e => e.stopPropagation()}>
                 <div className="flex items-center gap-1.5">
                   <EditableCell lead={lead} field="email" value={lead.email} type="email" />
                   {lead.email_status && lead.email_status !== 'unchecked' && (
@@ -305,52 +305,51 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
                 </div>
               </td>
 
-              {/* PHONE — with location tooltip on hover */}
-              <td className="px-4 py-3 text-sm text-gray-600 relative">
-                {editingCell?.leadId === lead.id && editingCell?.field === 'phone' ? (
-                  <EditableCell lead={lead} field="phone" value={lead.phone || ''} type="tel" />
-                ) : (
-                  <div className="relative inline-block">
-                    <span
-                      onMouseEnter={e => {
-                        if (!lead.phone) return;
-                        const key = lead.id;
-                        if (!phoneLocationData[key]) {
-                          const info = getPhoneLocation(lead.phone, Intl.DateTimeFormat().resolvedOptions().timeZone);
-                          setPhoneLocationData(prev => ({ ...prev, [key]: info }));
-                        }
-                        const rect = (e.target as HTMLElement).getBoundingClientRect();
-                        setTooltipPos({ x: rect.left + rect.width / 2, y: rect.bottom + 6 });
-                        setHoveredPhone(key);
-                      }}
-                      onMouseLeave={() => { setHoveredPhone(null); setTooltipPos(null); }}
-                      onClick={() => startEdit(lead.id, 'phone', lead.phone || '')}
-                      className="cursor-pointer hover:bg-gray-100 px-2 py-1 rounded block whitespace-nowrap"
+              {/* PHONE — selectable text + location tooltip; right-click to edit */}
+              <td
+                className="px-4 py-3 text-sm text-gray-600 relative"
+                onContextMenu={e => e.stopPropagation()}
+              >
+                <div className="relative inline-block">
+                  <span
+                    onMouseEnter={e => {
+                      if (!lead.phone) return;
+                      const key = lead.id;
+                      if (!phoneLocationData[key]) {
+                        const info = getPhoneLocation(lead.phone, Intl.DateTimeFormat().resolvedOptions().timeZone);
+                        setPhoneLocationData(prev => ({ ...prev, [key]: info }));
+                      }
+                      const rect = (e.target as HTMLElement).getBoundingClientRect();
+                      setTooltipPos({ x: rect.left + rect.width / 2, y: rect.bottom + 6 });
+                      setHoveredPhone(key);
+                    }}
+                    onMouseLeave={() => { setHoveredPhone(null); setTooltipPos(null); }}
+                    className="select-text cursor-text px-2 py-1 rounded block whitespace-nowrap hover:bg-gray-50"
+                    title="Select to copy · Right-click row to edit"
+                  >
+                    {lead.phone || <span className="text-gray-300 cursor-default">—</span>}
+                  </span>
+                  {hoveredPhone === lead.id && phoneLocationData[lead.id] && tooltipPos && (
+                    <div
+                      className="fixed z-[9999] bg-white border border-gray-200 rounded-lg shadow-xl p-3 whitespace-nowrap pointer-events-none"
+                      style={{ left: tooltipPos.x, top: tooltipPos.y, transform: 'translateX(-50%)' }}
                     >
-                      {lead.phone || <span className="text-gray-300">—</span>}
-                    </span>
-                    {hoveredPhone === lead.id && phoneLocationData[lead.id] && tooltipPos && (
-                      <div
-                        className="fixed z-[9999] bg-white border border-gray-200 rounded-lg shadow-xl p-3 whitespace-nowrap pointer-events-none"
-                        style={{ left: tooltipPos.x, top: tooltipPos.y, transform: 'translateX(-50%)' }}
-                      >
-                        <div className="text-xs space-y-0.5">
-                          <div className="font-semibold text-gray-900">
-                            {phoneLocationData[lead.id]!.city}, {phoneLocationData[lead.id]!.state}
-                          </div>
-                          <div className="text-gray-500">
-                            {phoneLocationData[lead.id]!.localTime} ({phoneLocationData[lead.id]!.timeOffset})
-                          </div>
+                      <div className="text-xs space-y-0.5">
+                        <div className="font-semibold text-gray-900">
+                          {phoneLocationData[lead.id]!.city}, {phoneLocationData[lead.id]!.state}
                         </div>
-                        <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-white border-l border-t border-gray-200 rotate-45" />
+                        <div className="text-gray-500">
+                          {phoneLocationData[lead.id]!.localTime} ({phoneLocationData[lead.id]!.timeOffset})
+                        </div>
                       </div>
-                    )}
-                  </div>
-                )}
+                      <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-white border-l border-t border-gray-200 rotate-45" />
+                    </div>
+                  )}
+                </div>
               </td>
 
               {/* NOTES */}
-              <td className="px-4 py-3 text-sm text-gray-600 max-w-[220px]">
+              <td className="px-4 py-3 text-sm text-gray-600 max-w-[220px]" onContextMenu={e => e.stopPropagation()}>
                 {editingCell?.leadId === lead.id && editingCell?.field === 'notes' ? (
                   <textarea
                     value={editValue}
