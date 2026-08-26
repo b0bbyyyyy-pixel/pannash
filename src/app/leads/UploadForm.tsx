@@ -348,7 +348,31 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
 
     const baseNotes = findColumn(['notes', 'note', 'comments', 'comment', 'description', 'details', 'memo', 'remarks']);
 
-    const combinedNotes = [extraPhoneNote, baseNotes].filter(Boolean).join(' | ') || null;
+    // Columns to skip entirely (already mapped or not useful)
+    const SKIP_LABELS = new Set([
+      'name','full name','fullname','first name','firstname','first_name','fname','given name',
+      'last name','lastname','last_name','lname','surname','family name',
+      'email','e-mail','email address','emailaddress','mail',
+      'business name','business_name','company name','company_name','companyname',
+      'organization','org','employer','account','dba','dba name',
+      'notes','note','comments','comment','description','details','memo','remarks',
+    ]);
+    const isPhoneKey = (k: string) =>
+      ['phone','telephone','tel','mobile','cell','contact number'].some(p => k.includes(p));
+
+    // Collect all remaining non-empty columns as extra notes
+    const extraCols: string[] = [];
+    for (const key of rowKeys) {
+      const lowerKey = key.toLowerCase().trim();
+      if (SKIP_LABELS.has(lowerKey)) continue;
+      if (isPhoneKey(lowerKey)) continue; // phones already handled
+      const v = cellVal(key);
+      if (!v) continue;
+      // Skip obvious placeholder / numeric-only values like Lead IDs unless short label
+      extraCols.push(`${key}: ${v}`);
+    }
+
+    const combinedNotes = [extraPhoneNote, baseNotes, ...extraCols].filter(Boolean).join(' | ') || null;
 
     return {
       name: name || '',
