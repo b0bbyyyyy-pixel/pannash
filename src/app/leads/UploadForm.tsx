@@ -286,29 +286,67 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
   const smartColumnMapper = (row: any): any => {
     const rowKeys = Object.keys(row);
 
+    // Get a cell value, treating "-" and blank as empty
+    const cellVal = (key: string): string | null => {
+      const v = String(row[key] || '').trim();
+      return v && v !== '-' && v !== '--' ? v : null;
+    };
+
     const findColumn = (possibleNames: string[]): string | null => {
       for (const key of rowKeys) {
         const lowerKey = key.toLowerCase().trim();
-        if (possibleNames.some(name => lowerKey.includes(name.toLowerCase()))) {
-          return String(row[key] || '').trim() || null;
+        if (possibleNames.some(n => lowerKey === n.toLowerCase() || lowerKey.includes(n.toLowerCase()))) {
+          return cellVal(key);
         }
       }
       return null;
     };
 
-    // Find ALL phone columns (primary + alternates like "phone2", "alt phone", "mobile")
+    // Combine "First name" + "Last Name" into a full name when available
+    const findExact = (possibleNames: string[]): string | null => {
+      for (const key of rowKeys) {
+        const lowerKey = key.toLowerCase().trim();
+        if (possibleNames.some(n => lowerKey === n.toLowerCase())) {
+          return cellVal(key);
+        }
+      }
+      return null;
+    };
+
+    const firstName = findExact(['first name', 'firstname', 'first_name', 'fname', 'given name']);
+    const lastName  = findExact(['last name', 'lastname', 'last_name', 'lname', 'surname', 'family name']);
+    let name: string | null = null;
+    if (firstName && lastName) {
+      name = `${firstName} ${lastName}`.trim();
+    } else if (firstName || lastName) {
+      name = (firstName || lastName);
+    } else {
+      // Fall back to a single combined name column
+      name = findColumn(['full name', 'fullname', 'contact name', 'tracers name', 'lead name', 'person name', 'owner name']);
+    }
+
+    // Phone: "Tracers Phone 1" first, then generic phone/cell/mobile columns
     const phoneKeys = rowKeys.filter(key => {
       const k = key.toLowerCase().trim();
       return ['phone', 'telephone', 'tel', 'mobile', 'cell', 'contact number'].some(p => k.includes(p));
     });
-    const phoneValues = phoneKeys.map(k => String(row[k] || '').trim()).filter(v => v && isPhone(v));
+    const phoneValues = phoneKeys
+      .map(k => cellVal(k))
+      .filter((v): v is string => !!v && isPhone(v));
     const primaryPhone = phoneValues[0] || null;
     const extraPhoneNote = phoneValues.slice(1).join(' | ');
 
-    const name = findColumn(['name', 'full name', 'fullname', 'contact name', 'contact', 'first name', 'firstname', 'lead name', 'person']);
-    const email = findColumn(['email', 'e-mail', 'email address', 'emailaddress', 'contact email', 'mail', 'email_address']);
-    const company = findColumn(['company', 'organization', 'org', 'business', 'company name', 'companyname', 'employer', 'account']);
-    const baseNotes = findColumn(['notes', 'note', 'comments', 'comment', 'description', 'details', 'memo', 'remarks', 'message']);
+    // Email: ignore obvious placeholder emails
+    const rawEmail = findColumn(['email', 'e-mail', 'email address', 'emailaddress', 'contact email', 'mail']);
+    const email = rawEmail && !rawEmail.toLowerCase().includes('noemail') ? rawEmail : null;
+
+    // Company: prefer "Business Name" then "Company Name" then generic
+    const company =
+      findExact(['business name', 'business_name', 'dba', 'dba name']) ||
+      findExact(['company name', 'company_name', 'companyname']) ||
+      findColumn(['organization', 'org', 'employer', 'account']);
+
+    const baseNotes = findColumn(['notes', 'note', 'comments', 'comment', 'description', 'details', 'memo', 'remarks']);
 
     const combinedNotes = [extraPhoneNote, baseNotes].filter(Boolean).join(' | ') || null;
 
