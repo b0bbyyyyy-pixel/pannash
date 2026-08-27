@@ -13,10 +13,17 @@ interface LeadList {
   parent_list_id?: string | null;
 }
 
+interface ListProgress {
+  listId: string;
+  total: number;     // leads with phone
+  attempted: number; // leads with phone + last_contact set
+}
+
 interface LeadListSelectorProps {
   lists: LeadList[];
   selectedListId?: string;
   listCounts: { listId: string; count: number }[];
+  listProgress: ListProgress[];
   unlistedCount: number;
   deleteList: (formData: FormData) => Promise<void>;
   deleteListWithLeads: (formData: FormData) => Promise<void>;
@@ -26,6 +33,7 @@ export default function LeadListSelector({
   lists,
   selectedListId,
   listCounts,
+  listProgress,
   unlistedCount,
   deleteList,
   deleteListWithLeads,
@@ -54,6 +62,12 @@ export default function LeadListSelector({
 
   const getCount = (listId: string) =>
     listCounts.find(c => c.listId === listId)?.count || 0;
+
+  const getProgress = (listId: string) => {
+    const p = listProgress.find(p => p.listId === listId);
+    if (!p || p.total === 0) return null;
+    return { total: p.total, attempted: p.attempted, pct: Math.round((p.attempted / p.total) * 100) };
+  };
 
   // Split into top-level lists (no parent) and sub-lists (have parent)
   const { topLevel, subListsByParent } = useMemo(() => {
@@ -202,6 +216,7 @@ export default function LeadListSelector({
     const hasSubSelected = subs.some(s => s.id === selectedListId);
     const isHovered = hoveredId === list.id;
     const isRenaming = renamingListId === list.id;
+    const progress = getProgress(list.id);
 
     return (
       <div
@@ -222,18 +237,43 @@ export default function LeadListSelector({
         ) : (
           <Link
             href={`/leads?list=${list.id}`}
-            className={`px-4 py-3 text-sm border-b-2 transition-colors whitespace-nowrap ${
+            className={`px-4 pb-2 pt-2.5 text-sm border-b-2 transition-colors whitespace-nowrap flex flex-col gap-1 ${
               isSelected || hasSubSelected
                 ? 'border-[#1a1a1a] text-[#1a1a1a] font-semibold'
                 : 'border-transparent text-[#999] hover:text-[#1a1a1a] font-medium'
-            } ${inSubRow ? 'py-2.5' : ''}`}
+            } ${inSubRow ? 'pt-2' : ''}`}
           >
-            {list.name}
-            <span className="ml-1.5 text-xs text-gray-400">({count})</span>
-            {subs.length > 0 && (
-              <svg className="inline ml-1 w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
+            {/* Name + count row */}
+            <span className="flex items-center gap-1">
+              {list.name}
+              <span className="text-xs text-gray-400">({count})</span>
+              {subs.length > 0 && (
+                <svg className="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              )}
+            </span>
+
+            {/* Calling progress bar — only shown when list has leads with phone numbers */}
+            {progress && (
+              <span className="flex items-center gap-1.5 w-full">
+                <span className="relative flex-1 h-1.5 rounded-full bg-gray-100 border border-gray-200 overflow-hidden min-w-[60px]">
+                  <span
+                    className="absolute inset-y-0 left-0 rounded-full transition-all duration-500"
+                    style={{
+                      width: `${progress.pct}%`,
+                      background: progress.pct === 0
+                        ? 'transparent'
+                        : `linear-gradient(to right, #d1d5db, #111827)`,
+                    }}
+                  />
+                </span>
+                <span className={`text-[10px] font-medium tabular-nums flex-shrink-0 ${
+                  progress.pct === 100 ? 'text-gray-900' : 'text-gray-400'
+                }`}>
+                  {progress.pct}%
+                </span>
+              </span>
             )}
           </Link>
         )}
@@ -257,23 +297,46 @@ export default function LeadListSelector({
             {subs.length > 0 && (
               <>
                 <p className="px-3 pt-2 pb-1 text-xs font-semibold text-gray-400 uppercase tracking-wide">Sources</p>
-                {subs.map(sub => (
-                  <div key={sub.id} className="flex items-center group/sub">
-                    <Link
-                      href={`/leads?list=${sub.id}`}
-                      className={`flex-1 px-3 py-2 text-sm hover:bg-gray-50 transition-colors ${
-                        selectedListId === sub.id ? 'font-semibold text-gray-900' : 'text-gray-700'
-                      }`}
-                    >
-                      {sub.name}
-                      <span className="ml-1.5 text-xs text-gray-400">({getCount(sub.id)})</span>
-                    </Link>
-                    <button
-                      onClick={() => handleDeleteList(sub.id, sub.name)}
-                      className="pr-2 text-gray-300 hover:text-red-500 opacity-0 group-hover/sub:opacity-100 text-xs"
-                    >✕</button>
-                  </div>
-                ))}
+                {subs.map(sub => {
+                  const subProgress = getProgress(sub.id);
+                  return (
+                    <div key={sub.id} className="flex items-center group/sub">
+                      <Link
+                        href={`/leads?list=${sub.id}`}
+                        className={`flex-1 px-3 py-2 text-sm hover:bg-gray-50 transition-colors flex flex-col gap-1 ${
+                          selectedListId === sub.id ? 'font-semibold text-gray-900' : 'text-gray-700'
+                        }`}
+                      >
+                        <span>
+                          {sub.name}
+                          <span className="ml-1.5 text-xs text-gray-400">({getCount(sub.id)})</span>
+                        </span>
+                        {subProgress && (
+                          <span className="flex items-center gap-1.5">
+                            <span className="relative flex-1 h-1.5 rounded-full bg-gray-100 border border-gray-200 overflow-hidden">
+                              <span
+                                className="absolute inset-y-0 left-0 rounded-full transition-all duration-500"
+                                style={{
+                                  width: `${subProgress.pct}%`,
+                                  background: subProgress.pct === 0
+                                    ? 'transparent'
+                                    : 'linear-gradient(to right, #d1d5db, #111827)',
+                                }}
+                              />
+                            </span>
+                            <span className="text-[10px] text-gray-400 tabular-nums flex-shrink-0">
+                              {subProgress.pct}%
+                            </span>
+                          </span>
+                        )}
+                      </Link>
+                      <button
+                        onClick={() => handleDeleteList(sub.id, sub.name)}
+                        className="pr-2 text-gray-300 hover:text-red-500 opacity-0 group-hover/sub:opacity-100 text-xs"
+                      >✕</button>
+                    </div>
+                  );
+                })}
                 <div className="border-t border-gray-100 my-1" />
               </>
             )}

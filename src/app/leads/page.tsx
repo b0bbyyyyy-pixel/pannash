@@ -80,6 +80,23 @@ export default async function LeadsPage({
     })
   );
 
+  // Per-list calling progress: phone_total and attempted (last_contact set)
+  const { data: progressRaw } = await supabase
+    .from('leads')
+    .select('list_id, phone, last_contact')
+    .eq('user_id', user.id)
+    .not('list_id', 'is', null);
+
+  const listProgress = (leadLists || []).map(list => {
+    const listLeads = (progressRaw || []).filter(l => l.list_id === list.id);
+    const withPhone = listLeads.filter(l => {
+      const p = (l.phone || '').trim();
+      return p && p !== '-' && p !== '--';
+    });
+    const attempted = withPhone.filter(l => l.last_contact != null);
+    return { listId: list.id, total: withPhone.length, attempted: attempted.length };
+  });
+
   // Count uncategorized contact-list leads (no list_id, no month_key unless showCrm)
   let unlistedQuery = supabase
     .from('leads')
@@ -269,6 +286,7 @@ export default async function LeadsPage({
           lists={leadLists || []}
           selectedListId={selectedListId}
           listCounts={listCounts}
+          listProgress={listProgress}
           unlistedCount={unlistedCount || 0}
           deleteList={deleteList}
           deleteListWithLeads={deleteListWithLeads}
