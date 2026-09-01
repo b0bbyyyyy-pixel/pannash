@@ -5,6 +5,13 @@ import { createClient } from '@supabase/supabase-js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+interface LeadList {
+  id: string;
+  name: string;
+  folder_name: string | null;
+  parent_list_id: string | null;
+}
+
 interface InboxLead {
   id: string;
   name: string;
@@ -125,6 +132,16 @@ export default function InboxClient({
   const [loadingLeads, setLoadingLeads] = useState(true);
   const [dbSetupRequired, setDbSetupRequired] = useState(false);
 
+  // List picker state
+  const [showListPicker, setShowListPicker] = useState(false);
+  const [listPickerData, setListPickerData] = useState<{ lists: LeadList[]; countMap: Record<string, number> } | null>(null);
+  const [loadingListPicker, setLoadingListPicker] = useState(false);
+  const [activeListName, setActiveListName] = useState<string | null>(null);
+  const [loadingListLeads, setLoadingListLeads] = useState(false);
+  const [pickerAnchor, setPickerAnchor] = useState<{ top: number; left: number } | null>(null);
+  const listPickerRef = useRef<HTMLDivElement>(null);
+  const listPickerBtnRef = useRef<HTMLButtonElement>(null);
+
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(initialLeadId);
   const [messages, setMessages] = useState<InboxMessage[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -232,6 +249,70 @@ export default function InboxClient({
     const id = setInterval(loadLeads, 30000);
     return () => clearInterval(id);
   }, [loadLeads]);
+
+  // ── List picker: open + fetch ───────────────────────────────────────────────
+  const openListPicker = async () => {
+    const next = !showListPicker;
+    setShowListPicker(next);
+    if (next && listPickerBtnRef.current) {
+      const rect = listPickerBtnRef.current.getBoundingClientRect();
+      setPickerAnchor({ top: rect.bottom + 6, left: rect.left });
+    }
+    if (listPickerData) return;
+    setLoadingListPicker(true);
+    try {
+      // Reuse the existing lead-lists route which uses select('*') — works with any schema
+      const res = await fetch('/api/lead-lists');
+      if (res.ok) {
+        const data = await res.json();
+        // Transform { lists: [...with lead_count] } into { lists, countMap }
+        const lists: LeadList[] = (data.lists ?? []).map((l: any) => ({
+          id: l.id,
+          name: l.name,
+          folder_name: l.folder_name ?? null,
+          parent_list_id: l.parent_list_id ?? null,
+        }));
+        const countMap: Record<string, number> = {};
+        for (const l of data.lists ?? []) countMap[l.id] = l.lead_count ?? 0;
+        setListPickerData({ lists, countMap });
+      }
+    } finally {
+      setLoadingListPicker(false);
+    }
+  };
+
+  // ── Load leads from a list ─────────────────────────────────────────────────
+  const loadListLeads = async (list: LeadList) => {
+    setShowListPicker(false);
+    setLoadingListLeads(true);
+    setActiveListName(list.name);
+    try {
+      // Use the inbox lead-lists route to get leads with phones from this list
+      const res = await fetch(`/api/inbox/lead-lists?listId=${list.id}`);
+      if (!res.ok) {
+        // Fallback: try the existing leads page query via URL search
+        return;
+      }
+      const data = await res.json();
+      // Convert list leads to InboxLead shape
+      const listLeads: InboxLead[] = (data.leads ?? []).map((l: any) => ({
+        id: l.id,
+        name: l.name ?? '',
+        company: l.company ?? null,
+        phone: l.phone ?? '',
+        stage: null,
+        month_key: null,
+        last_contact: l.last_contact ?? null,
+        sms_opt_out: l.sms_opt_out ?? false,
+        notes: l.notes ?? null,
+        conversation: null,
+      }));
+      setLeads(listLeads);
+    } finally {
+      setLoadingListLeads(false);
+    }
+  };
+
 
   // ── Send message ────────────────────────────────────────────────────────────
   const handleSend = async () => {
@@ -384,8 +465,8 @@ export default function InboxClient({
             />
           </div>
 
-          {/* Filter chips */}
-          <div className="flex gap-1.5">
+          {/* Filter chips + list picker */}
+          <div className="flex items-center gap-1.5 flex-wrap">
             {(['all', 'unread'] as const).map(f => (
               <button
                 key={f}
@@ -399,6 +480,44 @@ export default function InboxClient({
                 {f === 'all' ? 'All' : 'Unread'}
               </button>
             ))}
+
+            {/* Load from list button */}
+            <div className="relative ml-auto" ref={listPickerRef}>
+              <button
+                ref={listPickerBtnRef}
+                onClick={openListPicker}
+                title="Load leads from a contact list"
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors border ${
+                  activeListName
+                    ? 'bg-blue-50 border-blue-200 text-blue-700'
+                    : 'bg-[#f0f0f0] border-transparent text-[#6b6b6b] hover:bg-[#e5e5e5]'
+                }`}
+              >
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                </svg>
+                {activeListName ? (
+                  <span className="max-w-[80px] truncate">{activeListName}</span>
+                ) : 'Lists'}
+              </button>
+            </div>
+
+            {/* Folder tree dropdown — fixed so it escapes overflow:hidden */}
+            {showListPicker && pickerAnchor && (
+              <ListPickerDropdown
+                anchor={pickerAnchor}
+                data={listPickerData}
+                loading={loadingListPicker}
+                onSelect={loadListLeads}
+                onClear={activeListName ? () => { setActiveListName(null); setShowListPicker(false); loadLeads(); } : undefined}
+                onClose={() => setShowListPicker(false)}
+              />
+            )}
+
+            {/* Loading indicator when fetching list leads */}
+            {loadingListLeads && (
+              <span className="text-[10px] text-gray-400 animate-pulse">Loading…</span>
+            )}
           </div>
         </div>
 
@@ -781,6 +900,189 @@ export default function InboxClient({
         </div>
       </div>
     </div>
+    </div>
+  );
+}
+
+// ── List picker dropdown ───────────────────────────────────────────────────────
+
+function ListPickerDropdown({
+  anchor,
+  data,
+  loading,
+  onSelect,
+  onClear,
+  onClose,
+}: {
+  anchor: { top: number; left: number };
+  data: { lists: LeadList[]; countMap: Record<string, number> } | null;
+  loading: boolean;
+  onSelect: (list: LeadList) => void;
+  onClear?: () => void;
+  onClose: () => void;
+}) {
+  const [openFolders, setOpenFolders] = useState<Set<string>>(new Set());
+  const [openParents, setOpenParents] = useState<Set<string>>(new Set());
+  const ref = useRef<HTMLDivElement>(null);
+
+  const toggleFolder = (name: string) =>
+    setOpenFolders(prev => { const s = new Set(prev); s.has(name) ? s.delete(name) : s.add(name); return s; });
+
+  const toggleParent = (id: string) =>
+    setOpenParents(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+
+  // Close on outside click
+  useEffect(() => {
+    const handle = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    document.addEventListener('mousedown', handle);
+    return () => document.removeEventListener('mousedown', handle);
+  }, [onClose]);
+
+  const style: React.CSSProperties = {
+    position: 'fixed',
+    top: anchor.top,
+    left: anchor.left,
+    zIndex: 9999,
+    width: 280,
+  };
+
+  if (loading) {
+    return (
+      <div ref={ref} style={style} className="bg-white border border-[#e5e5e5] rounded-xl shadow-xl p-4">
+        <p className="text-xs text-gray-400 text-center">Loading lists…</p>
+      </div>
+    );
+  }
+
+  if (!data || data.lists.length === 0) {
+    return (
+      <div ref={ref} style={style} className="bg-white border border-[#e5e5e5] rounded-xl shadow-xl p-4">
+        <p className="text-xs text-gray-400 text-center">No contact lists found</p>
+      </div>
+    );
+  }
+
+  // Build folder → top-level lists → sub-lists hierarchy
+  const topLevel = data.lists.filter(l => !l.parent_list_id);
+  const subsByParent: Record<string, LeadList[]> = {};
+  for (const l of data.lists) {
+    if (l.parent_list_id) {
+      if (!subsByParent[l.parent_list_id]) subsByParent[l.parent_list_id] = [];
+      subsByParent[l.parent_list_id].push(l);
+    }
+  }
+
+  // Group top-level by folder_name
+  const folderMap: Record<string, LeadList[]> = {};
+  const standalone: LeadList[] = [];
+  for (const l of topLevel) {
+    if (l.folder_name) {
+      if (!folderMap[l.folder_name]) folderMap[l.folder_name] = [];
+      folderMap[l.folder_name].push(l);
+    } else {
+      standalone.push(l);
+    }
+  }
+
+  const count = (id: string) => data.countMap[id] ?? 0;
+
+  const ListRow = ({ list, indent = 0 }: { list: LeadList; indent?: number }) => {
+    const subs = subsByParent[list.id] ?? [];
+    const hasSubs = subs.length > 0;
+    const isOpen = openParents.has(list.id);
+    const c = count(list.id);
+
+    return (
+      <div>
+        <div
+          className="flex items-center gap-1.5 w-full text-left hover:bg-[#f5f5f5] rounded-lg transition-colors"
+          style={{ paddingLeft: `${8 + indent * 12}px`, paddingRight: 8, paddingTop: 5, paddingBottom: 5 }}
+        >
+          {hasSubs ? (
+            <button
+              onClick={(e) => { e.stopPropagation(); toggleParent(list.id); }}
+              className="flex-shrink-0 text-gray-400 hover:text-gray-600"
+            >
+              <svg className={`w-3 h-3 transition-transform ${isOpen ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+          ) : (
+            <span className="w-3 flex-shrink-0" />
+          )}
+          <button
+            onClick={() => onSelect(list)}
+            className="flex-1 flex items-center justify-between gap-2 text-left"
+          >
+            <span className="text-xs text-[#1a1a1a] truncate">{list.name}</span>
+            {c > 0 && (
+              <span className="text-[10px] text-gray-400 flex-shrink-0">{c} w/ phone</span>
+            )}
+          </button>
+        </div>
+        {hasSubs && isOpen && (
+          <div>
+            {subs.map(sub => (
+              <ListRow key={sub.id} list={sub} indent={indent + 1} />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div ref={ref} style={style} className="bg-white border border-[#e5e5e5] rounded-xl shadow-xl overflow-hidden">
+      <div className="max-h-80 overflow-y-auto p-2">
+        {/* Clear / back to CRM option */}
+        {onClear && (
+          <button
+            onClick={onClear}
+            className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-blue-600 hover:bg-blue-50 rounded-lg transition-colors mb-1"
+          >
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+            </svg>
+            Back to CRM leads
+          </button>
+        )}
+
+        {/* Folders */}
+        {Object.entries(folderMap).map(([folderName, lists]) => {
+          const isOpen = openFolders.has(folderName);
+          return (
+            <div key={folderName} className="mb-0.5">
+              <button
+                onClick={() => toggleFolder(folderName)}
+                className="w-full flex items-center gap-2 px-2 py-2 text-left hover:bg-[#f5f5f5] rounded-lg transition-colors"
+              >
+                <svg className={`w-3 h-3 text-gray-400 flex-shrink-0 transition-transform ${isOpen ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+                <svg className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+                </svg>
+                <span className="text-xs font-semibold text-[#1a1a1a] flex-1 truncate">{folderName}</span>
+                <span className="text-[10px] text-gray-400 flex-shrink-0">{lists.length}</span>
+              </button>
+              {isOpen && (
+                <div className="ml-2">
+                  {lists.map(list => <ListRow key={list.id} list={list} indent={0} />)}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {/* Standalone (no folder) */}
+        {standalone.map(list => <ListRow key={list.id} list={list} indent={0} />)}
+
+        {Object.keys(folderMap).length === 0 && standalone.length === 0 && (
+          <p className="text-xs text-gray-400 text-center py-3">No lists yet</p>
+        )}
+      </div>
     </div>
   );
 }
