@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Validate field to prevent SQL injection
-    const allowedFields = ['name', 'email', 'phone', 'company', 'notes', 'last_contact'];
+    const allowedFields = ['name', 'email', 'phone', 'company', 'notes', 'last_contact', 'sms_opt_out'];
     if (!allowedFields.includes(field)) {
       return NextResponse.json({ error: 'Invalid field' }, { status: 400 });
     }

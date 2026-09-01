@@ -46,14 +46,14 @@ export default function Navbar({ userName }: NavbarProps) {
               Dashboard
             </Link>
             <Link
-              href="/campaigns"
+              href="/inbox"
               className={`text-sm font-medium transition-colors ${
-                isActive('/campaigns')
+                isActive('/inbox')
                   ? 'text-[#1a1a1a]'
                   : 'text-[#6b6b6b] hover:text-[#1a1a1a]'
               }`}
             >
-              Campaigns
+              Agent
             </Link>
             <Link
               href="/leads"

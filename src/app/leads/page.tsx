@@ -260,6 +260,12 @@ export default async function LeadsPage({
             </p>
           </div>
           <div className="flex gap-3">
+            <Link
+              href="/campaigns"
+              className="px-4 py-2.5 rounded-md text-sm font-medium border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-colors"
+            >
+              Campaigns
+            </Link>
             <AddLeadButton selectedListId={selectedListId} />
             <ExportListButton 
               leads={leads || []} 

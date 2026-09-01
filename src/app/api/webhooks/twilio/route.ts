@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Log the incoming message
+    // Log the incoming message (campaign system)
     await supabase
       .from('sms_messages')
       .insert({
@@ -99,6 +99,62 @@ export async function POST(req: NextRequest) {
         twilio_sid: messageSid,
         ai_generated: false,
       });
+
+    // ALSO write to the inbox thread so it appears in the Inbox page
+    try {
+      // Find or create conversation for this lead+user
+      const userId = campaign?.user_id;
+      if (userId) {
+        let { data: conv } = await supabase
+          .from('inbox_conversations')
+          .select('id, unread_count')
+          .eq('user_id', userId)
+          .eq('lead_id', lead.id)
+          .single();
+
+        if (!conv) {
+          const { data: newConv } = await supabase
+            .from('inbox_conversations')
+            .insert({ user_id: userId, lead_id: lead.id })
+            .select('id, unread_count')
+            .single();
+          conv = newConv;
+        }
+
+        if (conv) {
+          // Check opt-out
+          if (body.match(/^(STOP|UNSUBSCRIBE|CANCEL|QUIT|END)\s*$/i)) {
+            await supabase
+              .from('leads')
+              .update({ sms_opt_out: true })
+              .eq('id', lead.id);
+          }
+
+          const preview = body.length > 100 ? body.slice(0, 97) + '…' : body;
+          await supabase.from('inbox_messages').insert({
+            conversation_id: conv.id,
+            lead_id: lead.id,
+            direction: 'inbound',
+            body,
+            status: 'received',
+            sent_by: 'user',
+            twilio_sid: messageSid,
+          });
+
+          await supabase
+            .from('inbox_conversations')
+            .update({
+              last_message_at: new Date().toISOString(),
+              last_message_preview: preview,
+              last_direction: 'inbound',
+              unread_count: (conv.unread_count ?? 0) + 1,
+            })
+            .eq('id', conv.id);
+        }
+      }
+    } catch (inboxErr) {
+      console.error('[Inbox] Failed to write inbound to inbox_messages:', inboxErr);
+    }
 
     // Update campaign_lead status to 'replied'
     await supabase
