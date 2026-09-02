@@ -33,6 +33,7 @@ export async function POST(req: NextRequest) {
       logoUrl,
       customCta, thankYouMessage, expiresAt,
       showTermOptions, termOptions,
+      epoOptions,
     } = body;
 
     const token = randomBytes(24).toString('hex');
@@ -73,7 +74,7 @@ export async function POST(req: NextRequest) {
     let data = null;
     let error = null;
 
-    // Attempt 1: all columns (og + term options + revenue %)
+    // Attempt 1: all columns (og + term options + revenue % + epo)
     ({ data, error } = await supabase
       .from('client_offer_portals')
       .insert({
@@ -83,11 +84,29 @@ export async function POST(req: NextRequest) {
         term_options: termOptions ?? [],
         show_revenue_percent: showRevenuePercent ?? false,
         avg_monthly_revenue: avgMonthlyRevenue ?? null,
+        epo_options: epoOptions ?? [],
       })
       .select('token, id')
       .single());
 
-    // Attempt 2: without revenue columns
+    // Attempt 2: without epo_options column
+    if (error && isColError(error)) {
+      console.warn('[portal/create] Retrying without epo_options column:', error.message);
+      ({ data, error } = await supabase
+        .from('client_offer_portals')
+        .insert({
+          ...coreRow,
+          ...ogRow,
+          show_term_options: showTermOptions ?? false,
+          term_options: termOptions ?? [],
+          show_revenue_percent: showRevenuePercent ?? false,
+          avg_monthly_revenue: avgMonthlyRevenue ?? null,
+        })
+        .select('token, id')
+        .single());
+    }
+
+    // Attempt 3: without revenue columns
     if (error && isColError(error)) {
       console.warn('[portal/create] Retrying without revenue columns:', error.message);
       ({ data, error } = await supabase
@@ -102,7 +121,7 @@ export async function POST(req: NextRequest) {
         .single());
     }
 
-    // Attempt 3: without term option columns
+    // Attempt 4: without term option columns
     if (error && isColError(error)) {
       console.warn('[portal/create] Retrying without term/revenue columns:', error.message);
       ({ data, error } = await supabase
@@ -112,7 +131,7 @@ export async function POST(req: NextRequest) {
         .single());
     }
 
-    // Attempt 4: without OG columns (last resort)
+    // Attempt 5: without OG columns (last resort)
     if (error && isColError(error)) {
       console.warn('[portal/create] Retrying without OG columns:', error.message);
       ({ data, error } = await supabase

@@ -9,6 +9,11 @@ interface TermOption {
   factorRate: number;
 }
 
+interface EpoOption {
+  days: number;
+  amount: number; // buyout total at the max offer amount
+}
+
 interface Portal {
   id: string;
   lead_name: string | null;
@@ -31,6 +36,7 @@ interface Portal {
   show_revenue_percent: boolean;
   fee_disclaimer: string | null;
   logo_url: string | null;
+  epo_options: EpoOption[] | null;
 }
 
 interface Props {
@@ -48,6 +54,7 @@ export default function PortalClient({ portal, token }: Props) {
   const [amount, setAmount] = useState(maxAmount);
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [showEpo, setShowEpo] = useState(false);
   const sliderDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasLoggedOpen = useRef(false);
 
@@ -232,41 +239,87 @@ export default function PortalClient({ portal, token }: Props) {
         )}
 
         {/* Details card */}
-        <div className="bg-gray-50 rounded-2xl p-5 space-y-4">
-          <div className="flex justify-between items-center">
-            <span className="text-gray-700 font-medium">Loan amount</span>
-            <span className="font-bold text-gray-900">{fmt(amount)}</span>
-          </div>
-          <div className="flex justify-between items-center">
-            <span className="text-gray-700 font-medium">Loan fee</span>
-            <div className="text-right">
-              <span className="font-bold text-gray-900">{fmt(Math.round(loanFee))}</span>
-            </div>
-          </div>
-          {portal.show_total_repayment && (
-            <div className="flex justify-between items-center border-t border-gray-200 pt-4">
-              <span className="text-gray-900 font-semibold">Total owed</span>
-              <span className="font-bold text-gray-900 text-lg">{fmt(Math.round(totalRepayment))}</span>
-            </div>
-          )}
-          {portal.show_payment && effectivePayments > 0 && (
-            <div className="flex justify-between items-center">
-              <span className="text-gray-700 font-medium">{portal.frequency} payment</span>
-              <div className="text-right">
-                <span className="font-bold text-blue-600">{fmt(Math.round(payment))}</span>
-                {revenuePct && (
-                  <p className="text-xs text-gray-400 mt-0.5">{revenuePct}% of avg monthly revenue</p>
-                )}
+        {(() => {
+          const epoOptions: EpoOption[] = portal.epo_options ?? [];
+          const maxSavings = epoOptions.length > 0
+            ? Math.round(totalRepayment) - Math.round(Math.min(...epoOptions.map(o => o.amount)) * (amount / portal.offer_amount))
+            : 0;
+          return (
+            <div className="bg-gray-50 rounded-2xl p-5 space-y-4">
+              {/* 1. Loan amount */}
+              <div className="flex justify-between items-center">
+                <span className="text-gray-700 font-medium">Loan amount</span>
+                <span className="font-bold text-gray-900">{fmt(amount)}</span>
               </div>
+
+              {/* 2. Weekly payment */}
+              {portal.show_payment && effectivePayments > 0 && (
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-700 font-medium">{portal.frequency} payment</span>
+                  <div className="text-right">
+                    <span className="font-bold text-blue-600">{fmt(Math.round(payment))}</span>
+                    {revenuePct && (
+                      <p className="text-xs text-gray-400 mt-0.5">{revenuePct}% of avg monthly revenue</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Thin separator */}
+              <div className="border-t border-gray-200" />
+
+              {/* 3. Total owed */}
+              {portal.show_total_repayment && (
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-900 font-semibold">Total owed</span>
+                  <span className="font-bold text-gray-900 text-lg">{fmt(Math.round(totalRepayment))}</span>
+                </div>
+              )}
+
+              {/* 4. Early payoff options */}
+              {epoOptions.length > 0 && (
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setShowEpo(v => !v)}
+                    className="flex w-full justify-between items-center"
+                  >
+                    <span className="text-gray-700 font-medium">Early payoff</span>
+                    <span className="text-blue-600 text-sm font-medium">
+                      {showEpo ? 'Hide ▲' : `Save up to ${fmt(maxSavings)} ▼`}
+                    </span>
+                  </button>
+                  {showEpo && (
+                    <div className="mt-3 space-y-2">
+                      {epoOptions.map(opt => {
+                        const scaledBuyout = Math.round(opt.amount * (amount / portal.offer_amount));
+                        const savings = Math.round(totalRepayment) - scaledBuyout;
+                        return (
+                          <div key={opt.days} className="flex justify-between items-center bg-white rounded-xl px-3 py-2.5 border border-gray-100">
+                            <span className="text-sm text-gray-600">Pay off by day {opt.days}</span>
+                            <div className="text-right">
+                              <span className="text-sm font-bold text-gray-900">{fmt(scaledBuyout)}</span>
+                              <p className="text-xs text-green-600 font-medium">save {fmt(savings)}</p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      <p className="text-xs text-gray-400 text-center pt-1">Contact us for exact buyout amount.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Factor rate (optional) */}
+              {portal.show_factor && (
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-500 text-sm">Factor rate</span>
+                  <span className="text-gray-700 text-sm font-medium">{effectiveFactor}x</span>
+                </div>
+              )}
             </div>
-          )}
-          {portal.show_factor && (
-            <div className="flex justify-between items-center">
-              <span className="text-gray-500 text-sm">Factor rate</span>
-              <span className="text-gray-700 text-sm font-medium">{effectiveFactor}x</span>
-            </div>
-          )}
-        </div>
+          );
+        })()}
 
         {portal.fee_disclaimer && (
           <p className="text-xs text-gray-400 text-center leading-relaxed">
