@@ -155,7 +155,36 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
     ? ((previewMonthlyPayment / avgMonthlyRevenue) * 100).toFixed(1)
     : null;
 
-  // Settings are saved manually via the "Save Settings" button below the iMessage section
+  // On mount: pull defaults from the database so they sync across all devices.
+  // localStorage is kept as an instant-load cache only.
+  useEffect(() => {
+    let active = true;
+    fetch('/api/portal/defaults')
+      .then(r => r.json())
+      .then(({ defaults }) => {
+        if (!active || !defaults) return;
+        if (defaults.title !== undefined) setTitle(defaults.title);
+        if (defaults.introMessage !== undefined) setIntroMessage(defaults.introMessage);
+        if (defaults.minAmountPct !== undefined) setMinAmountPct(defaults.minAmountPct);
+        if (defaults.showFactor !== undefined) setShowFactor(defaults.showFactor);
+        if (defaults.showTotalRepayment !== undefined) setShowTotalRepayment(defaults.showTotalRepayment);
+        if (defaults.showPayment !== undefined) setShowPayment(defaults.showPayment);
+        if (defaults.showRevenuePercent !== undefined) setShowRevenuePercent(defaults.showRevenuePercent);
+        if (defaults.customCta !== undefined) setCustomCta(defaults.customCta);
+        if (defaults.thankYouMessage !== undefined) setThankYouMessage(defaults.thankYouMessage);
+        if (defaults.expiryDays !== undefined) setExpiryDays(defaults.expiryDays);
+        if (defaults.feeDisclaimer !== undefined) setFeeDisclaimer(defaults.feeDisclaimer);
+        if (defaults.ogTitle !== undefined) setOgTitle(defaults.ogTitle);
+        if (defaults.ogDescription !== undefined) setOgDescription(defaults.ogDescription);
+        if (defaults.ogImageUrl !== undefined) setOgImageUrl(defaults.ogImageUrl);
+        if (defaults.logoUrl !== undefined) setLogoUrl(defaults.logoUrl);
+        if (defaults.showEpoOptions !== undefined) setShowEpoOptions(defaults.showEpoOptions);
+        if (defaults.epoOptions !== undefined) setEpoOptions(defaults.epoOptions);
+        saveDefaults(defaults); // refresh localStorage cache
+      })
+      .catch(() => {}); // silent — localStorage fallback still active
+    return () => { active = false; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchLogs = useCallback(async () => {
     if (!generatedToken) return;
@@ -781,7 +810,13 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
                   <button
                     type="button"
                     onClick={() => {
-                      saveDefaults({ title, introMessage, minAmountPct, showFactor, showTotalRepayment, showPayment, showRevenuePercent, customCta, thankYouMessage, expiryDays, feeDisclaimer, ogTitle, ogDescription, ogImageUrl, logoUrl, showEpoOptions, epoOptions });
+                      const defaults = { title, introMessage, minAmountPct, showFactor, showTotalRepayment, showPayment, showRevenuePercent, customCta, thankYouMessage, expiryDays, feeDisclaimer, ogTitle, ogDescription, ogImageUrl, logoUrl, showEpoOptions, epoOptions };
+                      saveDefaults(defaults); // localStorage cache
+                      fetch('/api/portal/defaults', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(defaults),
+                      }).catch(() => {});
                     }}
                     className="px-4 py-1.5 bg-gray-900 text-white text-xs font-medium rounded-lg hover:bg-gray-700 transition-colors"
                   >
