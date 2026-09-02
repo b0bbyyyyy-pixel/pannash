@@ -113,6 +113,10 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
   const [logoUploading, setLogoUploading] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
 
+  // Save defaults feedback
+  const [savingDefaults, setSavingDefaults] = useState(false);
+  const [saveDefaultsStatus, setSaveDefaultsStatus] = useState<'idle' | 'saved' | 'error'>('idle');
+
   // Generated link state
   const [generating, setGenerating] = useState(false);
   const [generatedToken, setGeneratedToken] = useState<string | null>(null);
@@ -806,21 +810,38 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
                 </div>
 
                 {/* Save all settings */}
-                <div className="flex justify-end">
+                <div className="flex items-center justify-end gap-3">
+                  {saveDefaultsStatus === 'saved' && (
+                    <span className="text-xs text-green-600 font-medium">✓ Saved to all devices</span>
+                  )}
+                  {saveDefaultsStatus === 'error' && (
+                    <span className="text-xs text-red-500 font-medium">⚠ Save failed — run add-portal-defaults.sql in Supabase first</span>
+                  )}
                   <button
                     type="button"
-                    onClick={() => {
+                    disabled={savingDefaults}
+                    onClick={async () => {
                       const defaults = { title, introMessage, minAmountPct, showFactor, showTotalRepayment, showPayment, showRevenuePercent, customCta, thankYouMessage, expiryDays, feeDisclaimer, ogTitle, ogDescription, ogImageUrl, logoUrl, showEpoOptions, epoOptions };
                       saveDefaults(defaults); // localStorage cache
-                      fetch('/api/portal/defaults', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(defaults),
-                      }).catch(() => {});
+                      setSavingDefaults(true);
+                      setSaveDefaultsStatus('idle');
+                      try {
+                        const res = await fetch('/api/portal/defaults', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify(defaults),
+                        });
+                        setSaveDefaultsStatus(res.ok ? 'saved' : 'error');
+                      } catch {
+                        setSaveDefaultsStatus('error');
+                      } finally {
+                        setSavingDefaults(false);
+                        setTimeout(() => setSaveDefaultsStatus('idle'), 4000);
+                      }
                     }}
-                    className="px-4 py-1.5 bg-gray-900 text-white text-xs font-medium rounded-lg hover:bg-gray-700 transition-colors"
+                    className="px-4 py-1.5 bg-gray-900 text-white text-xs font-medium rounded-lg hover:bg-gray-700 transition-colors disabled:opacity-60"
                   >
-                    Save Settings
+                    {savingDefaults ? 'Saving…' : 'Save Settings'}
                   </button>
                 </div>
 
