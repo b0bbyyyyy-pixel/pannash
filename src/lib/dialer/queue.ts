@@ -66,7 +66,7 @@ export async function claimNextLead(
 
   if (error || !candidates?.length) return null;
 
-  const eligible = candidates.filter((l) =>
+  const eligible = (candidates as QueueLead[]).filter((l) =>
     !['bad_number', 'do_not_contact'].includes(l.dialer_status ?? '') &&
     isEligible(l)
   );
@@ -145,7 +145,7 @@ export async function peekQueue(
     .limit(40);
 
   if (!data) return [];
-  return data.filter((l) => isEligible(l)).slice(0, limit) as QueuePreview[];
+  return (data as QueuePreview[]).filter((l) => isEligible(l)).slice(0, limit);
 }
 
 /** Increment attempts_today (resetting if date changed in lead tz) */
