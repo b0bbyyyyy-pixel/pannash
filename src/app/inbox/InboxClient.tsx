@@ -875,11 +875,11 @@ export default function InboxClient({
               }} />
             </div>
 
-            {/* Calvin AI — Suggest reply */}
+            {/* Casper AI — Suggest reply */}
             <div className="border-t border-[#e5e5e5]" />
             <div>
               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">
-                Calvin AI
+                Casper AI
               </p>
               {suggestSent ? (
                 <div className="w-full px-3 py-2 text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg text-center">

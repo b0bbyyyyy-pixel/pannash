@@ -299,7 +299,7 @@ function BriefingPanel({ text, onClose }: { text: string; onClose: () => void })
       <button onClick={onClose} className="absolute top-4 right-4 text-gray-500 hover:text-gray-300 text-lg leading-none">×</button>
       <div className="flex items-center gap-2 mb-3">
         <GostwrkLogo size={20} invert />
-        <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Calvin</span>
+        <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Casper</span>
       </div>
       <pre className="text-sm text-gray-200 whitespace-pre-wrap leading-relaxed font-sans">{text}</pre>
     </div>
@@ -453,7 +453,7 @@ export default function AgentClient() {
         <div className="px-4 pt-5 pb-3 border-b border-[#f0f0f0]">
           <div className="flex items-center gap-2 mb-1">
             <GostwrkLogo size={18} />
-            <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Calvin</span>
+            <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Casper</span>
           </div>
           <p className="text-xs text-gray-400">
             {pending.length === 0 ? 'Queue clear' : `${pending.length} decision${pending.length !== 1 ? 's' : ''} waiting`}
@@ -537,7 +537,7 @@ export default function AgentClient() {
               <GostwrkLogo size={22} invert />
             </div>
             <div>
-              <p className="text-white font-bold text-base leading-none">Calvin</p>
+                      <p className="text-white font-bold text-base leading-none">Casper</p>
               <p className="text-gray-400 text-xs mt-0.5">Gostwrk co-pilot · SMS-first</p>
             </div>
           </div>
@@ -607,7 +607,7 @@ export default function AgentClient() {
                   }
                 }}
                 rows={1}
-                placeholder='Ask Calvin — "what needs me right now", "who went quiet", "hot leads"…'
+                placeholder='Ask Casper — "what needs me right now", "who went quiet", "hot leads"…'
                 className="w-full px-4 py-3 pr-12 text-sm bg-[#f4f4f4] border border-[#e5e5e5] rounded-2xl resize-none focus:outline-none focus:ring-2 focus:ring-[#1a1a1a] focus:border-transparent placeholder:text-gray-400 leading-relaxed"
                 style={{ minHeight: 44, maxHeight: 120 }}
               />
@@ -627,7 +627,7 @@ export default function AgentClient() {
             </button>
           </div>
           <p className="text-[10px] text-gray-400 mt-2 text-center">
-            Enter to send · Shift+Enter for new line · Calvin reviews and proposes — you approve
+            Enter to send · Shift+Enter for new line · Casper reviews and proposes — you approve
           </p>
         </div>
       </div>
