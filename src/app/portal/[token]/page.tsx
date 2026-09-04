@@ -16,13 +16,14 @@ export async function generateMetadata({
   const { token } = await params;
   const { data } = await supabase
     .from('client_offer_portals')
-    .select('og_title, og_description, og_image_url, title, lead_name')
+    .select('og_title, og_description, og_image_url, og_site_name, title, lead_name')
     .eq('token', token)
     .single();
 
   const ogTitle = data?.og_title || data?.title || 'Your Funding Offer';
   const ogDesc = data?.og_description || 'View and customize your approved funding offer.';
   const ogImage = data?.og_image_url || null;
+  const ogSiteName = data?.og_site_name || null;
 
   return {
     title: ogTitle,
@@ -30,6 +31,7 @@ export async function generateMetadata({
     openGraph: {
       title: ogTitle,
       description: ogDesc,
+      ...(ogSiteName ? { siteName: ogSiteName } : {}),
       ...(ogImage ? { images: [{ url: ogImage, width: 1200, height: 630 }] } : {}),
     },
     twitter: {

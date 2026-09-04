@@ -105,6 +105,8 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
   const [ogTitle, setOgTitle] = useState<string>(saved?.ogTitle ?? '');
   const [ogDescription, setOgDescription] = useState<string>(saved?.ogDescription ?? '');
   const [ogImageUrl, setOgImageUrl] = useState<string>(saved?.ogImageUrl ?? '');
+  const [ogSiteName, setOgSiteName] = useState<string>(saved?.ogSiteName ?? '');
+  const [portalDomain, setPortalDomain] = useState<string>(saved?.portalDomain ?? '');
   const [ogImageUploading, setOgImageUploading] = useState(false);
   const ogImageInputRef = useRef<HTMLInputElement>(null);
 
@@ -181,6 +183,8 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
         if (defaults.ogTitle !== undefined) setOgTitle(defaults.ogTitle);
         if (defaults.ogDescription !== undefined) setOgDescription(defaults.ogDescription);
         if (defaults.ogImageUrl !== undefined) setOgImageUrl(defaults.ogImageUrl);
+        if (defaults.ogSiteName !== undefined) setOgSiteName(defaults.ogSiteName);
+        if (defaults.portalDomain !== undefined) setPortalDomain(defaults.portalDomain);
         if (defaults.logoUrl !== undefined) setLogoUrl(defaults.logoUrl);
         if (defaults.showEpoOptions !== undefined) setShowEpoOptions(defaults.showEpoOptions);
         if (defaults.epoOptions !== undefined) setEpoOptions(defaults.epoOptions);
@@ -277,6 +281,7 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
           ogTitle: ogTitle.trim() || null,
           ogDescription: ogDescription.trim() || null,
           ogImageUrl: ogImageUrl.trim() || null,
+          ogSiteName: ogSiteName.trim() || null,
           logoUrl: logoUrl.trim() || null,
           customCta,
           thankYouMessage,
@@ -300,7 +305,10 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
   }
 
   function portalUrl(token: string) {
-    return `${window.location.origin}/portal/${token}`;
+    const base = portalDomain.trim()
+      ? `https://${portalDomain.trim().replace(/^https?:\/\//, '').replace(/\/$/, '')}`
+      : window.location.origin;
+    return `${base}/portal/${token}`;
   }
 
   const [copiedType, setCopiedType] = useState<'url' | 'hyperlink' | 'sms' | null>(null);
@@ -379,7 +387,7 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
                 <div>
                   <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
                     Logo
-                    <span className="ml-1 normal-case font-normal text-gray-400">(PNG/SVG, transparent background, min 200px tall, under 2MB)</span>
+                    <span className="ml-1 normal-case font-normal text-gray-400">(JPEG, PNG, or SVG — any background — under 2MB)</span>
                   </label>
                   <div className="flex gap-2 items-center">
                     {logoUrl ? (
@@ -711,6 +719,33 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
                 <div className="border border-blue-100 rounded-xl p-4 bg-blue-50 space-y-3">
                   <p className="text-xs font-bold text-blue-700 uppercase tracking-wide">iMessage / Link Preview</p>
                   <p className="text-xs text-gray-500">Controls what the recipient sees when you text them the link — the bold title, description, and image thumbnail.</p>
+
+                  {/* Custom domain */}
+                  <div className="bg-white rounded-lg p-3 space-y-2 border border-blue-200">
+                    <label className="block text-xs font-semibold text-gray-600 uppercase">
+                      Custom Link Domain
+                      <span className="ml-1 normal-case font-normal text-gray-400">(iMessage shows this instead of gostwrk.io)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={portalDomain}
+                      onChange={(e) => setPortalDomain(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white font-mono"
+                      placeholder="e.g. offers.pannash.com"
+                    />
+                    {portalDomain.trim() && (
+                      <p className="text-xs text-blue-700 font-medium break-all">
+                        Links will generate as: https://{portalDomain.trim().replace(/^https?:\/\//, '').replace(/\/$/, '')}/portal/…
+                      </p>
+                    )}
+                    <div className="text-xs text-gray-500 space-y-1 pt-1 border-t border-gray-100">
+                      <p className="font-medium text-gray-600">2-step setup:</p>
+                      <p>1. Add your domain in <strong>Vercel → Project → Settings → Domains</strong> (free)</p>
+                      <p>2. Point a DNS record at your registrar: <code className="bg-gray-100 px-1 rounded">CNAME offers.yourdomain.com → cname.vercel-dns.com</code></p>
+                      <p>Once live, iMessage will display your domain instead of gostwrk.io.</p>
+                    </div>
+                  </div>
+
                   <div>
                     <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
                       Preview Title
@@ -792,8 +827,22 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
                       </div>
                     )}
                   </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
+                      Brand / Site Name
+                      <span className="ml-1 normal-case font-normal text-gray-400">(shown below the description in iMessage)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={ogSiteName}
+                      onChange={(e) => setOgSiteName(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
+                      placeholder="e.g. Pannash Capital, My Funding Co…"
+                    />
+                  </div>
+
                   {/* Live mini-preview */}
-                  {(ogTitle || ogDescription || ogImageUrl) && (
+                  {(ogTitle || ogDescription || ogImageUrl || ogSiteName) && (
                     <div className="mt-2 rounded-xl overflow-hidden border border-gray-200 bg-white shadow-sm flex items-center gap-3 p-3">
                       {ogImageUrl ? (
                         <img src={ogImageUrl} alt="preview" className="w-12 h-12 rounded-lg object-cover flex-shrink-0" />
@@ -803,7 +852,7 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
                       <div className="min-w-0">
                         <p className="text-sm font-bold text-gray-900 truncate">{ogTitle || 'Your Funding Offer'}</p>
                         <p className="text-xs text-gray-500 truncate">{ogDescription || 'View and customize your approved funding offer.'}</p>
-                        <p className="text-xs text-gray-400">gostwrk.io</p>
+                        <p className="text-xs text-gray-400">{ogSiteName || 'gostwrk.io'}</p>
                       </div>
                     </div>
                   )}
@@ -821,7 +870,7 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
                     type="button"
                     disabled={savingDefaults}
                     onClick={async () => {
-                      const defaults = { title, introMessage, minAmountPct, showFactor, showTotalRepayment, showPayment, showRevenuePercent, customCta, thankYouMessage, expiryDays, feeDisclaimer, ogTitle, ogDescription, ogImageUrl, logoUrl, showEpoOptions, epoOptions };
+                      const defaults = { title, introMessage, minAmountPct, showFactor, showTotalRepayment, showPayment, showRevenuePercent, customCta, thankYouMessage, expiryDays, feeDisclaimer, ogTitle, ogDescription, ogImageUrl, ogSiteName, portalDomain, logoUrl, showEpoOptions, epoOptions };
                       saveDefaults(defaults); // localStorage cache
                       setSavingDefaults(true);
                       setSaveDefaultsStatus('idle');

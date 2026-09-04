@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
       showFactor, showTotalRepayment, showPayment,
       showRevenuePercent, avgMonthlyRevenue,
       feeDisclaimer,
-      ogTitle, ogDescription, ogImageUrl,
+      ogTitle, ogDescription, ogImageUrl, ogSiteName,
       logoUrl,
       customCta, thankYouMessage, expiresAt,
       showTermOptions, termOptions,
@@ -66,6 +66,7 @@ export async function POST(req: NextRequest) {
       og_title: ogTitle || null,
       og_description: ogDescription || null,
       og_image_url: ogImageUrl || null,
+      og_site_name: ogSiteName || null,
     };
 
     const isColError = (e: { message?: string; code?: string }) =>
