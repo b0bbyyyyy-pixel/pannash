@@ -620,4 +620,17 @@ export default function AgentClient() {
               {askLoading ? (
                 <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
               ) : (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                </svg>
+              )}
+            </button>
+          </div>
+          <p className="text-[10px] text-gray-400 mt-2 text-center">
+            Enter to send · Shift+Enter for new line · Calvin reviews and proposes — you approve
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
