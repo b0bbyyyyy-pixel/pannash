@@ -46,6 +46,16 @@ export default function Navbar({ userName }: NavbarProps) {
               Dashboard
             </Link>
             <Link
+              href="/agent"
+              className={`text-sm font-medium transition-colors ${
+                isActive('/agent')
+                  ? 'text-[#1a1a1a]'
+                  : 'text-[#6b6b6b] hover:text-[#1a1a1a]'
+              }`}
+            >
+              Agent
+            </Link>
+            <Link
               href="/inbox"
               className={`text-sm font-medium transition-colors ${
                 isActive('/inbox')
@@ -53,7 +63,7 @@ export default function Navbar({ userName }: NavbarProps) {
                   : 'text-[#6b6b6b] hover:text-[#1a1a1a]'
               }`}
             >
-              Agent
+              Inbox
             </Link>
             <Link
               href="/leads"

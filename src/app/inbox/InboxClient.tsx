@@ -152,6 +152,8 @@ export default function InboxClient({
   const [composerText, setComposerText] = useState('');
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [suggestingReply, setSuggestingReply] = useState(false);
+  const [suggestSent, setSuggestSent] = useState(false);
 
   const threadEndRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -873,18 +875,44 @@ export default function InboxClient({
               }} />
             </div>
 
-            {/* Phase 2 stub: Calvin suggest */}
+            {/* Calvin AI — Suggest reply */}
             <div className="border-t border-[#e5e5e5]" />
             <div>
               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">
-                Calvin AI <span className="normal-case font-normal text-gray-300">· Phase 2</span>
+                Calvin AI
               </p>
-              <button
-                disabled
-                className="w-full px-3 py-2 text-xs text-gray-400 border border-dashed border-gray-200 rounded-lg cursor-not-allowed"
-              >
-                Suggest reply — coming soon
-              </button>
+              {suggestSent ? (
+                <div className="w-full px-3 py-2 text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg text-center">
+                  ✓ Card added to Agent tab
+                </div>
+              ) : (
+                <button
+                  disabled={suggestingReply || !selectedLead}
+                  onClick={async () => {
+                    if (!selectedLead) return;
+                    setSuggestingReply(true);
+                    try {
+                      await fetch('/api/agent/suggest-reply', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          lead_id: selectedLead.id,
+                          conversation_id: selectedLead.conversation?.id ?? null,
+                          lead_name: selectedLead.name,
+                          company: selectedLead.company ?? null,
+                        }),
+                      });
+                      setSuggestSent(true);
+                      setTimeout(() => setSuggestSent(false), 4000);
+                    } finally {
+                      setSuggestingReply(false);
+                    }
+                  }}
+                  className="w-full px-3 py-2 text-xs text-gray-600 border border-dashed border-gray-300 rounded-lg hover:bg-gray-50 hover:border-gray-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {suggestingReply ? 'Drafting…' : '✨ Suggest reply → Agent'}
+                </button>
+              )}
             </div>
           </div>
         )}
