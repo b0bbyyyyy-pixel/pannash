@@ -5,7 +5,7 @@
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SupabaseClient = any;
 
-import { isEligible, todayInTz } from './canDial';
+import { isEligible, todayInTz, type DialerLeadShape } from './canDial';
 
 const LOCK_TTL_MS = 5 * 60 * 1_000;
 
@@ -145,7 +145,9 @@ export async function peekQueue(
     .limit(40);
 
   if (!data) return [];
-  return (data as QueuePreview[]).filter((l) => isEligible(l)).slice(0, limit);
+  // Cast to the full shape needed by isEligible, then strip to QueuePreview on return
+  type PeekRow = QueuePreview & DialerLeadShape;
+  return (data as PeekRow[]).filter((l) => isEligible(l)).slice(0, limit);
 }
 
 /** Increment attempts_today (resetting if date changed in lead tz) */
