@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
   const supabase = getAdminClient();
 
   // 3. Find or create the "One Funding Leads" list
-  const LIST_NAME = 'One Funding Leads';
+  const LIST_NAME = 'One Funding';
 
   let listId: string;
 
