@@ -60,8 +60,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   if (availableMonths.length === 0) {
     const defaultMonthKey = new Date().toISOString().slice(0, 16).replace('T', '_').replace(/:/g, '-');
     const defaultName = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-    
-    const { data: newDashboard, error: insertError } = await supabase
+
+    // Use service role key to bypass RLS for this server-side insert
+    // (we already verified the user above with getUser())
+    const serviceSupabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      { cookies: { get(name: string) { return cookieStore.get(name)?.value; }, set() {}, remove() {} } }
+    );
+
+    const { data: newDashboard, error: insertError } = await serviceSupabase
       .from('monthly_dashboards')
       .insert({
         user_id: user.id,
@@ -73,7 +81,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
 
     if (insertError) {
       console.error('Error creating default dashboard:', insertError);
-      console.error('Insert error details:', JSON.stringify(insertError, null, 2));
     } else if (newDashboard) {
       availableMonths = [{
         monthKey: newDashboard.month_key,
