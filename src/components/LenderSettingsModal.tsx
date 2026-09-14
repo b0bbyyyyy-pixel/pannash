@@ -542,7 +542,7 @@ function LenderRow({
           <span>·</span>
           <span>{posLabel}</span>
           {(lender.restricted_states ?? []).length > 0 && (
-            <><span>·</span><span className="text-red-400">{lender.restricted_states.slice(0,3).join(', ')}{lender.restricted_states.length > 3 ? '…' : ''}</span></>
+            <><span>·</span><span className="text-red-400">{(lender.restricted_states ?? []).slice(0,3).join(', ')}{(lender.restricted_states ?? []).length > 3 ? '…' : ''}</span></>
           )}
         </div>
       </div>
