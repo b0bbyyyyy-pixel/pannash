@@ -116,7 +116,7 @@ function formToPayload(f: FormState) {
   };
 }
 
-const TIER_ORDER: LenderTier[] = [1, 2, 3, 4, 5, 6];
+const TIER_ORDER: LenderTier[] = [1, 2, 3, 4, 5];
 
 interface Props {
   onClose: () => void;
