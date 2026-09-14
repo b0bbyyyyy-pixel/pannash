@@ -35,9 +35,7 @@ export default function AuthPage() {
             setError('An account with this email already exists. Please sign in instead.');
           } else if (data.session) {
             setSuccess('Account created. Redirecting…');
-            setTimeout(() => {
-              window.location.href = '/onboarding';
-            }, 1000);
+            setTimeout(() => { window.location.href = '/onboarding'; }, 1000);
           } else {
             setSuccess('Account created. Check your email to verify, then sign in.');
             setTimeout(() => setSuccess(''), 5000);
@@ -46,24 +44,29 @@ export default function AuthPage() {
           setError('Something went wrong. Please try again.');
         }
       } else {
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) {
           setError(error.message);
         } else {
           setSuccess('Signed in. Redirecting…');
-          setTimeout(() => {
-            window.location.href = '/dashboard';
-          }, 500);
+          setTimeout(() => { window.location.href = '/dashboard'; }, 500);
         }
       }
     } finally {
       setLoading(false);
     }
   };
+
+  const inputClass = [
+    'w-full bg-transparent border-0 border-b border-[#f5f1e8]/60 pb-2',
+    'text-sm text-[#f5f1e8] focus:outline-none focus:border-[#f5f1e8]',
+    'transition-colors rounded-none',
+    // Kill browser autofill highlight
+    '[&:-webkit-autofill]:shadow-[0_0_0_1000px_rgb(13,13,13)_inset]',
+    '[&:-webkit-autofill]:[color:white]',
+    '[&:-webkit-autofill]:[-webkit-text-fill-color:#f5f1e8]',
+    '[&:-webkit-autofill]:caret-[#f5f1e8]',
+  ].join(' ');
 
   return (
     <div className="min-h-screen bg-[rgb(13,13,13)] flex items-center justify-center px-6 py-12">
@@ -81,42 +84,50 @@ export default function AuthPage() {
         {/* Form */}
         <div className="w-full max-w-[300px]">
           <form onSubmit={handleAuth} className="space-y-10">
+
+            {/* Email */}
             <div>
               <label className="block text-[11px] tracking-[0.3em] text-[#f5f1e8] font-medium mb-2">
                 EMAIL
               </label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                autoComplete="email"
-                className="w-full bg-transparent border-0 border-b border-[#f5f1e8]/60 pb-2 text-sm text-[#f5f1e8] focus:outline-none focus:border-[#f5f1e8] transition-colors rounded-none"
-              />
+              <div className="relative">
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  autoComplete="email"
+                  className={inputClass}
+                />
+                {email && (
+                  <span className="absolute right-0 bottom-3 text-[#f5f1e8]/50 text-[8px] leading-none select-none">·</span>
+                )}
+              </div>
             </div>
 
+            {/* Password */}
             <div>
               <label className="block text-[11px] tracking-[0.3em] text-[#f5f1e8] font-medium mb-2">
                 PASSWORD
               </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                minLength={6}
-                autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-                className="w-full bg-transparent border-0 border-b border-[#f5f1e8]/60 pb-2 text-sm text-[#f5f1e8] focus:outline-none focus:border-[#f5f1e8] transition-colors rounded-none"
-              />
+              <div className="relative">
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  minLength={6}
+                  autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+                  className={inputClass}
+                />
+                {password && (
+                  <span className="absolute right-0 bottom-3 text-[#f5f1e8]/50 text-[8px] leading-none select-none">·</span>
+                )}
+              </div>
             </div>
 
-            {error && (
-              <p className="text-xs text-red-400">{error}</p>
-            )}
-
-            {success && (
-              <p className="text-xs text-green-400">{success}</p>
-            )}
+            {error && <p className="text-xs text-red-400">{error}</p>}
+            {success && <p className="text-xs text-green-400">{success}</p>}
 
             <div>
               <button
