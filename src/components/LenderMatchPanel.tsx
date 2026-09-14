@@ -34,25 +34,61 @@ function fmtTIB(months: number) {
   return `${y}yr ${m}mo`;
 }
 
+/** Map a DB row → LenderCriteria using new column names, falling back to legacy columns */
 function dbToLenderCriteria(r: LenderRecord): LenderCriteria & { id: string } {
+  // stateRestrictions: prefer new text column; fall back to old string[] column
+  const stateRestrictions: string | undefined =
+    r.state_restrictions
+      ? r.state_restrictions
+      : Array.isArray(r.restricted_states) && r.restricted_states.length > 0
+        ? r.restricted_states.join(', ')
+        : undefined;
+
+  // prohibitedIndustries: prefer new text column; fall back to old string[] column
+  const prohibitedIndustries: string | undefined =
+    r.prohibited_industries
+      ? r.prohibited_industries
+      : Array.isArray(r.restricted_industry_keywords) && r.restricted_industry_keywords.length > 0
+        ? r.restricted_industry_keywords.join(', ')
+        : undefined;
+
   return {
-    id: r.id,
-    name: r.name,
-    tier: r.tier as LenderTier,
-    minMonthlyRevenue: r.min_monthly_revenue,
-    minTIBMonths: r.min_tib_months,
-    minFico: r.min_fico,
-    tibFicoTiers: r.tib_fico_tiers ?? undefined,
-    noCreditPull: r.no_credit_pull,
-    minPosition: r.min_position,
-    maxPosition: r.max_position,
-    negDaysMax: r.neg_days_max ?? undefined,
-    minDeposits: r.min_deposits ?? undefined,
-    hardPullSoleProps: r.hard_pull_sole_props,
-    restrictsSoleProps: r.restricts_sole_props ?? false,
-    restrictedStates: r.restricted_states ?? [],
-    restrictedIndustryKeywords: r.restricted_industry_keywords ?? [],
-    notes: r.notes ?? '',
+    id:                            r.id,
+    name:                          r.name,
+    isActive:                      r.is_active ?? true,
+    tier:                          (r.tier as LenderTier) ?? 3,
+    email:                         r.email ?? undefined,
+    ccEmail:                       r.cc_email ?? undefined,
+    repName:                       r.rep_name ?? undefined,
+    contactPhone:                  r.contact_phone ?? undefined,
+    repDirectPhone:                r.rep_direct_phone ?? undefined,
+    submissionMethod:              r.submission_method ?? undefined,
+    products:                      r.products ?? undefined,
+    minMonthlyRevenue:             r.min_monthly_revenue ?? undefined,
+    minTibMonths:                  r.min_tib_months ?? undefined,
+    minFico:                       r.min_fico ?? undefined,
+    minPosition:                   r.min_position ?? 1,
+    maxPosition:                   r.max_position ?? 6,
+    maxNsfs:                       r.max_nsfs ?? undefined,
+    maxNegDays:                    r.neg_days_max ?? undefined,
+    maxWithhold:                   r.max_withhold ?? undefined,
+    minDeposits:                   r.min_deposits ?? undefined,
+    minAmount:                     r.min_amount ?? undefined,
+    maxAmount:                     r.max_amount ?? undefined,
+    minTermDays:                   r.min_term_days ?? undefined,
+    maxTermDays:                   r.max_term_days ?? undefined,
+    acceptsMercury:                r.accepts_mercury ?? undefined,
+    acceptsNonprofit:              r.accepts_nonprofit ?? undefined,
+    acceptsDefaults:               r.accepts_defaults ?? undefined,
+    acceptsSoleProp:               r.accepts_sole_prop ?? undefined,
+    doesBuyout:                    r.does_buyout ?? undefined,
+    doesReverseConsolidation:      r.does_reverse_consolidation ?? undefined,
+    stateRestrictions,
+    prohibitedIndustries,
+    preferredIndustries:           r.preferred_industries ?? undefined,
+    industryPositionRestrictions:  r.industry_position_restrictions ?? undefined,
+    otherRequirements:             r.other_requirements ?? undefined,
+    notes:                         r.notes ?? undefined,
   };
 }
 
@@ -60,68 +96,66 @@ function computeMatch(lender: LenderCriteria, props: LenderMatchPanelProps): Len
   const newPosition = props.currentPositions + 1;
   const reasons: MatchReason[] = [];
 
-  reasons.push({
-    label: `Revenue: ${fmtRevenue(Math.round(props.avgMonthlyRevenue))}/mo (min ${fmtRevenue(lender.minMonthlyRevenue)})`,
-    pass: props.avgMonthlyRevenue >= lender.minMonthlyRevenue,
-  });
-
-  if (lender.tibFicoTiers && lender.tibFicoTiers.length > 0) {
-    const tibPass = lender.tibFicoTiers.some(
-      (t) => props.timeInBusiness >= t.minTIBMonths && props.creditScore >= t.minFico
-    );
-    const tierStr = lender.tibFicoTiers.map((t) => `${fmtTIB(t.minTIBMonths)}@${t.minFico}`).join(' or ');
+  // Revenue
+  if (lender.minMonthlyRevenue) {
     reasons.push({
-      label: tibPass
-        ? `TIB & FICO: ${fmtTIB(props.timeInBusiness)} @ ${props.creditScore} ✓`
-        : `TIB & FICO: needs ${tierStr} (have ${fmtTIB(props.timeInBusiness)} @ ${props.creditScore})`,
-      pass: tibPass,
+      label: `Revenue: ${fmtRevenue(Math.round(props.avgMonthlyRevenue))}/mo (min ${fmtRevenue(lender.minMonthlyRevenue)})`,
+      pass: props.avgMonthlyRevenue >= lender.minMonthlyRevenue,
     });
-  } else {
-    reasons.push({
-      label: `TIB: ${fmtTIB(props.timeInBusiness)} (min ${fmtTIB(lender.minTIBMonths)})`,
-      pass: props.timeInBusiness >= lender.minTIBMonths,
-    });
-    if (lender.noCreditPull) {
-      reasons.push({ label: 'No credit pull required', pass: true });
-    } else if (lender.minFico > 0) {
-      reasons.push({
-        label: `FICO: ${props.creditScore} (min ${lender.minFico})`,
-        pass: props.creditScore >= lender.minFico,
-      });
-    }
   }
 
+  // TIB
+  if (lender.minTibMonths) {
+    reasons.push({
+      label: `TIB: ${fmtTIB(props.timeInBusiness)} (min ${fmtTIB(lender.minTibMonths)})`,
+      pass: props.timeInBusiness >= lender.minTibMonths,
+    });
+  }
+
+  // FICO
+  if (lender.minFico) {
+    reasons.push({
+      label: `FICO: ${props.creditScore} (min ${lender.minFico})`,
+      pass: props.creditScore >= lender.minFico,
+    });
+  }
+
+  // Position
   const posOrd = (n: number) => n === 1 ? '1st' : n === 2 ? '2nd' : n === 3 ? '3rd' : `${n}th`;
   reasons.push({
-    label: lender.minPosition > 1
-      ? `Position: ${posOrd(newPosition)} pos (needs ${lender.minPosition}–${lender.maxPosition})`
-      : `Position: ${posOrd(newPosition)} pos (max ${lender.maxPosition})`,
-    pass: newPosition >= lender.minPosition && newPosition <= lender.maxPosition,
+    label: `Position: ${posOrd(newPosition)} pos (max ${lender.maxPosition ?? 6})`,
+    pass: newPosition >= (lender.minPosition ?? 1) && newPosition <= (lender.maxPosition ?? 6),
   });
 
-  if (props.businessState && lender.restrictedStates.length > 0) {
-    const blocked = lender.restrictedStates.includes(props.businessState.toUpperCase());
+  // State restrictions (comma-separated string)
+  if (props.businessState && lender.stateRestrictions) {
+    const state = props.businessState.trim().toLowerCase();
+    const blocked = lender.stateRestrictions.toLowerCase().split(/[,;]+/).map(s => s.trim()).some(s => s && state.includes(s) || s.includes(state));
     if (blocked) reasons.push({ label: `State: ${props.businessState.toUpperCase()} is restricted`, pass: false });
   }
 
-  if (props.industry && lender.restrictedIndustryKeywords.length > 0) {
+  // Industry restrictions (comma-separated string)
+  if (props.industry && lender.prohibitedIndustries) {
     const lower = props.industry.toLowerCase();
-    const hit = lender.restrictedIndustryKeywords.find((kw) => lower.includes(kw));
+    const keywords = lender.prohibitedIndustries.toLowerCase().split(/[,;]+/).map(s => s.trim()).filter(Boolean);
+    const hit = keywords.find(kw => lower.includes(kw) || kw.includes(lower));
     if (hit) reasons.push({ label: `Industry: "${props.industry}" is restricted`, pass: false });
   }
 
-  // Sole prop check
-  if (props.isSoleProp && lender.restrictsSoleProps) {
-    reasons.push({ label: 'Sole Proprietors restricted by this lender', pass: false });
+  // Sole prop — if acceptsSoleProp is explicitly false, block
+  if (props.isSoleProp && lender.acceptsSoleProp === false) {
+    reasons.push({ label: 'Sole Proprietors not accepted by this lender', pass: false });
   }
 
-  if (lender.negDaysMax !== undefined) {
+  // NSFs / neg days
+  if (lender.maxNegDays !== undefined) {
     reasons.push({
-      label: `NSF/Neg Days: ${props.nsfCount} (max ${lender.negDaysMax})`,
-      pass: props.nsfCount <= lender.negDaysMax,
+      label: `NSF/Neg Days: ${props.nsfCount} (max ${lender.maxNegDays})`,
+      pass: props.nsfCount <= lender.maxNegDays,
     });
   }
 
+  // Deposits
   if (lender.minDeposits !== undefined) {
     reasons.push({
       label: `Deposits: ${props.depositsCount}/mo (min ${lender.minDeposits})`,
@@ -136,22 +170,21 @@ function computeMatch(lender: LenderCriteria, props: LenderMatchPanelProps): Len
   };
 }
 
-const TIER_ORDER: LenderTier[] = [1, 2, 3, 4, 5, 6];
+const TIER_ORDER: LenderTier[] = [1, 2, 3, 4, 5];
 const TIER_COLORS: Record<LenderTier, string> = {
   1: 'text-indigo-700 bg-indigo-50 border-indigo-200',
   2: 'text-blue-700 bg-blue-50 border-blue-200',
   3: 'text-teal-700 bg-teal-50 border-teal-200',
   4: 'text-amber-700 bg-amber-50 border-amber-200',
   5: 'text-orange-700 bg-orange-50 border-orange-200',
-  6: 'text-red-700 bg-red-50 border-red-200',
 };
 
 export default function LenderMatchPanel(props: LenderMatchPanelProps) {
-  const [open, setOpen] = useState(false); // collapsed by default
+  const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState<FilterTab>('all');
   const [expandedTiers, setExpandedTiers] = useState<Set<LenderTier>>(new Set([1, 2, 3]));
   const [showSettings, setShowSettings] = useState(false);
-  const [lenders, setLenders] = useState<LenderCriteria[]>(LENDERS); // fallback to hardcoded
+  const [lenders, setLenders] = useState<LenderCriteria[]>(LENDERS.filter(l => l.isActive !== false));
   const [loadedFromApi, setLoadedFromApi] = useState(false);
 
   const fetchLenders = useCallback(async () => {
@@ -161,7 +194,7 @@ export default function LenderMatchPanel(props: LenderMatchPanelProps) {
       const json = await res.json();
       if (json.lenders && json.lenders.length > 0) {
         const active = (json.lenders as LenderRecord[])
-          .filter((l) => l.is_active)
+          .filter((l) => l.is_active !== false)
           .map(dbToLenderCriteria);
         setLenders(active);
         setLoadedFromApi(true);
@@ -211,7 +244,6 @@ export default function LenderMatchPanel(props: LenderMatchPanelProps) {
               </svg>
             </div>
           </button>
-          {/* Settings gear */}
           <button
             onClick={() => setShowSettings(true)}
             className="px-3 py-3 text-slate-400 hover:text-white transition-colors border-l border-slate-600"
@@ -226,7 +258,7 @@ export default function LenderMatchPanel(props: LenderMatchPanelProps) {
 
         {open && (
           <div className="bg-white">
-            {/* File summary */}
+            {/* Summary bar */}
             <div className="px-4 py-2 bg-slate-50 border-b border-gray-200 text-xs text-slate-600 flex flex-wrap gap-x-3 gap-y-1">
               <span><b>Rev:</b> {fmtRevenue(Math.round(props.avgMonthlyRevenue))}/mo</span>
               <span><b>TIB:</b> {fmtTIB(props.timeInBusiness)}</span>
@@ -242,9 +274,7 @@ export default function LenderMatchPanel(props: LenderMatchPanelProps) {
                 const label = tab === 'all' ? 'All' : tab === 'qualified' ? '✓ Qualify' : '✗ No';
                 const active = filter === tab;
                 return (
-                  <button
-                    key={tab}
-                    onClick={() => setFilter(tab)}
+                  <button key={tab} onClick={() => setFilter(tab)}
                     className={`flex-1 py-2 text-xs font-medium transition-colors ${
                       active
                         ? tab === 'qualified' ? 'text-green-700 border-b-2 border-green-600 bg-green-50'
@@ -269,8 +299,7 @@ export default function LenderMatchPanel(props: LenderMatchPanelProps) {
                 const isExpanded = expandedTiers.has(tier);
                 return (
                   <div key={tier} className="border-b border-gray-100 last:border-0">
-                    <button
-                      onClick={() => toggleTier(tier)}
+                    <button onClick={() => toggleTier(tier)}
                       className={`w-full flex items-center justify-between px-4 py-2 border-b text-xs font-semibold ${TIER_COLORS[tier]}`}
                     >
                       <span>{TIER_LABELS[tier]}</span>
@@ -293,10 +322,7 @@ export default function LenderMatchPanel(props: LenderMatchPanelProps) {
       </div>
 
       {showSettings && (
-        <LenderSettingsModal
-          onClose={() => setShowSettings(false)}
-          onRefresh={fetchLenders}
-        />
+        <LenderSettingsModal onClose={() => setShowSettings(false)} onRefresh={fetchLenders} />
       )}
     </>
   );
@@ -338,11 +364,26 @@ function LenderRow({ match }: { match: LenderMatch }) {
               </div>
             ))}
           </div>
+          {/* Contact info */}
+          {lender.email && (
+            <p className="text-[10px] text-blue-600 mt-1">📧 {lender.email}{lender.ccEmail ? ` · CC: ${lender.ccEmail}` : ''}</p>
+          )}
+          {lender.repName && (
+            <p className="text-[10px] text-gray-500 mt-0.5">Rep: {lender.repName}{lender.contactPhone ? ` · ${lender.contactPhone}` : ''}</p>
+          )}
+          {/* Preferences */}
+          {lender.preferredIndustries && (
+            <p className="text-[10px] text-green-600 mt-1">✓ Preferred: {lender.preferredIndustries}</p>
+          )}
+          {lender.stateRestrictions && (
+            <p className="text-[10px] text-amber-600 mt-0.5">⚠ State restrictions: {lender.stateRestrictions}</p>
+          )}
           {lender.notes && (
             <p className="text-[10px] text-gray-400 leading-snug border-t border-gray-100 pt-1.5 mt-1.5">{lender.notes}</p>
           )}
-          {lender.hardPullSoleProps && <p className="text-[10px] text-amber-600 mt-1">⚠ Hard credit pull on sole proprietors.</p>}
-          {lender.noCreditPull && <p className="text-[10px] text-green-600 mt-1">✓ No credit pull required.</p>}
+          {lender.otherRequirements && (
+            <p className="text-[10px] text-gray-400 leading-snug mt-1">{lender.otherRequirements}</p>
+          )}
         </div>
       )}
     </div>

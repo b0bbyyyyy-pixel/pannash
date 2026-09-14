@@ -6,6 +6,8 @@ export interface LenderRecord {
   id: string;
   name: string;
   tier: number;
+  is_active: boolean;
+  // legacy columns (still present in DB)
   min_monthly_revenue: number;
   min_tib_months: number;
   min_fico: number;
@@ -17,10 +19,34 @@ export interface LenderRecord {
   min_deposits: number | null;
   hard_pull_sole_props: boolean;
   restricts_sole_props: boolean;
-  restricted_states: string[];
-  restricted_industry_keywords: string[];
-  notes: string;
-  is_active: boolean;
+  restricted_states: string[] | null;
+  restricted_industry_keywords: string[] | null;
+  notes: string | null;
+  // new columns (added by add-lender-fields.sql)
+  email?: string | null;
+  cc_email?: string | null;
+  rep_name?: string | null;
+  contact_phone?: string | null;
+  rep_direct_phone?: string | null;
+  submission_method?: string | null;
+  products?: string | null;
+  max_nsfs?: number | null;
+  max_withhold?: number | null;
+  min_amount?: number | null;
+  max_amount?: number | null;
+  min_term_days?: number | null;
+  max_term_days?: number | null;
+  accepts_mercury?: boolean | null;
+  accepts_nonprofit?: boolean | null;
+  accepts_defaults?: boolean | null;
+  accepts_sole_prop?: boolean | null;
+  does_buyout?: boolean | null;
+  does_reverse_consolidation?: boolean | null;
+  state_restrictions?: string | null;
+  prohibited_industries?: string | null;
+  preferred_industries?: string | null;
+  industry_position_restrictions?: string | null;
+  other_requirements?: string | null;
 }
 
 const EMPTY_FORM = {
