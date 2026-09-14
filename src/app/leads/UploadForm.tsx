@@ -31,15 +31,21 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
   const [quickPreview, setQuickPreview] = useState<ParsedLead[]>([]);
   // Google Sheets state
   const [sheetsUrl, setSheetsUrl] = useState('');
-  const [sheetsPreview, setSheetsPreview] = useState<ParsedLead[]>([]);
+  const [sheetsAllRows, setSheetsAllRows] = useState<ParsedLead[]>([]); // full parsed data
+  const [sheetsPreview, setSheetsPreview] = useState<ParsedLead[]>([]); // filtered slice
   const [sheetsLoading, setSheetsLoading] = useState(false);
   const [sheetsAddToDialer, setSheetsAddToDialer] = useState(false);
+  const [rangeFrom, setRangeFrom] = useState<string>('1');
+  const [rangeTo, setRangeTo] = useState<string>('');
   // Google OAuth state
   const [googleStatus, setGoogleStatus] = useState<{ connected: boolean; email?: string } | null>(null);
   const [googleStatusLoading, setGoogleStatusLoading] = useState(false);
   const [driveSheets, setDriveSheets] = useState<{ id: string; name: string; modifiedTime: string }[]>([]);
   const [driveSheetsLoading, setDriveSheetsLoading] = useState(false);
   const [selectedDriveSheet, setSelectedDriveSheet] = useState<string>(''); // sheetId
+  const [driveTabs, setDriveTabs] = useState<{ gid: string; title: string; index: number }[]>([]);
+  const [driveSheetsTabsLoading, setDriveSheetsTabsLoading] = useState(false);
+  const [selectedTab, setSelectedTab] = useState<string>('0'); // gid
 
   // ZIP pack state
   const [zipDragging, setZipDragging] = useState(false);
@@ -336,16 +342,34 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
       name = findColumn(['full name', 'fullname', 'contact name', 'tracers name', 'lead name', 'person name', 'owner name']);
     }
 
-    // Phone: "Tracers Phone 1" first, then generic phone/cell/mobile columns
+    // Phone — Step 1: look for columns whose NAME suggests a phone field (broad list)
+    const phoneNameKeywords = [
+      'phone', 'telephone', 'tel', 'mobile', 'cell', 'contact number',
+      'direct', 'fax', 'ph ', ' ph', 'phone #', 'phone number',
+      'work phone', 'home phone', 'bus phone', 'business phone',
+      'contact phone', 'primary phone', 'number', 'contact #',
+    ];
     const phoneKeys = rowKeys.filter(key => {
       const k = key.toLowerCase().trim();
-      return ['phone', 'telephone', 'tel', 'mobile', 'cell', 'contact number'].some(p => k.includes(p));
+      return phoneNameKeywords.some(p => k === p || k.includes(p));
     });
-    const phoneValues = phoneKeys
+    const namedPhoneValues = phoneKeys
       .map(k => cellVal(k))
       .filter((v): v is string => !!v && isPhone(v));
-    const primaryPhone = phoneValues[0] || null;
-    const extraPhoneNote = phoneValues.slice(1).join(' | ');
+
+    // Phone — Step 2: if still no phone found by column name, scan EVERY column's value
+    // This handles sheets where the phone is in a column named "Contact", "Lead #", etc.
+    let allPhoneValues = namedPhoneValues;
+    if (namedPhoneValues.length === 0) {
+      const valuePhones = rowKeys
+        .filter(k => !phoneKeys.includes(k)) // don't double-count
+        .map(k => cellVal(k))
+        .filter((v): v is string => !!v && isPhone(v));
+      allPhoneValues = valuePhones;
+    }
+
+    const primaryPhone = allPhoneValues[0] || null;
+    const extraPhoneNote = allPhoneValues.slice(1).join(' | ');
 
     // Email: ignore obvious placeholder emails
     const rawEmail = findColumn(['email', 'e-mail', 'email address', 'emailaddress', 'contact email', 'mail']);
@@ -369,9 +393,11 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
       'notes','note','comments','comment','description','details','memo','remarks',
     ]);
     const isPhoneKey = (k: string) =>
-      ['phone','telephone','tel','mobile','cell','contact number'].some(p => k.includes(p));
+      ['phone','telephone','tel','mobile','cell','contact number','direct','fax','number'].some(p => k.includes(p));
 
     // Collect all remaining non-empty columns as extra notes
+    // If the value-scan fallback found the phone, exclude those values from notes too
+    const usedPhoneValues = new Set(allPhoneValues);
     const extraCols: string[] = [];
     for (const key of rowKeys) {
       const lowerKey = key.toLowerCase().trim();
@@ -379,7 +405,8 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
       if (isPhoneKey(lowerKey)) continue; // phones already handled
       const v = cellVal(key);
       if (!v) continue;
-      // Skip obvious placeholder / numeric-only values like Lead IDs unless short label
+      // If this value was picked up by the phone value-scan fallback, skip it from notes
+      if (usedPhoneValues.has(v)) continue;
       extraCols.push(`${key}: ${v}`);
     }
 
@@ -987,6 +1014,9 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
   const loadDriveSheets = useCallback(async () => {
     setDriveSheetsLoading(true);
     setDriveSheets([]);
+    setDriveTabs([]);
+    setSelectedDriveSheet('');
+    setSelectedTab('0');
     try {
       const res = await fetch('/api/auth/google/sheets');
       const json = await res.json();
@@ -995,12 +1025,45 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
     setDriveSheetsLoading(false);
   }, []);
 
+  const loadTabs = useCallback(async (sheetId: string) => {
+    setDriveTabs([]);
+    setSelectedTab('0');
+    setSheetsPreview([]);
+    if (!sheetId) return;
+    setDriveSheetsTabsLoading(true);
+    try {
+      const res = await fetch(`/api/auth/google/sheets?sheetId=${encodeURIComponent(sheetId)}`);
+      const json = await res.json();
+      if (res.ok && json.tabs?.length > 0) {
+        setDriveTabs(json.tabs);
+        setSelectedTab(json.tabs[0].gid); // default to first tab
+      }
+    } catch { /* silent */ }
+    setDriveSheetsTabsLoading(false);
+  }, []);
+
   const handleGoogleDisconnect = async () => {
     await fetch('/api/auth/google/disconnect', { method: 'POST' });
     setGoogleStatus({ connected: false });
     setDriveSheets([]);
     setSelectedDriveSheet('');
+    setDriveTabs([]);
     setSheetsPreview([]);
+    setSheetsAllRows([]);
+  };
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // ── Google Sheets range helper ───────────────────────────────────────────
+  const applyRange = useCallback((all: ParsedLead[], from: string, to: string) => {
+    const f = Math.max(1, parseInt(from) || 1);
+    const t = to.trim() ? Math.min(all.length, parseInt(to)) : all.length;
+    return all.slice(f - 1, t);
+  }, []);
+
+  const handleRangeChange = (from: string, to: string) => {
+    setRangeFrom(from);
+    setRangeTo(to);
+    setSheetsPreview(applyRange(sheetsAllRows, from, to));
   };
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -1012,8 +1075,10 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
     setSheetsLoading(true);
     setMessage('');
     setSheetsPreview([]);
+    setSheetsAllRows([]);
+    const gidParam = sheetId && selectedTab ? `&gid=${encodeURIComponent(selectedTab)}` : '';
     const apiUrl = sheetId
-      ? `/api/import/google-sheets?sheetId=${encodeURIComponent(sheetId)}`
+      ? `/api/import/google-sheets?sheetId=${encodeURIComponent(sheetId)}${gidParam}`
       : `/api/import/google-sheets?url=${encodeURIComponent(sheetsUrl.trim())}`;
     try {
       const res = await fetch(apiUrl);
@@ -1042,8 +1107,18 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
           .map(row => positionalColumnMapper(row.map(v => String(v || '').trim())) as ParsedLead)
           .filter(l => l.name || l.phone || l.email);
       }
-      setSheetsPreview(leads);
-      if (leads.length === 0) setMessage('No leads detected — check column headers in your sheet');
+
+      if (leads.length === 0) {
+        setMessage('No leads detected — check column headers in your sheet');
+      } else {
+        setSheetsAllRows(leads);
+        // Reset range to show all
+        const defaultFrom = '1';
+        const defaultTo = String(leads.length);
+        setRangeFrom(defaultFrom);
+        setRangeTo(defaultTo);
+        setSheetsPreview(applyRange(leads, defaultFrom, defaultTo));
+      }
     } catch (e: any) {
       setMessage(`Error: ${e.message}`);
     }
@@ -1406,13 +1481,18 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
             </div>
           )}
 
-          {/* If connected: Drive sheet picker */}
+          {/* If connected: Drive sheet picker + tab picker */}
           {googleStatus?.connected && (
             <div className="space-y-2">
+              {/* Row 1: spreadsheet dropdown + Browse button */}
               <div className="flex items-center gap-2">
                 <select
                   value={selectedDriveSheet}
-                  onChange={e => { setSelectedDriveSheet(e.target.value); setSheetsPreview([]); }}
+                  onChange={e => {
+                    setSelectedDriveSheet(e.target.value);
+                    setSheetsPreview([]);
+                    loadTabs(e.target.value);
+                  }}
                   className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 bg-white"
                 >
                   <option value="">— Pick a spreadsheet —</option>
@@ -1420,25 +1500,43 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
                     <option key={s.id} value={s.id}>{s.name}</option>
                   ))}
                 </select>
-                {driveSheets.length === 0 && (
-                  <button
-                    onClick={loadDriveSheets}
-                    disabled={driveSheetsLoading}
-                    className="px-3 py-2 text-xs border border-gray-200 rounded-lg text-gray-600 hover:border-gray-400 disabled:opacity-50 whitespace-nowrap"
-                  >
-                    {driveSheetsLoading ? 'Loading…' : 'Browse Drive'}
-                  </button>
-                )}
-                {selectedDriveSheet && (
-                  <button
-                    onClick={() => handleSheetsFetch(selectedDriveSheet)}
-                    disabled={sheetsLoading}
-                    className="px-3 py-2 bg-[#1a1a1a] text-white rounded-lg text-xs font-medium hover:bg-[#2a2a2a] disabled:opacity-40 whitespace-nowrap"
-                  >
-                    {sheetsLoading ? '…' : 'Load'}
-                  </button>
-                )}
+                <button
+                  onClick={loadDriveSheets}
+                  disabled={driveSheetsLoading}
+                  className="px-3 py-2 text-xs border border-gray-200 rounded-lg text-gray-600 hover:border-gray-400 disabled:opacity-50 whitespace-nowrap"
+                >
+                  {driveSheetsLoading ? 'Loading…' : driveSheets.length === 0 ? 'Browse Drive' : '↻ Refresh'}
+                </button>
               </div>
+
+              {/* Row 2: tab dropdown (shows after spreadsheet selected) */}
+              {selectedDriveSheet && (
+                <div className="flex items-center gap-2">
+                  {driveSheetsTabsLoading ? (
+                    <p className="text-xs text-gray-400 animate-pulse">Loading tabs…</p>
+                  ) : driveTabs.length > 0 ? (
+                    <>
+                      <select
+                        value={selectedTab}
+                        onChange={e => { setSelectedTab(e.target.value); setSheetsPreview([]); }}
+                        className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 bg-white"
+                      >
+                        {driveTabs.map(t => (
+                          <option key={t.gid} value={t.gid}>{t.title}</option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={() => handleSheetsFetch(selectedDriveSheet)}
+                        disabled={sheetsLoading}
+                        className="px-4 py-2 bg-[#1a1a1a] text-white rounded-lg text-sm font-medium hover:bg-[#2a2a2a] disabled:opacity-40 whitespace-nowrap"
+                      >
+                        {sheetsLoading ? '…' : 'Load Tab'}
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+              )}
+
               {driveSheets.length === 0 && !driveSheetsLoading && (
                 <p className="text-[10px] text-gray-400">Click "Browse Drive" to see your recent spreadsheets, or paste a URL below.</p>
               )}
@@ -1464,12 +1562,49 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
             </button>
           </div>
 
+          {/* Row range selector */}
+          {sheetsAllRows.length > 0 && (
+            <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+              <span className="text-xs text-gray-500 whitespace-nowrap">
+                <strong>{sheetsAllRows.length}</strong> total rows — import rows:
+              </span>
+              <input
+                type="number"
+                min={1}
+                max={sheetsAllRows.length}
+                value={rangeFrom}
+                onChange={e => handleRangeChange(e.target.value, rangeTo)}
+                className="w-20 px-2 py-1 border border-gray-200 rounded text-sm text-center focus:outline-none focus:ring-2 focus:ring-gray-900"
+                placeholder="1"
+              />
+              <span className="text-xs text-gray-400">to</span>
+              <input
+                type="number"
+                min={1}
+                max={sheetsAllRows.length}
+                value={rangeTo}
+                onChange={e => handleRangeChange(rangeFrom, e.target.value)}
+                className="w-20 px-2 py-1 border border-gray-200 rounded text-sm text-center focus:outline-none focus:ring-2 focus:ring-gray-900"
+                placeholder={String(sheetsAllRows.length)}
+              />
+              <button
+                onClick={() => handleRangeChange('1', String(sheetsAllRows.length))}
+                className="text-xs text-gray-400 hover:text-gray-700 underline whitespace-nowrap"
+              >
+                All
+              </button>
+            </div>
+          )}
+
           {/* Preview table */}
           {sheetsPreview.length > 0 && (
             <div className="border border-gray-200 rounded-lg overflow-hidden">
               <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
                 <p className="text-xs font-semibold text-gray-700">
-                  {sheetsPreview.length} lead{sheetsPreview.length !== 1 ? 's' : ''} found
+                  {sheetsPreview.length} lead{sheetsPreview.length !== 1 ? 's' : ''} selected
+                  {sheetsAllRows.length !== sheetsPreview.length && (
+                    <span className="text-gray-400 font-normal"> (of {sheetsAllRows.length})</span>
+                  )}
                 </p>
                 <p className="text-xs text-gray-400">scroll for all</p>
               </div>

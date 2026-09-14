@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { getGoogleAccessToken } from '@/lib/google/token';
@@ -7,10 +7,14 @@ export const dynamic = 'force-dynamic';
 
 /**
  * GET /api/auth/google/sheets
- * Lists the user's Google Sheets spreadsheets from Drive.
- * Returns: { sheets: [{ id, name, modifiedTime, url }] }
+ *   — lists the user's Google Sheets spreadsheets from Drive
+ *   Returns: { sheets: [{ id, name, modifiedTime }] }
+ *
+ * GET /api/auth/google/sheets?sheetId={id}
+ *   — lists the tabs (worksheets) inside a specific spreadsheet
+ *   Returns: { tabs: [{ gid, title, index }] }
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   const cookieStore = await cookies();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -32,7 +36,28 @@ export async function GET() {
     return NextResponse.json({ error: 'not_connected' }, { status: 401 });
   }
 
-  // List spreadsheets from Google Drive (most recently modified first)
+  const sheetId = request.nextUrl.searchParams.get('sheetId');
+
+  // ── Tab listing for a specific spreadsheet ───────────────────────────────
+  if (sheetId) {
+    const metaRes = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    if (!metaRes.ok) {
+      const err = await metaRes.json();
+      return NextResponse.json({ error: err.error?.message || 'Sheets API error' }, { status: 502 });
+    }
+    const meta = await metaRes.json();
+    const tabs = (meta.sheets ?? []).map((s: any) => ({
+      gid:   String(s.properties.sheetId),
+      title: s.properties.title,
+      index: s.properties.index,
+    }));
+    return NextResponse.json({ tabs });
+  }
+
+  // ── Spreadsheet listing from Drive ───────────────────────────────────────
   const params = new URLSearchParams({
     q:        "mimeType='application/vnd.google-apps.spreadsheet' and trashed=false",
     fields:   'files(id,name,modifiedTime,webViewLink)',
@@ -57,7 +82,6 @@ export async function GET() {
       id:           f.id,
       name:         f.name,
       modifiedTime: f.modifiedTime,
-      url:          f.webViewLink,
     })),
   });
 }
