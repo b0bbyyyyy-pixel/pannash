@@ -89,11 +89,26 @@ export default function AddLeadButton({ selectedListId }: AddLeadButtonProps) {
       {/* Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-md p-8 max-w-md w-full">
-            <h2 className="text-2xl font-bold text-[#1a1a1a] mb-2 tracking-tight">
-              Add Lead Manually
-            </h2>
-            <p className="text-sm text-[#6b6b6b] mb-4">Fill in the fields, or use Quick paste at the bottom to auto-fill from a block of text.</p>
+          <div className="bg-white rounded-md w-full max-w-md max-h-[90vh] flex flex-col">
+            {/* Header — always visible */}
+            <div className="flex items-start justify-between px-7 pt-6 pb-3 flex-shrink-0">
+              <div>
+                <h2 className="text-2xl font-bold text-[#1a1a1a] tracking-tight">Add Lead Manually</h2>
+                <p className="text-sm text-[#6b6b6b] mt-1">Fill in the fields, or use Quick paste to auto-fill.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowModal(false)}
+                className="ml-4 mt-0.5 text-[#9b9b9b] hover:text-[#1a1a1a] transition-colors flex-shrink-0"
+                aria-label="Close"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            {/* Scrollable body */}
+            <div className="flex-1 overflow-y-auto px-7 pb-6">
             
             <form onSubmit={handleCreate} className="space-y-4">
               <div>
@@ -200,6 +215,7 @@ export default function AddLeadButton({ selectedListId }: AddLeadButtonProps) {
                 </button>
               </div>
             </form>
+            </div>{/* end scrollable body */}
           </div>
         </div>
       )}

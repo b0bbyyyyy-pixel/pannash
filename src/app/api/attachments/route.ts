@@ -2,14 +2,14 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 
-// GET: Fetch attachments for a lead + column
+// GET: Fetch attachments for a lead (optionally filtered by column field)
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const leadId = searchParams.get('leadId');
-  const columnField = searchParams.get('columnField');
+  const columnField = searchParams.get('columnField'); // optional — omit to get all
 
-  if (!leadId || !columnField) {
-    return NextResponse.json({ error: 'Missing leadId or columnField' }, { status: 400 });
+  if (!leadId) {
+    return NextResponse.json({ error: 'Missing leadId' }, { status: 400 });
   }
 
   const cookieStore = await cookies();
@@ -32,12 +32,12 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { data, error } = await supabase
+  let query = supabase
     .from('lead_attachments')
     .select('*')
-    .eq('lead_id', leadId)
-    .eq('column_field', columnField)
-    .order('created_at', { ascending: false });
+    .eq('lead_id', leadId);
+  if (columnField) query = query.eq('column_field', columnField);
+  const { data, error } = await query.order('created_at', { ascending: false });
 
   if (error) {
     console.error('Error fetching attachments:', error);
@@ -114,12 +114,57 @@ export async function POST(request: Request) {
 
   if (dbError) {
     console.error('Error saving attachment metadata:', dbError);
-    // Clean up uploaded file
     await supabase.storage.from('lead-attachments').remove([filePath]);
     return NextResponse.json({ error: 'Failed to save attachment' }, { status: 500 });
   }
 
+  // ── Auto-trigger: advance lead status to "Docs In" if still in early stage ──
+  const earlyStages = new Set([
+    'New Lead', 'Contacted', 'Callback Scheduled', 'Revisit', 'App Out',
+    'Application Acknowledgement', 'Docs Requested', 'Missing Docs/info', '',
+  ]);
+  const { data: leadRow } = await supabase
+    .from('leads')
+    .select('lead_status, stage')
+    .eq('id', leadId)
+    .eq('user_id', user.id)
+    .single();
+  const current = leadRow?.lead_status || leadRow?.stage || '';
+  if (earlyStages.has(current)) {
+    await supabase
+      .from('leads')
+      .update({ lead_status: 'Docs In' })
+      .eq('id', leadId)
+      .eq('user_id', user.id);
+  }
+
   return NextResponse.json({ attachment });
+}
+
+// PUT: Rename an attachment
+export async function PUT(request: Request) {
+  const cookieStore = await cookies();
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { cookies: { get(n: string) { return cookieStore.get(n)?.value; }, set() {}, remove() {} } }
+  );
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const { id, file_name } = await request.json();
+  if (!id || !file_name) return NextResponse.json({ error: 'Missing id or file_name' }, { status: 400 });
+
+  const { data, error } = await supabase
+    .from('lead_attachments')
+    .update({ file_name })
+    .eq('id', id)
+    .eq('user_id', user.id)
+    .select()
+    .single();
+
+  if (error) return NextResponse.json({ error: 'Failed to rename' }, { status: 500 });
+  return NextResponse.json({ attachment: data });
 }
 
 // DELETE: Remove an attachment

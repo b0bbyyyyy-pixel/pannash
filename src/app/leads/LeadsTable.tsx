@@ -49,6 +49,7 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
   const [promoteConfirm, setPromoteConfirm] = useState<Lead | null>(null);
   const [promoteMonth, setPromoteMonth] = useState('');
   const [dashboardTabs, setDashboardTabs] = useState<{ month_key: string; custom_name: string }[]>([]);
+  const [pipelineMoving, setPipelineMoving] = useState<string | null>(null);
   // Phone hover tooltip
   const [hoveredPhone, setHoveredPhone] = useState<string | null>(null);
   const [phoneLocationData, setPhoneLocationData] = useState<Record<string, PhoneLocationInfo | null>>({});
@@ -394,6 +395,34 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
             <p className="text-xs font-semibold text-gray-900 truncate">{contextMenu.lead.name}</p>
             <p className="text-xs text-gray-400 truncate">{contextMenu.lead.company || contextMenu.lead.email}</p>
           </div>
+          <button
+            onClick={async () => {
+              const lead = contextMenu.lead;
+              setContextMenu(null);
+              setPipelineMoving(lead.id);
+              try {
+                const res = await fetch('/api/leads/pipeline', {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ leadId: lead.id }),
+                });
+                if (res.ok) {
+                  router.push(`/pipeline/${lead.id}`);
+                } else {
+                  const d = await res.json();
+                  alert(`Error: ${d.error}`);
+                }
+              } finally {
+                setPipelineMoving(null);
+              }
+            }}
+            className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2.5"
+          >
+            <svg className="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
+            {pipelineMoving === contextMenu?.lead?.id ? 'Moving…' : 'Move to Pipeline'}
+          </button>
           <button
             onClick={async () => {
               setPromoteConfirm(contextMenu.lead);

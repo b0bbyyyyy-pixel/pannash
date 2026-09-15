@@ -12,11 +12,13 @@ interface UnderwritingData {
   industry: string;
   creditScore: number;
   
-  // Bank Statement Data (last 3 months)
+  // Bank Statement Data
   month1Revenue: number;
   month2Revenue: number;
   month3Revenue: number;
   month4Revenue: number;
+  /** Single canonical average monthly revenue — takes priority over 4-month computation */
+  monthlyRevenue?: number;
   avgDailyBalance: number;
   endingBalance: number;
   nsfCount: number;
@@ -82,6 +84,8 @@ interface UnderwritingSuiteProps {
   onClose: () => void;
   onSave: (data: UnderwritingData) => Promise<void>;
   onNotesUpdate?: (notes: string) => Promise<void>;
+  /** When true, renders inline without the fixed modal overlay */
+  inline?: boolean;
 }
 
 // ── SOS Registry URLs by state abbreviation ─────────────────────────────────
@@ -290,8 +294,30 @@ export default function UnderwritingSuite({
   onClose,
   onSave,
   onNotesUpdate,
+  inline = false,
 }: UnderwritingSuiteProps) {
   const [data, setData] = useState<UnderwritingData>({ ...DEFAULT_DATA, ...initialData });
+
+  // Sync fields edited in the left-pane lead info into the local data state
+  // so lender match & calculations always reflect the latest values without a page reload.
+  useEffect(() => {
+    if (!initialData) return;
+    setData(prev => ({
+      ...prev,
+      timeInBusiness:   initialData.timeInBusiness   ?? prev.timeInBusiness,
+      industry:         initialData.industry          ?? prev.industry,
+      businessState:    initialData.businessState     ?? prev.businessState,
+      creditScore:      initialData.creditScore       ?? prev.creditScore,
+      isSoleProp:       initialData.isSoleProp        ?? prev.isSoleProp,
+      monthlyRevenue:   initialData.monthlyRevenue    ?? prev.monthlyRevenue,
+      avgDailyBalance:  initialData.avgDailyBalance   ?? prev.avgDailyBalance,
+      endingBalance:    initialData.endingBalance     ?? prev.endingBalance,
+      nsfCount:         initialData.nsfCount          ?? prev.nsfCount,
+      depositsCount:    initialData.depositsCount     ?? prev.depositsCount,
+      hasOtherMCALoans: initialData.hasOtherMCALoans  ?? prev.hasOtherMCALoans,
+    }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialData]);
   const commissionPointsMax = COMMISSION_ADDED_POINTS_MAX;
   const [saving, setSaving] = useState(false);
 
@@ -809,11 +835,13 @@ export default function UnderwritingSuite({
   const otherMCAMonthlyPayment = Number(data.otherMCAMonthlyPayment) || 0;
   const otherMCAOutstandingBalance = Number(data.otherMCAOutstandingBalance) || 0;
   
-  // Calculate average monthly revenue (only count months that have data)
+  // Use single monthlyRevenue if set (from left pane / bank analyzer); otherwise compute from 4 months
   const revenueMonthValues = [month1Revenue, month2Revenue, month3Revenue, month4Revenue].filter((r) => r > 0);
-  const avgMonthlyRevenue = revenueMonthValues.length > 0
-    ? (month1Revenue + month2Revenue + month3Revenue + month4Revenue) / revenueMonthValues.length
-    : 0;
+  const avgMonthlyRevenue = Number(data.monthlyRevenue) > 0
+    ? Number(data.monthlyRevenue)
+    : revenueMonthValues.length > 0
+      ? (month1Revenue + month2Revenue + month3Revenue + month4Revenue) / revenueMonthValues.length
+      : 0;
   // Underwriting rule of thumb: advance size is tied to the *weakest* month, not the average
   const lowestMonthlyRevenue = revenueMonthValues.length > 0 ? Math.min(...revenueMonthValues) : 0;
   const allFour = month1Revenue > 0 && month2Revenue > 0 && month3Revenue > 0 && month4Revenue > 0;
@@ -1319,8 +1347,8 @@ export default function UnderwritingSuite({
 
   return (
     <>
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-2xl w-full max-w-[1600px] h-[90vh] flex flex-col">
+    <div className={inline ? "contents" : "fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"}>
+      <div className={inline ? "w-full flex flex-col" : "bg-white rounded-lg shadow-2xl w-full max-w-[1600px] h-[90vh] flex flex-col"}>
         {/* Header */}
         <div className="border-b border-gray-200 p-6 flex items-center justify-between">
           <div className="flex items-start gap-4">
@@ -1420,12 +1448,14 @@ export default function UnderwritingSuite({
             >
               {saving ? 'Saving...' : 'Save Deal'}
             </button>
-            <button
-              onClick={onClose}
-              className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md text-sm font-medium hover:bg-gray-50 transition-colors"
-            >
-              Close
-            </button>
+            {!inline && (
+              <button
+                onClick={onClose}
+                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md text-sm font-medium hover:bg-gray-50 transition-colors"
+              >
+                Close
+              </button>
+            )}
           </div>
         </div>
 
@@ -1433,410 +1463,6 @@ export default function UnderwritingSuite({
         <div className="flex-1 flex overflow-hidden">
           {/* Left Sidebar - Financial Data Inputs */}
           <div className="w-80 border-r border-gray-200 p-6 overflow-y-auto bg-gray-50">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Input Financials</h2>
-            
-            {/* Business Info */}
-            <div className="mb-6">
-              <h3 className="text-sm font-medium text-gray-700 mb-3">Business Info</h3>
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-xs text-gray-600 mb-2">Time in Business</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">Years</label>
-                      <input
-                        type="number"
-                        value={Math.floor((data.timeInBusiness || 0) / 12)}
-                        onChange={(e) => {
-                          const years = Number(e.target.value) || 0;
-                          const months = (data.timeInBusiness || 0) % 12;
-                          setData({ ...data, timeInBusiness: years * 12 + months });
-                        }}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
-                        min="0"
-                        placeholder="2"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">Months</label>
-                      <input
-                        type="number"
-                        value={(data.timeInBusiness || 0) % 12}
-                        onChange={(e) => {
-                          const years = Math.floor((data.timeInBusiness || 0) / 12);
-                          const months = Number(e.target.value) || 0;
-                          setData({ ...data, timeInBusiness: years * 12 + months });
-                        }}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
-                        min="0"
-                        max="11"
-                        placeholder="0"
-                      />
-                    </div>
-                  </div>
-                </div>
-                
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">Industry</label>
-                  <select
-                    value={data.industry || 'Retail - General'}
-                    onChange={(e) => setData({ ...data, industry: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
-                  >
-                    {INDUSTRIES.map((industry) => (
-                      <option key={industry} value={industry}>{industry}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs text-gray-600">Business State</label>
-                    {detectedState && data.businessState && data.businessState !== detectedState && (
-                      <button
-                        onClick={() => setData({ ...data, businessState: detectedState })}
-                        className="text-[10px] text-blue-500 hover:text-blue-700 underline"
-                      >
-                        Reset to {detectedState}
-                      </button>
-                    )}
-                  </div>
-                  <select
-                    value={data.businessState || ''}
-                    onChange={(e) => setData({ ...data, businessState: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
-                  >
-                    <option value="">— Select State —</option>
-                    {US_STATES.map((st) => (
-                      <option key={st} value={st}>{st}</option>
-                    ))}
-                  </select>
-                </div>
-                
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">Credit Score</label>
-                  <input
-                    type="number"
-                    value={data.creditScore || ''}
-                    onChange={(e) => setData({ ...data, creditScore: Number(e.target.value) || 0 })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
-                    min="300"
-                    max="850"
-                    placeholder="650"
-                  />
-                  {/* Credit Report Upload */}
-                  <input
-                    ref={creditReportInputRef}
-                    type="file"
-                    accept="application/pdf"
-                    className="hidden"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) handleCreditReportUpload(f);
-                      e.target.value = '';
-                    }}
-                  />
-                  <div
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => !creditReportParsing && creditReportInputRef.current?.click()}
-                    onKeyDown={(e) => e.key === 'Enter' && !creditReportParsing && creditReportInputRef.current?.click()}
-                    onDragOver={(e) => { e.preventDefault(); if (!creditReportParsing) setCreditReportDragOver(true); }}
-                    onDragLeave={() => setCreditReportDragOver(false)}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      setCreditReportDragOver(false);
-                      if (creditReportParsing) return;
-                      const f = e.dataTransfer.files?.[0];
-                      if (f && f.type === 'application/pdf') handleCreditReportUpload(f);
-                    }}
-                    className={`mt-1.5 w-full flex items-center justify-center gap-1.5 px-2 py-1.5 text-xs border border-dashed rounded cursor-pointer transition-colors select-none
-                      ${creditReportParsing ? 'opacity-50 cursor-not-allowed border-gray-300 text-gray-400' :
-                        creditReportDragOver ? 'border-[#5a7fc7] bg-blue-50 text-[#5a7fc7]' :
-                        'border-gray-300 text-gray-500 hover:border-[#5a7fc7] hover:text-[#5a7fc7]'}`}
-                  >
-                    {creditReportParsing ? (
-                      <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
-                      </svg>
-                    ) : creditReportDragOver ? (
-                      <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3"/>
-                      </svg>
-                    ) : (
-                      <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
-                      </svg>
-                    )}
-                    {creditReportParsing ? 'Parsing…' : creditReportDragOver ? 'Drop to parse' : creditReportMeta ? 'Re-upload Credit Report' : 'Upload Credit Report PDF'}
-                  </div>
-                  {creditReportMeta && (
-                    <div className="mt-1.5 grid grid-cols-2 gap-1 text-xs">
-                      <span className="text-gray-500">Avail. Credit</span>
-                      <span className="font-medium text-gray-800 text-right">${creditReportMeta.availableCredit.toLocaleString()}</span>
-                      <span className="text-gray-500">Utilization</span>
-                      <span className={`font-medium text-right ${creditReportMeta.utilization > 80 ? 'text-red-600' : creditReportMeta.utilization > 50 ? 'text-yellow-600' : 'text-green-600'}`}>{creditReportMeta.utilization}%</span>
-                      <span className="text-gray-500">Inquiries</span>
-                      <span className="font-medium text-gray-800 text-right">{creditReportMeta.inquiries}</span>
-                      <span className="text-gray-500">Lates</span>
-                      <span className={`font-medium text-right ${creditReportMeta.lates > 0 ? 'text-red-600' : 'text-green-600'}`}>{creditReportMeta.lates}</span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="pt-1">
-                  <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer hover:text-gray-900">
-                    <input
-                      type="checkbox"
-                      checked={data.isSoleProp || false}
-                      onChange={(e) => setData({ ...data, isSoleProp: e.target.checked })}
-                      className="w-4 h-4 text-[#5a7fc7] focus:ring-[#5a7fc7] border-gray-300 rounded"
-                    />
-                    <span>Sole Proprietor</span>
-                  </label>
-                  <p className="text-xs text-gray-400 mt-0.5 ml-6">Some lenders restrict sole props</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Bank Statement Data */}
-            <div className="mb-6">
-              <h3 className="text-sm font-medium text-gray-700 mb-3">Bank Statements (Last 4 Months)</h3>
-              <div className="space-y-3">
-                <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <label className="block text-xs text-gray-600">Month 1 Revenue</label>
-                    <span className="text-sm font-semibold text-gray-900">${Math.round(data.month1Revenue || 0).toLocaleString()}</span>
-                  </div>
-                  <input
-                    type="range"
-                    value={data.month1Revenue || 0}
-                    onChange={(e) => setData({ ...data, month1Revenue: Number(e.target.value) })}
-                    min="0"
-                    max="500000"
-                    step="500"
-                    className="w-full h-2 bg-blue-100 rounded-lg appearance-none cursor-pointer accent-[#5a7fc7]"
-                  />
-                  <div className="flex justify-between text-xs text-gray-500 mt-1">
-                    <span>$0</span>
-                    <span>$500k</span>
-                  </div>
-                </div>
-                
-                <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <label className="block text-xs text-gray-600">Month 2 Revenue</label>
-                    <span className="text-sm font-semibold text-gray-900">${Math.round(data.month2Revenue || 0).toLocaleString()}</span>
-                  </div>
-                  <input
-                    type="range"
-                    value={data.month2Revenue || 0}
-                    onChange={(e) => setData({ ...data, month2Revenue: Number(e.target.value) })}
-                    min="0"
-                    max="500000"
-                    step="500"
-                    className="w-full h-2 bg-blue-100 rounded-lg appearance-none cursor-pointer accent-[#5a7fc7]"
-                  />
-                  <div className="flex justify-between text-xs text-gray-500 mt-1">
-                    <span>$0</span>
-                    <span>$500k</span>
-                  </div>
-                </div>
-                
-                <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <label className="block text-xs text-gray-600">Month 3 Revenue</label>
-                    <span className="text-sm font-semibold text-gray-900">${Math.round(data.month3Revenue || 0).toLocaleString()}</span>
-                  </div>
-                  <input
-                    type="range"
-                    value={data.month3Revenue || 0}
-                    onChange={(e) => setData({ ...data, month3Revenue: Number(e.target.value) })}
-                    min="0"
-                    max="500000"
-                    step="500"
-                    className="w-full h-2 bg-blue-100 rounded-lg appearance-none cursor-pointer accent-[#5a7fc7]"
-                  />
-                  <div className="flex justify-between text-xs text-gray-500 mt-1">
-                    <span>$0</span>
-                    <span>$500k</span>
-                  </div>
-                </div>
-                
-                <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <label className="block text-xs text-gray-600">Month 4 Revenue</label>
-                    <span className="text-sm font-semibold text-gray-900">${Math.round(data.month4Revenue || 0).toLocaleString()}</span>
-                  </div>
-                  <input
-                    type="range"
-                    value={data.month4Revenue || 0}
-                    onChange={(e) => setData({ ...data, month4Revenue: Number(e.target.value) })}
-                    min="0"
-                    max="500000"
-                    step="500"
-                    className="w-full h-2 bg-blue-100 rounded-lg appearance-none cursor-pointer accent-[#5a7fc7]"
-                  />
-                  <div className="flex justify-between text-xs text-gray-500 mt-1">
-                    <span>$0</span>
-                    <span>$500k</span>
-                  </div>
-                </div>
-
-                <div className="pt-2 border-t border-gray-300">
-                  <div className="text-xs text-gray-600 mb-1">Average Monthly Revenue</div>
-                  <div className="text-lg font-bold text-gray-900">
-                    ${Math.round(avgMonthlyRevenue).toLocaleString()}
-                  </div>
-                </div>
-                
-                <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <label className="block text-xs text-gray-600">Average Daily Balance</label>
-                    <span className="text-sm font-semibold text-gray-900">${Math.round(data.avgDailyBalance || 0).toLocaleString()}</span>
-                  </div>
-                  <input
-                    type="range"
-                    value={data.avgDailyBalance || 0}
-                    onChange={(e) => setData({ ...data, avgDailyBalance: Number(e.target.value) })}
-                    min="0"
-                    max="100000"
-                    step="500"
-                    className="w-full h-2 bg-blue-100 rounded-lg appearance-none cursor-pointer accent-[#5a7fc7]"
-                  />
-                  <div className="flex justify-between text-xs text-gray-500 mt-1">
-                    <span>$0</span>
-                    <span>$100k</span>
-                  </div>
-                </div>
-                
-                <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <label className="block text-xs text-gray-600">Ending Balance</label>
-                    <span className="text-sm font-semibold text-gray-900">${Math.round(data.endingBalance || 0).toLocaleString()}</span>
-                  </div>
-                  <input
-                    type="range"
-                    value={data.endingBalance || 0}
-                    onChange={(e) => setData({ ...data, endingBalance: Number(e.target.value) })}
-                    min="0"
-                    max="100000"
-                    step="500"
-                    className="w-full h-2 bg-blue-100 rounded-lg appearance-none cursor-pointer accent-[#5a7fc7]"
-                  />
-                  <div className="flex justify-between text-xs text-gray-500 mt-1">
-                    <span>$0</span>
-                    <span>$100k</span>
-                  </div>
-                </div>
-                
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">NSF Count (3 months)</label>
-                  <input
-                    type="number"
-                    value={data.nsfCount || ''}
-                    onChange={(e) => setData({ ...data, nsfCount: Number(e.target.value) || 0 })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
-                    min="0"
-                    max="50"
-                    placeholder="0"
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">
-                    Avg deposit count / month
-                  </label>
-                  <input
-                    type="number"
-                    value={data.depositsCount || ''}
-                    onChange={(e) => setData({ ...data, depositsCount: Number(e.target.value) || 0 })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
-                    min="0"
-                    max="100"
-                    placeholder="10"
-                    step="0.1"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">Average number of deposit transactions per month</p>
-                </div>
-                
-                <div className="pt-3 border-t border-gray-300 space-y-3">
-                  <label className="flex items-center text-sm text-gray-700 cursor-pointer hover:text-gray-900">
-                    <input
-                      type="checkbox"
-                      checked={data.hasOtherMCALoans || false}
-                      onChange={(e) => setData({ ...data, hasOtherMCALoans: e.target.checked, mcaPositionCount: e.target.checked ? (data.mcaPositionCount || 1) : 0, otherMCAMonthlyPayment: e.target.checked ? data.otherMCAMonthlyPayment : 0 })}
-                      className="mr-2 w-4 h-4 text-[#5a7fc7] focus:ring-[#5a7fc7] border-gray-300 rounded"
-                    />
-                    <span>Has Other MCA Loans</span>
-                  </label>
-                  
-                  {data.hasOtherMCALoans && (
-                    <div className="ml-6 bg-orange-50 border border-orange-200 rounded-md p-3 space-y-3">
-                      <div>
-                        <label className="block text-xs text-gray-700 mb-1 font-medium">Number of Current Positions</label>
-                        <select
-                          value={data.mcaPositionCount ?? 1}
-                          onChange={(e) => setData({ ...data, mcaPositionCount: Number(e.target.value) })}
-                          className="w-full px-3 py-2 border border-orange-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
-                        >
-                          <option value={1}>1 position (1st MCA)</option>
-                          <option value={2}>2 positions (stacked × 2)</option>
-                          <option value={3}>3 positions (stacked × 3)</option>
-                          <option value={4}>4 positions (stacked × 4)</option>
-                          <option value={5}>5+ positions</option>
-                        </select>
-                        <p className="text-xs text-gray-600 mt-1">How many active MCA positions does the business currently have?</p>
-                      </div>
-
-                      <div>
-                        <label className="block text-xs text-gray-700 mb-1 font-medium">MCA Lender Names</label>
-                        <input
-                          type="text"
-                          value={data.otherMCALenders || ''}
-                          onChange={(e) => setData({ ...data, otherMCALenders: e.target.value })}
-                          className="w-full px-3 py-2 border border-orange-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
-                          placeholder="e.g., Fundbox, OnDeck..."
-                        />
-                        <p className="text-xs text-gray-600 mt-1">List all MCA lenders (comma separated)</p>
-                      </div>
-
-                      <div>
-                        <label className="block text-xs text-gray-700 mb-1 font-medium">Monthly MCA Payment</label>
-                        <input
-                          type="number"
-                          value={data.otherMCAMonthlyPayment || ''}
-                          onChange={(e) => setData({ ...data, otherMCAMonthlyPayment: Number(e.target.value) || 0 })}
-                          className="w-full px-3 py-2 border border-orange-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
-                          min="0"
-                          step="100"
-                          placeholder="e.g., 5000"
-                        />
-                        <p className="text-xs text-gray-600 mt-1">Total monthly payment for all existing MCA loans</p>
-                      </div>
-
-                      <div>
-                        <label className="block text-xs text-gray-700 mb-1 font-medium">
-                          Remaining Balance
-                        </label>
-                        <input
-                          type="number"
-                          value={data.otherMCAOutstandingBalance || ''}
-                          onChange={(e) => setData({ ...data, otherMCAOutstandingBalance: Number(e.target.value) || 0 })}
-                          className="w-full px-3 py-2 border border-orange-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
-                          min="0"
-                          step="500"
-                          placeholder="Enter if known"
-                        />
-                        <p className="text-xs text-gray-600 mt-1">Total outstanding balance across all MCA loans</p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-
             {/* Lender Match Panel */}
             <LenderMatchPanel
               timeInBusiness={data.timeInBusiness || 0}

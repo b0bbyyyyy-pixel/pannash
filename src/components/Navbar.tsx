@@ -20,7 +20,7 @@ export default function Navbar({ userName }: NavbarProps) {
       <div className="max-w-[1600px] mx-auto px-12">
         <div className="flex items-center justify-between h-20">
           {/* Logo - Gray Ghost */}
-          <Link href="/dashboard" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
+          <Link href="/pipeline" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
             <img
               src="/images/logo/gostwrk-logo-gray.svg"
               alt="Gostwrk"
@@ -36,14 +36,14 @@ export default function Navbar({ userName }: NavbarProps) {
           {/* Center Links */}
           <div className="flex items-center space-x-12">
             <Link
-              href="/dashboard"
+              href="/pipeline"
               className={`text-sm font-medium transition-colors ${
-                isActive('/dashboard')
+                isActive('/pipeline')
                   ? 'text-[#1a1a1a]'
                   : 'text-[#6b6b6b] hover:text-[#1a1a1a]'
               }`}
             >
-              Dashboard
+              Pipeline
             </Link>
             <Link
               href="/agent"

@@ -50,6 +50,8 @@ export function mapAnalyzerMetricsToUnderwritingFields(metrics: Record<string, u
   month2Revenue: number;
   month3Revenue: number;
   month4Revenue: number;
+  /** Single average — use this as the canonical revenue figure going forward */
+  monthlyRevenue: number;
   avgDailyBalance: number;
   endingBalance: number;
   nsfCount: number;
@@ -63,11 +65,18 @@ export function mapAnalyzerMetricsToUnderwritingFields(metrics: Record<string, u
   const m3 = Number(last4[2]?.amount) || 0;
   const m4 = Number(last4[3]?.amount) || 0;
 
+  // Compute single average (only from months that have data)
+  const nonZero = [m1, m2, m3, m4].filter(v => v > 0);
+  const monthlyRevenue = nonZero.length > 0
+    ? nonZero.reduce((a, b) => a + b, 0) / nonZero.length
+    : 0;
+
   return {
     month1Revenue: m1,
     month2Revenue: m2,
     month3Revenue: m3,
     month4Revenue: m4,
+    monthlyRevenue,
     avgDailyBalance: Number(metrics.avg_daily_balance) || 0,
     endingBalance: Number(metrics.ending_balance) || 0,
     nsfCount: Number(metrics.nsf_count) || 0,
