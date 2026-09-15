@@ -57,12 +57,14 @@ export default async function PipelineLeadPage({ params }: { params: Promise<{ i
     <div className="min-h-screen bg-[#fafafa]">
       <Navbar userName={userName} />
       <main className="pt-20 min-h-screen bg-[#fafafa]">
-        <LeadWorkspaceClient
-          lead={lead}
-          allLeadIds={pipelineIds}
-          userId={user.id}
-          userName={userName}
-        />
+        <div className="max-w-[1600px] mx-auto px-6 py-6">
+          <LeadWorkspaceClient
+            lead={lead}
+            allLeadIds={pipelineIds}
+            userId={user.id}
+            userName={userName}
+          />
+        </div>
       </main>
     </div>
   );
