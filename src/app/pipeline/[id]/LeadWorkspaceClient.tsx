@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 
@@ -398,6 +398,146 @@ export default function LeadWorkspaceClient({
     document.getElementById('underwriting-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
+  // ── Projected Offer calculation (mirrors UnderwritingSuite logic) ────────────
+  const [showProjectedOffer, setShowProjectedOffer] = useState(false);
+
+  const projectedOffer = useMemo(() => {
+    const rev      = Number(ud.monthlyRevenue  ?? 0);
+    const fico     = Number(ud.creditScore     ?? 0);
+    const tib      = Number(ud.timeInBusiness  ?? 0);
+    const nsf      = Number(ud.nsfCount        ?? 0);
+    const deps     = Number(ud.depositsCount   ?? 0);
+    const adb      = Number(ud.avgDailyBalance ?? 0);
+    const industry = String(ud.industry        ?? '');
+    const hasMCA   = Boolean(ud.hasOtherMCALoans ?? false);
+    const mcaPmt   = Number(ud.otherMCAMonthlyPayment ?? 0);
+    const mcaBal   = Number(ud.otherMCAOutstandingBalance ?? 0);
+    const m1 = Number(ud.month1Revenue ?? 0), m2 = Number(ud.month2Revenue ?? 0);
+    const m3 = Number(ud.month3Revenue ?? 0), m4 = Number(ud.month4Revenue ?? 0);
+
+    if (!rev) return null; // need at least monthly revenue
+
+    // Revenue stability
+    const months = [m1, m2, m3, m4].filter(x => x > 0);
+    const avg    = months.length ? months.reduce((a, b) => a + b, 0) / months.length : rev;
+    const revenueStability = months.length >= 2
+      ? 1 - (Math.max(...months) - Math.min(...months)) / avg
+      : 0.7;
+
+    const otherMCAMonthlyPayment = hasMCA ? mcaPmt : 0;
+    const availableRev = rev - otherMCAMonthlyPayment;
+
+    // Factor rate
+    let fr = 1.35;
+    let holdback = 12;
+    // Industry
+    if (/Healthcare|Medical|Dental|Legal|Accounting|Insurance/i.test(industry))           { fr -= 0.07; }
+    else if (/Professional Services|IT Services|Software|SaaS|Consulting|Financial/i.test(industry)) { fr -= 0.04; }
+    else if (/Bar|Nightclub|Trucking|Moving|Construction|Roofing|Auto Dealership|Travel|Entertainment|Catering/i.test(industry)) { fr += 0.07; holdback += 2; }
+    else if (/Dropshipping|Amazon FBA|Event Planning|Non-Profit/i.test(industry))         { fr += 0.10; holdback += 3; }
+    else if (/Restaurant.*Fast|Food Truck|Retail.*Clothing|Fitness|Gym|Salon|Beauty|Pet|Cleaning|Landscaping/i.test(industry)) { fr += 0.04; }
+    // FICO
+    if (fico >= 700)      fr -= 0.10;
+    else if (fico >= 650) fr -= 0.05;
+    else if (fico < 600)  fr += 0.05;
+    // TIB
+    if (tib >= 36)      fr -= 0.05;
+    else if (tib < 12)  fr += 0.05;
+    // NSF
+    if (nsf === 0)     fr -= 0.03;
+    else if (nsf >= 3) fr += 0.05;
+    // Stability
+    if (revenueStability > 0.8)      fr -= 0.03;
+    else if (revenueStability < 0.5) fr += 0.03;
+    // Deposits
+    if (deps >= 13)     fr -= 0.03;
+    else if (deps >= 8) fr -= 0.01;
+    else if (deps < 3)  fr += 0.03;
+    // MCA debt burden
+    if (hasMCA && otherMCAMonthlyPayment > 0 && rev > 0) {
+      const dtr = otherMCAMonthlyPayment / rev;
+      if (dtr > 0.25) fr += 0.08;
+      else if (dtr > 0.15) fr += 0.05;
+      else if (dtr > 0.10) fr += 0.03;
+      if (mcaBal > 0) {
+        const btr = mcaBal / rev;
+        if (btr > 4) fr += 0.06;
+        else if (btr > 2.5) fr += 0.03;
+      }
+    }
+    fr = Math.max(1.15, Math.min(1.45, fr));
+
+    // Holdback
+    if (rev >= 100000) holdback = 8;
+    else if (rev >= 50000) holdback = 10;
+    else if (rev >= 25000) holdback = 12;
+    else holdback = 15;
+    if (nsf >= 2)    holdback += 2;
+    if (adb < 5000)  holdback += 2;
+    if (hasMCA && otherMCAMonthlyPayment / rev > 0.15) holdback += 2;
+    holdback = Math.max(8, Math.min(20, holdback));
+
+    // Approved amount
+    let advanceMult = 1.5;
+    if (fico >= 700 && tib >= 24) advanceMult = 2.0;
+    else if (fico >= 650 && tib >= 12) advanceMult = 1.75;
+    else if (fico < 600 || tib < 6) advanceMult = 1.2;
+    const revenueForAdvance = Math.max(0, availableRev);
+    const maxApproved = revenueForAdvance > 0 ? Math.floor(revenueForAdvance * advanceMult) : 0;
+
+    // Term
+    let termMonths = 9;
+    if (fico >= 700 && tib >= 36)      termMonths = 15;
+    else if (fico >= 650 && tib >= 24) termMonths = 12;
+    else if (tib >= 12)                termMonths = 9;
+    else                               termMonths = 6;
+
+    // Weekly payback
+    const totalRepayment = maxApproved * fr;
+    const weeklyPayback  = termMonths > 0 ? (totalRepayment / termMonths) / 4.33 : 0;
+
+    // Risk score
+    let score = 40;
+    if (/Healthcare|Medical|Dental|Legal|Accounting|Insurance/i.test(industry))           score += 20;
+    else if (/IT Services|Software|SaaS|Consulting|Financial/i.test(industry))             score += 12;
+    else if (/Retail/i.test(industry) && !/Bar|Night/i.test(industry))                    score += 5;
+    else if (/Restaurant|Food/i.test(industry))                                            score -= 5;
+    else if (/Bar|Nightclub|Trucking|Construction|Roofing|Auto Dealership/i.test(industry)) score -= 15;
+    else if (/Dropshipping|Amazon FBA|Event Planning|Non-Profit/i.test(industry))          score -= 25;
+    if (fico >= 720)      score += 25;
+    else if (fico >= 680) score += 15;
+    else if (fico >= 650) score += 5;
+    else if (fico >= 620) score -= 5;
+    else if (fico >= 580) score -= 15;
+    else                  score -= 25;
+    if (tib >= 48)      score += 18;
+    else if (tib >= 36) score += 12;
+    else if (tib >= 24) score += 6;
+    else if (tib >= 12) score -= 5;
+    else                score -= 15;
+    if (nsf === 0)      score += 15;
+    else if (nsf === 1) score -= 5;
+    else if (nsf === 2) score -= 12;
+    else                score -= 20;
+    if (deps >= 15)     score += 12;
+    else if (deps >= 10) score += 6;
+    else if (deps < 5)  score -= 10;
+    if (adb >= 30000)      score += 15;
+    else if (adb >= 15000) score += 8;
+    else if (adb >= 8000)  score += 3;
+    else if (adb < 5000)   score -= 12;
+    const riskScore = Math.max(0, Math.min(100, score));
+
+    return {
+      maxApproved,
+      factorRate: Math.round(fr * 100) / 100,
+      riskScore,
+      weeklyPayback: Math.round(weeklyPayback),
+      holdback,
+      termMonths,
+    };
+  }, [ud]);
+
   return (
     <div className="flex flex-col">
       {/* ── TOP HEADER BAR ──────────────────────────────────────────────────── */}
@@ -742,19 +882,58 @@ export default function LeadWorkspaceClient({
             </div>
           </Section>
 
-          {/* DEAL TOOLS */}
-          <Section title="Deal Tools">
-            <p className="text-xs text-[#9b9b9b] mb-2">Input Financials, Bank Statements, Lender Match, and Offers are below — scroll down or jump directly.</p>
-            <button
-              onClick={scrollToUW}
-              className="w-full px-4 py-2.5 border border-[#e5e5e5] text-[#1a1a1a] text-sm font-medium rounded-md hover:bg-[#f5f5f5] transition-colors flex items-center justify-between"
-            >
-              <span>Jump to Underwriting</span>
-              <svg className="w-4 h-4 text-[#9b9b9b]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
-          </Section>
+          {/* PROJECTED OFFER BUTTON */}
+          {(() => {
+            const po = projectedOffer;
+            const rsColor = !po ? '#9b9b9b' : po.riskScore >= 70 ? '#15803d' : po.riskScore >= 50 ? '#a16207' : '#b91c1c';
+            return (
+              <div className="relative">
+                <button
+                  onClick={() => setShowProjectedOffer(v => !v)}
+                  className="px-3 py-1.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] transition-colors flex items-center gap-1.5"
+                >
+                  <span>Projected Offer</span>
+                  <svg className={`w-3 h-3 transition-transform ${showProjectedOffer ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+
+                {showProjectedOffer && (
+                  <div className="mt-2 bg-white border border-[#e5e5e5] rounded-xl overflow-hidden shadow-sm">
+                    {!po ? (
+                      <p className="text-xs text-[#9b9b9b] text-center py-3 px-4">Enter Avg Monthly Revenue to generate a projection.</p>
+                    ) : (
+                      <div className="divide-y divide-[#f0f0f0]">
+                        <div className="flex justify-between items-center px-4 py-2.5">
+                          <span className="text-xs text-[#9b9b9b]">Max Approved</span>
+                          <span className="text-sm font-bold text-[#1a1a1a]">${po.maxApproved.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between items-center px-4 py-2.5">
+                          <span className="text-xs text-[#9b9b9b]">Factor Rate</span>
+                          <span className="text-sm font-semibold text-[#1a1a1a]">{po.factorRate.toFixed(2)}x</span>
+                        </div>
+                        <div className="flex justify-between items-center px-4 py-2.5">
+                          <span className="text-xs text-[#9b9b9b]">Risk Score</span>
+                          <span className="text-sm font-semibold" style={{ color: rsColor }}>{po.riskScore} / 100</span>
+                        </div>
+                        <div className="flex justify-between items-center px-4 py-2.5">
+                          <span className="text-xs text-[#9b9b9b]">Est. Weekly Payback</span>
+                          <span className="text-sm font-semibold text-[#1a1a1a]">${po.weeklyPayback.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between items-center px-4 py-2.5">
+                          <span className="text-xs text-[#9b9b9b]">Holdback %</span>
+                          <span className="text-sm font-semibold text-[#1a1a1a]">{po.holdback}%</span>
+                        </div>
+                        <div className="px-4 py-2 bg-[#fafafa]">
+                          <p className="text-[10px] text-[#9b9b9b]">Projection only — based on lead financials.</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
       </div>
 
