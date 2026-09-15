@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import OpenAI from 'openai';
+import { getAIClient, GROK_MINI_MODEL } from '@/lib/ai';
 import twilio from 'twilio';
 
 const supabase = createClient(
@@ -14,12 +14,7 @@ const supabase = createClient(
   }
 );
 
-// Lazy initialization to avoid build-time errors
-function getOpenAI() {
-  return new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY!,
-  });
-}
+const getOpenAI = () => getAIClient();
 
 export async function POST(req: NextRequest) {
   try {
@@ -202,7 +197,7 @@ export async function POST(req: NextRequest) {
     // Generate AI response
     const openai = getOpenAI();
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: GROK_MINI_MODEL,
       messages: [
         {
           role: 'system',

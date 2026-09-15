@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
-import OpenAI from 'openai';
+import { getAIClient, GROK_MINI_MODEL } from '@/lib/ai';
 
 async function getSupabase() {
   const cookieStore = await cookies();
@@ -61,9 +61,9 @@ export async function POST(req: NextRequest) {
     // Generate draft with OpenAI
     let draft = '';
     try {
-      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      const openai = getAIClient();
       const completion = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: GROK_MINI_MODEL,
         temperature: 0.7,
         max_tokens: 150,
         messages: [

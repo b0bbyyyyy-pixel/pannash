@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef } from 'react';
 import type { BankStatementAnalysisSnapshot } from '@/lib/bankAnalyzer';
 import BankStatementAnalyzerPanel from '@/components/BankStatementAnalyzerPanel';
-import LenderMatchPanel from '@/components/LenderMatchPanel';
 import ClientPortalModal from '@/components/ClientPortalModal';
 
 interface UnderwritingData {
@@ -1463,19 +1462,6 @@ export default function UnderwritingSuite({
         <div className="flex-1 flex overflow-hidden">
           {/* Left Sidebar - Financial Data Inputs */}
           <div className="w-80 border-r border-gray-200 p-6 overflow-y-auto bg-gray-50">
-            {/* Lender Match Panel */}
-            <LenderMatchPanel
-              timeInBusiness={data.timeInBusiness || 0}
-              creditScore={data.creditScore || 0}
-              avgMonthlyRevenue={avgMonthlyRevenue}
-              currentPositions={data.hasOtherMCALoans ? (data.mcaPositionCount ?? 1) : 0}
-              businessState={data.businessState || ''}
-              industry={data.industry || ''}
-              nsfCount={data.nsfCount || 0}
-              depositsCount={data.depositsCount || 0}
-              isSoleProp={data.isSoleProp || false}
-            />
-
             {/* Expected Offer */}
             <div className="mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-lg p-4">
               <h3 className="text-sm font-semibold text-blue-900 mb-3">Expected Offer</h3>

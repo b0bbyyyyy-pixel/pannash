@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef, DragEvent } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, DragEvent } from 'react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Lender {
@@ -46,6 +46,19 @@ interface EmailTemplate {
   body?: string;
 }
 
+// ── Lead criteria for lender matching ────────────────────────────────────────
+interface LeadCriteria {
+  timeInBusiness:   number;   // months
+  creditScore:      number;
+  avgMonthlyRevenue: number;
+  currentPositions:  number;
+  businessState:    string;
+  industry:         string;
+  nsfCount:         number;
+  depositsCount:    number;
+  isSoleProp:       boolean;
+}
+
 interface SendToLenderModalProps {
   leadId: string;
   leadName: string;
@@ -53,7 +66,65 @@ interface SendToLenderModalProps {
   leadValue?: number | null;
   leadStatus?: string | null;
   userName?: string;
+  criteria?: LeadCriteria;
   onClose: () => void;
+}
+
+// ── Matching helpers (mirrors LenderMatchPanel logic) ──────────────────────────
+interface MatchReason { label: string; pass: boolean; }
+interface LenderMatch { status: 'qualified' | 'not_qualified'; reasons: MatchReason[]; }
+
+function fmtRev(n: number) {
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000)      return `$${(n / 1000).toFixed(0)}K`;
+  return `$${n}`;
+}
+function fmtTib(m: number) {
+  if (!m) return 'None';
+  if (m < 12) return `${m}mo`;
+  return `${(m / 12).toFixed(1)}yr`;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function computeMatch(lender: Record<string, any>, c: LeadCriteria): LenderMatch {
+  const reasons: MatchReason[] = [];
+  const pos = c.currentPositions + 1;
+
+  if (lender.min_monthly_revenue) {
+    reasons.push({ label: `Revenue: ${fmtRev(Math.round(c.avgMonthlyRevenue))}/mo (min ${fmtRev(lender.min_monthly_revenue)})`, pass: c.avgMonthlyRevenue >= lender.min_monthly_revenue });
+  }
+  if (lender.min_tib_months) {
+    reasons.push({ label: `TIB: ${fmtTib(c.timeInBusiness)} (min ${fmtTib(lender.min_tib_months)})`, pass: c.timeInBusiness >= lender.min_tib_months });
+  }
+  if (lender.min_fico) {
+    reasons.push({ label: `FICO: ${c.creditScore} (min ${lender.min_fico})`, pass: c.creditScore >= lender.min_fico });
+  }
+  const maxPos = lender.max_position ?? 6;
+  const minPos = lender.min_position ?? 1;
+  reasons.push({ label: `Position: ${pos} (range ${minPos}–${maxPos})`, pass: pos >= minPos && pos <= maxPos });
+
+  if (c.businessState && lender.state_restrictions) {
+    const state   = c.businessState.trim().toLowerCase();
+    const blocked = String(lender.state_restrictions).toLowerCase().split(/[,;]+/).map((s: string) => s.trim()).some((s: string) => s && (state.includes(s) || s.includes(state)));
+    if (blocked) reasons.push({ label: `State: ${c.businessState.toUpperCase()} restricted`, pass: false });
+  }
+  if (c.industry && lender.prohibited_industries) {
+    const lower = c.industry.toLowerCase();
+    const kws   = String(lender.prohibited_industries).toLowerCase().split(/[,;]+/).map((s: string) => s.trim()).filter(Boolean);
+    const hit   = kws.find((kw: string) => lower.includes(kw) || kw.includes(lower));
+    if (hit) reasons.push({ label: `Industry: "${c.industry}" restricted`, pass: false });
+  }
+  if (c.isSoleProp && lender.accepts_sole_prop === false) {
+    reasons.push({ label: 'Sole Proprietors not accepted', pass: false });
+  }
+  if (lender.neg_days_max !== undefined && lender.neg_days_max !== null) {
+    reasons.push({ label: `NSF/Neg: ${c.nsfCount} (max ${lender.neg_days_max})`, pass: c.nsfCount <= lender.neg_days_max });
+  }
+  if (lender.min_deposits !== undefined && lender.min_deposits !== null) {
+    reasons.push({ label: `Deposits: ${c.depositsCount}/mo (min ${lender.min_deposits})`, pass: c.depositsCount >= lender.min_deposits });
+  }
+
+  return { status: reasons.every(r => r.pass) ? 'qualified' : 'not_qualified', reasons };
 }
 
 // ── Status helpers ─────────────────────────────────────────────────────────────
@@ -91,7 +162,7 @@ function fmtDateShort(iso: string) {
 
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function SendToLenderModal({
-  leadId, leadName, leadCompany, leadValue, leadStatus, userName, onClose,
+  leadId, leadName, leadCompany, leadValue, leadStatus, userName, criteria, onClose,
 }: SendToLenderModalProps) {
   // ── State ──────────────────────────────────────────────────────────────────
   const [lenders, setLenders]               = useState<Lender[]>([]);
@@ -163,13 +234,37 @@ export default function SendToLenderModal({
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
+  // ── Lender matching ────────────────────────────────────────────────────────
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const matchMap = useMemo<Map<string, LenderMatch>>(() => {
+    const map = new Map<string, LenderMatch>();
+    if (!criteria) return map;
+    for (const l of lenders) {
+      map.set(l.id, computeMatch(l as unknown as Record<string, unknown>, criteria));
+    }
+    return map;
+  }, [lenders, criteria]);
+
+  const qualifiedCount     = criteria ? [...matchMap.values()].filter(m => m.status === 'qualified').length : null;
+  const notQualifiedCount  = criteria ? lenders.length - (qualifiedCount ?? 0) : null;
+
   // ── Lender filter + search ─────────────────────────────────────────────────
   const recentLenderNames = new Set(submissions.map(s => s.lender_name));
-  const filteredLenders = lenders.filter(l => {
-    if (search && !l.name.toLowerCase().includes(search.toLowerCase())) return false;
-    if (lenderFilter === 'Recent' && !recentLenderNames.has(l.name)) return false;
-    return true;
-  });
+  const filteredLenders = lenders
+    .filter(l => {
+      if (search && !l.name.toLowerCase().includes(search.toLowerCase())) return false;
+      if (lenderFilter === 'Recent' && !recentLenderNames.has(l.name)) return false;
+      return true;
+    })
+    // Sort: qualified first, then by name
+    .sort((a, b) => {
+      if (!criteria) return 0;
+      const aq = matchMap.get(a.id)?.status === 'qualified';
+      const bq = matchMap.get(b.id)?.status === 'qualified';
+      if (aq && !bq) return -1;
+      if (!aq && bq) return 1;
+      return a.name.localeCompare(b.name);
+    });
 
   // ── Selection helpers ──────────────────────────────────────────────────────
   const toggleLender = (id: string) =>
@@ -280,7 +375,7 @@ export default function SendToLenderModal({
   return (
     <>
       <div className="fixed inset-0 bg-black/40 z-50 flex items-stretch" onClick={onClose}>
-        <div className="ml-auto w-full max-w-[1100px] bg-white flex flex-col h-full shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="ml-auto w-full max-w-[1300px] bg-white flex flex-col h-full shadow-2xl" onClick={e => e.stopPropagation()}>
 
           {/* ── Top header bar ──────────────────────────────────────────── */}
           <div className="flex items-center gap-3 px-5 py-3 border-b border-[#ebebeb] flex-shrink-0 bg-white">
@@ -327,7 +422,7 @@ export default function SendToLenderModal({
           <div className="flex flex-1 overflow-hidden">
 
             {/* ── LEFT PANEL ─────────────────────────────────────────────── */}
-            <div className="w-[400px] flex-shrink-0 border-r border-[#ebebeb] flex flex-col overflow-hidden bg-white">
+            <div className="w-[580px] flex-shrink-0 border-r border-[#ebebeb] flex flex-col overflow-hidden bg-white">
               <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
 
                 {/* Submit header */}
@@ -377,23 +472,49 @@ export default function SendToLenderModal({
                     ))}
                   </div>
 
+                  {/* Match count header */}
+                  {criteria && qualifiedCount !== null && (
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <span className="text-[10px] text-[#9b9b9b]">Based on lead data:</span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-500 text-white">{qualifiedCount} Qualify</span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-500 text-white">{notQualifiedCount} No</span>
+                    </div>
+                  )}
+
                   {/* Lender list */}
-                  <div className="space-y-1 max-h-52 overflow-y-auto pr-0.5">
+                  <div className="space-y-0.5 max-h-[420px] overflow-y-auto pr-0.5">
                     {filteredLenders.length === 0 ? (
                       <p className="text-xs text-[#9b9b9b] py-3 text-center">No lenders found</p>
-                    ) : filteredLenders.map(l => (
-                      <label key={l.id} className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer transition-colors ${selectedLenderIds.has(l.id) ? 'bg-indigo-50 border border-indigo-100' : 'hover:bg-[#fafafa] border border-transparent'}`}>
-                        <input type="checkbox" checked={selectedLenderIds.has(l.id)} onChange={() => toggleLender(l.id)}
-                          className="w-4 h-4 rounded border-[#d4d4d4] accent-indigo-600 cursor-pointer flex-shrink-0" />
-                        <div className="w-6 h-6 rounded bg-[#f0f0f0] flex items-center justify-center flex-shrink-0">
-                          <svg className="w-3 h-3 text-[#6b6b6b]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                          </svg>
-                        </div>
-                        <span className="flex-1 text-xs font-medium text-[#1a1a1a] truncate">{l.name}</span>
-                        {l.latestStatus && <StatusPill status={l.latestStatus} />}
-                      </label>
-                    ))}
+                    ) : filteredLenders.map(l => {
+                      const match = matchMap.get(l.id);
+                      const isQualified = match?.status === 'qualified';
+                      const hasMatch = !!match;
+                      const failReasons = match?.reasons.filter(r => !r.pass) ?? [];
+                      return (
+                        <label key={l.id} className={`flex items-start gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-colors ${selectedLenderIds.has(l.id) ? 'bg-indigo-50 border border-indigo-100' : 'hover:bg-[#fafafa] border border-transparent'}`}>
+                          <input type="checkbox" checked={selectedLenderIds.has(l.id)} onChange={() => toggleLender(l.id)}
+                            className="w-4 h-4 rounded border-[#d4d4d4] accent-indigo-600 cursor-pointer flex-shrink-0 mt-0.5" />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className={`text-xs font-medium ${hasMatch && !isQualified ? 'text-[#9b9b9b]' : 'text-[#1a1a1a]'}`}>{l.name}</span>
+                              {hasMatch && (
+                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 leading-none ${isQualified ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
+                                  {isQualified ? '✓ Qualify' : '✗ No'}
+                                </span>
+                              )}
+                              {l.latestStatus && <StatusPill status={l.latestStatus} />}
+                            </div>
+                            {failReasons.length > 0 && (
+                              <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0">
+                                {failReasons.map((r, i) => (
+                                  <span key={i} className="text-[10px] text-red-400 leading-tight">· {r.label}</span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </label>
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -452,7 +573,7 @@ export default function SendToLenderModal({
                         <label key={doc.id}
                           className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl cursor-pointer transition-colors border ${selectedDocIds.has(doc.id) ? 'bg-indigo-50 border-indigo-200' : 'bg-[#fafafa] border-transparent hover:bg-white hover:border-[#e5e5e5]'}`}>
                           <input type="checkbox" checked={selectedDocIds.has(doc.id)} onChange={() => toggleDoc(doc.id)}
-                            className="w-4 h-4 rounded border-[#d4d4d4] accent-indigo-600 cursor-pointer flex-shrink-0" />
+                            className="w-4 h-4 rounded border-[#d4d4d4] accent-indigo-600 cursor-pointer flex-shrink-0 mt-0.5" />
                           <div className="w-7 h-7 rounded-lg bg-white border border-[#e5e5e5] flex items-center justify-center flex-shrink-0">
                             <svg className="w-3.5 h-3.5 text-[#9b9b9b]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />

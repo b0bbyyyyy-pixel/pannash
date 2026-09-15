@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
-import OpenAI from 'openai';
-// Lazy-loaded inside the handler to avoid pdf-parse self-test at module init
+import { getAIClient, GROK_MODEL, GROK_MINI_MODEL, GROK_VISION_MODEL } from '@/lib/ai';
+
+// Lazy-load pdf-parse to avoid self-test at module init (crashes Next.js)
 type PdfParseResult = { text: string };
 let _pdfParse: ((buf: Buffer) => Promise<PdfParseResult>) | null = null;
-function getPdfParse(): (buf: Buffer) => Promise<PdfParseResult> {
+function getPdfParse() {
   if (!_pdfParse) {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     _pdfParse = require('pdf-parse');
@@ -13,13 +14,14 @@ function getPdfParse(): (buf: Buffer) => Promise<PdfParseResult> {
   return _pdfParse!;
 }
 
-// Fields the model should try to extract
-const SYSTEM_PROMPT = `You are a data extraction specialist for business funding applications.
-Extract ALL available fields from the provided application text and return a JSON object.
-Only include fields that are clearly present in the text — do NOT invent values.
-Return ONLY raw JSON, no markdown fences.
+export const runtime     = 'nodejs';
+export const maxDuration = 120;
 
-JSON schema (all fields optional):
+// ── Prompts ────────────────────────────────────────────────────────────────────
+const APP_PROMPT = `You are a data extraction specialist for business funding applications.
+Extract ALL available fields from the provided document and return ONLY a raw JSON object — no markdown fences.
+
+JSON schema (all fields optional, only include fields clearly present):
 {
   "name": "Owner full name",
   "email": "Owner email",
@@ -44,9 +46,9 @@ JSON schema (all fields optional):
   "ownershipPercent": "Ownership percentage",
   "businessPhone": "Business phone number",
   "fax": "Fax number",
-  "requestedAmount": "Requested funding amount (number string)",
-  "monthlyRevenue": "Average monthly gross revenue (number string)",
-  "avgDailyBalance": "Average daily bank balance (number string)",
+  "requestedAmount": "Requested funding amount (number string, digits only)",
+  "monthlyRevenue": "Average monthly gross revenue (number string, digits only)",
+  "avgDailyBalance": "Average daily bank balance (number string, digits only)",
   "purposeOfFunds": "Use of funds",
   "owner2FirstName": "Second owner first name",
   "owner2LastName": "Second owner last name",
@@ -55,96 +57,184 @@ JSON schema (all fields optional):
   "owner2SSN": "Second owner SSN"
 }`;
 
-export const runtime = 'nodejs';
-export const maxDuration = 60;
+const BANK_PROMPT = `You are a financial analyst extracting data from a bank statement.
+Extract ALL financial metrics and return ONLY a raw JSON object — no markdown fences.
 
+JSON schema (all optional, only include what is clearly present):
+{
+  "company": "Business / account holder name",
+  "bankName": "Name of bank (e.g. Chase, Bank of America, Wells Fargo)",
+  "accountNumber": "Account number (last 4 digits only if masked)",
+  "statementMonth": "Statement month/year (e.g. June 2026)",
+  "openingBalance": "Opening balance (number string, digits only)",
+  "endingBalance": "Ending balance (number string, digits only)",
+  "totalDeposits": "Total deposits amount (number string, digits only)",
+  "totalWithdrawals": "Total withdrawals (number string, digits only)",
+  "monthlyRevenue": "Total deposits / monthly revenue (number string, digits only)",
+  "avgDailyBalance": "Average daily balance (number string, digits only)",
+  "nsfCount": "Number of NSF / overdraft charges (integer string)",
+  "depositCount": "Number of deposits (integer string)",
+  "largestDeposit": "Largest single deposit (number string, digits only)",
+  "month1Revenue": "First month revenue if multi-month (number string)",
+  "month2Revenue": "Second month revenue (number string)",
+  "month3Revenue": "Third month revenue (number string)",
+  "month4Revenue": "Fourth month revenue (number string)"
+}`;
+
+// ── Helper: detect bank statement ─────────────────────────────────────────────
+function isBankStatement(filename: string, text: string): boolean {
+  const lower = filename.toLowerCase() + ' ' + text.slice(0, 500).toLowerCase();
+  return [
+    'bank statement','statement of account','account statement',
+    'chase','bank of america','wells fargo','citibank','td bank',
+    'us bank','pnc bank','capital one','regions','suntrust','truist',
+    'fifth third','huntington','citizens bank',
+    'ending balance','beginning balance','opening balance',
+    'total deposits','total withdrawals','nsf','overdraft',
+  ].some(k => lower.includes(k));
+}
+
+// ── Helper: parse JSON safely ──────────────────────────────────────────────────
+function safeJson(raw: string): Record<string, string> {
+  try {
+    const clean = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '');
+    const obj = JSON.parse(clean);
+    const result: Record<string, string> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      const s = String(v ?? '').trim();
+      if (s && s !== 'null' && s !== 'undefined') result[k] = s;
+    }
+    return result;
+  } catch { return {}; }
+}
+
+// ── Helper: OCR via Grok Vision (for scanned / image-based PDFs & images) ─────
+async function ocrWithGrokVision(buffer: Buffer, filename: string, mimeType: string, prompt: string): Promise<string> {
+  const ai = getAIClient();
+  const base64 = buffer.toString('base64');
+
+  // Grok vision accepts image_url with base64 data URLs (PNG, JPG, WebP).
+  // For PDFs that are image-based, we send as JPEG and let the vision model handle it.
+  // This covers most scanned PDFs from major banks.
+  const ext      = filename.split('.').pop()?.toLowerCase() ?? '';
+  const imgMime  = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+  const dataUrl  = `data:${imgMime};base64,${base64}`;
+
+  try {
+    const completion = await ai.chat.completions.create({
+      model: GROK_VISION_MODEL,
+      messages: [
+        { role: 'system', content: prompt + '\n\nReturn ONLY raw JSON, no markdown.' },
+        {
+          role: 'user',
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          content: [{ type: 'image_url', image_url: { url: dataUrl, detail: 'high' } }] as any,
+        },
+      ],
+    });
+    return completion.choices[0]?.message?.content?.trim() ?? '{}';
+  } catch (err) {
+    console.error('[parse-application] Grok vision OCR failed:', err);
+    // Final fallback: send as plain text prompt asking AI to describe what it can infer
+    try {
+      const fallback = await ai.chat.completions.create({
+        model: GROK_MODEL,
+        temperature: 0,
+        messages: [
+          { role: 'system', content: prompt },
+          { role: 'user', content: `The document could not be rendered as text. Filename: "${filename}". Please return an empty JSON object: {}` },
+        ],
+      });
+      return fallback.choices[0]?.message?.content?.trim() ?? '{}';
+    } catch { return '{}'; }
+  }
+}
+
+// ── POST handler ───────────────────────────────────────────────────────────────
 export async function POST(request: Request) {
   const cookieStore = await cookies();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get(name: string) { return cookieStore.get(name)?.value; },
-        set() {},
-        remove() {},
-      },
-    }
+    { cookies: { get: (n) => cookieStore.get(n)?.value, set: () => {}, remove: () => {} } }
   );
 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  // ── Parse multipart ───────────────────────────────────────────────────────
   const formData = await request.formData();
-  const file = formData.get('file') as File | null;
+  const file     = formData.get('file') as File | null;
+  if (!file) return NextResponse.json({ error: 'No file provided' }, { status: 400 });
 
-  if (!file) {
-    return NextResponse.json({ error: 'No file provided' }, { status: 400 });
-  }
+  const buffer   = Buffer.from(await file.arrayBuffer());
+  const filename = file.name;
+  const mime     = file.type || 'application/octet-stream';
+  const ext      = filename.split('.').pop()?.toLowerCase() ?? '';
 
-  const allowed = [
-    'application/pdf',
-    'application/msword',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'text/plain',
-  ];
-  if (!allowed.includes(file.type) && !file.name.match(/\.(pdf|doc|docx|txt)$/i)) {
-    return NextResponse.json({ error: 'Unsupported file type. Upload PDF, DOC, DOCX, or TXT.' }, { status: 400 });
-  }
-
-  // ── Extract raw text ──────────────────────────────────────────────────────
+  // ── Step 1: Extract raw text ───────────────────────────────────────────────
   let rawText = '';
-  try {
-      const buffer = Buffer.from(await file.arrayBuffer());
+  let isImage = false;
 
-    if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+  if (ext === 'txt') {
+    rawText = buffer.toString('utf-8');
+  } else if (ext === 'pdf' || mime.includes('pdf')) {
+    try {
       const parsed = await getPdfParse()(buffer);
-      rawText = parsed.text;
-    } else {
-      // DOC/DOCX/TXT — decode as UTF-8 (works for TXT; DOC may be partial)
-      rawText = buffer.toString('utf-8');
+      rawText = parsed.text ?? '';
+    } catch (err) {
+      console.warn('[parse-application] pdf-parse failed, will use vision OCR:', err);
     }
-  } catch (err) {
-    console.error('Text extraction error:', err);
-    return NextResponse.json({ error: 'Failed to extract text from file.' }, { status: 422 });
+    // < 150 meaningful chars → treat as scanned/image-based PDF
+    if (rawText.replace(/\s+/g, ' ').trim().length < 150) {
+      console.log('[parse-application] Sparse text — switching to Grok vision OCR');
+      isImage = true;
+    }
+  } else if (['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext)) {
+    isImage = true;
+  } else {
+    rawText = buffer.toString('utf-8').replace(/[^\x20-\x7E\n\r\t]/g, ' ');
   }
 
-  if (!rawText.trim()) {
-    return NextResponse.json({ error: 'No readable text found in the file.' }, { status: 422 });
+  // ── Step 2: Detect document type ──────────────────────────────────────────
+  const isBank  = isBankStatement(filename, rawText);
+  const prompt  = isBank ? BANK_PROMPT : APP_PROMPT;
+
+  // ── Step 3: Extract fields ────────────────────────────────────────────────
+  let rawResult = '{}';
+
+  if (isImage) {
+    // Scanned PDF or image → Grok vision
+    rawResult = await ocrWithGrokVision(buffer, filename, mime, prompt);
+  } else {
+    const ai = getAIClient();
+    const truncated = rawText.slice(0, 14000); // Grok has larger context
+    try {
+      const completion = await ai.chat.completions.create({
+        model:       GROK_MINI_MODEL,
+        temperature: 0,
+        messages: [
+          { role: 'system', content: prompt },
+          { role: 'user',   content: `DOCUMENT TEXT:\n\n${truncated}` },
+        ],
+      });
+      rawResult = completion.choices[0]?.message?.content?.trim() ?? '{}';
+    } catch (err) {
+      console.error('[parse-application] Grok text extraction failed, trying vision:', err);
+      rawResult = await ocrWithGrokVision(buffer, filename, mime, prompt);
+    }
   }
 
-  // Limit to first 12 000 chars to stay within token limits
-  const truncated = rawText.slice(0, 12000);
+  const fields = safeJson(rawResult);
 
-  // ── OpenAI extraction ─────────────────────────────────────────────────────
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-  let parsed: Record<string, string> = {};
-  try {
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      temperature: 0,
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: `APPLICATION TEXT:\n\n${truncated}` },
-      ],
-    });
-
-    const raw = completion.choices[0]?.message?.content?.trim() ?? '{}';
-    // Strip any accidental markdown fences
-    const clean = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '');
-    parsed = JSON.parse(clean);
-  } catch (err) {
-    console.error('OpenAI parse error:', err);
-    return NextResponse.json({ error: 'AI parsing failed — try again.' }, { status: 500 });
+  if (Object.keys(fields).length === 0) {
+    return NextResponse.json({
+      error: 'Could not extract any data from this file. Try a clearer scan or a text-based PDF.',
+      fields: {},
+    }, { status: 422 });
   }
 
-  // Remove empty/null values
-  const result: Record<string, string> = {};
-  for (const [k, v] of Object.entries(parsed)) {
-    if (v && String(v).trim()) result[k] = String(v).trim();
-  }
-
-  return NextResponse.json({ fields: result });
+  return NextResponse.json({
+    fields,
+    documentType: isBank ? 'bank_statement' : 'application',
+  });
 }

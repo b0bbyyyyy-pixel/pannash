@@ -68,6 +68,7 @@ function fileIcon(type: string) {
 
 // ── Parse review helpers ───────────────────────────────────────────────────────
 const FIELD_LABELS: Record<string, string> = {
+  // Application fields
   name: 'Full Name', email: 'Email', phone: 'Mobile Phone', dob: 'Date of Birth',
   ssn: 'SSN', homeAddress: 'Home Address', city: 'City', state: 'State', zip: 'ZIP',
   creditScore: 'Credit Score', company: 'Legal Business Name', dba: 'DBA',
@@ -75,17 +76,25 @@ const FIELD_LABELS: Record<string, string> = {
   businessState: 'Business State', businessZip: 'Business ZIP',
   industry: 'Industry', businessStartDate: 'Business Start Date', ein: 'EIN',
   entityType: 'Entity Type', ownershipPercent: 'Ownership %', businessPhone: 'Business Phone',
-  fax: 'Fax', requestedAmount: 'Amount Requested', monthlyRevenue: 'Monthly Revenue',
+  fax: 'Fax', requestedAmount: 'Amount Requested', monthlyRevenue: 'Avg Monthly Revenue',
   avgDailyBalance: 'Avg Daily Balance', purposeOfFunds: 'Use of Funds',
   owner2FirstName: 'Owner 2 First Name', owner2LastName: 'Owner 2 Last Name',
   owner2Ownership: 'Owner 2 Ownership %', owner2DOB: 'Owner 2 DOB', owner2SSN: 'Owner 2 SSN',
+  // Bank statement fields
+  bankName: 'Bank Name', accountNumber: 'Account # (last 4)', statementMonth: 'Statement Month',
+  openingBalance: 'Opening Balance', endingBalance: 'Ending Balance',
+  totalDeposits: 'Total Deposits', totalWithdrawals: 'Total Withdrawals',
+  nsfCount: 'NSF / OD Count', depositCount: 'Deposit Count', largestDeposit: 'Largest Deposit',
+  month1Revenue: 'Month 1 Deposits', month2Revenue: 'Month 2 Deposits',
+  month3Revenue: 'Month 3 Deposits', month4Revenue: 'Month 4 Deposits',
 };
 
 const PARSE_SECTIONS = [
-  { label: 'Person',    keys: ['name','email','phone','dob','ssn','homeAddress','city','state','zip','creditScore'] },
-  { label: 'Company',   keys: ['company','dba','businessAddress','businessCity','businessState','businessZip','industry','businessStartDate','ein','entityType','ownershipPercent','businessPhone','fax'] },
-  { label: 'Deal',      keys: ['requestedAmount','monthlyRevenue','avgDailyBalance','purposeOfFunds'] },
-  { label: 'Owner 2',   keys: ['owner2FirstName','owner2LastName','owner2Ownership','owner2DOB','owner2SSN'] },
+  { label: 'Person',          keys: ['name','email','phone','dob','ssn','homeAddress','city','state','zip','creditScore'] },
+  { label: 'Company',         keys: ['company','dba','businessAddress','businessCity','businessState','businessZip','industry','businessStartDate','ein','entityType','ownershipPercent','businessPhone','fax'] },
+  { label: 'Deal / Financials', keys: ['requestedAmount','monthlyRevenue','avgDailyBalance','purposeOfFunds'] },
+  { label: 'Owner 2',         keys: ['owner2FirstName','owner2LastName','owner2Ownership','owner2DOB','owner2SSN'] },
+  { label: 'Bank Statement',  keys: ['bankName','accountNumber','statementMonth','openingBalance','endingBalance','totalDeposits','totalWithdrawals','nsfCount','depositCount','largestDeposit','month1Revenue','month2Revenue','month3Revenue','month4Revenue'] },
 ];
 
 const ALLOWED_TYPES = '.pdf,.doc,.docx,.jpg,.jpeg,.png,.xls,.xlsx';
@@ -110,17 +119,18 @@ export default function DocumentsModal({
   const [uploadProgress, setUploadProgress] = useState<Record<string, 'pending' | 'done' | 'error'>>({});
 
   // "Parse as Application" flow
-  const [parseAsApp, setParseAsApp]       = useState(false);
+  const [parseAsApp, setParseAsApp]       = useState(true); // ON by default
   const [parseStep, setParseStep]         = useState<'upload' | 'parsing' | 'review'>('upload');
   const [parsedFields, setParsedFields]   = useState<Record<string, string>>({});
   const [parsedSelected, setParsedSelected] = useState<Set<string>>(new Set());
   const [applying, setApplying]           = useState(false);
 
-  // Rename / download / delete
+  // Rename / download / delete / re-extract
   const [renamingId, setRenamingId]   = useState<string | null>(null);
   const [renameVal, setRenameVal]     = useState('');
   const [downloading, setDownloading] = useState<string | null>(null);
   const [deleting, setDeleting]       = useState<string | null>(null);
+  const [reExtracting, setReExtracting] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -219,28 +229,39 @@ export default function DocumentsModal({
     setAttachments(prev => [...newAttachments, ...prev]);
     setUploading(false);
 
-    // If user wants to parse as application, kick off AI extraction on the first file
-    if (parseAsApp && onApplyParsed && pendingFiles.length > 0) {
-      const appFile = pendingFiles[0];
+    // If auto-extract is ON, process ALL uploaded files and merge results
+    if (parseAsApp && onApplyParsed && newAttachments.length > 0) {
       setPendingFiles([]);
       setUploadProgress({});
       setParseStep('parsing');
 
-      const fd = new FormData();
-      fd.append('file', appFile);
-      try {
-        const res = await fetch('/api/leads/parse-application', { method: 'POST', body: fd, credentials: 'include' });
-        const json = await res.json();
-        if (res.ok && json.fields) {
-          setParsedFields(json.fields);
-          setParsedSelected(new Set(Object.keys(json.fields)));
-          setParseStep('review');
-        } else {
-          alert(json.error || 'Parse failed — document was uploaded but fields could not be extracted.');
-          closeUpload();
+      const mergedFields: Record<string, string> = {};
+      let anySuccess = false;
+
+      for (const file of pendingFiles) {
+        const fd = new FormData();
+        fd.append('file', file);
+        try {
+          const res  = await fetch('/api/leads/parse-application', { method: 'POST', body: fd, credentials: 'include' });
+          const json = await res.json();
+          if (res.ok && json.fields && Object.keys(json.fields).length > 0) {
+            // Merge — later files don't overwrite already-filled fields
+            for (const [k, v] of Object.entries(json.fields as Record<string, string>)) {
+              if (!mergedFields[k]) mergedFields[k] = v;
+            }
+            anySuccess = true;
+          }
+        } catch {
+          console.warn('Parse failed for', file.name);
         }
-      } catch {
-        alert('Network error during parsing — document was uploaded successfully.');
+      }
+
+      if (anySuccess && Object.keys(mergedFields).length > 0) {
+        setParsedFields(mergedFields);
+        setParsedSelected(new Set(Object.keys(mergedFields)));
+        setParseStep('review');
+      } else {
+        alert('Could not extract data from any of the uploaded files. They were uploaded successfully — you can re-extract individually later.');
         closeUpload();
       }
     } else {
@@ -285,6 +306,36 @@ export default function DocumentsModal({
       const res = await fetch(`/api/attachments?id=${id}`, { method: 'DELETE', credentials: 'include' });
       if (res.ok) setAttachments(prev => prev.filter(a => a.id !== id));
     } finally { setDeleting(null); }
+  };
+
+  // Re-extract: download the file from storage then send to parse-application
+  const handleReExtract = async (a: Attachment) => {
+    if (!onApplyParsed) return;
+    setReExtracting(a.id);
+    try {
+      // Get signed URL for the file
+      const dlRes = await fetch(`/api/attachments/download?id=${a.id}`, { credentials: 'include' });
+      if (!dlRes.ok) throw new Error('Could not fetch file');
+      const { url } = await dlRes.json();
+      const fileBlob = await fetch(url).then(r => r.blob());
+      const file = new File([fileBlob], a.file_name, { type: a.file_type || 'application/pdf' });
+      const fd = new FormData();
+      fd.append('file', file);
+      const res  = await fetch('/api/leads/parse-application', { method: 'POST', body: fd, credentials: 'include' });
+      const json = await res.json();
+      if (res.ok && json.fields && Object.keys(json.fields).length > 0) {
+        setParsedFields(json.fields);
+        setParsedSelected(new Set(Object.keys(json.fields)));
+        setParseStep('review');
+        setShowUpload(true); // Show upload panel so review is visible
+      } else {
+        alert(json.error || 'Could not extract data from this file.');
+      }
+    } catch (e) {
+      alert('Re-extraction failed: ' + (e instanceof Error ? e.message : 'unknown error'));
+    } finally {
+      setReExtracting(null);
+    }
   };
 
   const startRename = (a: Attachment) => { setRenamingId(a.id); setRenameVal(a.file_name); };
@@ -447,6 +498,21 @@ export default function DocumentsModal({
                             Analyze
                           </button>
                         )}
+                        {/* Re-extract — only show when onApplyParsed is wired */}
+                        {onApplyParsed && (
+                          <button
+                            onClick={() => handleReExtract(a)}
+                            disabled={reExtracting === a.id}
+                            title="Re-extract & fill lead data"
+                            className="p-1.5 rounded-lg text-indigo-500 hover:bg-indigo-50 transition-colors disabled:opacity-40"
+                          >
+                            {reExtracting === a.id ? (
+                              <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                            ) : (
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                            )}
+                          </button>
+                        )}
                         <button onClick={() => handleView(a.id)} title="View" className="p-1.5 rounded-lg text-emerald-500 hover:bg-emerald-50 transition-colors">
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -566,20 +632,23 @@ export default function DocumentsModal({
                   </div>
                 )}
 
-                {/* "Parse as Application" toggle — only shown if onApplyParsed is wired */}
+                {/* Auto-extract toggle — shown whenever onApplyParsed is wired */}
                 {onApplyParsed && pendingFiles.length > 0 && (
                   <div className="px-6 pb-2 pt-1">
-                    <label className="flex items-start gap-3 p-3 bg-blue-50 border border-blue-100 rounded-xl cursor-pointer hover:bg-blue-100/60 transition-colors">
+                    <label className="flex items-start gap-3 p-3 bg-indigo-50 border border-indigo-100 rounded-xl cursor-pointer hover:bg-indigo-100/60 transition-colors">
                       <input
                         type="checkbox"
                         checked={parseAsApp}
                         onChange={e => setParseAsApp(e.target.checked)}
-                        className="mt-0.5 w-4 h-4 rounded border-blue-300 accent-blue-600 cursor-pointer flex-shrink-0"
+                        className="mt-0.5 w-4 h-4 rounded border-indigo-300 accent-indigo-600 cursor-pointer flex-shrink-0"
                       />
                       <div>
-                        <p className="text-xs font-semibold text-blue-800">This is a funding application — auto-fill lead data</p>
-                        <p className="text-[11px] text-blue-600 mt-0.5">
-                          After uploading, AI will extract the applicant&apos;s info and let you apply it to this lead&apos;s fields. Only works on the first file.
+                        <p className="text-xs font-semibold text-indigo-800">
+                          ✦ Auto-extract &amp; fill lead data
+                          <span className="ml-1.5 text-[10px] font-medium bg-indigo-600 text-white px-1.5 py-0.5 rounded-full">ON</span>
+                        </p>
+                        <p className="text-[11px] text-indigo-600 mt-0.5">
+                          AI scans all uploaded files — applications fill contact/business fields, bank statements fill financial fields. Works on scanned PDFs too.
                         </p>
                       </div>
                     </label>
@@ -605,7 +674,7 @@ export default function DocumentsModal({
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
                         </svg>
-                        {parseAsApp ? 'Upload & Parse Application' : 'Save & Upload Files'}
+                        {parseAsApp ? 'Upload & Extract Data' : 'Save & Upload Files'}
                       </>
                     )}
                   </button>
@@ -623,8 +692,8 @@ export default function DocumentsModal({
                   </svg>
                 </div>
                 <div className="text-center">
-                  <p className="text-sm font-semibold text-[#1a1a1a]">Document uploaded ✓ — now parsing…</p>
-                  <p className="text-xs text-[#9b9b9b] mt-1">AI is extracting applicant fields. Takes ~5–10 seconds.</p>
+                  <p className="text-sm font-semibold text-[#1a1a1a]">Documents uploaded ✓ — now extracting data…</p>
+                  <p className="text-xs text-[#9b9b9b] mt-1">AI is scanning for application fields &amp; financial data. Takes ~10–20 seconds.</p>
                 </div>
               </div>
             )}

@@ -58,6 +58,7 @@ function Field({
   masked = false,
   readOnly = false,
   type = 'text',
+  valueStyle,
 }: {
   label: string;
   value: string | null | undefined;
@@ -65,6 +66,7 @@ function Field({
   masked?: boolean;
   readOnly?: boolean;
   type?: string;
+  valueStyle?: React.CSSProperties;
 }) {
   const [editing, setEditing]   = useState(false);
   const [editVal, setEditVal]   = useState(value || '');
@@ -101,6 +103,7 @@ function Field({
         <div className="flex-1 flex items-center gap-1 group">
           <span
             className={`text-sm text-[#1a1a1a] flex-1 ${!readOnly ? 'cursor-pointer hover:underline underline-offset-2 decoration-dotted' : ''}`}
+            style={valueStyle}
             onClick={() => { if (!readOnly && !masked) { setEditVal(value || ''); setEditing(true); } }}
           >
             {masked && !revealed ? <span className="text-[#9b9b9b]">{display}</span> : display}
@@ -486,12 +489,13 @@ export default function LeadWorkspaceClient({
 
           {/* CREDIT */}
           <Section title="Credit">
-            <div className="flex items-start gap-2 py-2 border-b border-[#f5f5f5]">
-              <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0 pt-0.5">Credit Score</span>
-              <span className="text-sm font-bold" style={{ color: creditScoreColor }}>
-                {creditScore != null ? String(creditScore) : '—'}
-              </span>
-            </div>
+            <Field
+              label="Credit Score"
+              value={creditScore != null ? String(creditScore) : null}
+              onSave={v => saveField('creditScore', v)}
+              type="number"
+              valueStyle={{ color: creditScoreColor, fontWeight: 700 }}
+            />
             <Field label="Credit Util %" value={str(ud.creditUtilization)} onSave={v => saveField('creditUtilization', v)} type="number" />
             <Field label="Inquiries"     value={str(ud.creditInquiries)}   onSave={v => saveField('creditInquiries', v)} type="number" />
             <Field label="Lates"         value={str(ud.creditLates)}       onSave={v => saveField('creditLates', v)} type="number" />
@@ -693,14 +697,16 @@ export default function LeadWorkspaceClient({
             {/* Lead Status dropdown */}
             <div className="flex items-start gap-2 py-2 border-b border-[#f5f5f5]">
               <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0 pt-0.5">Lead Status</span>
-              <select
-                value={lead.lead_status || lead.stage || ''}
-                onChange={e => saveLeadStatus(e.target.value)}
-                className="flex-1 text-sm border border-[#e5e5e5] rounded px-2 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-[#1a1a1a]"
-              >
-                <option value="">— Select —</option>
-                {dbStatuses.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
-              </select>
+              <div className="flex-1 min-w-0">
+                <select
+                  value={lead.lead_status || lead.stage || ''}
+                  onChange={e => saveLeadStatus(e.target.value)}
+                  className="w-full text-sm border border-[#e5e5e5] rounded px-2 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-[#1a1a1a]"
+                >
+                  <option value="">— Select —</option>
+                  {dbStatuses.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                </select>
+              </div>
             </div>
 
             {/* Temperature pills */}
@@ -811,6 +817,17 @@ export default function LeadWorkspaceClient({
           leadValue={lead.value ?? null}
           leadStatus={lead.lead_status || lead.stage || undefined}
           userName={userName}
+          criteria={{
+            timeInBusiness:    Number(ud.timeInBusiness  ?? 0),
+            creditScore:       Number(ud.creditScore     ?? 0),
+            avgMonthlyRevenue: Number(ud.monthlyRevenue  ?? 0),
+            currentPositions:  ud.hasOtherMCALoans ? Number(ud.mcaPositionCount ?? 1) : 0,
+            businessState:     String(ud.businessState   ?? ''),
+            industry:          String(ud.industry        ?? ''),
+            nsfCount:          Number(ud.nsfCount        ?? 0),
+            depositsCount:     Number(ud.depositsCount   ?? 0),
+            isSoleProp:        Boolean(ud.isSoleProp     ?? false),
+          }}
           onClose={() => setShowSendModal(false)}
         />
       )}

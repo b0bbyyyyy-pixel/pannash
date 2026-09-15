@@ -1,14 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
-import OpenAI from 'openai';
-
-// Lazy initialization to avoid build-time errors
-function getOpenAI() {
-  return new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-  });
-}
+import { getAIClient as getOpenAI, GROK_MINI_MODEL } from '@/lib/ai';
 
 // Email validation regex
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -135,7 +128,7 @@ Respond in JSON format with SHORT reasoning (max 15 words):
 
         const openai = getOpenAI();
         const completion = await openai.chat.completions.create({
-          model: 'gpt-4o-mini',
+          model: GROK_MINI_MODEL,
           messages: [{ role: 'user', content: prompt }],
           temperature: 0.3,
           response_format: { type: 'json_object' },

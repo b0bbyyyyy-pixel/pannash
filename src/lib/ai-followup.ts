@@ -2,14 +2,7 @@
  * AI utilities for follow-up generation and sentiment analysis
  */
 
-import OpenAI from 'openai';
-
-// Lazy initialization to avoid build-time errors
-function getOpenAI() {
-  return new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-  });
-}
+import { getAIClient as getOpenAI, GROK_MINI_MODEL } from '@/lib/ai';
 
 export interface EngagementData {
   opens: number;
@@ -106,7 +99,7 @@ Return JSON with "subject" and "body" fields.`;
 
     const openai = getOpenAI();
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini', // Cost-effective for this task
+      model: GROK_MINI_MODEL,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
@@ -143,7 +136,7 @@ export async function analyzeReplySentiment(replyText: string): Promise<{
   try {
     const openai = getOpenAI();
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: GROK_MINI_MODEL,
       messages: [
         {
           role: 'system',
