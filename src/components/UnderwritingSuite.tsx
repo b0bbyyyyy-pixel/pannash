@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef } from 'react';
 import type { BankStatementAnalysisSnapshot } from '@/lib/bankAnalyzer';
-import BankStatementAnalyzerPanel from '@/components/BankStatementAnalyzerPanel';
 import ClientPortalModal from '@/components/ClientPortalModal';
 
 interface UnderwritingData {
@@ -1462,55 +1461,11 @@ export default function UnderwritingSuite({
         <div className="flex-1 flex overflow-hidden">
           {/* Left Sidebar - Financial Data Inputs */}
           <div className="w-80 border-r border-gray-200 p-6 overflow-y-auto bg-gray-50">
-            {/* Expected Offer */}
-            <div className="mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-lg p-4">
-              <h3 className="text-sm font-semibold text-blue-900 mb-3">Expected Offer</h3>
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-blue-800">Max Approved Amount:</span>
-                  <span className="text-lg font-bold text-blue-900">
-                    ${Math.round(approvedAmount).toLocaleString()}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-blue-800">Factor Rate:</span>
-                  <span className="text-base font-semibold text-blue-900">
-                    {Number(factorRate).toFixed(2)}x
-                  </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-blue-800">Risk score:</span>
-                  <span className={`text-base font-bold tabular-nums ${riskScoreTextClass}`}>
-                    {riskScore}
-                    <span className="text-xs font-semibold text-blue-800/80 ml-1">/ 100</span>
-                  </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-blue-800">Est. weekly payback (avg. over {termMonths} mo):</span>
-                  <span className="text-base font-semibold text-blue-900">
-                    ${Math.round(weeklyPaymentEstimate).toLocaleString()}
-                  </span>
-                </div>
-                <p className="text-[10px] text-blue-700/80 leading-tight">
-                  Modeled {paymentFrequency.toLowerCase()} remittance; week = monthly payback ÷ 4.33
-                </p>
-                <div className="flex justify-between items-center pt-2 border-t border-blue-300">
-                  <span className="text-xs text-blue-800">Holdback %:</span>
-                  <span className="text-sm font-medium text-blue-900">
-                    {holdbackPercent}%
-                  </span>
-                </div>
-              </div>
-              <p className="text-xs text-blue-700 mt-3">
-                Click "Calculate Offer" to see full analysis
-              </p>
-            </div>
-            
             {/* Calculate Button */}
-            <div className="mt-6">
+            <div className="mb-6">
               <button
                 onClick={handleCalculate}
-                className="w-full px-4 py-3 bg-[#5a7fc7] text-white rounded-md text-sm font-semibold hover:bg-[#4a6fb7] transition-colors"
+                className="w-full px-4 py-3 bg-[#1a1a1a] text-white rounded-lg text-sm font-semibold hover:bg-[#333] transition-colors"
               >
                 Calculate Offer
               </button>
@@ -1686,16 +1641,6 @@ export default function UnderwritingSuite({
                   );
                 })()}
 
-            <BankStatementAnalyzerPanel
-              leadId={leadId}
-              bankStatementAnalysis={data.bankStatementAnalysis}
-              onApplyBankFields={(patch) =>
-                setData((d) => ({
-                  ...d,
-                  ...patch,
-                }))
-              }
-            />
           </div>
 
           {/* Right Panel - Actual Offers Received */}

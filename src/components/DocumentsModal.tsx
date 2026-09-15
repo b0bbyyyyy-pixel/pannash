@@ -123,6 +123,9 @@ export default function DocumentsModal({
   const [parseStep, setParseStep]         = useState<'upload' | 'parsing' | 'review'>('upload');
   const [parsedFields, setParsedFields]   = useState<Record<string, string>>({});
   const [parsedSelected, setParsedSelected] = useState<Set<string>>(new Set());
+
+  // Analyze selected docs (bank statement analysis)
+  const [analyzing, setAnalyzing]         = useState(false);
   const [applying, setApplying]           = useState(false);
 
   // Rename / download / delete / re-extract
@@ -338,6 +341,50 @@ export default function DocumentsModal({
     }
   };
 
+  // Analyze selected (or all) docs via parse-application (bank statement or app extraction)
+  const handleAnalyzeSelected = async () => {
+    if (!onApplyParsed) return;
+    const targets = attachments.filter(a =>
+      selected.size > 0 ? selected.has(a.id) : true
+    );
+    if (!targets.length) return;
+    setAnalyzing(true);
+    setParseStep('parsing');
+    setShowUpload(true);
+
+    const merged: Record<string, string> = {};
+    let anySuccess = false;
+    for (const a of targets) {
+      try {
+        const dlRes = await fetch(`/api/attachments/download?id=${a.id}`, { credentials: 'include' });
+        if (!dlRes.ok) continue;
+        const { url } = await dlRes.json();
+        const blob = await fetch(url).then(r => r.blob());
+        const file = new File([blob], a.file_name, { type: a.file_type || 'application/pdf' });
+        const fd = new FormData(); fd.append('file', file);
+        const res = await fetch('/api/leads/parse-application', { method: 'POST', body: fd, credentials: 'include' });
+        const json = await res.json();
+        if (res.ok && json.fields && Object.keys(json.fields).length > 0) {
+          for (const [k, v] of Object.entries(json.fields as Record<string, string>)) {
+            if (!merged[k]) merged[k] = v;
+          }
+          anySuccess = true;
+        }
+      } catch { /* skip */ }
+    }
+
+    setAnalyzing(false);
+    if (anySuccess) {
+      setParsedFields(merged);
+      setParsedSelected(new Set(Object.keys(merged)));
+      setParseStep('review');
+    } else {
+      setParseStep('upload');
+      setShowUpload(false);
+      alert('Could not extract data from the selected documents. Try PDFs with readable text or scanned images.');
+    }
+  };
+
   const startRename = (a: Attachment) => { setRenamingId(a.id); setRenameVal(a.file_name); };
   const saveRename  = async () => {
     if (!renamingId || !renameVal.trim()) return;
@@ -408,6 +455,23 @@ export default function DocumentsModal({
                 className="w-full pl-8 pr-3 py-1.5 text-sm border border-[#e5e5e5] rounded-lg bg-[#fafafa] text-[#1a1a1a] placeholder:text-[#9b9b9b] focus:outline-none focus:ring-1 focus:ring-[#1a1a1a] focus:bg-white"
               />
             </div>
+            {/* Analyze button — extract & fill fields from selected docs */}
+            {onApplyParsed && (
+              <button
+                onClick={handleAnalyzeSelected}
+                disabled={analyzing}
+                title={selected.size > 0 ? `Analyze ${selected.size} selected doc(s)` : 'Analyze all docs'}
+                className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium border border-[#e5e5e5] rounded-lg bg-white text-[#1a1a1a] hover:bg-[#f5f5f5] disabled:opacity-50 transition-colors whitespace-nowrap"
+              >
+                {analyzing ? (
+                  <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                ) : (
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+                )}
+                {selected.size > 0 ? `Analyze (${selected.size})` : 'Analyze'}
+              </button>
+            )}
+
             <select
               value={sortOrder} onChange={e => setSortOrder(e.target.value as typeof sortOrder)}
               className="text-xs border border-[#e5e5e5] rounded-lg px-2.5 py-1.5 bg-white text-[#1a1a1a] focus:outline-none focus:ring-1 focus:ring-[#1a1a1a] cursor-pointer"
