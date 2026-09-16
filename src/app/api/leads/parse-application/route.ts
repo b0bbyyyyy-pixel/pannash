@@ -108,23 +108,39 @@ function safeJson(raw: string): Record<string, string> {
   } catch { return {}; }
 }
 
-// ── Helper: OCR via Grok Vision (for scanned / image-based PDFs & images) ─────
-async function ocrWithGrokVision(buffer: Buffer, filename: string, mimeType: string, prompt: string): Promise<string> {
+// ── Helper: resolve the correct MIME type for a file ─────────────────────────
+function resolveImageMime(ext: string): string {
+  if (ext === 'png')  return 'image/png';
+  if (ext === 'webp') return 'image/webp';
+  if (ext === 'gif')  return 'image/gif';
+  if (ext === 'pdf')  return 'application/pdf';
+  return 'image/jpeg'; // jpg / jpeg / anything else
+}
+
+// ── Helper: OCR via Grok Vision ───────────────────────────────────────────────
+// Sends the raw file bytes to Grok-Vision as a base64 data URL.
+// Works for: JPEG, PNG, WebP (native images) AND scanned PDFs (sent as application/pdf).
+async function ocrWithGrokVision(
+  buffer: Buffer,
+  filename: string,
+  _mimeType: string,
+  prompt: string,
+): Promise<string> {
   const ai = getAIClient();
-  const base64 = buffer.toString('base64');
+  const ext     = filename.split('.').pop()?.toLowerCase() ?? '';
+  const mime    = resolveImageMime(ext);
+  const base64  = buffer.toString('base64');
+  const dataUrl = `data:${mime};base64,${base64}`;
 
-  // Grok vision accepts image_url with base64 data URLs (PNG, JPG, WebP).
-  // For PDFs that are image-based, we send as JPEG and let the vision model handle it.
-  // This covers most scanned PDFs from major banks.
-  const ext      = filename.split('.').pop()?.toLowerCase() ?? '';
-  const imgMime  = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
-  const dataUrl  = `data:${imgMime};base64,${base64}`;
+  console.log(`[parse-application] Vision OCR → mime=${mime} size=${buffer.length}b`);
 
+  // Attempt 1 — send as correct MIME (PDF or image) to vision model
   try {
     const completion = await ai.chat.completions.create({
       model: GROK_VISION_MODEL,
+      max_tokens: 2000,
       messages: [
-        { role: 'system', content: prompt + '\n\nReturn ONLY raw JSON, no markdown.' },
+        { role: 'system', content: prompt + '\n\nReturn ONLY raw JSON, no markdown fences.' },
         {
           role: 'user',
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -132,22 +148,57 @@ async function ocrWithGrokVision(buffer: Buffer, filename: string, mimeType: str
         },
       ],
     });
-    return completion.choices[0]?.message?.content?.trim() ?? '{}';
+    const text = completion.choices[0]?.message?.content?.trim() ?? '{}';
+    console.log('[parse-application] Vision OCR result (first 200):', text.slice(0, 200));
+    return text;
   } catch (err) {
-    console.error('[parse-application] Grok vision OCR failed:', err);
-    // Final fallback: send as plain text prompt asking AI to describe what it can infer
-    try {
-      const fallback = await ai.chat.completions.create({
+    console.error('[parse-application] Vision OCR attempt 1 failed:', err);
+  }
+
+  // Attempt 2 — try sending as image/jpeg (some providers convert on their end)
+  try {
+    const jpegUrl = `data:image/jpeg;base64,${base64}`;
+    const completion = await ai.chat.completions.create({
+      model: GROK_VISION_MODEL,
+      max_tokens: 2000,
+      messages: [
+        { role: 'system', content: prompt + '\n\nReturn ONLY raw JSON, no markdown fences.' },
+        {
+          role: 'user',
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          content: [{ type: 'image_url', image_url: { url: jpegUrl, detail: 'high' } }] as any,
+        },
+      ],
+    });
+    const text = completion.choices[0]?.message?.content?.trim() ?? '{}';
+    console.log('[parse-application] Vision OCR attempt 2 result:', text.slice(0, 200));
+    return text;
+  } catch (err) {
+    console.error('[parse-application] Vision OCR attempt 2 failed:', err);
+  }
+
+  // Attempt 3 — text model with any raw readable chars (works for semi-readable PDFs)
+  try {
+    const readable = buffer.toString('latin1').replace(/[^\x20-\x7E\n\r\t]/g, ' ').replace(/\s{3,}/g, ' ').slice(0, 12000);
+    if (readable.replace(/\s/g, '').length > 100) {
+      const ai2 = getAIClient();
+      const completion = await ai2.chat.completions.create({
         model: GROK_MODEL,
         temperature: 0,
         messages: [
           { role: 'system', content: prompt },
-          { role: 'user', content: `The document could not be rendered as text. Filename: "${filename}". Please return an empty JSON object: {}` },
+          { role: 'user', content: `DOCUMENT (raw extracted text — may contain noise):\n\n${readable}` },
         ],
       });
-      return fallback.choices[0]?.message?.content?.trim() ?? '{}';
-    } catch { return '{}'; }
+      const text = completion.choices[0]?.message?.content?.trim() ?? '{}';
+      console.log('[parse-application] Text fallback result:', text.slice(0, 200));
+      return text;
+    }
+  } catch (err) {
+    console.error('[parse-application] Text fallback failed:', err);
   }
+
+  return '{}';
 }
 
 // ── POST handler ───────────────────────────────────────────────────────────────
@@ -184,8 +235,8 @@ export async function POST(request: Request) {
     } catch (err) {
       console.warn('[parse-application] pdf-parse failed, will use vision OCR:', err);
     }
-    // < 150 meaningful chars → treat as scanned/image-based PDF
-    if (rawText.replace(/\s+/g, ' ').trim().length < 150) {
+    // < 80 meaningful chars → treat as scanned/image-based PDF and use vision OCR
+    if (rawText.replace(/\s+/g, ' ').trim().length < 80) {
       console.log('[parse-application] Sparse text — switching to Grok vision OCR');
       isImage = true;
     }
@@ -226,15 +277,12 @@ export async function POST(request: Request) {
 
   const fields = safeJson(rawResult);
 
-  if (Object.keys(fields).length === 0) {
-    return NextResponse.json({
-      error: 'Could not extract any data from this file. Try a clearer scan or a text-based PDF.',
-      fields: {},
-    }, { status: 422 });
-  }
-
+  // Always return 200 — even if extraction yielded nothing, let the UI decide
   return NextResponse.json({
     fields,
     documentType: isBank ? 'bank_statement' : 'application',
+    ...(Object.keys(fields).length === 0
+      ? { warning: 'No data could be extracted automatically. Please fill in the fields manually.' }
+      : {}),
   });
 }

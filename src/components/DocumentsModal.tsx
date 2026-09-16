@@ -259,13 +259,15 @@ export default function DocumentsModal({
         }
       }
 
-      if (anySuccess && Object.keys(mergedFields).length > 0) {
+      if (Object.keys(mergedFields).length > 0) {
         setParsedFields(mergedFields);
         setParsedSelected(new Set(Object.keys(mergedFields)));
         setParseStep('review');
       } else {
-        alert('Could not extract data from any of the uploaded files. They were uploaded successfully — you can re-extract individually later.');
-        closeUpload();
+        // Still show review step so user can manually fill in what was missed
+        setParsedFields({});
+        setParsedSelected(new Set());
+        setParseStep('review');
       }
     } else {
       setPendingFiles([]);
@@ -326,11 +328,15 @@ export default function DocumentsModal({
       fd.append('file', file);
       const res  = await fetch('/api/leads/parse-application', { method: 'POST', body: fd, credentials: 'include' });
       const json = await res.json();
-      if (res.ok && json.fields && Object.keys(json.fields).length > 0) {
-        setParsedFields(json.fields);
-        setParsedSelected(new Set(Object.keys(json.fields)));
+      if (res.ok) {
+        const extractedFields = json.fields ?? {};
+        setParsedFields(extractedFields);
+        setParsedSelected(new Set(Object.keys(extractedFields)));
         setParseStep('review');
         setShowUpload(true); // Show upload panel so review is visible
+        if (json.warning) {
+          console.warn('[DocumentsModal] Extraction warning:', json.warning);
+        }
       } else {
         alert(json.error || 'Could not extract data from this file.');
       }

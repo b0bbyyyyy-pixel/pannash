@@ -114,19 +114,26 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
     fd.append('file', uploadFile);
     try {
       const res = await fetch('/api/leads/parse-application', { method: 'POST', body: fd, credentials: 'include' });
-      if (!res.ok) throw new Error((await res.json()).error || 'Parse failed');
       const json = await res.json();
-      setParsed(json);
+      if (!res.ok) throw new Error(json.error || 'Parse failed');
+
+      // Use json.fields if available (new format), otherwise fall back to flat json
+      const extractedFields: Record<string, unknown> = json.fields ?? json;
+      setParsed(extractedFields);
+
       // Pre-select all keys that map to our fields
-      const keys = Object.keys(json).filter(k => FIELD_MAP[k] && json[k]);
+      const keys = Object.keys(extractedFields).filter(k => FIELD_MAP[k] && extractedFields[k]);
       setSelectedKeys(new Set(keys));
       // Pre-fill form
       const newFields = { ...EMPTY };
       for (const k of keys) {
         const fk = FIELD_MAP[k];
-        if (fk && json[k]) newFields[fk] = String(json[k]);
+        if (fk && extractedFields[k]) newFields[fk] = String(extractedFields[k]);
       }
       setFields(newFields);
+      if (json.warning) {
+        setError('Auto-extraction returned limited data — please review and fill in any missing fields.');
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Parse failed');
     } finally {
