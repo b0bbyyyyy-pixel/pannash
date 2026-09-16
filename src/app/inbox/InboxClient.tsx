@@ -797,7 +797,7 @@ export default function InboxClient({
             {/* Quick actions */}
             <div className="grid grid-cols-2 gap-1.5">
               <a
-                href={`/dashboard?highlight=${selectedLead.id}`}
+                href={`/pipeline/${selectedLead.id}`}
                 className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#e5e5e5] bg-white hover:bg-[#f5f5f5] transition-colors text-xs text-[#1a1a1a] font-medium"
               >
                 <svg className="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">

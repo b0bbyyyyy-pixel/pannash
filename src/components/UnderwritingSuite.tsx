@@ -84,6 +84,12 @@ interface UnderwritingSuiteProps {
   onNotesUpdate?: (notes: string) => Promise<void>;
   /** When true, renders inline without the fixed modal overlay */
   inline?: boolean;
+  /** When true, the Actual Offers right panel is hidden from the suite layout */
+  offersAsModal?: boolean;
+  /** When true (and offersAsModal is true), show the Actual Offers panel as a modal overlay */
+  showOffersModal?: boolean;
+  /** Called when the offers modal overlay should close */
+  onCloseOffersModal?: () => void;
 }
 
 // ── SOS Registry URLs by state abbreviation ─────────────────────────────────
@@ -293,6 +299,9 @@ export default function UnderwritingSuite({
   onSave,
   onNotesUpdate,
   inline = false,
+  offersAsModal = false,
+  showOffersModal = false,
+  onCloseOffersModal,
 }: UnderwritingSuiteProps) {
   const [data, setData] = useState<UnderwritingData>({ ...DEFAULT_DATA, ...initialData });
 
@@ -1644,8 +1653,38 @@ export default function UnderwritingSuite({
           </div>
 
           {/* Right Panel - Actual Offers Received */}
-          <div className="w-96 border-l border-gray-200 p-6 overflow-y-auto bg-gray-50">
-            <div className="flex items-center justify-between mb-4">
+          {/* When offersAsModal=true, backdrop shown when open */}
+          {offersAsModal && showOffersModal && (
+            <div className="fixed inset-0 bg-black/50 z-[64]" onClick={onCloseOffersModal} />
+          )}
+          <div className={
+            offersAsModal
+              ? `fixed right-0 top-0 bottom-0 w-full max-w-lg bg-gray-50 overflow-y-auto shadow-2xl z-[65] transition-transform duration-200 ${showOffersModal ? 'translate-x-0' : 'translate-x-full'}`
+              : 'w-96 border-l border-gray-200 p-6 overflow-y-auto bg-gray-50'
+          }>
+            {/* Modal header — only shown when rendered as an overlay */}
+            {offersAsModal && (
+              <div className="sticky top-0 flex items-center justify-between px-6 py-4 bg-white border-b border-gray-200 z-10">
+                <h2 className="text-base font-bold text-gray-900">Actual Offers Received</h2>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowPitchModal(true)}
+                    className="px-3 py-1.5 bg-white hover:bg-gray-50 text-gray-800 border border-gray-300 rounded-md text-sm font-medium transition-colors"
+                  >
+                    Pitch
+                  </button>
+                  <button onClick={onCloseOffersModal} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            )}
+            {/* Inner wrapper adds padding when in modal mode */}
+            <div className={offersAsModal ? 'p-6' : ''}>
+            {/* Normal sidebar header — only shown when NOT in modal mode */}
+            {!offersAsModal && <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold text-gray-900">Actual Offers Received</h2>
               <button
                 onClick={() => setShowPitchModal(true)}
@@ -1653,7 +1692,7 @@ export default function UnderwritingSuite({
               >
                 Pitch
               </button>
-            </div>
+            </div>}
             
             {/* Saved Offers List - Now at top */}
             {actualOffers.length > 0 && (
@@ -2536,9 +2575,11 @@ export default function UnderwritingSuite({
             )}
             
           </div>
-        </div>
+          </div>{/* closes inner p-6 wrapper */}
+        </div>{/* closes outer offersAsModal panel */}
       </div>
     </div>
+
 
     {/* ── Pitch Script Modal ──────────────────────────────────────────────── */}
     {showPitchModal && (

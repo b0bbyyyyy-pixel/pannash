@@ -240,6 +240,80 @@ export default function LeadWorkspaceClient({
   const status = lead.lead_status || lead.stage || 'New Lead';
   const statusStyle = getStatusStyle(status, dbStatuses);
 
+  // ── SOS / Google lookup (header buttons) ──────────────────────────────────
+  const SOS_URLS: Record<string, string> = {
+    AL:'https://arc-sos.state.al.us/cgi/corpname.mbr/input',AK:'https://myalaska.state.ak.us/business/soskb/Corp.asp',
+    AZ:'https://apps.azsos.gov/apps/tntp/se.html',AR:'https://www.sos.arkansas.gov/corps/search_all.php',
+    CA:'https://bizfileonline.sos.ca.gov/search/business',CO:'https://www.sos.state.co.us/biz/BusinessEntityCriteriaExt.do',
+    CT:'https://service.ct.gov/business/s/onlinebusinesssearch',DE:'https://icis.corp.delaware.gov/Ecorp/EntitySearch/NameSearch.aspx',
+    DC:'https://corponline.dcra.dc.gov/Home.aspx',FL:'https://search.sunbiz.org/Inquiry/CorporationSearch/ByName',
+    GA:'https://ecorp.sos.ga.gov/BusinessSearch',HI:'https://hbe.ehawaii.gov/documents/search.html',
+    ID:'https://sosbiz.idaho.gov/search/business',IL:'https://www.ilsos.gov/corporatellc/',
+    IN:'https://bsd.sos.in.gov/publicbusinesssearch',IA:'https://sos.iowa.gov/search/business/search.aspx',
+    KS:'https://www.sos.ks.gov/eforms/BusinessEntity/Search.aspx',KY:'https://sosbes.sos.ky.gov/BusSearchNProfile/search.aspx',
+    LA:'https://coraweb.sos.la.gov/commercialSearch/CommercialSearch.aspx',ME:'https://apps3.web.maine.gov/nei-sos-icrs/ICRS?MainPage=x',
+    MD:'https://egov.maryland.gov/businessexpress/entitysearch',MA:'https://corp.sec.state.ma.us/CorpWeb/CorpSearch/CorpSearch.aspx',
+    MI:'https://mibusinessregistry.lara.state.mi.us/search/business',MN:'https://mblsportal.sos.state.mn.us/Business/Search',
+    MS:'https://business.sos.ms.gov/star/portal/msbsd/portal.aspx',MO:'https://bsd.sos.mo.gov/BusinessEntity/BESearch.aspx',
+    MT:'https://biz.sosmt.gov/search',NE:'https://www.nebraska.gov/sos/corp/corpsearch.cgi',
+    NV:'https://esos.nv.gov/EntitySearch/OnlineEntitySearch',NH:'https://quickstart.sos.nh.gov/online/Business',
+    NJ:'https://www.njportal.com/DOR/BusinessNameSearch/',NM:'https://enterprise.sos.nm.gov/search/business',
+    NY:'https://apps.dos.ny.gov/publicInquiry/',NC:'https://www.sosnc.gov/online_services/search/by_title/_Business_Registration',
+    ND:'https://firststop.sos.nd.gov/search/business',OH:'https://businesssearch.ohiosos.gov/',
+    OK:'https://www.sos.ok.gov/corp/corpInquiryFind.aspx',OR:'https://sos.oregon.gov/business/Pages/find.aspx',
+    PA:'https://file.dos.pa.gov/search/business',RI:'https://business.sos.ri.gov/CorpWeb/CorpSearch/CorpSearch.aspx',
+    SC:'https://businessfilings.sc.gov/BusinessFiling/Entity/Search',SD:'https://sosenterprise.sd.gov/BusinessServices/Business/FilingSearch.aspx',
+    TN:'https://tncab.tnsos.gov/business-entity-search',TX:'https://comptroller.texas.gov/taxes/franchise/account-status/search',
+    UT:'https://corporations.utah.gov/search/',VT:'https://bizfilings.vermont.gov/online/Filings/PrSearchAction',
+    VA:'https://cis.scc.virginia.gov/',WA:'https://ccfs.sos.wa.gov/#/BusinessSearch',
+    WV:'https://apps.wv.gov/sos/businessentitysearch/',WI:'https://apps.dfi.wi.gov/apps/corpsearch/search.aspx',
+    WY:'https://wyobiz.wyo.gov/Business/FilingSearch.aspx',
+  };
+  const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','DC','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'];
+  const [sosOpen, setSosOpen] = useState(false);
+  const [sosCopied, setSosCopied] = useState(false);
+  const detectedSosState = useMemo(() => {
+    const ph = lead.phone || '';
+    const digits = ph.replace(/\D/g, '');
+    const ac = digits.length === 11 && digits.startsWith('1') ? digits.substring(1, 4) : digits.length === 10 ? digits.substring(0, 3) : null;
+    if (!ac) return null;
+    const map: Record<string, string> = {
+      '205':'AL','251':'AL','256':'AL','334':'AL','659':'AL','938':'AL','907':'AK','480':'AZ','520':'AZ','602':'AZ','623':'AZ','928':'AZ',
+      '479':'AR','501':'AR','870':'AR','209':'CA','213':'CA','279':'CA','310':'CA','323':'CA','408':'CA','415':'CA','510':'CA','530':'CA',
+      '559':'CA','562':'CA','619':'CA','626':'CA','650':'CA','657':'CA','661':'CA','707':'CA','714':'CA','760':'CA','805':'CA','818':'CA',
+      '831':'CA','858':'CA','909':'CA','916':'CA','925':'CA','949':'CA','951':'CA','303':'CO','719':'CO','720':'CO','970':'CO',
+      '203':'CT','475':'CT','860':'CT','302':'DE','239':'FL','305':'FL','321':'FL','352':'FL','407':'FL','561':'FL','727':'FL',
+      '754':'FL','772':'FL','786':'FL','813':'FL','850':'FL','863':'FL','904':'FL','941':'FL','954':'FL','229':'GA','404':'GA',
+      '470':'GA','478':'GA','678':'GA','706':'GA','762':'GA','770':'GA','912':'GA','808':'HI','208':'ID','217':'IL','224':'IL',
+      '309':'IL','312':'IL','331':'IL','447':'IL','464':'IL','618':'IL','630':'IL','708':'IL','730':'IL','773':'IL','779':'IL',
+      '815':'IL','847':'IL','872':'IL','219':'IN','260':'IN','317':'IN','463':'IN','574':'IN','765':'IN','812':'IN','930':'IN',
+      '319':'IA','515':'IA','563':'IA','641':'IA','712':'IA','316':'KS','620':'KS','785':'KS','913':'KS','270':'KY','364':'KY',
+      '502':'KY','606':'KY','859':'KY','225':'LA','318':'LA','337':'LA','504':'LA','985':'LA','207':'ME','240':'MD','301':'MD',
+      '410':'MD','443':'MD','667':'MD','339':'MA','351':'MA','413':'MA','508':'MA','617':'MA','774':'MA','781':'MA','857':'MA',
+      '978':'MA','231':'MI','248':'MI','269':'MI','313':'MI','517':'MI','586':'MI','616':'MI','734':'MI','810':'MI','906':'MI',
+      '947':'MI','989':'MI','218':'MN','320':'MN','507':'MN','612':'MN','651':'MN','763':'MN','952':'MN','228':'MS','601':'MS',
+      '662':'MS','769':'MS','314':'MO','417':'MO','557':'MO','573':'MO','636':'MO','660':'MO','816':'MO','406':'MT','308':'NE',
+      '402':'NE','531':'NE','702':'NV','725':'NV','775':'NV','603':'NH','201':'NJ','551':'NJ','609':'NJ','732':'NJ','848':'NJ',
+      '856':'NJ','862':'NJ','908':'NJ','973':'NJ','505':'NM','575':'NM','212':'NY','315':'NY','332':'NY','347':'NY','516':'NY',
+      '518':'NY','585':'NY','607':'NY','631':'NY','646':'NY','680':'NY','716':'NY','718':'NY','838':'NY','845':'NY','914':'NY',
+      '917':'NY','929':'NY','934':'NY','252':'NC','336':'NC','704':'NC','743':'NC','828':'NC','910':'NC','919':'NC','980':'NC',
+      '984':'NC','701':'ND','216':'OH','220':'OH','234':'OH','330':'OH','380':'OH','419':'OH','440':'OH','513':'OH','567':'OH',
+      '614':'OH','740':'OH','937':'OH','405':'OK','539':'OK','580':'OK','918':'OK','503':'OR','541':'OR','458':'OR','971':'OR',
+      '215':'PA','267':'PA','272':'PA','412':'PA','445':'PA','484':'PA','570':'PA','610':'PA','717':'PA','724':'PA','814':'PA',
+      '878':'PA','401':'RI','803':'SC','839':'SC','843':'SC','864':'SC','605':'SD','423':'TN','615':'TN','629':'TN','731':'TN',
+      '865':'TN','901':'TN','931':'TN','210':'TX','214':'TX','254':'TX','281':'TX','325':'TX','346':'TX','361':'TX','409':'TX',
+      '430':'TX','432':'TX','469':'TX','512':'TX','682':'TX','713':'TX','726':'TX','737':'TX','806':'TX','817':'TX','830':'TX',
+      '832':'TX','903':'TX','915':'TX','936':'TX','940':'TX','956':'TX','972':'TX','979':'TX','385':'UT','435':'UT','801':'UT',
+      '802':'VT','276':'VA','434':'VA','540':'VA','571':'VA','703':'VA','757':'VA','804':'VA','206':'WA','253':'WA','360':'WA',
+      '425':'WA','509':'WA','564':'WA','304':'WV','681':'WV','262':'WI','414':'WI','534':'WI','608':'WI','715':'WI','920':'WI',
+      '307':'WY',
+    };
+    return map[ac] || null;
+  }, [lead.phone]);
+  const [sosState, setSosState] = useState('');
+  useEffect(() => { if (detectedSosState) setSosState(detectedSosState); else setSosState('NY'); }, [detectedSosState]);
+  const businessName = lead.company || lead.name || '';
+
   // Fields that can be updated directly via update-crm
   const DIRECT_FIELDS = new Set([
     'company', 'name', 'email', 'phone', 'notes', 'stage',
@@ -394,12 +468,11 @@ export default function LeadWorkspaceClient({
     creditScore >= 750 ? '#15803d' :
     creditScore >= 650 ? '#a16207' : '#b91c1c';
 
-  const scrollToUW = () => {
-    document.getElementById('underwriting-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
+  // scrollToUW removed — Underwriting Suite section is no longer visible
 
   // ── Projected Offer calculation (mirrors UnderwritingSuite logic) ────────────
   const [showProjectedOffer, setShowProjectedOffer] = useState(false);
+  const [showOffersModal, setShowOffersModal] = useState(false);
 
   const projectedOffer = useMemo(() => {
     const rev      = Number(ud.monthlyRevenue  ?? 0);
@@ -564,6 +637,63 @@ export default function LeadWorkspaceClient({
           >
             {status}
           </span>
+
+          {/* SOS + Google quick lookup buttons */}
+          <div className="relative flex items-center gap-1.5">
+            <button
+              onClick={() => setSosOpen(o => !o)}
+              title="SOS Registry Lookup"
+              className="px-2.5 py-0.5 rounded text-xs font-medium bg-[#1a1a1a] text-white hover:bg-[#333] transition-colors"
+            >
+              SOS
+            </button>
+            <button
+              onClick={() => {
+                const q = encodeURIComponent(`"${businessName}" ${sosState} reviews`);
+                window.open(`https://www.google.com/search?q=${q}`, '_blank', 'noopener,noreferrer');
+              }}
+              title="Google this business"
+              className="px-2.5 py-0.5 rounded text-xs font-medium bg-[#1a1a1a] text-white hover:bg-[#333] transition-colors"
+            >
+              Google
+            </button>
+
+            {/* SOS Popup */}
+            {sosOpen && (
+              <div className="absolute left-0 top-full mt-2 w-72 bg-white rounded-xl shadow-2xl border border-[#e5e5e5] z-50 p-4">
+                <div className="flex justify-end mb-1">
+                  <button onClick={() => setSosOpen(false)} className="text-[#9b9b9b] hover:text-[#1a1a1a] text-lg leading-none">&times;</button>
+                </div>
+                <div className="bg-[#fafafa] rounded-lg px-3 py-2 mb-3">
+                  <p className="text-xs text-[#9b9b9b] mb-0.5">Business Name</p>
+                  <p className="text-sm font-semibold text-[#1a1a1a] truncate">{businessName || '(no business name)'}</p>
+                </div>
+                <div className="mb-3">
+                  <label className="block text-xs text-[#6b6b6b] mb-1">
+                    State
+                    {detectedSosState && <span className="ml-1.5 text-blue-600 font-medium">(detected: {detectedSosState})</span>}
+                  </label>
+                  <select
+                    value={sosState}
+                    onChange={e => setSosState(e.target.value)}
+                    className="w-full border border-[#e5e5e5] rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a1a1a]"
+                  >
+                    {US_STATES.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+                <button
+                  onClick={() => {
+                    if (businessName) { navigator.clipboard.writeText(businessName).catch(() => {}); setSosCopied(true); setTimeout(() => setSosCopied(false), 2000); }
+                    const url = SOS_URLS[sosState];
+                    if (url) window.open(url, '_blank', 'noopener,noreferrer');
+                  }}
+                  className="w-full py-2 bg-[#1a1a1a] text-white rounded-lg text-sm font-medium hover:bg-[#333] transition-colors"
+                >
+                  {sosCopied ? `Copied! Opening ${sosState} SOS…` : `Copy Name & Open ${sosState} SOS`}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Right: actions + prev/next */}
@@ -955,21 +1085,29 @@ export default function LeadWorkspaceClient({
             </div>
           </Section>
 
-          {/* PROJECTED OFFER BUTTON */}
+          {/* PROJECTED OFFER BUTTON + OFFERS BUTTON */}
           {(() => {
             const po = projectedOffer;
             const rsColor = !po ? '#9b9b9b' : po.riskScore >= 70 ? '#15803d' : po.riskScore >= 50 ? '#a16207' : '#b91c1c';
             return (
               <div className="relative">
-                <button
-                  onClick={() => setShowProjectedOffer(v => !v)}
-                  className="px-3 py-1.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] transition-colors flex items-center gap-1.5"
-                >
-                  <span>Projected Offer</span>
-                  <svg className={`w-3 h-3 transition-transform ${showProjectedOffer ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
+                <div className="flex items-center gap-2 mb-1">
+                  <button
+                    onClick={() => setShowProjectedOffer(v => !v)}
+                    className="px-3 py-1.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] transition-colors flex items-center gap-1.5"
+                  >
+                    <span>Projected Offer</span>
+                    <svg className={`w-3 h-3 transition-transform ${showProjectedOffer ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => setShowOffersModal(true)}
+                    className="px-3 py-1.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] transition-colors"
+                  >
+                    Offers
+                  </button>
+                </div>
 
                 {showProjectedOffer && (
                   <div className="mt-2 bg-white border border-[#e5e5e5] rounded-xl overflow-hidden shadow-sm">
@@ -1010,16 +1148,11 @@ export default function LeadWorkspaceClient({
         </div>
       </div>
 
-      {/* ── UNDERWRITING SUITE (inline, full-width below the 3-pane) ────── */}
-      <div id="underwriting-section" className="border-t-4 border-[#e5e5e5] bg-white">
-        <div className="px-6 py-3 bg-[#fafafa] border-b border-[#e5e5e5] flex items-center gap-2">
-          <svg className="w-4 h-4 text-[#6b6b6b]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 11h.01M12 11h.01M15 11h.01M4 19h16a2 2 0 002-2V7a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2z" />
-          </svg>
-          <span className="text-sm font-semibold text-[#1a1a1a]">Underwriting Suite</span>
-          <span className="text-xs text-[#9b9b9b]">— Input Financials · Bank Statements · Lender Match · Offers</span>
-        </div>
-        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+      {/* ── UNDERWRITING SUITE — hidden from view, kept dormant so the
+           Offers overlay (position:fixed) still works when triggered.
+           Do NOT add transform/filter to this wrapper or fixed children break. ── */}
+      {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+      <div className="absolute -left-[9999px] -top-[9999px] overflow-hidden w-0 h-0 pointer-events-none" aria-hidden="true">
         <UnderwritingSuite
           leadId={lead.id}
           leadName={lead.name}
@@ -1031,6 +1164,9 @@ export default function LeadWorkspaceClient({
           onSave={handleUnderwritingSave as any}
           onNotesUpdate={async (n: string) => { await saveField('notes', n); setNotes(n); }}
           inline
+          offersAsModal
+          showOffersModal={showOffersModal}
+          onCloseOffersModal={() => setShowOffersModal(false)}
         />
       </div>
 
