@@ -619,6 +619,12 @@ export default function LeadWorkspaceClient({
         <div className="flex items-center gap-4">
           <a
             href="/pipeline"
+            onClick={e => {
+              if (typeof window !== 'undefined' && window.top && window.top !== window.self) {
+                e.preventDefault();
+                window.top.location.href = '/pipeline';
+              }
+            }}
             className="flex items-center gap-1.5 text-sm text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -718,7 +724,11 @@ export default function LeadWorkspaceClient({
           </button>
           <div className="flex gap-1 ml-2">
             <button
-              onClick={() => prevId && router.push(`/pipeline/${prevId}`)}
+              onClick={() => {
+                if (!prevId) return;
+                const inIframe = typeof window !== 'undefined' && window.top && window.top !== window.self;
+                router.push(`/pipeline/${prevId}${inIframe ? '?modal=1' : ''}`);
+              }}
               disabled={!prevId}
               className="px-2 py-1.5 text-sm border border-[#e5e5e5] rounded-md disabled:opacity-30 hover:bg-[#f5f5f5] transition-colors"
               title="Previous"
@@ -726,7 +736,11 @@ export default function LeadWorkspaceClient({
               ← Prev
             </button>
             <button
-              onClick={() => nextId && router.push(`/pipeline/${nextId}`)}
+              onClick={() => {
+                if (!nextId) return;
+                const inIframe = typeof window !== 'undefined' && window.top && window.top !== window.self;
+                router.push(`/pipeline/${nextId}${inIframe ? '?modal=1' : ''}`);
+              }}
               disabled={!nextId}
               className="px-2 py-1.5 text-sm border border-[#e5e5e5] rounded-md disabled:opacity-30 hover:bg-[#f5f5f5] transition-colors"
               title="Next"
@@ -1009,7 +1023,15 @@ export default function LeadWorkspaceClient({
                 Send Email
               </button>
               <button
-                onClick={() => router.push(`/inbox?leadId=${lead.id}`)}
+                onClick={() => {
+                  const url = `/inbox?leadId=${lead.id}`;
+                  // If loaded inside an iframe (modal overlay), navigate the parent window
+                  if (typeof window !== 'undefined' && window.top && window.top !== window.self) {
+                    window.top.location.href = url;
+                  } else {
+                    router.push(url);
+                  }
+                }}
                 className="px-3 py-2.5 border border-[#e5e5e5] text-[#1a1a1a] text-xs font-medium rounded-md hover:bg-[#f5f5f5] transition-colors text-center"
               >
                 Send SMS
