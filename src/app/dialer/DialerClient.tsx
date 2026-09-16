@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { formatDisplay } from '@/lib/dialer/e164';
+import ManualDialPanel from './ManualDialPanel';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -660,7 +661,8 @@ export default function DialerClient() {
         </div>
 
         {/* Right: sidebar */}
-        <div className="lg:col-span-1">
+        <div className="lg:col-span-1 space-y-6">
+          <ManualDialPanel />
           <QueueSidebar queue={queue} todayCalls={todayCalls} />
         </div>
       </div>

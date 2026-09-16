@@ -348,7 +348,7 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[90] p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden">
 
         {/* Header */}

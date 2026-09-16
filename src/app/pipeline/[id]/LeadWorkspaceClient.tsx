@@ -8,6 +8,7 @@ const UnderwritingSuite    = dynamic(() => import('@/components/UnderwritingSuit
 const ScheduleEmailModal   = dynamic(() => import('@/components/ScheduleEmailModal'), { ssr: false });
 const DocumentsModal       = dynamic(() => import('@/components/DocumentsModal'), { ssr: false });
 const SendToLenderModal    = dynamic(() => import('@/components/SendToLenderModal'), { ssr: false });
+const CallHistoryPanel     = dynamic(() => import('@/components/CallHistoryPanel'), { ssr: false });
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface Lead {
@@ -102,10 +103,11 @@ function Field({
           {saving && <span className="text-xs text-[#9b9b9b] pt-1">…</span>}
         </div>
       ) : (
-        <div className="flex-1 flex items-center gap-1 group">
+        <div className="flex-1 min-w-0 flex items-center gap-1 group">
           <span
-            className={`text-sm text-[#1a1a1a] flex-1 ${!readOnly ? 'cursor-pointer hover:underline underline-offset-2 decoration-dotted' : ''}`}
+            className={`text-sm text-[#1a1a1a] flex-1 min-w-0 truncate ${!readOnly ? 'cursor-pointer hover:underline underline-offset-2 decoration-dotted' : ''}`}
             style={valueStyle}
+            title={value || undefined}
             onClick={() => { if (!readOnly && !masked) { setEditVal(value || ''); setEditing(true); } }}
           >
             {masked && !revealed ? <span className="text-[#9b9b9b]">{display}</span> : display}
@@ -207,6 +209,7 @@ function Section({ title, children, collapsible = false }: { title: string; chil
   );
 }
 
+import FinancialsModal, { type BankSnap } from '@/components/FinancialsModal';
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function LeadWorkspaceClient({
   lead: initialLead,
@@ -222,10 +225,40 @@ export default function LeadWorkspaceClient({
   const [notesSaving, setNotesSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [showEmailModal, setShowEmailModal]   = useState(false);
-  const [showDocsModal, setShowDocsModal]     = useState(false);
-  const [showSendModal, setShowSendModal]     = useState(false);
+  const [showEmailModal, setShowEmailModal]     = useState(false);
+  const [showDocsModal, setShowDocsModal]       = useState(false);
+  const [showSendModal, setShowSendModal]       = useState(false);
+  const [showFinancials, setShowFinancials]     = useState(false);
   const [dbStatuses, setDbStatuses]           = useState<DBStatus[]>([]);
+
+  // ── Click-to-call (rings SIP desk phone first, then dials the lead) ────────
+  const [callBusy, setCallBusy]   = useState(false);
+  const [callMsg, setCallMsg]     = useState<string | null>(null);
+  const [callSeq, setCallSeq]     = useState(0); // remounts CallHistoryPanel to refresh
+
+  const startCall = useCallback(async () => {
+    setCallBusy(true);
+    setCallMsg(null);
+    try {
+      const res = await fetch('/api/telephony/click-to-call', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadId: lead.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Call failed');
+      setCallMsg(
+        data.dryRun
+          ? `Dry run — would dial ${data.wouldDial?.to} via ${data.wouldDial?.sip || 'SIP (not set)'}`
+          : 'Ringing your desk phone…'
+      );
+      setCallSeq((s) => s + 1);
+    } catch (e) {
+      setCallMsg(e instanceof Error ? e.message : 'Call failed');
+    } finally {
+      setCallBusy(false);
+    }
+  }, [lead.id]);
 
   // Load dynamic statuses
   useEffect(() => {
@@ -324,9 +357,17 @@ export default function LeadWorkspaceClient({
   ]);
 
   // ── Field save helper ────────────────────────────────────────────────────────
+  /** Calculate months between a date string and today */
+  const calcTIBMonths = (dateStr: string): number | null => {
+    if (!dateStr) return null;
+    const start = new Date(dateStr);
+    if (isNaN(start.getTime())) return null;
+    const now = new Date();
+    return Math.max(0, (now.getFullYear() - start.getFullYear()) * 12 + (now.getMonth() - start.getMonth()));
+  };
+
   const saveField = useCallback(async (field: string, value: string) => {
     if (DIRECT_FIELDS.has(field)) {
-      // Save directly to lead column via update-crm
       const res = await fetch('/api/leads/update-crm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -336,9 +377,15 @@ export default function LeadWorkspaceClient({
         setLead(prev => ({ ...prev, [field]: value }));
       }
     } else {
-      // Save to underwriting_data JSONB
       const currentUd = (lead.underwriting_data || {}) as Record<string, unknown>;
-      const updatedUd = { ...currentUd, [field]: value };
+      const updatedUd: Record<string, unknown> = { ...currentUd, [field]: value };
+
+      // Auto-calculate Time in Business when Start Date is saved
+      if (field === 'businessStartDate') {
+        const months = calcTIBMonths(value);
+        if (months !== null) updatedUd.timeInBusiness = months;
+      }
+
       const res = await fetch('/api/leads/underwriting', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -350,6 +397,43 @@ export default function LeadWorkspaceClient({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lead.id, lead.underwriting_data]);
+
+  // ── Save bank analysis snapshot to underwriting_data ────────────────────────
+  const saveBankAnalysis = useCallback(async (snapshot: Record<string, unknown>) => {
+    const currentUd = (lead.underwriting_data || {}) as Record<string, unknown>;
+    const updatedUd = { ...currentUd, bankStatementAnalysis: snapshot };
+    const res = await fetch('/api/leads/underwriting', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ leadId: lead.id, underwritingData: updatedUd }),
+    });
+    if (res.ok) {
+      setLead(prev => ({ ...prev, underwriting_data: updatedUd }));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lead.id, lead.underwriting_data]);
+
+  // ── Analyze a bank statement attachment and save result ───────────────────────
+  const analyzeBankAttachment = useCallback(async (attachment: { id: string; file_name: string; file_type?: string }) => {
+    try {
+      const dlRes = await fetch(`/api/attachments/download?id=${attachment.id}`, { credentials: 'include' });
+      if (!dlRes.ok) return;
+      const { url } = await dlRes.json();
+      const blob = await fetch(url).then(r => r.blob());
+      const file = new File([blob], attachment.file_name, { type: attachment.file_type || 'application/pdf' });
+      const fd = new FormData();
+      fd.append('files', file);
+      const resp = await fetch('/api/bank-analyze', { method: 'POST', body: fd });
+      if (!resp.ok) return;
+      const data = await resp.json() as Record<string, unknown>;
+      const snapshot = {
+        analyzedAt: new Date().toISOString(),
+        displayMetrics: data.metrics,
+        per_file: data.per_file,
+      };
+      await saveBankAnalysis(snapshot);
+    } catch { /* silent */ }
+  }, [saveBankAnalysis]);
 
   // ── Apply parsed application fields ─────────────────────────────────────────
   const applyParsedApp = async (
@@ -375,6 +459,12 @@ export default function LeadWorkspaceClient({
         credentials: 'include',
       });
       setLead(prev => ({ ...prev, [field]: value }));
+    }
+
+    // Normalize parse-application field names
+    if ('depositCount' in udUpdates && !('depositsCount' in udUpdates)) {
+      udUpdates.depositsCount = udUpdates.depositCount;
+      delete udUpdates.depositCount;
     }
 
     // Underwriting fields — merge into existing ud
@@ -473,6 +563,16 @@ export default function LeadWorkspaceClient({
   /** Safely extract a string from unknown JSON value */
   const str = (v: unknown): string | null => (v != null ? String(v) : null);
 
+  // Auto-derive TIB from businessStartDate if timeInBusiness is not set
+  const derivedTIB: number | null = (() => {
+    if (ud.timeInBusiness != null && ud.timeInBusiness !== '') return Number(ud.timeInBusiness);
+    if (!ud.businessStartDate) return null;
+    const start = new Date(String(ud.businessStartDate));
+    if (isNaN(start.getTime())) return null;
+    const now = new Date();
+    return Math.max(0, (now.getFullYear() - start.getFullYear()) * 12 + (now.getMonth() - start.getMonth()));
+  })();
+
   const creditScoreColor =
     !creditScore ? '#9b9b9b' :
     creditScore >= 750 ? '#15803d' :
@@ -487,7 +587,7 @@ export default function LeadWorkspaceClient({
   const projectedOffer = useMemo(() => {
     const rev      = Number(ud.monthlyRevenue  ?? 0);
     const fico     = Number(ud.creditScore     ?? 0);
-    const tib      = Number(ud.timeInBusiness  ?? 0);
+    const tib      = derivedTIB ?? Number(ud.timeInBusiness ?? 0);
     const nsf      = Number(ud.nsfCount        ?? 0);
     const deps     = Number(ud.depositsCount   ?? 0);
     const adb      = Number(ud.avgDailyBalance ?? 0);
@@ -787,7 +887,7 @@ export default function LeadWorkspaceClient({
       </div>
 
       {/* ── 3-PANE BODY ─────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-[460px_1fr_340px] min-h-[calc(100vh-140px)]">
+      <div className="grid grid-cols-1 lg:grid-cols-[340px_1fr_300px] min-h-[calc(100vh-140px)]">
 
         {/* ── LEFT PANE: Lead Details ─────────────────────────────────────── */}
         <div className="border-r border-[#e5e5e5] bg-white p-4">
@@ -830,7 +930,7 @@ export default function LeadWorkspaceClient({
             <Field label="ZIP"           value={str(ud.businessZip)}      onSave={v => saveField('businessZip', v)} />
             <Field label="Industry"      value={str(ud.industry)}         onSave={v => saveField('industry', v)} />
             <TIBField
-              valueMonths={typeof ud.timeInBusiness === 'number' ? ud.timeInBusiness : Number(ud.timeInBusiness) || null}
+              valueMonths={derivedTIB}
               onSave={months => saveField('timeInBusiness', String(months))}
             />
             <Field label="Start Date"    value={str(ud.businessStartDate)} onSave={v => saveField('businessStartDate', v)} />
@@ -1052,7 +1152,7 @@ export default function LeadWorkspaceClient({
                 Send to Lender
               </button>
               <button
-                onClick={() => setShowEmailModal(true)}
+                onClick={() => { setShowOffersModal(false); setShowEmailModal(true); }}
                 className="px-3 py-2.5 border border-[#e5e5e5] text-[#1a1a1a] text-xs font-medium rounded-md hover:bg-[#f5f5f5] transition-colors text-center"
               >
                 Send Email
@@ -1079,17 +1179,37 @@ export default function LeadWorkspaceClient({
               </button>
             </div>
 
-            {/* Generate App (coming soon) */}
-            <button
-              disabled
-              title="Coming soon — will link to your funding site application"
-              className="w-full px-3 py-2.5 border border-[#e5e5e5] text-[#9b9b9b] text-xs font-medium rounded-md cursor-not-allowed text-center flex items-center justify-center gap-1.5"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-              Generate App
-            </button>
+            {/* Application (disabled) + Financials */}
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                disabled
+                title="Coming soon — will link to your funding site application"
+                className="px-3 py-2.5 border border-[#e5e5e5] text-[#9b9b9b] text-xs font-medium rounded-md cursor-not-allowed text-center"
+              >
+                Application
+              </button>
+              <button
+                onClick={() => setShowFinancials(true)}
+                className="px-3 py-2.5 border border-[#e5e5e5] text-[#1a1a1a] text-xs font-medium rounded-md hover:bg-[#f5f5f5] transition-colors text-center"
+              >
+                Financials
+              </button>
+            </div>
+
+            {/* Call — agent-first SIP dial (desk phone rings, then the lead) */}
+            <div className="mt-2">
+              <button
+                onClick={startCall}
+                disabled={callBusy}
+                className="w-full px-3 py-2.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] disabled:opacity-50 transition-colors"
+              >
+                {callBusy ? 'Starting call…' : 'Call'}
+              </button>
+              {callMsg && (
+                <p className="text-[11px] text-[#6b6b6b] mt-1.5">{callMsg}</p>
+              )}
+              <CallHistoryPanel key={callSeq} leadId={lead.id} />
+            </div>
           </Section>
 
           {/* STATUS & OWNERSHIP */}
@@ -1151,7 +1271,7 @@ export default function LeadWorkspaceClient({
                 <div className="flex items-center gap-2 mb-1">
                   <button
                     onClick={() => setShowProjectedOffer(v => !v)}
-                    className="px-3 py-1.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] transition-colors flex items-center gap-1.5"
+                    className="flex-1 px-3 py-1.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] transition-colors flex items-center justify-between gap-1.5"
                   >
                     <span>Projected Offer</span>
                     <svg className={`w-3 h-3 transition-transform ${showProjectedOffer ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1159,8 +1279,8 @@ export default function LeadWorkspaceClient({
                     </svg>
                   </button>
                   <button
-                    onClick={() => setShowOffersModal(true)}
-                    className="px-3 py-1.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] transition-colors"
+                    onClick={() => { setShowEmailModal(false); setShowOffersModal(true); }}
+                    className="flex-1 px-3 py-1.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] transition-colors text-center"
                   >
                     Offers
                   </button>
@@ -1207,9 +1327,12 @@ export default function LeadWorkspaceClient({
 
       {/* ── UNDERWRITING SUITE — hidden from view, kept dormant so the
            Offers overlay (position:fixed) still works when triggered.
-           Do NOT add transform/filter to this wrapper or fixed children break. ── */}
+           Do NOT add transform/filter to this wrapper or fixed children break.
+           NOTE: no pointer-events-none here — the in-flow content is already
+           unclickable (0x0 + overflow-hidden), and the fixed overlays
+           (Offers panel, Pitch modal, Client Portal) must stay clickable. ── */}
       {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-      <div className="absolute -left-[9999px] -top-[9999px] overflow-hidden w-0 h-0 pointer-events-none" aria-hidden="true">
+      <div className="absolute -left-[9999px] -top-[9999px] overflow-hidden w-0 h-0">
         <UnderwritingSuite
           leadId={lead.id}
           leadName={lead.name}
@@ -1234,6 +1357,7 @@ export default function LeadWorkspaceClient({
           leadName={lead.name}
           leadCompany={lead.company}
           onApplyParsed={applyParsedApp}
+          onAnalyze={analyzeBankAttachment}
           onClose={() => setShowDocsModal(false)}
         />
       )}
@@ -1263,7 +1387,7 @@ export default function LeadWorkspaceClient({
           leadStatus={lead.lead_status || lead.stage || undefined}
           userName={userName}
           criteria={{
-            timeInBusiness:    Number(ud.timeInBusiness  ?? 0),
+            timeInBusiness:    derivedTIB ?? Number(ud.timeInBusiness ?? 0),
             creditScore:       Number(ud.creditScore     ?? 0),
             avgMonthlyRevenue: Number(ud.monthlyRevenue  ?? 0),
             currentPositions:  ud.hasOtherMCALoans ? Number(ud.mcaPositionCount ?? 1) : 0,
@@ -1274,6 +1398,19 @@ export default function LeadWorkspaceClient({
             isSoleProp:        Boolean(ud.isSoleProp     ?? false),
           }}
           onClose={() => setShowSendModal(false)}
+        />
+      )}
+
+      {/* ── FINANCIALS MODAL ─────────────────────────────────────────────── */}
+      {showFinancials && (
+        <FinancialsModal
+          snap={(ud.bankStatementAnalysis as BankSnap) ?? undefined}
+          ud={ud}
+          leadName={lead.name}
+          leadCompany={lead.company}
+          derivedTIB={derivedTIB}
+          onSaveField={(k, v) => saveField(k, v)}
+          onClose={() => setShowFinancials(false)}
         />
       )}
 

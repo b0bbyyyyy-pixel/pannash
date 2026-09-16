@@ -42,23 +42,31 @@ export function todayInTz(tz: string | null | undefined): string {
   }
 }
 
-/** True if the lead's local time is within calling hours */
-export function isWithinDialingHours(timezone: string | null | undefined): boolean {
+/** True if the lead's local time is within calling hours.
+ *  Optional start/end ("HH:MM") override the env defaults (per-user settings). */
+export function isWithinDialingHours(
+  timezone: string | null | undefined,
+  windowStart?: string,
+  windowEnd?: string
+): boolean {
   const tz = timezone || DEFAULT_TZ;
   const current = currentMinutesInTz(tz);
-  return current >= hmToMinutes(QUIET_START) && current < hmToMinutes(QUIET_END);
+  return current >= hmToMinutes(windowStart || QUIET_START)
+      && current <  hmToMinutes(windowEnd   || QUIET_END);
 }
 
-/** True if this lead has hit the per-day attempt cap */
+/** True if this lead has hit the per-day attempt cap.
+ *  Optional maxAttempts overrides the env default (per-user settings). */
 export function attemptsExceeded(
   attemptsToday: number | null | undefined,
   attemptsTodayOn: string | null | undefined,
-  timezone: string | null | undefined
+  timezone: string | null | undefined,
+  maxAttempts?: number
 ): boolean {
   const today = todayInTz(timezone);
   // If the recorded date differs (or is null), counter effectively resets → not exceeded
   if (attemptsTodayOn !== today) return false;
-  return (attemptsToday ?? 0) >= MAX_ATTEMPTS;
+  return (attemptsToday ?? 0) >= (maxAttempts ?? MAX_ATTEMPTS);
 }
 
 export interface DialerLeadShape {

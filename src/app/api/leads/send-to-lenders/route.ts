@@ -155,29 +155,13 @@ export async function POST(request: Request) {
   const sent   = results.filter(r => r.status === 'Sent').length;
   const failed = results.filter(r => r.status === 'Failed').length;
 
-  // ── Auto-trigger: if any sent successfully, advance lead status to "Submitted"
+  // ── Auto-trigger: if any sent successfully, always advance status to "Submitted"
   if (sent > 0) {
-    const { data: currentLead } = await supabase
+    await supabase
       .from('leads')
-      .select('lead_status, stage')
+      .update({ lead_status: 'Submitted' })
       .eq('id', leadId)
-      .eq('user_id', user.id)
-      .single();
-
-    const earlyStages = new Set([
-      'New Lead', 'Contacted', 'Callback Scheduled', 'Revisit', 'App Out',
-      'Application Acknowledgement', 'Documents Acknowledgment',
-      'Docs Requested', 'Docs In', 'Docs Received', 'Missing Docs/info',
-      'Needs More Docs', 'Pre-Qualified', '',
-    ]);
-    const currentStatus = currentLead?.lead_status || currentLead?.stage || '';
-    if (earlyStages.has(currentStatus)) {
-      await supabase
-        .from('leads')
-        .update({ lead_status: 'Submitted' })
-        .eq('id', leadId)
-        .eq('user_id', user.id);
-    }
+      .eq('user_id', user.id);
   }
 
   return NextResponse.json({ success: true, sent, failed, results });

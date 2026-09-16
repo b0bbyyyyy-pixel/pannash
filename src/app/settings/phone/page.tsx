@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { createServerClient } from '@supabase/ssr';
 import Navbar from '@/components/Navbar';
 import TwilioConnectionForm from './TwilioConnectionForm';
+import TelephonySettingsForm from './TelephonySettingsForm';
 
 export default async function PhoneSettingsPage() {
   const cookieStore = await cookies();
@@ -95,6 +96,17 @@ export default async function PhoneSettingsPage() {
               <TwilioConnectionForm />
             </div>
           )}
+        </div>
+
+        {/* Dialer settings — SIP desk phone, calling windows, dry-run */}
+        <div className="bg-white border border-gray-200 rounded-lg p-8 mt-6">
+          <div className="mb-6">
+            <h2 className="text-lg font-medium text-black mb-1">Dialer</h2>
+            <p className="text-sm text-gray-600">
+              Click-to-call rings your SIP desk phone first, then dials the lead from your Twilio number.
+            </p>
+          </div>
+          <TelephonySettingsForm />
         </div>
       </main>
     </div>

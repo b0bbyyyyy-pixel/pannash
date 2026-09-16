@@ -1655,11 +1655,11 @@ export default function UnderwritingSuite({
           {/* Right Panel - Actual Offers Received */}
           {/* When offersAsModal=true, backdrop shown when open */}
           {offersAsModal && showOffersModal && (
-            <div className="fixed inset-0 bg-black/50 z-[64]" onClick={onCloseOffersModal} />
+            <div className="fixed inset-0 bg-black/50 z-[74]" onClick={onCloseOffersModal} />
           )}
           <div className={
             offersAsModal
-              ? `fixed right-0 top-0 bottom-0 w-full max-w-lg bg-gray-50 overflow-y-auto shadow-2xl z-[65] transition-transform duration-200 ${showOffersModal ? 'translate-x-0' : 'translate-x-full'}`
+              ? `fixed right-0 top-0 bottom-0 w-full max-w-lg bg-gray-50 overflow-y-auto shadow-2xl z-[75] transition-transform duration-200 ${showOffersModal ? 'translate-x-0' : 'translate-x-full'}`
               : 'w-96 border-l border-gray-200 p-6 overflow-y-auto bg-gray-50'
           }>
             {/* Modal header — only shown when rendered as an overlay */}
@@ -2260,11 +2260,11 @@ export default function UnderwritingSuite({
             )}
             
             {/* Add New Offer Form */}
-            <div className="bg-white border border-gray-300 rounded-lg mb-4 overflow-hidden">
+            <div className="bg-white border border-gray-300 rounded-lg mb-4">
               <button
                 type="button"
                 onClick={() => setAddOfferOpen(v => !v)}
-                className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-50 transition-colors"
+                className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-50 transition-colors rounded-lg"
               >
                 <span className="text-sm font-medium text-gray-900">Add Competitor Offer</span>
                 <svg
@@ -2584,7 +2584,7 @@ export default function UnderwritingSuite({
     {/* ── Pitch Script Modal ──────────────────────────────────────────────── */}
     {showPitchModal && (
       <div
-        className="fixed inset-0 bg-black/50 flex items-center justify-center z-[70] p-4"
+        className="fixed inset-0 bg-black/50 flex items-center justify-center z-[85] p-4"
         onClick={() => { setShowPitchModal(false); setEditingPitchId(null); setShowNewPitchForm(false); }}
       >
         <div

@@ -55,10 +55,22 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
-    // Default: move to pipeline
+    // Default: move to pipeline — also set status to "New Lead" if not already set
+    const { data: existing } = await supabase
+      .from('leads')
+      .select('lead_status')
+      .eq('id', leadId)
+      .eq('user_id', user.id)
+      .single();
+
+    const updatePayload: Record<string, unknown> = { in_pipeline: true };
+    if (!existing?.lead_status) {
+      updatePayload.lead_status = 'New Lead';
+    }
+
     const { error } = await supabase
       .from('leads')
-      .update({ in_pipeline: true })
+      .update(updatePayload)
       .eq('id', leadId)
       .eq('user_id', user.id);
 
