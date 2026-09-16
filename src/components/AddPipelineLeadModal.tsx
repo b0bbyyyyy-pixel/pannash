@@ -58,6 +58,9 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
   const set = (k: keyof Fields) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setFields(f => ({ ...f, [k]: e.target.value }));
 
+  // Extra underwriting fields extracted from paste
+  const [pasteUW, setPasteUW] = useState<Record<string, string>>({});
+
   const applyPaste = () => {
     const p = parseLeadPasteText(quickPaste);
     const merged: Fields = {
@@ -70,13 +73,31 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
         : fields.notes,
     };
     setFields(merged);
-    const n = [p.name, p.email, p.phone, p.company].filter(Boolean).length;
+
+    // Collect extra underwriting fields
+    const uw: Record<string, string> = {};
+    if (p.ssn)               uw.ssn               = p.ssn;
+    if (p.ein)               uw.ein               = p.ein;
+    if (p.dob)               uw.dob               = p.dob;
+    if (p.homeAddress)       uw.homeAddress        = p.homeAddress;
+    if (p.city)              uw.city               = p.city;
+    if (p.state)             uw.state              = p.state;
+    if (p.zip)               uw.zip                = p.zip;
+    if (p.industry)          uw.industry           = p.industry;
+    if (p.businessStartDate) uw.businessStartDate  = p.businessStartDate;
+    if (p.monthlyRevenue)    uw.monthlyRevenue     = p.monthlyRevenue;
+    if (p.creditScore)       uw.creditScore        = p.creditScore;
+    setPasteUW(uw);
+
+    const baseFields = [p.name, p.email, p.phone, p.company].filter(Boolean).length;
+    const extraFields = Object.keys(uw).length;
+    const total = baseFields + extraFields;
     setParseNote(
-      n > 0
-        ? `Auto-filled ${n} field${n > 1 ? 's' : ''}.`
+      total > 0
+        ? `Auto-filled ${total} field${total > 1 ? 's' : ''}.`
         : 'Could not detect fields — try "Name: / Email:" labels or separate lines.'
     );
-    setMethod('manual'); // move to review form
+    setMethod('manual');
   };
 
   // ── Upload + parse ─────────────────────────────────────────────────────────
@@ -115,8 +136,8 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
 
   // ── Create lead in Pipeline ────────────────────────────────────────────────
   const createLead = async () => {
-    if (!fields.name.trim() || !fields.email.trim()) {
-      setError('Name and email are required.');
+    if (!fields.name.trim()) {
+      setError('Name is required.');
       return;
     }
     setSaving(true);
@@ -133,6 +154,7 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
           phone:   fields.phone.trim() || null,
           company: fields.company.trim() || null,
           notes:   fields.notes.trim() || null,
+          ...(Object.keys(pasteUW).length > 0 ? { underwriting_data: pasteUW } : {}),
         }),
       });
       if (!res.ok) throw new Error((await res.json()).error || 'Create failed');
@@ -157,7 +179,7 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
   };
 
   // ── Render helpers ─────────────────────────────────────────────────────────
-  const canCreate = fields.name.trim() && fields.email.trim();
+  const canCreate = fields.name.trim();
 
   const inputCls = 'w-full px-3.5 py-2.5 bg-white border border-[#e5e5e5] rounded-lg text-sm text-[#1a1a1a] placeholder:text-[#b0b0b0] focus:outline-none focus:ring-2 focus:ring-[#1a1a1a]/10 focus:border-[#1a1a1a] transition-colors';
   const labelCls = 'block text-xs font-semibold text-[#6b6b6b] uppercase tracking-wider mb-1.5';
@@ -171,7 +193,7 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
           <input type="text" value={fields.name} onChange={set('name')} placeholder="John Smith" className={inputCls} />
         </div>
         <div>
-          <label className={labelCls}>Email <span className="text-red-400">*</span></label>
+          <label className={labelCls}>Email</label>
           <input type="email" value={fields.email} onChange={set('email')} placeholder="john@company.com" className={inputCls} />
         </div>
       </div>
@@ -295,11 +317,25 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
           {(method === 'manual' || (method === 'paste' && parseNote) || (method === 'upload' && parsed)) && (
             <div className="space-y-5">
               {parseNote && (
-                <div className="flex items-center gap-2 px-3 py-2 bg-emerald-50 text-emerald-700 rounded-lg text-xs font-medium">
-                  <svg className="w-3.5 h-3.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                  </svg>
-                  {parseNote}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 px-3 py-2 bg-emerald-50 text-emerald-700 rounded-lg text-xs font-medium">
+                    <svg className="w-3.5 h-3.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                    {parseNote}
+                  </div>
+                  {Object.keys(pasteUW).length > 0 && (
+                    <div className="bg-[#fafafa] border border-[#e5e5e5] rounded-lg px-3 py-2">
+                      <p className="text-[10px] font-semibold text-[#9b9b9b] uppercase tracking-wider mb-1.5">Also saved to Lead Info</p>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1">
+                        {Object.entries(pasteUW).map(([k, v]) => (
+                          <span key={k} className="text-xs text-[#6b6b6b]">
+                            <span className="font-medium text-[#1a1a1a]">{k.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase())}:</span>{' '}{v}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
               {parsed && (

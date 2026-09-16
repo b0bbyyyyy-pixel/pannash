@@ -25,10 +25,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { name, email, phone, company, notes, list_id } = await req.json();
+    const { name, email, phone, company, notes, list_id, underwriting_data } = await req.json();
 
-    if (!name || !email) {
-      return NextResponse.json({ error: 'Name and email are required' }, { status: 400 });
+    if (!name) {
+      return NextResponse.json({ error: 'Name is required' }, { status: 400 });
     }
 
     const { data, error } = await supabase
@@ -42,6 +42,9 @@ export async function POST(req: NextRequest) {
         notes: notes || null,
         list_id: list_id || null,
         last_contact: new Date().toISOString(),
+        ...(underwriting_data && Object.keys(underwriting_data).length > 0
+          ? { underwriting_data }
+          : {}),
       })
       .select()
       .single();
