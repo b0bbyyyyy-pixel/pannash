@@ -8,8 +8,16 @@ import LeadWorkspaceClient from './LeadWorkspaceClient';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-export default async function PipelineLeadPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function PipelineLeadPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ modal?: string; edit?: string }>;
+}) {
   const { id } = await params;
+  const sp = await searchParams;
+  const isModal = sp.modal === '1';
 
   const cookieStore = await cookies();
   const supabase = createServerClient(
@@ -52,6 +60,22 @@ export default async function PipelineLeadPage({ params }: { params: Promise<{ i
   const pipelineIds = (pipelineLeads || []).map((l: { id: string }) => l.id);
 
   const userName = user.email?.split('@')[0] || 'User';
+
+  if (isModal) {
+    // Stripped-down render for iframe overlay — no nav, no extra padding
+    return (
+      <div className="min-h-screen bg-[#fafafa]">
+        <div className="max-w-[1600px] mx-auto px-6 py-4">
+          <LeadWorkspaceClient
+            lead={lead}
+            allLeadIds={pipelineIds}
+            userId={user.id}
+            userName={userName}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#fafafa]">

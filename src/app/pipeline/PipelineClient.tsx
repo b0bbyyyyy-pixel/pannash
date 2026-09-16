@@ -741,9 +741,9 @@ export default function PipelineClient({ leads, userId }: PipelineClientProps) {
             </div>
             {/* iframe */}
             <iframe
-              src={`/pipeline/${leadOverlayId}`}
-              className="flex-1 w-full bg-white border-0"
-              title="Lead workspace"
+            src={`/pipeline/${leadOverlayId}?modal=1`}
+            className="flex-1 w-full bg-white border-0"
+            title="Lead workspace"
             />
           </div>
         </>

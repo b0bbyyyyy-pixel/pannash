@@ -975,7 +975,7 @@ export default function InboxClient({
           </div>
           {/* iframe */}
           <iframe
-            src={`/pipeline/${leadOverlayId}`}
+            src={`/pipeline/${leadOverlayId}?modal=1`}
             className="flex-1 w-full bg-white rounded-b-xl border-0"
             title="Lead workspace"
           />
