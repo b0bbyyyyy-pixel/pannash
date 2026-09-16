@@ -16,14 +16,45 @@ interface Fields {
 
 const EMPTY: Fields = { name: '', email: '', phone: '', company: '', notes: '' };
 
-// Parsed field labels matching parse-application output
-const FIELD_MAP: Record<string, keyof Fields> = {
+// Fields that map directly to the lead record (top-level columns)
+const LEAD_FIELD_MAP: Record<string, keyof Fields> = {
   name: 'name', full_name: 'name',
   email: 'email', email_address: 'email',
-  phone: 'phone', phone_number: 'phone', mobile: 'phone',
-  company: 'company', business_name: 'company', dba: 'company',
+  phone: 'phone', phone_number: 'phone', mobile: 'phone', cell: 'phone',
+  company: 'company', business_name: 'company', legal_name: 'company',
   notes: 'notes',
 };
+
+// Everything else from the parser goes into underwriting_data
+// These are the keys the parse-application API can return
+const UW_KEYS = new Set([
+  'dob','ssn','homeAddress','city','state','zip','country','creditScore',
+  'creditUtilization','creditInquiries','creditLates',
+  'dba','businessAddress','businessCity','businessState','businessZip',
+  'industry','businessStartDate','ein','entityType','ownershipPercent',
+  'businessPhone','fax',
+  'requestedAmount','monthlyRevenue','avgDailyBalance','purposeOfFunds',
+  'openingBalance','endingBalance','totalDeposits','totalWithdrawals',
+  'nsfCount','depositCount','largestDeposit','bankName','accountNumber',
+  'statementMonth','month1Revenue','month2Revenue','month3Revenue','month4Revenue',
+  'owner2FirstName','owner2LastName','owner2Ownership','owner2DOB','owner2SSN',
+]);
+
+/** Split extracted fields into lead columns and underwriting_data */
+function splitExtracted(raw: Record<string, unknown>): { leadFields: Partial<Fields>; uw: Record<string, string> } {
+  const leadFields: Partial<Fields> = {};
+  const uw: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    const val = String(v ?? '').trim();
+    if (!val || val === 'null' || val === 'undefined') continue;
+    if (k in LEAD_FIELD_MAP) {
+      leadFields[LEAD_FIELD_MAP[k]] = val;
+    } else if (UW_KEYS.has(k)) {
+      uw[k] = val;
+    }
+  }
+  return { leadFields, uw };
+}
 
 interface Props {
   onClose: () => void;
@@ -117,22 +148,28 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Parse failed');
 
-      // Use json.fields if available (new format), otherwise fall back to flat json
       const extractedFields: Record<string, unknown> = json.fields ?? json;
       setParsed(extractedFields);
 
-      // Pre-select all keys that map to our fields
-      const keys = Object.keys(extractedFields).filter(k => FIELD_MAP[k] && extractedFields[k]);
-      setSelectedKeys(new Set(keys));
-      // Pre-fill form
-      const newFields = { ...EMPTY };
-      for (const k of keys) {
-        const fk = FIELD_MAP[k];
-        if (fk && extractedFields[k]) newFields[fk] = String(extractedFields[k]);
-      }
-      setFields(newFields);
-      if (json.warning) {
-        setError('Auto-extraction returned limited data — please review and fill in any missing fields.');
+      // Split into lead columns + underwriting_data
+      const { leadFields, uw } = splitExtracted(extractedFields);
+      setPasteUW(uw); // reuse pasteUW to carry UW data into createLead
+
+      // Pre-fill the visible form fields
+      setFields(prev => ({
+        ...prev,
+        name:    leadFields.name    || prev.name,
+        email:   leadFields.email   || prev.email,
+        phone:   leadFields.phone   || prev.phone,
+        company: leadFields.company || prev.company,
+        notes:   leadFields.notes   || prev.notes,
+      }));
+
+      const total = Object.keys(leadFields).length + Object.keys(uw).length;
+      if (json.warning || total === 0) {
+        setError('Limited data extracted — please review and fill in any missing fields.');
+      } else {
+        setError('');
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Parse failed');
@@ -346,11 +383,25 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
                 </div>
               )}
               {parsed && (
-                <div className="flex items-center gap-2 px-3 py-2 bg-emerald-50 text-emerald-700 rounded-lg text-xs font-medium">
-                  <svg className="w-3.5 h-3.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                  </svg>
-                  Application parsed — review and confirm the fields below.
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 px-3 py-2 bg-emerald-50 text-emerald-700 rounded-lg text-xs font-medium">
+                    <svg className="w-3.5 h-3.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                    Application parsed — {Object.keys(parsed).length} field{Object.keys(parsed).length !== 1 ? 's' : ''} extracted. Review below.
+                  </div>
+                  {Object.keys(pasteUW).length > 0 && (
+                    <div className="bg-[#fafafa] border border-[#e5e5e5] rounded-lg px-3 py-2">
+                      <p className="text-[10px] font-semibold text-[#9b9b9b] uppercase tracking-wider mb-1.5">Also saved to Lead Info</p>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1">
+                        {Object.entries(pasteUW).map(([k, v]) => (
+                          <span key={k} className="text-xs text-[#6b6b6b]">
+                            <span className="font-medium text-[#1a1a1a]">{k.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase())}:</span>{' '}{v}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
               <LeadForm />

@@ -89,7 +89,6 @@ async function extractPdfText(buffer: Buffer): Promise<string> {
   const loadingTask = pdfjs.getDocument({
     data,
     useWorkerFetch: false,
-    isEvalSupported: false,
     disableFontFace: true,
   });
 
@@ -114,7 +113,7 @@ async function extractPdfText(buffer: Buffer): Promise<string> {
     fullText += '\n\n';
   }
 
-  await pdf.destroy();
+  await pdf.cleanup?.();
   return fullText;
 }
 

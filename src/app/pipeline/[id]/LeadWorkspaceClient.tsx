@@ -420,10 +420,17 @@ export default function LeadWorkspaceClient({
   const handleDelete = async () => {
     setDeleting(true);
     try {
-      const fd = new FormData();
-      fd.append('leadId', lead.id);
-      await fetch('/api/leads/delete', { method: 'POST', body: fd });
-      router.push('/pipeline');
+      await fetch('/api/leads/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadId: lead.id }),
+      });
+      // If inside iframe overlay, break out to parent; otherwise navigate normally
+      if (typeof window !== 'undefined' && window.top && window.top !== window.self) {
+        window.top.location.href = '/pipeline';
+      } else {
+        router.push('/pipeline');
+      }
     } finally {
       setDeleting(false);
     }

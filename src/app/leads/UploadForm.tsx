@@ -608,7 +608,7 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
               return;
             }
 
-            const { error } = await supabase.from('leads').insert(leads);
+            const { error } = await supabase.from('leads').insert(leads.filter(Boolean) as NonNullable<typeof leads[0]>[]);
 
             if (error) {
               setMessage(`Error: ${error.message}`);
