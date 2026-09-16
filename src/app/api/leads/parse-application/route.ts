@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
-import { getAIClient, GROK_MODEL, GROK_MINI_MODEL, GROK_VISION_MODEL } from '@/lib/ai';
+import { getAIClient, GROK_MODEL, GROK_VISION_MODEL } from '@/lib/ai';
 
 // Lazy-load pdf-parse to avoid self-test at module init (crashes Next.js)
 type PdfParseResult = { text: string };
@@ -108,33 +108,50 @@ function safeJson(raw: string): Record<string, string> {
   } catch { return {}; }
 }
 
-// ── Helper: resolve the correct MIME type for a file ─────────────────────────
-function resolveImageMime(ext: string): string {
-  if (ext === 'png')  return 'image/png';
-  if (ext === 'webp') return 'image/webp';
-  if (ext === 'gif')  return 'image/gif';
-  if (ext === 'pdf')  return 'application/pdf';
-  return 'image/jpeg'; // jpg / jpeg / anything else
+// ── Helper: extract every readable string from a PDF binary ──────────────────
+// Scanned PDFs still contain metadata, form field labels, and often OCR layers.
+// This pulls all ASCII strings ≥ 4 chars from the raw bytes.
+function extractRawStringsFromPdf(buffer: Buffer): string {
+  const latin = buffer.toString('latin1');
+  // Pull runs of printable ASCII (space through ~) that are ≥ 4 chars
+  const matches = latin.match(/[\x20-\x7E]{4,}/g) ?? [];
+  // Filter out pure PDF syntax noise (obj, endobj, stream keywords etc.)
+  const filtered = matches.filter(s => {
+    const t = s.trim();
+    if (!t) return false;
+    // Skip common PDF binary noise tokens
+    if (/^(obj|endobj|stream|endstream|xref|trailer|startxref|%%EOF)$/.test(t)) return false;
+    // Skip very long hex strings (binary data encoded as hex)
+    if (/^[0-9A-Fa-f]{20,}$/.test(t)) return false;
+    return true;
+  });
+  // Deduplicate and join, capped at 18k chars for the AI
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const s of filtered) {
+    if (!seen.has(s)) { seen.add(s); out.push(s); }
+    if (out.join(' ').length > 18000) break;
+  }
+  return out.join('\n');
 }
 
-// ── Helper: OCR via Grok Vision ───────────────────────────────────────────────
-// Sends the raw file bytes to Grok-Vision as a base64 data URL.
-// Works for: JPEG, PNG, WebP (native images) AND scanned PDFs (sent as application/pdf).
+// ── Helper: OCR via Grok Vision (actual images only — JPEG/PNG/WebP) ─────────
 async function ocrWithGrokVision(
   buffer: Buffer,
   filename: string,
-  _mimeType: string,
   prompt: string,
 ): Promise<string> {
-  const ai = getAIClient();
-  const ext     = filename.split('.').pop()?.toLowerCase() ?? '';
-  const mime    = resolveImageMime(ext);
+  const ext = filename.split('.').pop()?.toLowerCase() ?? '';
+  const mime =
+    ext === 'png'  ? 'image/png'  :
+    ext === 'webp' ? 'image/webp' :
+    ext === 'gif'  ? 'image/gif'  : 'image/jpeg';
+
   const base64  = buffer.toString('base64');
   const dataUrl = `data:${mime};base64,${base64}`;
 
-  console.log(`[parse-application] Vision OCR → mime=${mime} size=${buffer.length}b`);
-
-  // Attempt 1 — send as correct MIME (PDF or image) to vision model
+  console.log(`[parse-application] Vision OCR → ext=${ext} mime=${mime} size=${buffer.length}b`);
+  const ai = getAIClient();
   try {
     const completion = await ai.chat.completions.create({
       model: GROK_VISION_MODEL,
@@ -149,56 +166,44 @@ async function ocrWithGrokVision(
       ],
     });
     const text = completion.choices[0]?.message?.content?.trim() ?? '{}';
-    console.log('[parse-application] Vision OCR result (first 200):', text.slice(0, 200));
+    console.log('[parse-application] Vision OCR result:', text.slice(0, 300));
     return text;
   } catch (err) {
-    console.error('[parse-application] Vision OCR attempt 1 failed:', err);
+    console.error('[parse-application] Vision OCR failed:', err);
+    return '{}';
   }
+}
 
-  // Attempt 2 — try sending as image/jpeg (some providers convert on their end)
+// ── Helper: extract fields via text AI ────────────────────────────────────────
+async function extractWithTextAI(text: string, prompt: string, label: string): Promise<string> {
+  if (!text.trim() || text.replace(/\s/g, '').length < 20) return '{}';
+  const ai = getAIClient();
   try {
-    const jpegUrl = `data:image/jpeg;base64,${base64}`;
     const completion = await ai.chat.completions.create({
-      model: GROK_VISION_MODEL,
+      model: GROK_MODEL,
+      temperature: 0,
       max_tokens: 2000,
       messages: [
         { role: 'system', content: prompt + '\n\nReturn ONLY raw JSON, no markdown fences.' },
-        {
-          role: 'user',
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          content: [{ type: 'image_url', image_url: { url: jpegUrl, detail: 'high' } }] as any,
-        },
+        { role: 'user', content: `DOCUMENT TEXT (${label}):\n\n${text.slice(0, 18000)}` },
       ],
     });
-    const text = completion.choices[0]?.message?.content?.trim() ?? '{}';
-    console.log('[parse-application] Vision OCR attempt 2 result:', text.slice(0, 200));
-    return text;
+    const result = completion.choices[0]?.message?.content?.trim() ?? '{}';
+    console.log(`[parse-application] Text AI (${label}) result:`, result.slice(0, 300));
+    return result;
   } catch (err) {
-    console.error('[parse-application] Vision OCR attempt 2 failed:', err);
+    console.error(`[parse-application] Text AI (${label}) failed:`, err);
+    return '{}';
   }
+}
 
-  // Attempt 3 — text model with any raw readable chars (works for semi-readable PDFs)
-  try {
-    const readable = buffer.toString('latin1').replace(/[^\x20-\x7E\n\r\t]/g, ' ').replace(/\s{3,}/g, ' ').slice(0, 12000);
-    if (readable.replace(/\s/g, '').length > 100) {
-      const ai2 = getAIClient();
-      const completion = await ai2.chat.completions.create({
-        model: GROK_MODEL,
-        temperature: 0,
-        messages: [
-          { role: 'system', content: prompt },
-          { role: 'user', content: `DOCUMENT (raw extracted text — may contain noise):\n\n${readable}` },
-        ],
-      });
-      const text = completion.choices[0]?.message?.content?.trim() ?? '{}';
-      console.log('[parse-application] Text fallback result:', text.slice(0, 200));
-      return text;
-    }
-  } catch (err) {
-    console.error('[parse-application] Text fallback failed:', err);
+// ── Helper: merge two field maps (first map wins on conflicts) ─────────────────
+function mergeFields(a: Record<string, string>, b: Record<string, string>): Record<string, string> {
+  const out = { ...b };
+  for (const [k, v] of Object.entries(a)) {
+    if (v) out[k] = v; // a overwrites b
   }
-
-  return '{}';
+  return out;
 }
 
 // ── POST handler ───────────────────────────────────────────────────────────────
@@ -221,63 +226,78 @@ export async function POST(request: Request) {
   const filename = file.name;
   const mime     = file.type || 'application/octet-stream';
   const ext      = filename.split('.').pop()?.toLowerCase() ?? '';
+  const isImageFile = ['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext);
+  const isPdfFile   = ext === 'pdf' || mime.includes('pdf');
 
-  // ── Step 1: Extract raw text ───────────────────────────────────────────────
-  let rawText = '';
-  let isImage = false;
+  // ── Step 1: Gather all available text from every source ───────────────────
+  let pdfParseText  = '';  // From pdf-parse (structured text layer)
+  let rawBinaryText = '';  // From raw binary string extraction (catches scanned PDFs with OCR layers)
 
   if (ext === 'txt') {
-    rawText = buffer.toString('utf-8');
-  } else if (ext === 'pdf' || mime.includes('pdf')) {
+    pdfParseText = buffer.toString('utf-8');
+  } else if (isPdfFile) {
+    // Source A: pdf-parse structural text
     try {
       const parsed = await getPdfParse()(buffer);
-      rawText = parsed.text ?? '';
+      pdfParseText = (parsed.text ?? '').replace(/\s+/g, ' ').trim();
+      console.log(`[parse-application] pdf-parse extracted ${pdfParseText.length} chars`);
     } catch (err) {
-      console.warn('[parse-application] pdf-parse failed, will use vision OCR:', err);
+      console.warn('[parse-application] pdf-parse failed:', err);
     }
-    // < 80 meaningful chars → treat as scanned/image-based PDF and use vision OCR
-    if (rawText.replace(/\s+/g, ' ').trim().length < 80) {
-      console.log('[parse-application] Sparse text — switching to Grok vision OCR');
-      isImage = true;
-    }
-  } else if (['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext)) {
-    isImage = true;
-  } else {
-    rawText = buffer.toString('utf-8').replace(/[^\x20-\x7E\n\r\t]/g, ' ');
+    // Source B: raw binary string extraction (catches embedded OCR text in scanned PDFs)
+    rawBinaryText = extractRawStringsFromPdf(buffer);
+    console.log(`[parse-application] raw binary strings: ${rawBinaryText.length} chars`);
+  } else if (!isImageFile) {
+    pdfParseText = buffer.toString('utf-8').replace(/[^\x20-\x7E\n\r\t]/g, ' ');
   }
+
+  // Combined text for document type detection
+  const combinedText = `${pdfParseText}\n${rawBinaryText}`.slice(0, 2000);
 
   // ── Step 2: Detect document type ──────────────────────────────────────────
-  const isBank  = isBankStatement(filename, rawText);
-  const prompt  = isBank ? BANK_PROMPT : APP_PROMPT;
+  const isBank = isBankStatement(filename, combinedText);
+  const prompt = isBank ? BANK_PROMPT : APP_PROMPT;
 
-  // ── Step 3: Extract fields ────────────────────────────────────────────────
-  let rawResult = '{}';
+  // ── Step 3: Multi-source extraction — merge best results ──────────────────
+  let fields: Record<string, string> = {};
 
-  if (isImage) {
-    // Scanned PDF or image → Grok vision
-    rawResult = await ocrWithGrokVision(buffer, filename, mime, prompt);
-  } else {
-    const ai = getAIClient();
-    const truncated = rawText.slice(0, 14000); // Grok has larger context
-    try {
-      const completion = await ai.chat.completions.create({
-        model:       GROK_MINI_MODEL,
-        temperature: 0,
-        messages: [
-          { role: 'system', content: prompt },
-          { role: 'user',   content: `DOCUMENT TEXT:\n\n${truncated}` },
-        ],
-      });
-      rawResult = completion.choices[0]?.message?.content?.trim() ?? '{}';
-    } catch (err) {
-      console.error('[parse-application] Grok text extraction failed, trying vision:', err);
-      rawResult = await ocrWithGrokVision(buffer, filename, mime, prompt);
+  if (isImageFile) {
+    // Pure image → vision only
+    const raw = await ocrWithGrokVision(buffer, filename, prompt);
+    fields = safeJson(raw);
+
+  } else if (isPdfFile) {
+    // Strategy A: pdf-parse text (best quality when text layer exists)
+    if (pdfParseText.length >= 80) {
+      const raw = await extractWithTextAI(pdfParseText, prompt, 'pdf-parse');
+      fields = mergeFields(safeJson(raw), fields);
     }
+
+    // Strategy B: raw binary strings (catches scanned PDFs with embedded OCR layers)
+    // Always try this — it often surfaces form field labels + values even in scanned PDFs
+    if (rawBinaryText.length >= 50) {
+      const raw = await extractWithTextAI(rawBinaryText, prompt, 'raw-binary');
+      fields = mergeFields(safeJson(raw), fields);
+    }
+
+    // Strategy C: combined pass if either A or B gave nothing meaningful
+    if (Object.keys(fields).length < 2) {
+      const combined = `${pdfParseText}\n\n${rawBinaryText}`.replace(/\s{3,}/g, ' ').trim();
+      if (combined.length >= 40) {
+        const raw = await extractWithTextAI(combined, prompt, 'combined');
+        fields = mergeFields(safeJson(raw), fields);
+      }
+    }
+
+  } else {
+    // Plain text / other file
+    const raw = await extractWithTextAI(pdfParseText, prompt, 'text');
+    fields = safeJson(raw);
   }
 
-  const fields = safeJson(rawResult);
+  console.log(`[parse-application] Final extracted fields (${Object.keys(fields).length}):`, Object.keys(fields));
 
-  // Always return 200 — even if extraction yielded nothing, let the UI decide
+  // Always return 200 — even partial results are useful; let the UI fill gaps
   return NextResponse.json({
     fields,
     documentType: isBank ? 'bank_statement' : 'application',
