@@ -155,6 +155,9 @@ export default function InboxClient({
   const [suggestingReply, setSuggestingReply] = useState(false);
   const [suggestSent, setSuggestSent] = useState(false);
 
+  // Lead overlay — shows the pipeline lead workspace in a floating panel
+  const [leadOverlayId, setLeadOverlayId] = useState<string | null>(null);
+
   const threadEndRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
 
@@ -421,6 +424,7 @@ export default function InboxClient({
 
   // ─────────────────────────────────────────────────────────────────────────────
   return (
+    <>
     <div className="flex flex-col flex-1 overflow-hidden" style={{ height: 'calc(100vh - 80px)' }}>
 
     {/* DB setup banner */}
@@ -796,15 +800,15 @@ export default function InboxClient({
 
             {/* Quick actions */}
             <div className="grid grid-cols-2 gap-1.5">
-              <a
-                href={`/pipeline/${selectedLead.id}`}
+              <button
+                onClick={() => setLeadOverlayId(selectedLead.id)}
                 className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#e5e5e5] bg-white hover:bg-[#f5f5f5] transition-colors text-xs text-[#1a1a1a] font-medium"
               >
                 <svg className="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                 </svg>
                 View Lead
-              </a>
+              </button>
               <a
                 href={`/leads?list=${selectedLead.month_key}`}
                 className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#e5e5e5] bg-white hover:bg-[#f5f5f5] transition-colors text-xs text-[#1a1a1a] font-medium"
@@ -929,6 +933,56 @@ export default function InboxClient({
       </div>
     </div>
     </div>
+
+    {/* ── Lead Overlay ─────────────────────────────────────────────────────── */}
+    {leadOverlayId && (
+      <>
+        {/* Backdrop — click to close */}
+        <div
+          className="fixed inset-0 bg-black/40 z-[80]"
+          onClick={() => setLeadOverlayId(null)}
+        />
+        {/* Panel */}
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[81] flex flex-col"
+          style={{ width: 'min(92vw, 1200px)', height: 'calc(100vh - 2rem)' }}
+        >
+          {/* Header bar */}
+          <div className="flex items-center justify-between px-4 py-2.5 bg-white border-b border-[#e5e5e5] rounded-t-xl flex-shrink-0">
+            <span className="text-xs text-[#6b6b6b] font-medium">Lead Info</span>
+            <div className="flex items-center gap-3">
+              <a
+                href={`/pipeline/${leadOverlayId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[#6b6b6b] hover:text-[#1a1a1a] text-xs flex items-center gap-1 transition-colors"
+                title="Open in full page"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+                Full page
+              </a>
+              <button
+                onClick={() => setLeadOverlayId(null)}
+                className="text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors p-1 rounded hover:bg-[#f5f5f5]"
+                title="Close"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          {/* iframe */}
+          <iframe
+            src={`/pipeline/${leadOverlayId}`}
+            className="flex-1 w-full bg-white rounded-b-xl border-0"
+            title="Lead workspace"
+          />
+        </div>
+      </>
+    )}
+    </>
   );
 }
 

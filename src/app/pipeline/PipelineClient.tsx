@@ -219,7 +219,8 @@ export default function PipelineClient({ leads, userId }: PipelineClientProps) {
 
   const activeCount  = countActive(applied);
   const statusNames  = dbStatuses.map(s => s.name);
-  const goTo = (id: string) => router.push(`/pipeline/${id}`);
+  const [leadOverlayId, setLeadOverlayId] = useState<string | null>(null);
+  const goTo = (id: string) => setLeadOverlayId(id);
 
   return (
     <div>
@@ -696,6 +697,56 @@ export default function PipelineClient({ leads, userId }: PipelineClientProps) {
           onClose={() => setShowManageStatuses(false)}
           onSaved={() => { loadStatuses(); }}
         />
+      )}
+
+      {/* ── LEAD OVERLAY ─────────────────────────────────────────────────── */}
+      {leadOverlayId && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black/40 z-[80]"
+            onClick={() => setLeadOverlayId(null)}
+          />
+          {/* Panel */}
+          <div
+            className="fixed top-4 left-1/2 -translate-x-1/2 z-[81] flex flex-col rounded-xl shadow-2xl overflow-hidden"
+            style={{ width: 'min(92vw, 1200px)', height: 'calc(100vh - 2rem)' }}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-2.5 bg-white border-b border-[#e5e5e5] flex-shrink-0">
+              <span className="text-xs text-[#6b6b6b] font-medium">Lead Info</span>
+              <div className="flex items-center gap-3">
+                <a
+                  href={`/pipeline/${leadOverlayId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[#6b6b6b] hover:text-[#1a1a1a] text-xs flex items-center gap-1 transition-colors"
+                  title="Open in full page"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
+                  Full page
+                </a>
+                <button
+                  onClick={() => setLeadOverlayId(null)}
+                  className="text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors p-1 rounded hover:bg-[#f5f5f5]"
+                  title="Close"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            {/* iframe */}
+            <iframe
+              src={`/pipeline/${leadOverlayId}`}
+              className="flex-1 w-full bg-white border-0"
+              title="Lead workspace"
+            />
+          </div>
+        </>
       )}
     </div>
   );
