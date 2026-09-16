@@ -444,7 +444,7 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
               </div>
             </div>
             <iframe
-              src={`/pipeline/${leadOverlayId}?modal=1`}
+              src={`/pipeline/${leadOverlayId}?modal=1&from=leads`}
               className="flex-1 w-full bg-white border-0"
               title="Lead workspace"
             />

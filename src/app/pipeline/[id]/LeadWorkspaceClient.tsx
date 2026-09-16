@@ -36,6 +36,8 @@ interface LeadWorkspaceClientProps {
   allLeadIds: string[];
   userId: string;
   userName: string;
+  /** True when opened from the Leads page — always shows "Add to Pipeline" */
+  fromLeads?: boolean;
 }
 
 // ── Status helpers (dynamic) ───────────────────────────────────────────────────
@@ -211,6 +213,7 @@ export default function LeadWorkspaceClient({
   allLeadIds,
   userId,
   userName,
+  fromLeads = false,
 }: LeadWorkspaceClientProps) {
   const router = useRouter();
   const [lead, setLead]               = useState(initialLead);
@@ -617,21 +620,46 @@ export default function LeadWorkspaceClient({
       <div className="bg-white border-b border-[#e5e5e5] px-6 py-3 flex items-center justify-between flex-shrink-0">
         {/* Left: back + title */}
         <div className="flex items-center gap-4">
-          <a
-            href="/pipeline"
-            onClick={e => {
-              if (typeof window !== 'undefined' && window.top && window.top !== window.self) {
-                e.preventDefault();
-                window.top.location.href = '/pipeline';
-              }
-            }}
-            className="flex items-center gap-1.5 text-sm text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-            Back to Pipeline
-          </a>
+          {lead.in_pipeline && !fromLeads ? (
+            <a
+              href="/pipeline"
+              onClick={e => {
+                if (typeof window !== 'undefined' && window.top && window.top !== window.self) {
+                  e.preventDefault();
+                  window.top.location.href = '/pipeline';
+                }
+              }}
+              className="flex items-center gap-1.5 text-sm text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+              Back to Pipeline
+            </a>
+          ) : (
+            <button
+              onClick={async () => {
+                await fetch('/api/leads/pipeline', {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ leadId: lead.id }),
+                });
+                setLead(prev => ({ ...prev, in_pipeline: true }));
+                const dest = '/pipeline';
+                if (typeof window !== 'undefined' && window.top && window.top !== window.self) {
+                  window.top.location.href = dest;
+                } else {
+                  router.push(dest);
+                }
+              }}
+              className="flex items-center gap-1.5 text-sm font-semibold text-white bg-[#1a1a1a] hover:bg-[#333] px-3 py-1 rounded-md transition-colors"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Add to Pipeline
+            </button>
+          )}
           <span className="text-[#e5e5e5]">|</span>
           <div className="flex items-center gap-2">
             <h2 className="text-base font-bold text-[#1a1a1a]">{lead.company || lead.name}</h2>

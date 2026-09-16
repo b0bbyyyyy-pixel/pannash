@@ -13,11 +13,12 @@ export default async function PipelineLeadPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ modal?: string; edit?: string }>;
+  searchParams: Promise<{ modal?: string; edit?: string; from?: string }>;
 }) {
   const { id } = await params;
   const sp = await searchParams;
   const isModal = sp.modal === '1';
+  const fromLeads = sp.from === 'leads';
 
   const cookieStore = await cookies();
   const supabase = createServerClient(
@@ -71,6 +72,7 @@ export default async function PipelineLeadPage({
             allLeadIds={pipelineIds}
             userId={user.id}
             userName={userName}
+            fromLeads={fromLeads}
           />
         </div>
       </div>
