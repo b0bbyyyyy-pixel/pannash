@@ -6,6 +6,7 @@ import Papa from 'papaparse';
 import { useRouter } from 'next/navigation';
 import JSZip from 'jszip';
 import { parseLeadPasteText } from '@/lib/parse-lead-paste';
+import { toE164 } from '@/lib/dialer/e164';
 
 interface UploadFormProps {
   selectedListId?: string;
@@ -332,8 +333,24 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       return null;
     };
 
-    const firstName = findExact(['first name', 'firstname', 'first_name', 'fname', 'given name']);
-    const lastName  = findExact(['last name', 'lastname', 'last_name', 'lname', 'surname', 'family name']);
+    // Substring header matcher with value validation — catches variants like
+    // "Owner First Name", "Contact First", "FIRST_NAME", etc. The value must
+    // look like an actual name (letters only) to count.
+    const findNameByContains = (subs: string[]): string | null => {
+      for (const key of rowKeys) {
+        const lowerKey = key.toLowerCase().trim();
+        if (subs.some(n => lowerKey.includes(n))) {
+          const v = cellVal(key);
+          if (v && /^[a-zA-Z\s\-\.']{1,40}$/.test(v)) return v;
+        }
+      }
+      return null;
+    };
+
+    const firstName = findExact(['first name', 'firstname', 'first_name', 'fname', 'given name'])
+      || findNameByContains(['first name', 'firstname', 'first_name', 'fname', 'first']);
+    const lastName  = findExact(['last name', 'lastname', 'last_name', 'lname', 'surname', 'family name'])
+      || findNameByContains(['last name', 'lastname', 'last_name', 'lname', 'surname']);
     let name: string | null = null;
     if (firstName && lastName) {
       name = `${firstName} ${lastName}`.trim();
@@ -341,7 +358,27 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       name = (firstName || lastName);
     } else {
       // Fall back to a single combined name column
-      name = findColumn(['full name', 'fullname', 'contact name', 'tracers name', 'lead name', 'person name', 'owner name']);
+      name = findColumn(['full name', 'fullname', 'contact name', 'tracers name', 'lead name', 'person name', 'owner name'])
+        // Generic single-word headers like "Name", "Owner", "Contact" (exact match
+        // only, so "Business Name" still maps to company, not here)
+        || findExact(['name', 'owner', 'contact', 'lead']);
+    }
+
+    // Last resort: many exports put First / Last right before the Email column.
+    // Grab up to two short alphabetic values immediately preceding the email.
+    if (!name) {
+      const emailKeyIdx = rowKeys.findIndex(k => {
+        const v = cellVal(k);
+        return !!v && isEmail(v);
+      });
+      if (emailKeyIdx > 0) {
+        const parts: string[] = [];
+        for (let i = Math.max(0, emailKeyIdx - 2); i < emailKeyIdx; i++) {
+          const v = cellVal(rowKeys[i]);
+          if (v && /^[a-zA-Z\-\.']{2,20}$/.test(v)) parts.push(v);
+        }
+        if (parts.length > 0) name = parts.join(' ');
+      }
     }
 
     // Phone — Step 1: look for columns whose NAME suggests a phone field (broad list)
@@ -501,12 +538,15 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
     const now = new Date().toISOString();
     const leads = parsedPreview.map(l => ({
       user_id: user.id,
-      name: l.name || (l.email ? l.email.split('@')[0] : 'Unknown'),
+      name: l.name || l.company || (l.email ? l.email.split('@')[0] : 'Unknown'),
       email: l.email || '',
       phone: l.phone || null,
+      phone_e164: toE164(l.phone),
       company: l.company || null,
       notes: l.notes || null,
       list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
+      month_key: null,      // keep campaign uploads OUT of the pipeline
+      in_pipeline: false,
     }));
 
     const { error } = await supabase.from('leads').insert(leads);
@@ -565,12 +605,15 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
 
                   return {
                     user_id: user.id,
-                    name: mapped.name || mapped.email.split('@')[0],
+                    name: mapped.name || mapped.company || mapped.email.split('@')[0],
                     email: mapped.email,
                     phone: mapped.phone,
+                    phone_e164: toE164(mapped.phone),
                     company: mapped.company,
                     notes: mapped.notes,
                     list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
+                    month_key: null,      // keep campaign uploads OUT of the pipeline
+                    in_pipeline: false,
                   };
                 })
                 .filter((lead: any) => lead !== null);
@@ -592,12 +635,15 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
 
                   return {
                     user_id: user.id,
-                    name: mapped.name || mapped.email.split('@')[0],
+                    name: mapped.name || mapped.company || mapped.email.split('@')[0],
                     email: mapped.email,
                     phone: mapped.phone,
+                    phone_e164: toE164(mapped.phone),
                     company: mapped.company,
                     notes: mapped.notes,
                     list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
+                    month_key: null,      // keep campaign uploads OUT of the pipeline
+                    in_pipeline: false,
                   };
                 })
                 .filter((lead: any) => lead !== null);
@@ -685,12 +731,15 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
     const now = new Date().toISOString();
     const leads = quickPreview.map(l => ({
       user_id: user.id,
-      name: l.name || '',
+      name: l.name || l.company || (l.email ? l.email.split('@')[0] : ''),
       email: l.email || '',
       phone: l.phone || null,
+      phone_e164: toE164(l.phone),
       company: l.company || null,
       notes: l.notes || null,
       list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
+      month_key: null,      // keep campaign uploads OUT of the pipeline
+      in_pipeline: false,
     }));
 
     const { error } = await supabase.from('leads').insert(leads);
@@ -976,12 +1025,15 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
     const now = new Date().toISOString();
     const leads = zipPreview.map(l => ({
       user_id: user.id,
-      name: l.name || '',
+      name: l.name || l.company || (l.email ? l.email.split('@')[0] : ''),
       email: l.email || '',
       phone: l.phone || null,
+      phone_e164: toE164(l.phone),
       company: l.company || null,
       notes: l.notes || null,
       list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
+      month_key: null,      // keep campaign uploads OUT of the pipeline
+      in_pipeline: false,
     }));
 
     const { error } = await supabase.from('leads').insert(leads);
@@ -1132,7 +1184,14 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
 
       const firstRow = result.data[0] as string[];
       const headerKeywords = ['name', 'email', 'phone', 'company', 'business', 'contact', 'first', 'last', 'mobile', 'cell'];
-      const hasHeaders = firstRow.some(v => headerKeywords.some(k => String(v).toLowerCase().includes(k)));
+      // A cell only counts as a header label if it has no digits and no @ —
+      // otherwise data like "2292200603 mobile" or emails would be mistaken for headers
+      const looksLikeHeaderCell = (v: unknown) => {
+        const s = String(v).toLowerCase().trim();
+        if (!s || s.includes('@') || /\d/.test(s)) return false;
+        return headerKeywords.some(k => s.includes(k));
+      };
+      const hasHeaders = firstRow.some(looksLikeHeaderCell);
 
       let leads: ParsedLead[];
       if (hasHeaders) {
@@ -1176,12 +1235,15 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
 
     const rows = sheetsPreview.map(l => ({
       user_id: user.id,
-      name: l.name || '',
+      name: l.name || l.company || (l.email ? l.email.split('@')[0] : ''),
       email: l.email || '',
       phone: l.phone || null,
+      phone_e164: toE164(l.phone),
       company: l.company || null,
       notes: l.notes || null,
       list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
+      month_key: null,      // keep campaign uploads OUT of the pipeline
+      in_pipeline: false,
       // Add to dialer queue if toggled
       ...(sheetsAddToDialer ? { dialer_status: 'queued' } : {}),
     }));

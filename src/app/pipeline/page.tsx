@@ -32,6 +32,7 @@ export default async function PipelinePage() {
     .select('*')
     .eq('user_id', user.id)
     .or('in_pipeline.eq.true,month_key.not.is.null')
+    .is('list_id', null) // campaign/list leads never belong in the pipeline
     .order('created_at', { ascending: false });
 
   if (error) {

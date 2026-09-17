@@ -192,8 +192,10 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
                 <tr key={lead.id} className="border-b border-[#f5f5f5] hover:bg-[#fafafa] transition-colors last:border-b-0">
                   {/* Lead name + company */}
                   <td className="px-4 py-3.5">
-                    <div className="font-semibold text-sm text-[#1a1a1a]">{lead.name || '—'}</div>
-                    {lead.company && (
+                    <div className="font-semibold text-sm text-[#1a1a1a]">
+                      {(lead.name && !lead.name.includes('@') ? lead.name : null) || lead.company || lead.name || '—'}
+                    </div>
+                    {lead.company && lead.company !== ((lead.name && !lead.name.includes('@') ? lead.name : null) || lead.company) && (
                       <div className="text-xs text-[#9b9b9b] mt-0.5">{lead.company}</div>
                     )}
                   </td>
