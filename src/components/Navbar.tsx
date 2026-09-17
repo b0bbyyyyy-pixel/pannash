@@ -19,10 +19,10 @@ export default function Navbar({ userName }: NavbarProps) {
     <nav className="fixed top-0 left-0 right-0 bg-[#fafafa] border-b border-[#e5e5e5] z-50">
       <div className="max-w-[1600px] mx-auto px-12">
         <div className="flex items-center justify-between h-20">
-          {/* Logo - Gray Ghost */}
+          {/* Logo - Trylon & Perisphere */}
           <Link href="/pipeline" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
             <img
-              src="/images/logo/gostwrk-logo-gray.svg"
+              src="/images/logo/trylon-perisphere.svg"
               alt="Gostwrk"
               width={40}
               height={40}

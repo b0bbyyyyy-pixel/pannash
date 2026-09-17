@@ -8,7 +8,7 @@ export default function TermsPage() {
         <div className="max-w-6xl mx-auto px-6 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-4 hover:opacity-80 transition-opacity">
             <img
-              src="/images/logo/gostwrk-logo-gray.svg"
+              src="/images/logo/trylon-perisphere.svg"
               alt="Gostwrk"
               width={48}
               height={48}
