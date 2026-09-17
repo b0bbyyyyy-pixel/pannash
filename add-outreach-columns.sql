@@ -1,0 +1,3 @@
+-- Safe to re-run
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS sms_sent_at TIMESTAMPTZ;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS call_made_at TIMESTAMPTZ;

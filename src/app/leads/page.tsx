@@ -2,22 +2,20 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
-import Link from 'next/link';
 import Navbar from '@/components/Navbar';
-import CreateListButton from './CreateListButton';
-import LeadListSelector from './LeadListSelector';
-import LeadsTableWrapper from './LeadsTableWrapper';
-import AddLeadButton from './AddLeadButton';
-import ExportListButton from './ExportListButton';
+import CampaignTable, { Campaign } from './CampaignTable';
+import CampaignLeadsView, { CampaignLead } from './CampaignLeadsView';
+import UploadModal from './UploadModal';
+import CampaignRenameWrapperComponent from './CampaignRenameWrapper';
 
 export default async function LeadsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ list?: string; showCrm?: string }>;
+  searchParams: Promise<{ list?: string }>;
 }) {
   const params = await searchParams;
   const selectedListId = params.list;
-  
+
   const cookieStore = await cookies();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -36,110 +34,67 @@ export default async function LeadsPage({
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/auth');
 
-  // Fetch user's lead lists
+  // ── Fetch campaigns with outreach stats ──────────────────────────────────
   const { data: leadLists } = await supabase
     .from('lead_lists')
     .select('*')
     .eq('user_id', user.id)
     .order('created_at', { ascending: false });
 
-  // Fetch user's leads (filtered by list if selected)
-  // showCrm param controls whether dashboard CRM leads are visible here
-  const showCrm = params.showCrm === '1';
-
-  let leadsQuery = supabase
-    .from('leads')
-    .select('*, lead_lists(name)')
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: false });
-
-  if (selectedListId) {
-    if (selectedListId === 'unlisted') {
-      // Uncategorized: no list AND no CRM month_key (unless showCrm)
-      leadsQuery = leadsQuery.is('list_id', null);
-      if (!showCrm) leadsQuery = leadsQuery.is('month_key', null);
-    } else {
-      // Specific list: leads with list_id are always contact leads, no extra filter needed
-      leadsQuery = leadsQuery.eq('list_id', selectedListId);
-    }
-  } else {
-    // "All" view — hide CRM leads unless showCrm is on
-    if (!showCrm) leadsQuery = leadsQuery.not('list_id', 'is', null);
-  }
-
-  const { data: leads } = await leadsQuery;
-
-  // Get counts per list
-  const listCounts = await Promise.all(
+  const campaignStats = await Promise.all(
     (leadLists || []).map(async (list) => {
-      const { count } = await supabase
+      const { data: stats } = await supabase
         .from('leads')
-        .select('*', { count: 'exact', head: true })
+        .select('id, sms_sent_at, call_made_at')
         .eq('list_id', list.id);
-      return { listId: list.id, count: count || 0 };
+      const total = stats?.length || 0;
+      const smsCount = stats?.filter((l) => l.sms_sent_at).length || 0;
+      const callCount = stats?.filter((l) => l.call_made_at).length || 0;
+      const touchedCount = stats?.filter((l) => l.sms_sent_at || l.call_made_at).length || 0;
+      return { listId: list.id, total, smsCount, callCount, touchedCount };
     })
   );
 
-  // Per-list calling progress: phone_total and attempted (last_contact set)
-  const { data: progressRaw } = await supabase
-    .from('leads')
-    .select('list_id, phone, last_contact')
-    .eq('user_id', user.id)
-    .not('list_id', 'is', null);
-
-  const listProgress = (leadLists || []).map(list => {
-    const listLeads = (progressRaw || []).filter(l => l.list_id === list.id);
-    const withPhone = listLeads.filter(l => {
-      const p = (l.phone || '').trim();
-      return p && p !== '-' && p !== '--';
-    });
-    const attempted = withPhone.filter(l => l.last_contact != null);
-    return { listId: list.id, total: withPhone.length, attempted: attempted.length };
+  const campaigns: Campaign[] = (leadLists || []).map((list) => {
+    const stats = campaignStats.find((s) => s.listId === list.id) || {
+      total: 0,
+      smsCount: 0,
+      callCount: 0,
+      touchedCount: 0,
+    };
+    return {
+      id: list.id,
+      name: list.name,
+      created_at: list.created_at,
+      total: stats.total,
+      smsCount: stats.smsCount,
+      callCount: stats.callCount,
+      touchedCount: stats.touchedCount,
+    };
   });
 
-  // Count uncategorized contact-list leads (no list_id, no month_key unless showCrm)
-  let unlistedQuery = supabase
-    .from('leads')
-    .select('*', { count: 'exact', head: true })
-    .eq('user_id', user.id)
-    .is('list_id', null);
-  if (!showCrm) unlistedQuery = unlistedQuery.is('month_key', null);
-  const { count: unlistedCount } = await unlistedQuery;
+  // ── Fetch leads for selected campaign ────────────────────────────────────
+  let campaignLeads: CampaignLead[] = [];
+  const selectedList = leadLists?.find((l) => l.id === selectedListId);
 
-  // Server action to delete lead
-  async function deleteLead(formData: FormData) {
-    'use server';
-    const leadId = formData.get('leadId') as string;
-    
-    const cookieStore = await cookies();
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          get(name: string) {
-            return cookieStore.get(name)?.value;
-          },
-          set() {},
-          remove() {},
-        },
-      }
-    );
-
-    await supabase
+  if (selectedListId) {
+    const { data: leads } = await supabase
       .from('leads')
-      .delete()
-      .eq('id', leadId);
-
-    revalidatePath('/leads');
+      .select('id, name, email, phone, company, notes, sms_sent_at, call_made_at, last_contact, created_at')
+      .eq('list_id', selectedListId)
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false });
+    campaignLeads = (leads || []) as CampaignLead[];
   }
 
-  // Server action to delete multiple leads
-  async function deleteMultipleLeads(formData: FormData) {
+  // ── Server action: create campaign ────────────────────────────────────────
+  async function createCampaign() {
     'use server';
-    const leadIds = formData.getAll('leadIds[]') as string[];
-    
-    if (leadIds.length === 0) return;
+    const today = new Date().toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
 
     const cookieStore = await cookies();
     const supabase = createServerClient(
@@ -147,66 +102,7 @@ export default async function LeadsPage({
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
       {
         cookies: {
-          get(name: string) {
-            return cookieStore.get(name)?.value;
-          },
-          set() {},
-          remove() {},
-        },
-      }
-    );
-
-    await supabase
-      .from('leads')
-      .delete()
-      .in('id', leadIds);
-
-    revalidatePath('/leads');
-  }
-
-  // Server action to delete list (keeps leads, they become uncategorized)
-  async function deleteList(formData: FormData) {
-    'use server';
-    const listId = formData.get('listId') as string;
-    
-    const cookieStore = await cookies();
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          get(name: string) {
-            return cookieStore.get(name)?.value;
-          },
-          set() {},
-          remove() {},
-        },
-      }
-    );
-
-    await supabase
-      .from('lead_lists')
-      .delete()
-      .eq('id', listId);
-
-    revalidatePath('/leads');
-    redirect('/leads');
-  }
-
-  // Server action to delete list AND all its leads
-  async function deleteListWithLeads(formData: FormData) {
-    'use server';
-    const listId = formData.get('listId') as string;
-    
-    const cookieStore = await cookies();
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          get(name: string) {
-            return cookieStore.get(name)?.value;
-          },
+          get(name: string) { return cookieStore.get(name)?.value; },
           set() {},
           remove() {},
         },
@@ -216,99 +112,161 @@ export default async function LeadsPage({
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    // First delete all leads in this list
-    await supabase
-      .from('leads')
-      .delete()
-      .eq('list_id', listId)
-      .eq('user_id', user.id);
+    await supabase.from('lead_lists').insert({
+      name: today,
+      user_id: user.id,
+    });
 
-    // Then delete the list
-    await supabase
-      .from('lead_lists')
-      .delete()
-      .eq('id', listId);
+    revalidatePath('/leads');
+  }
 
+  // ── Server action: delete lead ─────────────────────────────────────────
+  async function deleteLead(formData: FormData) {
+    'use server';
+    const leadId = formData.get('leadId') as string;
+    const cookieStore = await cookies();
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          get(name: string) { return cookieStore.get(name)?.value; },
+          set() {},
+          remove() {},
+        },
+      }
+    );
+    await supabase.from('leads').delete().eq('id', leadId);
+    revalidatePath('/leads');
+  }
+
+  // ── Server action: delete list ─────────────────────────────────────────
+  async function deleteList(formData: FormData) {
+    'use server';
+    const listId = formData.get('listId') as string;
+    const cookieStore = await cookies();
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          get(name: string) { return cookieStore.get(name)?.value; },
+          set() {},
+          remove() {},
+        },
+      }
+    );
+    await supabase.from('lead_lists').delete().eq('id', listId);
     revalidatePath('/leads');
     redirect('/leads');
   }
 
-  const totalLeads = leads?.length || 0;
-  const selectedList = leadLists?.find(l => l.id === selectedListId);
+  // ── Server action: delete list with leads ─────────────────────────────
+  async function deleteListWithLeads(formData: FormData) {
+    'use server';
+    const listId = formData.get('listId') as string;
+    const cookieStore = await cookies();
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          get(name: string) { return cookieStore.get(name)?.value; },
+          set() {},
+          remove() {},
+        },
+      }
+    );
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    await supabase.from('leads').delete().eq('list_id', listId).eq('user_id', user.id);
+    await supabase.from('lead_lists').delete().eq('id', listId);
+    revalidatePath('/leads');
+    redirect('/leads');
+  }
 
-  // Collect unique folder names for the CreateListButton picker
-  const existingFolders = [
-    ...new Set(
-      (leadLists || [])
-        .map((l: { folder_name?: string | null }) => l.folder_name)
-        .filter((f): f is string => typeof f === 'string' && f.trim() !== '')
-    ),
-  ];
+  // ── Server action: rename campaign ────────────────────────────────────
+  async function renameCampaign(formData: FormData) {
+    'use server';
+    const listId = formData.get('listId') as string;
+    const newName = formData.get('newName') as string;
+    if (!listId || !newName?.trim()) return;
+
+    const cookieStore = await cookies();
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          get(name: string) { return cookieStore.get(name)?.value; },
+          set() {},
+          remove() {},
+        },
+      }
+    );
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    await supabase
+      .from('lead_lists')
+      .update({ name: newName.trim() })
+      .eq('id', listId)
+      .eq('user_id', user.id);
+
+    revalidatePath('/leads');
+  }
+
+  // Suppress unused-warning for server actions we keep for completeness
+  void deleteLead;
+  void deleteList;
+  void deleteListWithLeads;
 
   return (
     <div className="min-h-screen bg-[#fafafa]">
       <Navbar userName={user.email?.split('@')[0] || 'User'} />
-      
+
       <main className="max-w-[1600px] mx-auto px-12 pt-28 pb-16">
+        {/* Page header */}
         <div className="flex items-center justify-between mb-10">
           <div>
             <h1 className="text-3xl font-bold text-[#1a1a1a] mb-1 tracking-tight">
-              Leads
-            </h1>
-            <p className="text-[#6b6b6b] text-sm">
-              Upload and organize your contact lists
-            </p>
-          </div>
-          <div className="flex gap-3">
-            <Link
-              href="/campaigns"
-              className="px-4 py-2.5 rounded-md text-sm font-medium border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-colors"
-            >
               Campaigns
-            </Link>
-            <AddLeadButton selectedListId={selectedListId} />
-            <ExportListButton 
-              leads={leads || []} 
-              listName={selectedList?.name || 'All_Leads'} 
-            />
-            <CreateListButton existingFolders={existingFolders} />
-            {/* Toggle to show/hide dashboard CRM leads in this list */}
-            <Link
-              href={showCrm ? `/leads${selectedListId ? `?list=${selectedListId}` : ''}` : `/leads?${selectedListId ? `list=${selectedListId}&` : ''}showCrm=1`}
-              className={`px-4 py-2.5 rounded-md text-sm font-medium border transition-colors ${
-                showCrm
-                  ? 'bg-gray-900 text-white border-gray-900'
-                  : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400'
-              }`}
-              title={showCrm ? 'Currently showing dashboard leads — click to hide' : 'Show dashboard leads here'}
-            >
-              {showCrm ? 'Hide Dashboard Leads' : 'Show Dashboard Leads'}
-            </Link>
+            </h1>
           </div>
+
+          {!selectedListId && (
+            <div className="flex gap-3">
+              {/* Upload Leads → opens modal */}
+              <UploadModal selectedListId={selectedListId} />
+
+              {/* New Campaign */}
+              <form action={createCampaign}>
+                <button
+                  type="submit"
+                  className="text-sm font-medium text-[#1a1a1a] hover:text-[#555] transition-colors"
+                >
+                  New Campaign
+                </button>
+              </form>
+            </div>
+          )}
         </div>
 
-        {/* Lead Lists Tabs */}
-        <LeadListSelector 
-          lists={leadLists || []}
-          selectedListId={selectedListId}
-          listCounts={listCounts}
-          listProgress={listProgress}
-          unlistedCount={unlistedCount || 0}
-          deleteList={deleteList}
-          deleteListWithLeads={deleteListWithLeads}
-        />
-
-        {/* Leads Table */}
-        <LeadsTableWrapper
-          leads={leads || []}
-          selectedListName={selectedList ? selectedList.name : 'All Leads'}
-          selectedListDescription={selectedList?.description}
-          totalLeads={totalLeads}
-          selectedListId={selectedListId}
-          deleteLead={deleteLead}
-          deleteMultipleLeads={deleteMultipleLeads}
-        />
+        {/* Main content */}
+        {selectedListId ? (
+          <CampaignLeadsView
+            leads={campaignLeads}
+            campaignName={selectedList?.name || 'Campaign'}
+            listId={selectedListId}
+          />
+        ) : (
+          <CampaignRenameWrapperComponent
+            campaigns={campaigns}
+            renameCampaign={renameCampaign}
+          />
+        )}
       </main>
     </div>
   );
 }
+

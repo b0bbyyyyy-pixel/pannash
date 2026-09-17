@@ -12,6 +12,8 @@ interface Lead {
   company: string | null;
   phone_e164: string;
   timezone: string | null;
+  city: string | null;
+  state: string | null;
   last_disposition: string | null;
   last_called_at: string | null;
   last_call_notes: string | null;
@@ -89,6 +91,54 @@ function dispositionColor(key: string | null): string {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
+function LeadInfoOverlay({ leadId, onClose }: { leadId: string; onClose: () => void }) {
+  return (
+    <>
+      {/* Backdrop */}
+      <div className="fixed inset-0 bg-black/40 z-[80]" onClick={onClose} />
+      {/* Panel */}
+      <div
+        className="fixed top-4 left-1/2 -translate-x-1/2 z-[81] flex flex-col rounded-xl shadow-2xl overflow-hidden"
+        style={{ width: 'min(92vw, 1200px)', height: 'calc(100vh - 2rem)' }}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-2.5 bg-white border-b border-[#e5e5e5] flex-shrink-0">
+          <span className="text-xs text-[#6b6b6b] font-medium">Lead Info</span>
+          <div className="flex items-center gap-3">
+            <a
+              href={`/pipeline/${leadId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[#6b6b6b] hover:text-[#1a1a1a] text-xs flex items-center gap-1 transition-colors"
+              title="Open in full page"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+              Full page
+            </a>
+            <button
+              onClick={onClose}
+              className="text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors p-1 rounded hover:bg-[#f5f5f5]"
+              title="Close"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        {/* iframe — reuses the same modal=1 route the pipeline uses */}
+        <iframe
+          src={`/pipeline/${leadId}?modal=1`}
+          className="flex-1 w-full bg-white border-0"
+          title="Lead workspace"
+        />
+      </div>
+    </>
+  );
+}
+
 function LeadCard({
   lead,
   onCall,
@@ -98,6 +148,7 @@ function LeadCard({
 }) {
   const [copied, setCopied] = useState(false);
   const [localT, setLocalT] = useState(localTime(lead.timezone));
+  const [showOverlay, setShowOverlay] = useState(false);
 
   useEffect(() => {
     const t = setInterval(() => setLocalT(localTime(lead.timezone)), 30_000);
@@ -126,7 +177,19 @@ function LeadCard({
           )}
         </div>
         <div className="text-right text-xs text-[#9ca3af] space-y-1">
-          <div>Last called: <span className="text-[#1a1a1a]">{timeAgo(lead.last_called_at)}</span></div>
+          <div className="flex items-center justify-end gap-2">
+            <button
+              onClick={() => setShowOverlay(true)}
+              title="View lead info"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#f4f4f4] hover:bg-[#e8e8e8] text-[#555] hover:text-[#1a1a1a] transition-colors text-[10px] font-medium"
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Info
+            </button>
+            <span>Last called: <span className="text-[#1a1a1a]">{timeAgo(lead.last_called_at)}</span></span>
+          </div>
           {lead.last_disposition && (
             <div>
               Last result:{' '}
@@ -137,6 +200,9 @@ function LeadCard({
           )}
         </div>
       </div>
+
+      {/* Full lead info overlay */}
+      {showOverlay && <LeadInfoOverlay leadId={lead.id} onClose={() => setShowOverlay(false)} />}
 
       {/* Phone */}
       <div className="flex items-center gap-3 mb-6">
@@ -170,14 +236,24 @@ function LeadCard({
         </button>
       </div>
 
-      {/* Local time */}
-      {localT && (
+      {/* Location + local time */}
+      {(lead.city || lead.state || localT) && (
         <div className="flex items-center gap-2 text-sm text-[#6b7280] mb-5">
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
               d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          Their local time: <span className="text-[#1a1a1a] font-medium">{localT}</span>
+          {(lead.city || lead.state) && (
+            <span className="text-[#1a1a1a] font-medium">
+              {[lead.city, lead.state].filter(Boolean).join(', ')}
+            </span>
+          )}
+          {(lead.city || lead.state) && localT && (
+            <span className="text-[#d4d4d4]">·</span>
+          )}
+          {localT && (
+            <span className="text-[#1a1a1a] font-medium">{localT}</span>
+          )}
         </div>
       )}
 
@@ -326,106 +402,61 @@ function WrapUpCard({
   );
 }
 
-function QueueSidebar({
-  queue,
-  todayCalls,
-}: {
-  queue: QueuePreview[];
-  todayCalls: DialerCall[];
-}) {
+function QueueSidebar({ queue }: { queue: QueuePreview[] }) {
   return (
-    <div className="space-y-6">
-      {/* Next up */}
-      <div className="bg-white border border-[#e5e5e5] rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-[#f0f0f0]">
-          <h3 className="text-sm font-semibold text-[#1a1a1a]">
-            Next up{' '}
-            <span className="text-[#9ca3af] font-normal">({queue.length})</span>
-          </h3>
-        </div>
-        {queue.length === 0 ? (
-          <p className="px-5 py-4 text-sm text-[#9ca3af]">Queue clear for now.</p>
-        ) : (
-          <ul className="divide-y divide-[#f0f0f0]">
-            {queue.map((lead, i) => (
-              <li key={lead.id} className="px-5 py-3 flex items-center gap-3">
-                <span className="text-xs text-[#ccc] w-4 text-right shrink-0">{i + 1}</span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-[#1a1a1a] truncate">{lead.name}</p>
-                  {lead.company && (
-                    <p className="text-xs text-[#9ca3af] truncate">{lead.company}</p>
-                  )}
-                </div>
-                {lead.last_disposition && (
-                  <span
-                    className="text-[10px] shrink-0 px-1.5 py-0.5 rounded-full border"
-                    style={{
-                      color: dispositionColor(lead.last_disposition),
-                      borderColor: dispositionColor(lead.last_disposition) + '40',
-                      backgroundColor: dispositionColor(lead.last_disposition) + '10',
-                    }}
-                  >
-                    {dispositionLabel(lead.last_disposition)}
-                  </span>
-                )}
-              </li>
-            ))}
-          </ul>
+    <div className="bg-white border border-[#e5e5e5] rounded-2xl overflow-hidden">
+      <div className="px-5 py-3 border-b border-[#f0f0f0] flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-[#1a1a1a]">Next up</h3>
+        {queue.length > 0 && (
+          <span className="text-xs text-[#9ca3af]">{queue.length} in queue</span>
         )}
       </div>
-
-      {/* Today's log */}
-      <div className="bg-white border border-[#e5e5e5] rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-[#f0f0f0]">
-          <h3 className="text-sm font-semibold text-[#1a1a1a]">
-            Today{' '}
-            <span className="text-[#9ca3af] font-normal">({todayCalls.length} calls)</span>
-          </h3>
+      {queue.length === 0 ? (
+        <p className="px-5 py-4 text-sm text-[#9ca3af]">Queue clear.</p>
+      ) : (
+        <div className="px-5 py-3 flex items-center gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-[#1a1a1a] truncate">{queue[0].name}</p>
+            {queue[0].company && (
+              <p className="text-xs text-[#9ca3af] truncate">{queue[0].company}</p>
+            )}
+          </div>
+          {queue[0].last_disposition && (
+            <span
+              className="text-[10px] shrink-0 px-1.5 py-0.5 rounded-full border"
+              style={{
+                color: dispositionColor(queue[0].last_disposition),
+                borderColor: dispositionColor(queue[0].last_disposition) + '40',
+                backgroundColor: dispositionColor(queue[0].last_disposition) + '10',
+              }}
+            >
+              {dispositionLabel(queue[0].last_disposition)}
+            </span>
+          )}
         </div>
-        {todayCalls.length === 0 ? (
-          <p className="px-5 py-4 text-sm text-[#9ca3af]">No calls yet today.</p>
-        ) : (
-          <ul className="divide-y divide-[#f0f0f0] max-h-72 overflow-y-auto">
-            {todayCalls.map((call) => (
-              <li key={call.id} className="px-5 py-3">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-[#1a1a1a] truncate">{call.lead_name}</p>
-                  <p className="text-xs text-[#9ca3af] ml-2 shrink-0">
-                    {new Date(call.started_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
-                  </p>
-                </div>
-                {call.disposition && (
-                  <span
-                    className="text-[10px] px-1.5 py-0.5 rounded-full border"
-                    style={{
-                      color: dispositionColor(call.disposition),
-                      borderColor: dispositionColor(call.disposition) + '40',
-                      backgroundColor: dispositionColor(call.disposition) + '10',
-                    }}
-                  >
-                    {dispositionLabel(call.disposition)}
-                  </span>
-                )}
-                {call.notes && (
-                  <p className="text-xs text-[#9ca3af] mt-1 line-clamp-1">{call.notes}</p>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      )}
     </div>
   );
 }
 
-function EmptyState({ onRefresh }: { onRefresh: () => void }) {
+function EmptyState({ onRefresh, queueLen }: { onRefresh: () => void; queueLen: number }) {
   return (
     <div className="bg-white border border-[#e5e5e5] rounded-2xl p-12 text-center shadow-sm">
-      <div className="text-5xl mb-4">☕</div>
-      <h2 className="text-xl font-semibold text-[#1a1a1a] mb-2">Queue's clear</h2>
-      <p className="text-sm text-[#6b7280] mb-6 max-w-xs mx-auto">
-        No eligible leads right now — everyone's in a call-back window or outside business hours.
-      </p>
+      {queueLen > 0 ? (
+        <>
+          <h2 className="text-xl font-semibold text-[#1a1a1a] mb-2">{queueLen} leads on deck</h2>
+          <p className="text-sm text-[#6b7280] mb-6 max-w-xs mx-auto">
+            None are dial-eligible right now — they may be in a call-back window or outside business hours.
+          </p>
+        </>
+      ) : (
+        <>
+          <h2 className="text-xl font-semibold text-[#1a1a1a] mb-2">Queue's clear</h2>
+          <p className="text-sm text-[#6b7280] mb-6 max-w-xs mx-auto">
+            No eligible leads right now — check back soon.
+          </p>
+        </>
+      )}
       <button
         onClick={onRefresh}
         className="px-6 py-2.5 rounded-xl border border-[#e5e5e5] text-sm text-[#1a1a1a] hover:bg-[#f4f4f4] transition-colors"
@@ -436,6 +467,81 @@ function EmptyState({ onRefresh }: { onRefresh: () => void }) {
   );
 }
 
+// ─── Campaign types ────────────────────────────────────────────────────────────
+interface Campaign {
+  id: string;
+  name: string;
+  created_at: string;
+  total: number;
+  touched: number;
+  called: number;
+}
+
+// ─── Campaign picker modal ─────────────────────────────────────────────────────
+function CampaignPickerModal({
+  onSelect,
+  onClose,
+}: {
+  onSelect: (c: Campaign) => void;
+  onClose: () => void;
+}) {
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch('/api/dialer/campaigns')
+      .then((r) => r.json())
+      .then((d) => { setCampaigns(d.campaigns ?? []); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/40 z-[80]" onClick={onClose} />
+      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[81] bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#f0f0f0]">
+          <h3 className="text-sm font-bold text-[#1a1a1a]">Load Campaign</h3>
+          <button onClick={onClose} className="text-[#9ca3af] hover:text-[#1a1a1a] transition-colors">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <div className="max-h-96 overflow-y-auto">
+          {loading ? (
+            <div className="flex items-center justify-center py-10">
+              <div className="w-5 h-5 border-2 border-[#e5e5e5] border-t-[#1a1a1a] rounded-full animate-spin" />
+            </div>
+          ) : campaigns.length === 0 ? (
+            <p className="text-sm text-[#9ca3af] text-center py-10">No campaigns found. Upload leads first.</p>
+          ) : (
+            <ul className="divide-y divide-[#f5f5f5]">
+              {campaigns.map((c) => {
+                const pct = c.total > 0 ? Math.round((c.called / c.total) * 100) : 0;
+                return (
+                  <li
+                    key={c.id}
+                    onClick={() => onSelect(c)}
+                    className="px-5 py-3.5 hover:bg-[#fafafa] cursor-pointer transition-colors"
+                  >
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-sm font-semibold text-[#1a1a1a]">{c.name}</span>
+                      <span className="text-xs text-[#9ca3af]">{c.called}/{c.total} called</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-[#f0f0f0] rounded-full overflow-hidden">
+                      <div className="h-full bg-[#1a1a1a] rounded-full" style={{ width: `${pct}%` }} />
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function DialerClient() {
@@ -443,39 +549,34 @@ export default function DialerClient() {
   const [lead, setLead] = useState<Lead | null>(null);
   const [callId, setCallId] = useState<string | null>(null);
   const [queue, setQueue] = useState<QueuePreview[]>([]);
-  const [todayCalls, setTodayCalls] = useState<DialerCall[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [stats, setStats] = useState({ connected: 0, total: 0 });
+  const [activeCampaign, setActiveCampaign] = useState<Campaign | null>(null);
+  const [showPicker, setShowPicker] = useState(false);
   const initDone = useRef(false);
 
+  // Keep listId as a ref so async callbacks always see the latest value
+  const listIdRef = useRef<string | null>(null);
+
   // ── Load initial state ──────────────────────────────────────────────────────
-  const loadCurrent = useCallback(async () => {
+  const loadCurrent = useCallback(async (listId: string | null = null) => {
     try {
-      const res = await fetch('/api/dialer/current');
+      const url = listId ? `/api/dialer/current?listId=${listId}` : '/api/dialer/current';
+      const res = await fetch(url);
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
 
       setQueue(data.queue ?? []);
-      setTodayCalls(data.todayCalls ?? []);
-
-      const calls: DialerCall[] = data.todayCalls ?? [];
-      setStats({
-        total: calls.length,
-        connected: calls.filter((c: DialerCall) => c.disposition === 'connected').length,
-      });
 
       if (data.current) {
         setLead(data.current);
         if (data.activeCall) {
-          // There was a call started but no disposition yet — resume wrap-up
           setCallId(data.activeCall.id);
           setState('wrap_up');
         } else {
           setState('ready');
         }
       } else {
-        // No current lock — claim next
-        await claimNext(null);
+        await claimNext(null, listId);
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Unknown error');
@@ -484,18 +585,18 @@ export default function DialerClient() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!initDone.current) { initDone.current = true; loadCurrent(); }
+    if (!initDone.current) { initDone.current = true; loadCurrent(null); }
   }, [loadCurrent]);
 
   // ── Claim next lead ─────────────────────────────────────────────────────────
-  const claimNext = async (releasePreviousId: string | null) => {
+  const claimNext = async (releasePreviousId: string | null, listId: string | null = listIdRef.current) => {
     setState('loading');
     setError(null);
     try {
       const res = await fetch('/api/dialer/next', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ releasePreviousId }),
+        body: JSON.stringify({ releasePreviousId, listId }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Failed to load next lead');
@@ -516,13 +617,46 @@ export default function DialerClient() {
     }
   };
 
+  // ── Load campaign ────────────────────────────────────────────────────────────
+  const handleLoadCampaign = async (campaign: Campaign) => {
+    setShowPicker(false);
+    setActiveCampaign(campaign);
+    listIdRef.current = campaign.id;
+    // Release current lead and start fresh with new campaign
+    if (lead) await fetch('/api/dialer/next', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ releasePreviousId: lead.id, listId: campaign.id }),
+    }).then((r) => r.json()).then((d) => {
+      setQueue(d.queue ?? []);
+      if (d.current) { setLead(d.current); setCallId(null); setState('ready'); }
+      else { setLead(null); setState('empty'); }
+    }).catch(() => {});
+    else await claimNext(null, campaign.id);
+  };
+
+  const handleClearCampaign = async () => {
+    setActiveCampaign(null);
+    listIdRef.current = null;
+    if (lead) {
+      await fetch('/api/dialer/next', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ releasePreviousId: lead.id, listId: null }),
+      }).then((r) => r.json()).then((d) => {
+        setQueue(d.queue ?? []);
+        if (d.current) { setLead(d.current); setCallId(null); setState('ready'); }
+        else { setLead(null); setState('empty'); }
+      }).catch(() => {});
+    } else {
+      await claimNext(null, null);
+    }
+  };
+
   // ── Start call ──────────────────────────────────────────────────────────────
   const handleCall = async () => {
     if (!lead) return;
-
-    // Open the dialer immediately
     window.open(`tel:${lead.phone_e164}`, '_self');
-
     try {
       const res = await fetch('/api/dialer/start', {
         method: 'POST',
@@ -546,7 +680,6 @@ export default function DialerClient() {
   ) => {
     if (!lead || !callId) return;
     setState('saving');
-
     try {
       const res = await fetch('/api/dialer/disposition', {
         method: 'POST',
@@ -561,18 +694,7 @@ export default function DialerClient() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Failed to save');
-
-      // Refresh today's calls then go to next
       await claimNext(lead.id);
-      // Refresh today's log in background
-      fetch('/api/dialer/current').then((r) => r.json()).then((d) => {
-        setTodayCalls(d.todayCalls ?? []);
-        const calls: DialerCall[] = d.todayCalls ?? [];
-        setStats({
-          total: calls.length,
-          connected: calls.filter((c: DialerCall) => c.disposition === 'connected').length,
-        });
-      }).catch(() => {});
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error saving disposition');
       setState('wrap_up');
@@ -591,36 +713,55 @@ export default function DialerClient() {
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
+  const campaignPct = activeCampaign && activeCampaign.total > 0
+    ? Math.round((activeCampaign.called / activeCampaign.total) * 100)
+    : 0;
+
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
 
       {/* Page header */}
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-2xl font-semibold text-[#1a1a1a]">Power Dialer</h1>
-          <p className="text-sm text-[#9ca3af] mt-0.5">Work your queue. Every call counts.</p>
-        </div>
-
-        {/* Today's stats */}
-        <div className="flex items-center gap-6 text-right">
-          <div>
-            <p className="text-2xl font-semibold text-[#1a1a1a]">{stats.total}</p>
-            <p className="text-xs text-[#9ca3af]">calls today</p>
-          </div>
-          <div>
-            <p className="text-2xl font-semibold text-green-600">{stats.connected}</p>
-            <p className="text-xs text-[#9ca3af]">connected</p>
-          </div>
-          {stats.total > 0 && (
-            <div>
-              <p className="text-2xl font-semibold text-[#1a1a1a]">
-                {Math.round((stats.connected / stats.total) * 100)}%
-              </p>
-              <p className="text-xs text-[#9ca3af]">connect rate</p>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-semibold text-[#1a1a1a]">Dialer</h1>
+        <div className="flex items-center gap-3">
+          {activeCampaign && (
+            <div className="flex items-center gap-2">
+              <div className="w-24 h-1.5 bg-[#f0f0f0] rounded-full overflow-hidden">
+                <div className="h-full bg-[#1a1a1a] rounded-full transition-all" style={{ width: `${campaignPct}%` }} />
+              </div>
+              <span className="text-xs text-[#9ca3af]">{campaignPct}%</span>
             </div>
           )}
+          <button
+            onClick={() => setShowPicker(true)}
+            className="text-sm font-medium text-[#1a1a1a] hover:text-[#555] transition-colors"
+          >
+            {activeCampaign ? 'Switch Campaign' : 'Load Campaign'}
+          </button>
         </div>
       </div>
+
+      {/* Active campaign bar */}
+      {activeCampaign && (
+        <div className="mb-6 bg-white border border-[#e5e5e5] rounded-xl px-5 py-3.5 flex items-center gap-4">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-sm font-semibold text-[#1a1a1a] truncate">{activeCampaign.name}</span>
+              <span className="text-xs text-[#9ca3af] ml-4 shrink-0">{activeCampaign.called}/{activeCampaign.total} called · {campaignPct}%</span>
+            </div>
+            <div className="w-full h-1.5 bg-[#f0f0f0] rounded-full overflow-hidden">
+              <div className="h-full bg-[#1a1a1a] rounded-full transition-all" style={{ width: `${campaignPct}%` }} />
+            </div>
+          </div>
+          <button
+            onClick={handleClearCampaign}
+            className="shrink-0 text-xs text-[#9ca3af] hover:text-[#1a1a1a] transition-colors"
+            title="Clear campaign"
+          >
+            Clear
+          </button>
+        </div>
+      )}
 
       {/* Error banner */}
       {error && (
@@ -647,7 +788,7 @@ export default function DialerClient() {
               </p>
             </div>
           ) : state === 'empty' ? (
-            <EmptyState onRefresh={() => claimNext(null)} />
+            <EmptyState onRefresh={() => claimNext(null)} queueLen={queue.length} />
           ) : state === 'ready' && lead ? (
             <LeadCard lead={lead} onCall={handleCall} />
           ) : state === 'wrap_up' && lead && callId ? (
@@ -662,8 +803,8 @@ export default function DialerClient() {
 
         {/* Right: sidebar */}
         <div className="lg:col-span-1 space-y-6">
+          <QueueSidebar queue={queue} />
           <ManualDialPanel />
-          <QueueSidebar queue={queue} todayCalls={todayCalls} />
         </div>
       </div>
 
@@ -672,6 +813,14 @@ export default function DialerClient() {
         <span><kbd className="bg-[#f0f0f0] text-[#888] px-1.5 py-0.5 rounded">C</kbd> Call</span>
         <span><kbd className="bg-[#f0f0f0] text-[#888] px-1.5 py-0.5 rounded">1-7</kbd> Disposition</span>
       </div>
+
+      {/* Campaign picker */}
+      {showPicker && (
+        <CampaignPickerModal
+          onSelect={handleLoadCampaign}
+          onClose={() => setShowPicker(false)}
+        />
+      )}
     </div>
   );
 }

@@ -15,7 +15,7 @@ async function getSupabase() {
 /**
  * POST /api/dialer/next
  * Releases any current lock, claims the next eligible lead.
- * Body: { releasePreviousId?: string }
+ * Body: { releasePreviousId?: string; listId?: string }
  */
 export async function POST(req: Request) {
   try {
@@ -24,19 +24,19 @@ export async function POST(req: Request) {
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await req.json().catch(() => ({}));
-    const { releasePreviousId } = body as { releasePreviousId?: string };
+    const { releasePreviousId, listId } = body as { releasePreviousId?: string; listId?: string };
 
     // Release previous lock if explicitly requested
     if (releasePreviousId) {
       await unlockLead(supabase, releasePreviousId, user.id);
     } else {
       // Auto-release any stale lock this agent holds
-      const existing = await getCurrentLead(supabase, user.id);
+      const existing = await getCurrentLead(supabase, user.id, listId);
       if (existing) await unlockLead(supabase, existing.id, user.id);
     }
 
-    const next = await claimNextLead(supabase, user.id);
-    const queue = await peekQueue(supabase, user.id, next?.id ?? null, 10);
+    const next = await claimNextLead(supabase, user.id, listId);
+    const queue = await peekQueue(supabase, user.id, next?.id ?? null, 10, listId);
 
     return NextResponse.json({ current: next, queue });
   } catch (err) {

@@ -16,6 +16,8 @@ export interface QueueLead {
   company: string | null;
   phone_e164: string;
   timezone: string | null;
+  city: string | null;
+  state: string | null;
   dnc: boolean;
   dialer_status: string | null;
   next_eligible_at: string | null;
@@ -32,7 +34,7 @@ export interface QueueLead {
 }
 
 const LEAD_SELECT = [
-  'id', 'name', 'company', 'phone_e164', 'timezone',
+  'id', 'name', 'company', 'phone_e164', 'timezone', 'city', 'state',
   'dnc', 'dialer_status', 'next_eligible_at',
   'last_disposition', 'last_called_at', 'last_call_notes',
   'notes', 'stage', 'month_key',
@@ -50,10 +52,11 @@ const staleLockIso = () => new Date(Date.now() - LOCK_TTL_MS).toISOString();
  */
 export async function claimNextLead(
   supabase: SupabaseClient,
-  userId: string
+  userId: string,
+  listId?: string | null
 ): Promise<QueueLead | null> {
   // Fetch a generous batch; filter timezone/attempts in JS
-  const { data: candidates, error } = await supabase
+  let query = supabase
     .from('leads')
     .select(LEAD_SELECT)
     .eq('user_id', userId)
@@ -63,6 +66,10 @@ export async function claimNextLead(
     .or(`next_eligible_at.is.null,next_eligible_at.lte.${new Date().toISOString()}`)
     .order('next_eligible_at', { ascending: true, nullsFirst: true })
     .limit(40);
+
+  if (listId) query = query.eq('list_id', listId);
+
+  const { data: candidates, error } = await query;
 
   if (error || !candidates?.length) return null;
 
@@ -101,18 +108,21 @@ export async function unlockLead(
 /** Return the lead currently locked by this agent (or null) */
 export async function getCurrentLead(
   supabase: SupabaseClient,
-  userId: string
+  userId: string,
+  listId?: string | null
 ): Promise<QueueLead | null> {
-  const { data } = await supabase
+  let query = supabase
     .from('leads')
     .select(LEAD_SELECT)
     .eq('user_id', userId)
     .eq('locked_by', userId)
     .gt('locked_at', staleLockIso())   // not stale
     .order('locked_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(1);
 
+  if (listId) query = query.eq('list_id', listId);
+
+  const { data } = await query.maybeSingle();
   return (data as QueueLead | null) ?? null;
 }
 
@@ -131,18 +141,24 @@ export async function peekQueue(
   supabase: SupabaseClient,
   userId: string,
   excludeId: string | null,
-  limit = 10
+  limit = 10,
+  listId?: string | null
 ): Promise<QueuePreview[]> {
-  const { data } = await supabase
+  let query = supabase
     .from('leads')
     .select('id, name, company, phone_e164, timezone, next_eligible_at, last_disposition, dnc, dialer_status, locked_by, locked_at, attempts_today, attempts_today_on')
     .eq('user_id', userId)
     .eq('dnc', false)
     .not('phone_e164', 'is', null)
     .neq('id', excludeId ?? '00000000-0000-0000-0000-000000000000')
+    .or(`locked_by.is.null,locked_at.lt.${staleLockIso()}`)
     .or(`next_eligible_at.is.null,next_eligible_at.lte.${new Date().toISOString()}`)
     .order('next_eligible_at', { ascending: true, nullsFirst: true })
     .limit(40);
+
+  if (listId) query = query.eq('list_id', listId);
+
+  const { data } = await query;
 
   if (!data) return [];
   // Cast to the full shape needed by isEligible, then strip to QueuePreview on return
