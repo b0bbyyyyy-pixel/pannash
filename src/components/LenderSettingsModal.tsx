@@ -195,6 +195,8 @@ export default function LenderSettingsModal({ onClose, onRefresh }: Props) {
   const [error, setError] = useState('');
 
   const [resetting, setResetting] = useState(false);
+  const [syncing,   setSyncing]   = useState(false);
+  const [syncMsg,   setSyncMsg]   = useState('');
 
   const load = useCallback(async (url = '/api/lenders') => {
     setLoading(true);
@@ -209,8 +211,27 @@ export default function LenderSettingsModal({ onClose, onRefresh }: Props) {
     }
   }, []);
 
+  const syncNewLenders = async () => {
+    setSyncing(true);
+    setSyncMsg('');
+    setError('');
+    try {
+      const res = await fetch('/api/lenders?sync=true');
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      setLenders(json.lenders ?? []);
+      onRefresh();
+      setSyncMsg(json.synced > 0 ? `✓ Added ${json.synced} new lender${json.synced !== 1 ? 's' : ''}` : 'Already up to date');
+      setTimeout(() => setSyncMsg(''), 3000);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Sync failed.');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const resetToDefaults = async () => {
-    if (!confirm('This will delete all your custom lender edits and restore the original 41 lenders. Continue?')) return;
+    if (!confirm('This will delete all your custom lender edits and restore the original defaults. Continue?')) return;
     setResetting(true);
     setError('');
     try {
@@ -359,12 +380,20 @@ export default function LenderSettingsModal({ onClose, onRefresh }: Props) {
                 Add Lender
               </button>
               <button
+                onClick={syncNewLenders}
+                disabled={syncing}
+                className="px-3 py-1.5 text-xs font-medium bg-indigo-100 text-indigo-800 border border-indigo-300 rounded-md hover:bg-indigo-200 transition-colors disabled:opacity-50"
+                title="Add any new lenders from defaults without removing existing ones"
+              >
+                {syncing ? 'Syncing…' : syncMsg || '+ Sync New'}
+              </button>
+              <button
                 onClick={resetToDefaults}
                 disabled={resetting}
                 className="px-3 py-1.5 text-xs font-medium bg-amber-100 text-amber-800 border border-amber-300 rounded-md hover:bg-amber-200 transition-colors disabled:opacity-50"
                 title="Delete all lenders and restore original defaults"
               >
-                {resetting ? 'Resetting…' : '↺ Reset to Defaults'}
+                {resetting ? 'Resetting…' : '↺ Reset All'}
               </button>
             </div>
 

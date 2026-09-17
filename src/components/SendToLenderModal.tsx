@@ -525,12 +525,12 @@ export default function SendToLenderModal({
                   {inactiveCount > 0 && (
                     <button
                       onClick={() => setShowInactive(v => !v)}
-                      className="flex items-center gap-1.5 mb-2 text-[10px] text-[#9b9b9b] hover:text-[#6b6b6b] transition-colors"
+                      className="flex items-center gap-1.5 mb-2 text-[10px] text-[#9b9b9b] hover:text-[#6b6b6b] transition-colors outline-none focus:outline-none"
                     >
-                      <span className={`w-6 h-3 rounded-full relative transition-colors ${showInactive ? 'bg-indigo-400' : 'bg-gray-200'}`}>
-                        <span className={`absolute top-0.5 w-2 h-2 rounded-full bg-white shadow transition-transform ${showInactive ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+                      <span className={`w-7 h-3.5 rounded-full relative flex-shrink-0 transition-colors ${showInactive ? 'bg-indigo-300' : 'bg-gray-200'}`}>
+                        <span className={`absolute top-0.5 left-0.5 w-2.5 h-2.5 rounded-full bg-white shadow-sm transition-transform ${showInactive ? 'translate-x-3.5' : 'translate-x-0'}`} />
                       </span>
-                      {showInactive ? `Hiding ${inactiveCount} inactive` : `Show ${inactiveCount} inactive`}
+                      <span>{showInactive ? `Hiding ${inactiveCount} inactive` : `Show ${inactiveCount} inactive`}</span>
                     </button>
                   )}
 

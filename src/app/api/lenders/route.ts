@@ -66,14 +66,16 @@ function buildSeedRows(userId: string) {
   }));
 }
 
-// GET — fetch all lenders; auto-seed from defaults if none exist; ?reset=true re-seeds
+// GET — fetch all lenders; auto-seed from defaults if none exist; ?reset=true re-seeds; ?sync=true adds missing lenders
 export async function GET(request: NextRequest) {
   const cookieStore = await cookies();
   const supabase = makeClient(cookieStore);
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const reset = new URL(request.url).searchParams.get('reset') === 'true';
+  const params = new URL(request.url).searchParams;
+  const reset = params.get('reset') === 'true';
+  const sync  = params.get('sync')  === 'true';
 
   if (reset) {
     // Delete all existing lenders for this user, then re-seed from defaults
@@ -83,10 +85,10 @@ export async function GET(request: NextRequest) {
       .insert(buildSeedRows(user.id))
       .select();
     if (seedErr) return NextResponse.json({ error: seedErr.message }, { status: 500 });
-    return NextResponse.json({ lenders: seeded ?? [] });
+    return NextResponse.json({ lenders: seeded ?? [], synced: 0 });
   }
 
-  const { data, error } = await supabase
+  const { data: existing, error } = await supabase
     .from('lenders')
     .select('*')
     .eq('user_id', user.id)
@@ -96,16 +98,36 @@ export async function GET(request: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   // Auto-seed default lenders on first load
-  if (!data || data.length === 0) {
+  if (!existing || existing.length === 0) {
     const { data: seeded, error: seedErr } = await supabase
       .from('lenders')
       .insert(buildSeedRows(user.id))
       .select();
     if (seedErr) return NextResponse.json({ error: seedErr.message }, { status: 500 });
-    return NextResponse.json({ lenders: seeded ?? [] });
+    return NextResponse.json({ lenders: seeded ?? [], synced: 0 });
   }
 
-  return NextResponse.json({ lenders: data });
+  // ?sync=true — insert any seed lenders that don't already exist (matched by name)
+  if (sync) {
+    const existingNames = new Set((existing ?? []).map((l: { name: string }) => l.name.toLowerCase()));
+    const missing = buildSeedRows(user.id).filter(r => !existingNames.has(r.name.toLowerCase()));
+    let syncedCount = 0;
+    if (missing.length > 0) {
+      const { error: insertErr } = await supabase.from('lenders').insert(missing);
+      if (insertErr) return NextResponse.json({ error: insertErr.message }, { status: 500 });
+      syncedCount = missing.length;
+    }
+    // Re-fetch after sync
+    const { data: refreshed } = await supabase
+      .from('lenders')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('tier', { ascending: true })
+      .order('name', { ascending: true });
+    return NextResponse.json({ lenders: refreshed ?? [], synced: syncedCount });
+  }
+
+  return NextResponse.json({ lenders: existing ?? [] });
 }
 
 // POST — create a new lender
