@@ -366,7 +366,7 @@ export default function LeadWorkspaceClient({
     return Math.max(0, (now.getFullYear() - start.getFullYear()) * 12 + (now.getMonth() - start.getMonth()));
   };
 
-  const saveField = useCallback(async (field: string, value: string) => {
+  const saveField = useCallback(async (field: string, value: unknown) => {
     if (DIRECT_FIELDS.has(field)) {
       const res = await fetch('/api/leads/update-crm', {
         method: 'POST',
@@ -382,7 +382,7 @@ export default function LeadWorkspaceClient({
 
       // Auto-calculate Time in Business when Start Date is saved
       if (field === 'businessStartDate') {
-        const months = calcTIBMonths(value);
+        const months = calcTIBMonths(String(value ?? ''));
         if (months !== null) updatedUd.timeInBusiness = months;
       }
 
@@ -941,8 +941,8 @@ export default function LeadWorkspaceClient({
             <Field label="Fax"           value={str(ud.fax)}              onSave={v => saveField('fax', v)} />
             <CheckboxField
               label="Sole Proprietor"
-              checked={!!(ud as Record<string, unknown>).isSoleProp}
-              onToggle={() => saveField('isSoleProp', String(!(ud as Record<string, unknown>).isSoleProp))}
+              checked={(ud as Record<string, unknown>).isSoleProp === true || (ud as Record<string, unknown>).isSoleProp === 'true'}
+              onToggle={() => saveField('isSoleProp', !((ud as Record<string, unknown>).isSoleProp === true || (ud as Record<string, unknown>).isSoleProp === 'true'))}
             />
           </Section>
 
@@ -957,8 +957,8 @@ export default function LeadWorkspaceClient({
             <Field label="Avg Deposits/Mo"   value={str(ud.depositsCount)}    onSave={v => saveField('depositsCount', v)} type="number" />
             <CheckboxField
               label="Has MCA Loans"
-              checked={!!(ud as Record<string, unknown>).hasOtherMCALoans}
-              onToggle={() => saveField('hasOtherMCALoans', String(!(ud as Record<string, unknown>).hasOtherMCALoans))}
+              checked={(ud as Record<string, unknown>).hasOtherMCALoans === true || (ud as Record<string, unknown>).hasOtherMCALoans === 'true'}
+              onToggle={() => saveField('hasOtherMCALoans', !((ud as Record<string, unknown>).hasOtherMCALoans === true || (ud as Record<string, unknown>).hasOtherMCALoans === 'true'))}
             />
           </Section>
 
