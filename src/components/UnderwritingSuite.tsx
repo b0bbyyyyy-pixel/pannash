@@ -1235,7 +1235,8 @@ export default function UnderwritingSuite({
       };
     }
 
-    setActualOffers([...actualOffers, newOffer]);
+    const newOffers = [...actualOffers, newOffer];
+    setActualOffers(newOffers);
     setNewOfferLender('');
     setNewOfferAmount('');
     setNewOfferFactorRate('');
@@ -1248,18 +1249,27 @@ export default function UnderwritingSuite({
     setNewOfferMonthlyAPR('');
     setNewOfferLocTermMonths('');
     setNewOfferLocPaymentFreq('Monthly');
+    // Persist immediately — closing the panel otherwise loses the offer
+    onSave({ ...data, actualOffers: newOffers, offersNotes, selectedOfferId, adjustedAmount, negotiationAddedPoints });
   };
 
   const deleteActualOffer = (offerId: string) => {
-    setActualOffers(actualOffers.filter(offer => offer.id !== offerId));
+    const newOffers = actualOffers.filter(offer => offer.id !== offerId);
+    setActualOffers(newOffers);
     // Clear selection and editing if the deleted offer was selected/being edited
+    let newSelectedId = selectedOfferId;
+    let newAdjusted = adjustedAmount;
     if (selectedOfferId === offerId) {
       setSelectedOfferId(null);
       setAdjustedAmount(0);
+      newSelectedId = null;
+      newAdjusted = 0;
     }
     if (editingOfferId === offerId) {
       setEditingOfferId(null);
     }
+    // Persist immediately
+    onSave({ ...data, actualOffers: newOffers, offersNotes, selectedOfferId: newSelectedId, adjustedAmount: newAdjusted, negotiationAddedPoints });
   };
 
   const startEditOffer = (offer: (typeof actualOffers)[number]) => {
@@ -1286,12 +1296,16 @@ export default function UnderwritingSuite({
       return;
     }
 
+    let updatedOffers: typeof actualOffers;
+    let newAdjusted = adjustedAmount;
+    let newNegPts = negotiationAddedPoints;
+
     if (editOfferType === 'loc') {
       if (!editOfferMonthlyAPR || !editOfferLocTermMonths) {
         alert('Please fill in Monthly APR % and Term Length for the Line of Credit');
         return;
       }
-      setActualOffers(actualOffers.map(offer =>
+      updatedOffers = actualOffers.map(offer =>
         offer.id === editingOfferId
           ? {
               ...offer,
@@ -1310,12 +1324,12 @@ export default function UnderwritingSuite({
               url: editOfferUrl.trim() || undefined,
             }
           : offer
-      ));
+      );
     } else {
       const buyRate = Number(editOfferBuyRate) || 1.20;
       const addedPoints = Math.min(commissionPointsMax, editOfferAddedPoints === '' ? 0 : Number(editOfferAddedPoints));
       const calculatedFactorRate = buyRate + (addedPoints / 100);
-      setActualOffers(actualOffers.map(offer =>
+      updatedOffers = actualOffers.map(offer =>
         offer.id === editingOfferId
           ? {
               ...offer,
@@ -1334,14 +1348,19 @@ export default function UnderwritingSuite({
               url: editOfferUrl.trim() || undefined,
             }
           : offer
-      ));
+      );
       if (selectedOfferId === editingOfferId) {
-        setAdjustedAmount(Number(editOfferAmount));
-        setNegotiationAddedPoints(addedPoints);
+        newAdjusted = Number(editOfferAmount);
+        newNegPts = addedPoints;
+        setAdjustedAmount(newAdjusted);
+        setNegotiationAddedPoints(newNegPts);
       }
     }
 
+    setActualOffers(updatedOffers);
     setEditingOfferId(null);
+    // Persist immediately
+    onSave({ ...data, actualOffers: updatedOffers, offersNotes, selectedOfferId, adjustedAmount: newAdjusted, negotiationAddedPoints: newNegPts });
   };
 
   const cancelEditOffer = () => {
