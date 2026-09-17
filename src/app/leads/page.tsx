@@ -5,8 +5,8 @@ import { revalidatePath } from 'next/cache';
 import Navbar from '@/components/Navbar';
 import CampaignTable, { Campaign } from './CampaignTable';
 import CampaignLeadsView, { CampaignLead } from './CampaignLeadsView';
-import UploadModal from './UploadModal';
 import CampaignRenameWrapperComponent from './CampaignRenameWrapper';
+import NewCampaignModal from './NewCampaignModal';
 
 export default async function LeadsPage({
   searchParams,
@@ -120,6 +120,33 @@ export default async function LeadsPage({
     revalidatePath('/leads');
   }
 
+  // ── Server action: create named campaign ──────────────────────────────────
+  async function createCampaignNamed(name: string): Promise<string | null> {
+    'use server';
+    const cookieStore = await cookies();
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          get(name: string) { return cookieStore.get(name)?.value; },
+          set() {},
+          remove() {},
+        },
+      }
+    );
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return null;
+    const { data, error } = await supabase
+      .from('lead_lists')
+      .insert({ name, user_id: user.id })
+      .select('id')
+      .single();
+    if (error || !data) return null;
+    revalidatePath('/leads');
+    return data.id;
+  }
+
   // ── Server action: delete lead ─────────────────────────────────────────
   async function deleteLead(formData: FormData) {
     'use server';
@@ -182,7 +209,6 @@ export default async function LeadsPage({
     await supabase.from('leads').delete().eq('list_id', listId).eq('user_id', user.id);
     await supabase.from('lead_lists').delete().eq('id', listId);
     revalidatePath('/leads');
-    redirect('/leads');
   }
 
   // ── Server action: rename campaign ────────────────────────────────────
@@ -235,20 +261,7 @@ export default async function LeadsPage({
           </div>
 
           {!selectedListId && (
-            <div className="flex gap-3">
-              {/* Upload Leads → opens modal */}
-              <UploadModal selectedListId={selectedListId} />
-
-              {/* New Campaign */}
-              <form action={createCampaign}>
-                <button
-                  type="submit"
-                  className="text-sm font-medium text-[#1a1a1a] hover:text-[#555] transition-colors"
-                >
-                  New Campaign
-                </button>
-              </form>
-            </div>
+            <NewCampaignModal createCampaign={createCampaignNamed} />
           )}
         </div>
 
@@ -263,6 +276,7 @@ export default async function LeadsPage({
           <CampaignRenameWrapperComponent
             campaigns={campaigns}
             renameCampaign={renameCampaign}
+            deleteCampaign={deleteListWithLeads}
           />
         )}
       </main>

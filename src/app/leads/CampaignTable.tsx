@@ -16,6 +16,7 @@ export interface Campaign {
 interface Props {
   campaigns: Campaign[];
   onRename: (id: string, newName: string) => void;
+  onDelete: (id: string) => Promise<void>;
 }
 
 function formatDate(dateStr: string) {
@@ -23,10 +24,11 @@ function formatDate(dateStr: string) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-export default function CampaignTable({ campaigns, onRename }: Props) {
+export default function CampaignTable({ campaigns, onRename, onDelete }: Props) {
   const router = useRouter();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const startEdit = (e: React.MouseEvent, campaign: Campaign) => {
@@ -147,17 +149,53 @@ export default function CampaignTable({ campaigns, onRename }: Props) {
                   <span className="text-sm text-[#9b9b9b]">{formatDate(campaign.created_at)}</span>
                 </td>
 
-                {/* Arrow */}
-                <td className="px-4 py-2 text-right">
-                  <svg className="w-4 h-4 text-[#c4c4c4] inline-block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
+                {/* Actions */}
+                <td className="px-4 py-2 text-right" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center justify-end gap-3">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(campaign.id); }}
+                      className="text-[#c4c4c4] hover:text-red-500 transition-colors"
+                      title="Delete campaign"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
+                    <svg className="w-4 h-4 text-[#c4c4c4]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </div>
                 </td>
               </tr>
             );
           })}
         </tbody>
       </table>
+
+      {/* Delete confirm dialog */}
+      {confirmDeleteId && (
+        <>
+          <div className="fixed inset-0 bg-black/40 z-[50]" onClick={() => setConfirmDeleteId(null)} />
+          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[51] bg-white rounded-2xl shadow-2xl p-6 w-80">
+            <h3 className="text-sm font-bold text-[#1a1a1a] mb-2">Delete campaign?</h3>
+            <p className="text-xs text-[#9b9b9b] mb-5">This will permanently delete the campaign and all its leads. This cannot be undone.</p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setConfirmDeleteId(null)}
+                className="px-4 py-2 text-sm text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => { setConfirmDeleteId(null); await onDelete(confirmDeleteId); }}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600 rounded-lg transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

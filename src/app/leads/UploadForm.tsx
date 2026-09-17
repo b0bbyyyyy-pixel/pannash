@@ -9,6 +9,7 @@ import { parseLeadPasteText } from '@/lib/parse-lead-paste';
 
 interface UploadFormProps {
   selectedListId?: string;
+  onSuccess?: () => void;
 }
 
 interface ParsedLead {
@@ -19,7 +20,7 @@ interface ParsedLead {
   notes: string | null;
 }
 
-export default function UploadForm({ selectedListId }: UploadFormProps) {
+export default function UploadForm({ selectedListId, onSuccess }: UploadFormProps) {
   const [mode, setMode] = useState<'file' | 'paste' | 'zip' | 'quick' | 'sheets'>('file');
   const [file, setFile] = useState<File | null>(null);
   const [pasteText, setPasteText] = useState('');
@@ -515,7 +516,7 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
       setMessage(`✓ Imported ${leads.length} lead${leads.length !== 1 ? 's' : ''}`);
       setPasteText('');
       setParsedPreview([]);
-      setTimeout(() => router.refresh(), 800);
+      setTimeout(() => { router.refresh(); onSuccess?.(); }, 800);
     }
     setLoading(false);
   };
@@ -618,6 +619,7 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
               setFile(null);
               setTimeout(() => {
                 router.refresh();
+                onSuccess?.();
               }, 1000);
             }
             setLoading(false);
@@ -698,7 +700,7 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
       setMessage(`✓ Imported ${leads.length} lead${leads.length !== 1 ? 's' : ''}`);
       setQuickText('');
       setQuickPreview([]);
-      setTimeout(() => router.refresh(), 800);
+      setTimeout(() => { router.refresh(); onSuccess?.(); }, 800);
     }
     setLoading(false);
   };
@@ -988,7 +990,7 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
     } else {
       setMessage(`✓ Imported ${leads.length} lead${leads.length !== 1 ? 's' : ''}`);
       setZipPreview([]);
-      setTimeout(() => router.refresh(), 800);
+      setTimeout(() => { router.refresh(); onSuccess?.(); }, 800);
     }
     setLoading(false);
   };
@@ -1191,7 +1193,7 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
       setMessage(`✓ Imported ${rows.length} lead${rows.length !== 1 ? 's' : ''}${sheetsAddToDialer ? ' · added to Dialer queue' : ''}`);
       setSheetsUrl('');
       setSheetsPreview([]);
-      setTimeout(() => router.refresh(), 800);
+      setTimeout(() => { router.refresh(); onSuccess?.(); }, 800);
     }
     setLoading(false);
   };

@@ -6,9 +6,10 @@ import CampaignTable, { Campaign } from './CampaignTable';
 interface Props {
   campaigns: Campaign[];
   renameCampaign: (formData: FormData) => Promise<void>;
+  deleteCampaign: (formData: FormData) => Promise<void>;
 }
 
-export default function CampaignRenameWrapper({ campaigns, renameCampaign }: Props) {
+export default function CampaignRenameWrapper({ campaigns, renameCampaign, deleteCampaign }: Props) {
   const router = useRouter();
 
   const handleRename = async (id: string, newName: string) => {
@@ -19,5 +20,16 @@ export default function CampaignRenameWrapper({ campaigns, renameCampaign }: Pro
     router.refresh();
   };
 
-  return <CampaignTable campaigns={campaigns} onRename={handleRename} />;
+  const handleDelete = async (id: string) => {
+    const formData = new FormData();
+    formData.set('listId', id);
+    try {
+      await deleteCampaign(formData);
+    } catch {
+      // server action may throw on redirect — that's OK
+    }
+    router.refresh();
+  };
+
+  return <CampaignTable campaigns={campaigns} onRename={handleRename} onDelete={handleDelete} />;
 }
