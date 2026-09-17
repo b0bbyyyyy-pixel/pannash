@@ -13,6 +13,7 @@ export default function Navbar({ userName }: NavbarProps) {
   const router = useRouter();
   const [showDropdown, setShowDropdown] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
+  const [showAgent, setShowAgent] = useState(false);
 
   const isActive = (path: string) => pathname === path || pathname?.startsWith(path + '/');
 
@@ -47,16 +48,6 @@ export default function Navbar({ userName }: NavbarProps) {
               Pipeline
             </Link>
             <Link
-              href="/agent"
-              className={`text-sm font-medium transition-colors ${
-                isActive('/agent')
-                  ? 'text-[#1a1a1a]'
-                  : 'text-[#6b6b6b] hover:text-[#1a1a1a]'
-              }`}
-            >
-              Agent
-            </Link>
-            <Link
               href="/inbox"
               className={`text-sm font-medium transition-colors ${
                 isActive('/inbox')
@@ -88,11 +79,26 @@ export default function Navbar({ userName }: NavbarProps) {
             </Link>
           </div>
 
-          {/* Right Side - Calendar popup + Settings menu */}
+          {/* Right Side - Agent popup + Calendar popup + Settings menu */}
           <div className="relative flex items-center gap-4">
+            {/* Agent icon → popup */}
+            <button
+              onClick={() => { setShowAgent(true); setShowCalendar(false); setShowDropdown(false); }}
+              className="focus:outline-none hover:opacity-70 transition-opacity"
+              title="Agent"
+            >
+              <img
+                src="/images/icons/agent-icon.png"
+                alt="Agent"
+                width={22}
+                height={22}
+                className="w-[22px] h-[22px]"
+              />
+            </button>
+
             {/* Calendar icon → popup */}
             <button
-              onClick={() => { setShowCalendar(true); setShowDropdown(false); }}
+              onClick={() => { setShowCalendar(true); setShowAgent(false); setShowDropdown(false); }}
               className="focus:outline-none hover:opacity-70 transition-opacity"
               title="Calendar"
             >
@@ -188,6 +194,56 @@ export default function Navbar({ userName }: NavbarProps) {
           </div>
         </div>
       </div>
+
+      {/* Agent popup overlay */}
+      {showAgent && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black/40 z-[80]"
+            onClick={() => setShowAgent(false)}
+          />
+          {/* Panel */}
+          <div
+            className="fixed top-4 left-1/2 -translate-x-1/2 z-[81] flex flex-col rounded-xl shadow-2xl overflow-hidden"
+            style={{ width: 'min(92vw, 1200px)', height: 'calc(100vh - 2rem)' }}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-2.5 bg-white border-b border-[#e5e5e5] flex-shrink-0">
+              <span className="text-xs text-[#6b6b6b] font-medium">Agent</span>
+              <div className="flex items-center gap-3">
+                <a
+                  href="/agent"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[#6b6b6b] hover:text-[#1a1a1a] text-xs flex items-center gap-1 transition-colors"
+                  title="Open in full page"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
+                  Full page
+                </a>
+                <button
+                  onClick={() => setShowAgent(false)}
+                  className="text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors p-1 rounded hover:bg-[#f5f5f5]"
+                  title="Close"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            {/* iframe */}
+            <iframe
+              src="/agent?modal=1"
+              className="flex-1 w-full bg-white border-0"
+              title="Agent"
+            />
+          </div>
+        </>
+      )}
 
       {/* Calendar popup overlay */}
       {showCalendar && (

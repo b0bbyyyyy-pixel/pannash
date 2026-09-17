@@ -58,8 +58,8 @@ function cardIcon(type: CardType, priority: string) {
 function GostwrkLogo({ size = 28, invert = false }: { size?: number; invert?: boolean }) {
   return (
     <img
-      src="/images/logo/gostwrk-logo-gray.svg"
-      alt="Gostwrk"
+      src="/images/icons/agent-icon.png"
+      alt="Casper"
       width={size}
       height={size}
       style={{ width: size, height: size, filter: invert ? 'invert(1)' : undefined }}
