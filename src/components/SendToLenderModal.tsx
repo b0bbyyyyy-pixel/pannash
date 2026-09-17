@@ -204,6 +204,9 @@ export default function SendToLenderModal({
   // Lender settings modal
   const [showLenderSettings, setShowLenderSettings] = useState(false);
 
+  // Show/hide inactive lenders in the send list
+  const [showInactive, setShowInactive] = useState(false);
+
   // Quick-toggle a lender active/inactive without leaving the modal
   const toggleLenderActive = useCallback(async (lender: Lender) => {
     const newActive = !lender.is_active;
@@ -231,7 +234,6 @@ export default function SendToLenderModal({
     const sJson = sRes.ok ? await sRes.json() : {};
     const tJson = tRes.ok ? await tRes.json() : {};
 
-    // Keep ALL lenders (including inactive) so the user can see and toggle them
     const rawLenders: Lender[] = lJson.lenders || [];
     const rawSubs:    Submission[] = sJson.submissions || [];
 
@@ -278,8 +280,11 @@ export default function SendToLenderModal({
 
   // ── Lender filter + search ─────────────────────────────────────────────────
   const recentLenderNames = new Set(submissions.map(s => s.lender_name));
+  const inactiveCount = lenders.filter(l => l.is_active === false).length;
+
   const filteredLenders = lenders
     .filter(l => {
+      if (!showInactive && l.is_active === false) return false;
       if (search && !l.name.toLowerCase().includes(search.toLowerCase())) return false;
       if (lenderFilter === 'Recent' && !recentLenderNames.has(l.name)) return false;
       return true;
@@ -515,6 +520,19 @@ export default function SendToLenderModal({
                       </button>
                     ))}
                   </div>
+
+                  {/* Show inactive toggle */}
+                  {inactiveCount > 0 && (
+                    <button
+                      onClick={() => setShowInactive(v => !v)}
+                      className="flex items-center gap-1.5 mb-2 text-[10px] text-[#9b9b9b] hover:text-[#6b6b6b] transition-colors"
+                    >
+                      <span className={`w-6 h-3 rounded-full relative transition-colors ${showInactive ? 'bg-indigo-400' : 'bg-gray-200'}`}>
+                        <span className={`absolute top-0.5 w-2 h-2 rounded-full bg-white shadow transition-transform ${showInactive ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+                      </span>
+                      {showInactive ? `Hiding ${inactiveCount} inactive` : `Show ${inactiveCount} inactive`}
+                    </button>
+                  )}
 
                   {/* Match count header */}
                   {criteria && qualifiedCount !== null && (
