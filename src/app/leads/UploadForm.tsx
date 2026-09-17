@@ -42,6 +42,7 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
   const [googleStatusLoading, setGoogleStatusLoading] = useState(false);
   const [driveSheets, setDriveSheets] = useState<{ id: string; name: string; modifiedTime: string }[]>([]);
   const [driveSheetsLoading, setDriveSheetsLoading] = useState(false);
+  const [driveSheetsError, setDriveSheetsError] = useState<string>('');
   const [selectedDriveSheet, setSelectedDriveSheet] = useState<string>(''); // sheetId
   const [driveTabs, setDriveTabs] = useState<{ gid: string; title: string; index: number }[]>([]);
   const [driveSheetsTabsLoading, setDriveSheetsTabsLoading] = useState(false);
@@ -1004,38 +1005,10 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
     setGoogleStatusLoading(false);
   }, []);
 
-  // Check status when switching to sheets tab, then auto-load the spreadsheet list
-  const enterSheetsMode = useCallback(async () => {
-    setMode('sheets');
-    setMessage('');
-    setGoogleStatusLoading(true);
-    try {
-      const res = await fetch('/api/auth/google/status');
-      const json = await res.json();
-      setGoogleStatus(json);
-      // If already connected, populate the spreadsheet dropdown automatically
-      // so the user doesn't have to click "Browse Drive" manually.
-      if (json.connected) {
-        setDriveSheetsLoading(true);
-        setDriveSheets([]);
-        setDriveTabs([]);
-        setSelectedDriveSheet('');
-        setSelectedTab('0');
-        try {
-          const sheetsRes = await fetch('/api/auth/google/sheets');
-          const sheetsJson = await sheetsRes.json();
-          if (sheetsRes.ok) setDriveSheets(sheetsJson.sheets ?? []);
-        } catch { /* silent */ }
-        setDriveSheetsLoading(false);
-      }
-    } catch {
-      setGoogleStatus({ connected: false });
-    }
-    setGoogleStatusLoading(false);
-  }, []);
-
-  const loadDriveSheets = useCallback(async () => {
+  // Fetch spreadsheet list with proper error surfacing
+  const fetchDriveSheets = useCallback(async () => {
     setDriveSheetsLoading(true);
+    setDriveSheetsError('');
     setDriveSheets([]);
     setDriveTabs([]);
     setSelectedDriveSheet('');
@@ -1043,10 +1016,54 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
     try {
       const res = await fetch('/api/auth/google/sheets');
       const json = await res.json();
-      if (res.ok) setDriveSheets(json.sheets ?? []);
-    } catch { /* silent */ }
-    setDriveSheetsLoading(false);
+      if (!res.ok) {
+        // 401 usually means token expired / revoked
+        if (res.status === 401) {
+          setGoogleStatus({ connected: false });
+          setDriveSheetsError('Google session expired. Please reconnect below.');
+        } else {
+          setDriveSheetsError(json.error || 'Failed to load spreadsheets from Drive.');
+        }
+      } else {
+        const sheets = json.sheets ?? [];
+        setDriveSheets(sheets);
+        if (sheets.length === 0) {
+          setDriveSheetsError('No spreadsheets found in your Drive. Make sure you have at least one Google Sheet.');
+        }
+      }
+    } catch {
+      setDriveSheetsError('Network error — could not reach Drive. Check your connection and try again.');
+    } finally {
+      setDriveSheetsLoading(false);
+    }
   }, []);
+
+  // Check status when switching to sheets tab, then auto-load the spreadsheet list
+  const enterSheetsMode = useCallback(async () => {
+    setMode('sheets');
+    setMessage('');
+    setDriveSheetsError('');
+    setGoogleStatusLoading(true);
+    try {
+      const res = await fetch('/api/auth/google/status');
+      const json = await res.json();
+      setGoogleStatus(json);
+      if (json.connected) {
+        if (json.expired) {
+          // Token is expired — show reconnect prompt instead of a silent empty list
+          setDriveSheetsError('Google session expired. Please reconnect.');
+        } else {
+          await fetchDriveSheets();
+        }
+      }
+    } catch {
+      setGoogleStatus({ connected: false });
+    } finally {
+      setGoogleStatusLoading(false);
+    }
+  }, [fetchDriveSheets]);
+
+  const loadDriveSheets = fetchDriveSheets;
 
   const loadTabs = useCallback(async (sheetId: string) => {
     setDriveTabs([]);
@@ -1483,12 +1500,26 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
           {googleStatusLoading ? (
             <div className="text-xs text-gray-400 text-center py-2 animate-pulse">Checking Google connection…</div>
           ) : googleStatus?.connected ? (
-            <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+            <div className={`flex items-center justify-between rounded-lg px-3 py-2 border ${(googleStatus as {connected: boolean; expired?: boolean}).expired ? 'bg-amber-50 border-amber-200' : 'bg-green-50 border-green-200'}`}>
               <div className="flex items-center gap-2">
-                <svg className="w-4 h-4 text-green-600" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>
-                <span className="text-xs text-green-800 font-medium">Connected as <strong>{googleStatus.email}</strong></span>
+                {(googleStatus as {connected: boolean; expired?: boolean}).expired ? (
+                  <>
+                    <svg className="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    <span className="text-xs text-amber-800 font-medium">Session expired for <strong>{googleStatus.email}</strong></span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4 text-green-600" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>
+                    <span className="text-xs text-green-800 font-medium">Connected as <strong>{googleStatus.email}</strong></span>
+                  </>
+                )}
               </div>
-              <button onClick={handleGoogleDisconnect} className="text-[11px] text-red-500 hover:text-red-700 underline">Disconnect</button>
+              <div className="flex items-center gap-3">
+                {(googleStatus as {connected: boolean; expired?: boolean}).expired && (
+                  <a href="/api/auth/google/connect?redirect=/leads" className="text-[11px] text-blue-600 hover:underline font-medium">Reconnect</a>
+                )}
+                <button onClick={handleGoogleDisconnect} className="text-[11px] text-red-500 hover:text-red-700 underline">Disconnect</button>
+              </div>
             </div>
           ) : (
             <div className="flex flex-col items-center gap-2 border border-gray-200 rounded-lg p-4">
@@ -1526,9 +1557,14 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
                 <button
                   onClick={loadDriveSheets}
                   disabled={driveSheetsLoading}
-                  className="px-3 py-2 text-xs border border-gray-200 rounded-lg text-gray-600 hover:border-gray-400 disabled:opacity-50 whitespace-nowrap"
+                  className="flex items-center gap-1.5 px-3 py-2 text-xs border border-gray-200 rounded-lg text-gray-600 hover:border-gray-400 disabled:opacity-50 whitespace-nowrap transition-colors"
                 >
-                  {driveSheetsLoading ? 'Loading…' : driveSheets.length === 0 ? 'Browse Drive' : '↻ Refresh'}
+                  {driveSheetsLoading ? (
+                    <>
+                      <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                      Loading…
+                    </>
+                  ) : driveSheets.length === 0 ? '↻ Load Sheets' : '↻ Refresh'}
                 </button>
               </div>
 
@@ -1560,8 +1596,31 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
                 </div>
               )}
 
-              {driveSheets.length === 0 && !driveSheetsLoading && (
-                <p className="text-[10px] text-gray-400">Your spreadsheets are loading — if the list is empty, click ↻ Refresh or paste a URL below.</p>
+              {/* Error / empty state */}
+              {driveSheetsError && !driveSheetsLoading && (
+                <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                  <svg className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-red-700">{driveSheetsError}</p>
+                    {(driveSheetsError.includes('expired') || driveSheetsError.includes('reconnect')) && (
+                      <a
+                        href="/api/auth/google/connect?redirect=/leads"
+                        className="inline-flex items-center gap-1 mt-1 text-xs font-medium text-blue-600 hover:underline"
+                      >
+                        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>
+                        Reconnect Google account →
+                      </a>
+                    )}
+                    {!driveSheetsError.includes('expired') && !driveSheetsError.includes('reconnect') && (
+                      <button onClick={loadDriveSheets} className="mt-1 text-xs text-blue-600 hover:underline">Try again</button>
+                    )}
+                  </div>
+                </div>
+              )}
+              {driveSheets.length === 0 && !driveSheetsLoading && !driveSheetsError && (
+                <p className="text-[10px] text-gray-400">No spreadsheets loaded yet — click ↻ Refresh or paste a URL below.</p>
               )}
             </div>
           )}
