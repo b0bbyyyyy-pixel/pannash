@@ -12,6 +12,7 @@ export default function Navbar({ userName }: NavbarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [showDropdown, setShowDropdown] = useState(false);
+  const [showCalendar, setShowCalendar] = useState(false);
 
   const isActive = (path: string) => pathname === path || pathname?.startsWith(path + '/');
 
@@ -85,46 +86,38 @@ export default function Navbar({ userName }: NavbarProps) {
             >
               Leads
             </Link>
-            <Link
-              href="/calendar"
-              className={`text-sm font-medium transition-colors ${
-                isActive('/calendar')
-                  ? 'text-[#1a1a1a]'
-                  : 'text-[#6b6b6b] hover:text-[#1a1a1a]'
-              }`}
-            >
-              Calendar
-            </Link>
           </div>
 
-          {/* Right Side - User Menu with Gear Icon */}
-          <div className="relative">
+          {/* Right Side - Calendar popup + Settings menu */}
+          <div className="relative flex items-center gap-4">
+            {/* Calendar icon → popup */}
+            <button
+              onClick={() => { setShowCalendar(true); setShowDropdown(false); }}
+              className="focus:outline-none hover:opacity-70 transition-opacity"
+              title="Calendar"
+            >
+              <img
+                src="/images/icons/calendar-icon.png"
+                alt="Calendar"
+                width={22}
+                height={22}
+                className="w-[22px] h-[22px]"
+              />
+            </button>
+
+            {/* Settings (kanban icon) */}
             <button
               onClick={() => setShowDropdown(!showDropdown)}
-              className="flex items-center space-x-2 text-sm focus:outline-none hover:opacity-70 transition-opacity"
+              className="focus:outline-none hover:opacity-70 transition-opacity"
+              title="Settings"
             >
-              <span className="font-medium text-[#1a1a1a] capitalize">
-                {userName}
-              </span>
-              <svg
-                className="w-5 h-5 text-[#6b6b6b]"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-                />
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                />
-              </svg>
+              <img
+                src="/images/icons/kanban-icon.png"
+                alt="Settings"
+                width={22}
+                height={22}
+                className="w-[22px] h-[22px]"
+              />
             </button>
 
             {/* Settings Dropdown */}
@@ -187,11 +180,64 @@ export default function Navbar({ userName }: NavbarProps) {
                 >
                   Sign Out
                 </button>
+                <div className="px-4 py-2.5 text-sm font-bold text-[#1a1a1a] capitalize border-t border-[#f0f0f0] mt-1">
+                  {userName}
+                </div>
               </div>
             )}
           </div>
         </div>
       </div>
+
+      {/* Calendar popup overlay */}
+      {showCalendar && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black/40 z-[80]"
+            onClick={() => setShowCalendar(false)}
+          />
+          {/* Panel */}
+          <div
+            className="fixed top-4 left-1/2 -translate-x-1/2 z-[81] flex flex-col rounded-xl shadow-2xl overflow-hidden"
+            style={{ width: 'min(92vw, 1200px)', height: 'calc(100vh - 2rem)' }}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-2.5 bg-white border-b border-[#e5e5e5] flex-shrink-0">
+              <span className="text-xs text-[#6b6b6b] font-medium">Calendar</span>
+              <div className="flex items-center gap-3">
+                <a
+                  href="/calendar"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[#6b6b6b] hover:text-[#1a1a1a] text-xs flex items-center gap-1 transition-colors"
+                  title="Open in full page"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
+                  Full page
+                </a>
+                <button
+                  onClick={() => setShowCalendar(false)}
+                  className="text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors p-1 rounded hover:bg-[#f5f5f5]"
+                  title="Close"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            {/* iframe */}
+            <iframe
+              src="/calendar?modal=1"
+              className="flex-1 w-full bg-white border-0"
+              title="Calendar"
+            />
+          </div>
+        </>
+      )}
     </nav>
   );
 }

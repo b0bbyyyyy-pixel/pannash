@@ -75,7 +75,7 @@ export default function AuthPage() {
         {/* Logo */}
         <div className="shrink-0">
           <img
-            src="/images/logo/trylon-perisphere-cream.png"
+            src="/images/logo/gostwrk-auth-logo-transparent.png"
             alt="Gostwrk"
             className="w-[260px] md:w-[320px] h-auto"
           />

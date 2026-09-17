@@ -6,7 +6,14 @@ import CalendarClient from './CalendarClient';
 
 export const dynamic = 'force-dynamic';
 
-export default async function CalendarPage() {
+export default async function CalendarPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ modal?: string }>;
+}) {
+  const sp = await searchParams;
+  const isModal = sp.modal === '1';
+
   const cookieStore = await cookies();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -26,6 +33,15 @@ export default async function CalendarPage() {
     .single();
 
   const userName = profile?.full_name || user.email?.split('@')[0] || 'User';
+
+  if (isModal) {
+    // Stripped-down render for iframe overlay — no nav, no top padding
+    return (
+      <div className="min-h-screen bg-[#fafafa]">
+        <CalendarClient />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#fafafa]">
