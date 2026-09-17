@@ -66,25 +66,45 @@ function absDate(dateStr: string | null | undefined): string {
 
 // ── Filter state shape ────────────────────────────────────────────────────────
 interface Filters {
-  leadId:      string;
-  status:      string;
-  assignedTo:  string;
-  temperature: string;  // 'Hot' | 'Warm' | 'Cold' | ''
-  dateFrom:    string;  // ISO date string 'YYYY-MM-DD'
-  dateTo:      string;
-  phone:       string;
-  email:       string;
-  company:     string;
-  industry:    string;
+  leadId:           string;
+  /** Statuses to HIDE. Empty array = show all. */
+  excludedStatuses: string[];
+  assignedTo:       string;
+  temperature:      string;  // 'Hot' | 'Warm' | 'Cold' | ''
+  dateFrom:         string;  // ISO date string 'YYYY-MM-DD'
+  dateTo:           string;
+  phone:            string;
+  email:            string;
+  company:          string;
+  industry:         string;
 }
 
+/** Truly empty — used by Clear All */
 const EMPTY_FILTERS: Filters = {
-  leadId: '', status: '', assignedTo: '', temperature: '',
+  leadId: '', excludedStatuses: [], assignedTo: '', temperature: '',
   dateFrom: '', dateTo: '', phone: '', email: '', company: '', industry: '',
 };
 
+/** Smart default — last 30 days, all statuses except Prospect */
+function buildDefaultFilters(): Filters {
+  return {
+    leadId: '', excludedStatuses: ['Prospect'], assignedTo: '', temperature: '',
+    dateFrom: isoDaysAgo(30), dateTo: isoToday(), phone: '', email: '', company: '', industry: '',
+  };
+}
+
 function countActive(f: Filters): number {
-  return Object.values(f).filter(v => v !== '').length;
+  let n = 0;
+  if (f.leadId)              n++;
+  if (f.excludedStatuses.length > 0) n++;
+  if (f.assignedTo)          n++;
+  if (f.temperature)         n++;
+  if (f.dateFrom || f.dateTo) n++;
+  if (f.phone)               n++;
+  if (f.email)               n++;
+  if (f.company)             n++;
+  if (f.industry)            n++;
+  return n;
 }
 
 // ── Quick date range helpers ──────────────────────────────────────────────────
@@ -132,8 +152,8 @@ export default function PipelineClient({ leads, userId }: PipelineClientProps) {
   }, []);
 
   useEffect(() => { loadStatuses(); }, [loadStatuses]);
-  const [applied, setApplied]               = useState<Filters>(EMPTY_FILTERS);
-  const [pending, setPending]               = useState<Filters>(EMPTY_FILTERS);
+  const [applied, setApplied]               = useState<Filters>(buildDefaultFilters);
+  const [pending, setPending]               = useState<Filters>(buildDefaultFilters);
 
   // Derive unique assigned-to values from leads for the dropdown
   const agents = useMemo(() => {
@@ -152,9 +172,15 @@ export default function PipelineClient({ leads, userId }: PipelineClientProps) {
     setShowDrawer(false);
   }, [pending]);
 
+  // Reset → back to smart default (last 30d, all except Prospect)
   const resetFilters = useCallback(() => {
-    setPending(EMPTY_FILTERS);
-  }, []);
+    const def = buildDefaultFilters();
+    // If statuses are loaded, restore "all except Prospect"
+    const allExceptProspect = dbStatuses.map(s => s.name).includes('Prospect')
+      ? ['Prospect']
+      : def.excludedStatuses;
+    setPending({ ...def, excludedStatuses: allExceptProspect });
+  }, [dbStatuses]);
 
   const clearAll = useCallback(() => {
     setApplied(EMPTY_FILTERS);
@@ -191,8 +217,11 @@ export default function PipelineClient({ leads, userId }: PipelineClientProps) {
       }
       // Lead ID
       if (f.leadId && !lead.id.toLowerCase().includes(f.leadId.toLowerCase())) return false;
-      // Status
-      if (f.status && (lead.lead_status || lead.stage) !== f.status) return false;
+      // Status (multi-exclude)
+      if (f.excludedStatuses.length > 0) {
+        const s = lead.lead_status || lead.stage || '';
+        if (f.excludedStatuses.includes(s)) return false;
+      }
       // Assigned to
       if (f.assignedTo && lead.assigned_to !== f.assignedTo) return false;
       // Temperature
@@ -218,7 +247,7 @@ export default function PipelineClient({ leads, userId }: PipelineClientProps) {
   }, [sorted, search, applied]);
 
   const activeCount  = countActive(applied);
-  const statusNames  = dbStatuses.map(s => s.name);
+  const statusNames  = useMemo(() => dbStatuses.map(s => s.name), [dbStatuses]);
   const [leadOverlayId, setLeadOverlayId] = useState<string | null>(null);
   const goTo = (id: string) => setLeadOverlayId(id);
 
@@ -500,40 +529,72 @@ export default function PipelineClient({ leads, userId }: PipelineClientProps) {
                 </div>
               </FilterSection>
 
-              {/* ── STATUS ── */}
+              {/* ── STATUS (multi-select checkboxes) ── */}
               <FilterSection
                 icon={<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" /></svg>}
                 title="Status"
               >
-                <div className="relative">
-                  <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#9b9b9b]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
-                  </svg>
-                  <select
-                    value={pending.status}
-                    onChange={e => setPending(p => ({ ...p, status: e.target.value }))}
-                    className="w-full pl-9 pr-3 py-2.5 text-sm border border-[#e5e5e5] rounded-lg bg-[#fafafa] text-[#1a1a1a] focus:outline-none focus:ring-1 focus:ring-[#1a1a1a] focus:bg-white appearance-none"
-                  >
-                    <option value="">All statuses</option>
-                    {statusNames.map(s => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                  <svg className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#9b9b9b] pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
+                {/* Select All / None */}
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[11px] text-[#9b9b9b]">
+                    {statusNames.length - pending.excludedStatuses.length} of {statusNames.length} selected
+                  </span>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPending(p => ({ ...p, excludedStatuses: [] }))}
+                      className="text-[11px] text-[#1a1a1a] font-medium hover:underline"
+                    >
+                      All
+                    </button>
+                    <span className="text-[#d4d4d4]">·</span>
+                    <button
+                      type="button"
+                      onClick={() => setPending(p => ({ ...p, excludedStatuses: [...statusNames] }))}
+                      className="text-[11px] text-[#9b9b9b] hover:underline"
+                    >
+                      None
+                    </button>
+                  </div>
                 </div>
-                {/* Status pills preview */}
-                {pending.status && (() => {
-                  const col = getStatusStyleFrom(pending.status, dbStatuses);
-                  return (
-                    <div className="mt-2 flex">
-                      <span className="px-2.5 py-1 rounded text-xs font-medium" style={{ background: col.bg, color: col.text }}>
-                        {pending.status}
-                      </span>
-                    </div>
-                  );
-                })()}
+
+                {/* Checkbox list */}
+                <div className="max-h-56 overflow-y-auto rounded-lg border border-[#e5e5e5] divide-y divide-[#f5f5f5]">
+                  {statusNames.length === 0 && (
+                    <p className="text-xs text-[#9b9b9b] px-3 py-4 text-center">Loading statuses…</p>
+                  )}
+                  {statusNames.map(name => {
+                    const isChecked = !pending.excludedStatuses.includes(name);
+                    const col = getStatusStyleFrom(name, dbStatuses);
+                    return (
+                      <label
+                        key={name}
+                        className="flex items-center gap-2.5 px-3 py-2 hover:bg-[#fafafa] cursor-pointer select-none"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={e => {
+                            const checked = e.target.checked;
+                            setPending(p => ({
+                              ...p,
+                              excludedStatuses: checked
+                                ? p.excludedStatuses.filter(s => s !== name)
+                                : [...p.excludedStatuses, name],
+                            }));
+                          }}
+                          className="w-3.5 h-3.5 rounded border-[#d4d4d4] accent-[#1a1a1a] cursor-pointer"
+                        />
+                        <span
+                          className="px-1.5 py-0.5 rounded text-[11px] font-medium whitespace-nowrap"
+                          style={{ background: col.bg, color: col.text }}
+                        >
+                          {name}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
               </FilterSection>
 
               {/* ── ASSIGNMENT ── */}
