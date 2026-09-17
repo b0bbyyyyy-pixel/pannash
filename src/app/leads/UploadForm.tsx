@@ -1004,12 +1004,35 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
     setGoogleStatusLoading(false);
   }, []);
 
-  // Check status when switching to sheets tab
-  const enterSheetsMode = useCallback(() => {
+  // Check status when switching to sheets tab, then auto-load the spreadsheet list
+  const enterSheetsMode = useCallback(async () => {
     setMode('sheets');
     setMessage('');
-    checkGoogleStatus();
-  }, [checkGoogleStatus]);
+    setGoogleStatusLoading(true);
+    try {
+      const res = await fetch('/api/auth/google/status');
+      const json = await res.json();
+      setGoogleStatus(json);
+      // If already connected, populate the spreadsheet dropdown automatically
+      // so the user doesn't have to click "Browse Drive" manually.
+      if (json.connected) {
+        setDriveSheetsLoading(true);
+        setDriveSheets([]);
+        setDriveTabs([]);
+        setSelectedDriveSheet('');
+        setSelectedTab('0');
+        try {
+          const sheetsRes = await fetch('/api/auth/google/sheets');
+          const sheetsJson = await sheetsRes.json();
+          if (sheetsRes.ok) setDriveSheets(sheetsJson.sheets ?? []);
+        } catch { /* silent */ }
+        setDriveSheetsLoading(false);
+      }
+    } catch {
+      setGoogleStatus({ connected: false });
+    }
+    setGoogleStatusLoading(false);
+  }, []);
 
   const loadDriveSheets = useCallback(async () => {
     setDriveSheetsLoading(true);
@@ -1538,7 +1561,7 @@ export default function UploadForm({ selectedListId }: UploadFormProps) {
               )}
 
               {driveSheets.length === 0 && !driveSheetsLoading && (
-                <p className="text-[10px] text-gray-400">Click "Browse Drive" to see your recent spreadsheets, or paste a URL below.</p>
+                <p className="text-[10px] text-gray-400">Your spreadsheets are loading — if the list is empty, click ↻ Refresh or paste a URL below.</p>
               )}
             </div>
           )}
