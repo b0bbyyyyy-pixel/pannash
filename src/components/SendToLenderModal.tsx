@@ -1,6 +1,9 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, useMemo, DragEvent } from 'react';
+import dynamic from 'next/dynamic';
+
+const LenderSettingsModal = dynamic(() => import('./LenderSettingsModal'), { ssr: false });
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Lender {
@@ -15,6 +18,14 @@ interface Lender {
   latestStatus?: string | null;
   submissionCount?: number;
 }
+
+const TIER_COLORS: Record<number, { bg: string; text: string; border: string; label: string }> = {
+  1: { bg: 'bg-violet-100', text: 'text-violet-700', border: 'border-violet-200', label: 'T1' },
+  2: { bg: 'bg-blue-100',   text: 'text-blue-700',   border: 'border-blue-200',   label: 'T2' },
+  3: { bg: 'bg-amber-100',  text: 'text-amber-700',  border: 'border-amber-200',  label: 'T3' },
+  4: { bg: 'bg-gray-100',   text: 'text-gray-600',   border: 'border-gray-200',   label: 'T4' },
+  5: { bg: 'bg-gray-100',   text: 'text-gray-500',   border: 'border-gray-200',   label: 'T5' },
+};
 
 interface Document {
   id: string;
@@ -190,6 +201,22 @@ export default function SendToLenderModal({
   // Edit submission status
   const [editingSubId, setEditingSubId] = useState<string | null>(null);
 
+  // Lender settings modal
+  const [showLenderSettings, setShowLenderSettings] = useState(false);
+
+  // Quick-toggle a lender active/inactive without leaving the modal
+  const toggleLenderActive = useCallback(async (lender: Lender) => {
+    const newActive = !lender.is_active;
+    await fetch('/api/lenders', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ id: lender.id, is_active: newActive }),
+    });
+    setLenders(prev => prev.map(l => l.id === lender.id ? { ...l, is_active: newActive } : l));
+    if (!newActive) setSelectedLenderIds(s => { const n = new Set(s); n.delete(lender.id); return n; });
+  }, []);
+
   // ── Load data ──────────────────────────────────────────────────────────────
   const loadAll = useCallback(async () => {
     const [lRes, dRes, sRes, tRes] = await Promise.all([
@@ -204,7 +231,8 @@ export default function SendToLenderModal({
     const sJson = sRes.ok ? await sRes.json() : {};
     const tJson = tRes.ok ? await tRes.json() : {};
 
-    const rawLenders: Lender[] = (lJson.lenders || []).filter((l: Lender) => l.is_active !== false);
+    // Keep ALL lenders (including inactive) so the user can see and toggle them
+    const rawLenders: Lender[] = lJson.lenders || [];
     const rawSubs:    Submission[] = sJson.submissions || [];
 
     // Enrich lenders with latest submission status
@@ -256,13 +284,18 @@ export default function SendToLenderModal({
       if (lenderFilter === 'Recent' && !recentLenderNames.has(l.name)) return false;
       return true;
     })
-    // Sort: qualified first, then by name
+    // Sort: tier (1→4), then active before inactive, then qualified before not, then name
     .sort((a, b) => {
-      if (!criteria) return 0;
-      const aq = matchMap.get(a.id)?.status === 'qualified';
-      const bq = matchMap.get(b.id)?.status === 'qualified';
-      if (aq && !bq) return -1;
-      if (!aq && bq) return 1;
+      const ta = a.tier ?? 99, tb = b.tier ?? 99;
+      if (ta !== tb) return ta - tb;
+      const aActive = a.is_active !== false, bActive = b.is_active !== false;
+      if (aActive !== bActive) return aActive ? -1 : 1;
+      if (criteria) {
+        const aq = matchMap.get(a.id)?.status === 'qualified';
+        const bq = matchMap.get(b.id)?.status === 'qualified';
+        if (aq && !bq) return -1;
+        if (!aq && bq) return 1;
+      }
       return a.name.localeCompare(b.name);
     });
 
@@ -409,6 +442,17 @@ export default function SendToLenderModal({
                 Funding Request
               </span>
               {leadStatus && <StatusPill status={leadStatus} />}
+              <button
+                onClick={() => setShowLenderSettings(true)}
+                className="ml-2 flex items-center gap-1 px-3 py-1.5 rounded-lg border border-[#e5e5e5] text-xs text-[#6b6b6b] hover:bg-[#f5f5f5] transition-colors"
+                title="Edit lenders, tiers, and criteria"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                Manage Lenders
+              </button>
               <button onClick={onClose} className="ml-2 flex items-center gap-1 px-3 py-1.5 rounded-lg border border-[#e5e5e5] text-xs text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors">
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -481,40 +525,87 @@ export default function SendToLenderModal({
                     </div>
                   )}
 
-                  {/* Lender list */}
-                  <div className="space-y-0.5 max-h-[420px] overflow-y-auto pr-0.5">
+                  {/* Lender list — grouped by tier */}
+                  <div className="max-h-[420px] overflow-y-auto pr-0.5">
                     {filteredLenders.length === 0 ? (
                       <p className="text-xs text-[#9b9b9b] py-3 text-center">No lenders found</p>
-                    ) : filteredLenders.map(l => {
-                      const match = matchMap.get(l.id);
-                      const isQualified = match?.status === 'qualified';
-                      const hasMatch = !!match;
-                      const failReasons = match?.reasons.filter(r => !r.pass) ?? [];
-                      return (
-                        <label key={l.id} className={`flex items-start gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-colors ${selectedLenderIds.has(l.id) ? 'bg-indigo-50 border border-indigo-100' : 'hover:bg-[#fafafa] border border-transparent'}`}>
-                          <input type="checkbox" checked={selectedLenderIds.has(l.id)} onChange={() => toggleLender(l.id)}
-                            className="w-4 h-4 rounded border-[#d4d4d4] accent-indigo-600 cursor-pointer flex-shrink-0 mt-0.5" />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className={`text-xs font-medium ${hasMatch && !isQualified ? 'text-[#9b9b9b]' : 'text-[#1a1a1a]'}`}>{l.name}</span>
-                              {hasMatch && (
-                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 leading-none ${isQualified ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
-                                  {isQualified ? '✓ Qualify' : '✗ No'}
-                                </span>
-                              )}
-                              {l.latestStatus && <StatusPill status={l.latestStatus} />}
+                    ) : (() => {
+                      const rows: React.ReactNode[] = [];
+                      let lastTier: number | null = null;
+                      filteredLenders.forEach(l => {
+                        const tier = l.tier ?? 99;
+                        if (tier !== lastTier) {
+                          lastTier = tier;
+                          const tc = TIER_COLORS[tier] ?? TIER_COLORS[4];
+                          rows.push(
+                            <div key={`tier-${tier}`} className="flex items-center gap-2 px-1 pt-2 pb-0.5">
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${tc.bg} ${tc.text} ${tc.border}`}>
+                                Tier {tier}
+                              </span>
+                              <div className="flex-1 h-px bg-[#f0f0f0]" />
                             </div>
-                            {failReasons.length > 0 && (
-                              <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0">
-                                {failReasons.map((r, i) => (
-                                  <span key={i} className="text-[10px] text-red-400 leading-tight">· {r.label}</span>
-                                ))}
+                          );
+                        }
+                        const match = matchMap.get(l.id);
+                        const isQualified = match?.status === 'qualified';
+                        const hasMatch = !!match;
+                        const failReasons = match?.reasons.filter(r => !r.pass) ?? [];
+                        const isActive = l.is_active !== false;
+                        const tc = TIER_COLORS[l.tier ?? 4] ?? TIER_COLORS[4];
+                        rows.push(
+                          <div
+                            key={l.id}
+                            onClick={() => isActive && toggleLender(l.id)}
+                            className={`flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors ${!isActive ? 'opacity-40' : 'cursor-pointer'} ${selectedLenderIds.has(l.id) ? 'bg-indigo-50 border border-indigo-100' : 'hover:bg-[#fafafa] border border-transparent'}`}
+                          >
+                            {/* Lender info */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {/* Tier badge */}
+                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border leading-none ${tc.bg} ${tc.text} ${tc.border}`}>
+                                  {tc.label}
+                                </span>
+                                <span className={`text-xs font-medium ${!isActive ? 'line-through text-[#9b9b9b]' : hasMatch && !isQualified ? 'text-[#9b9b9b]' : 'text-[#1a1a1a]'}`}>
+                                  {l.name}
+                                </span>
+                                {hasMatch && isActive && (
+                                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 leading-none ${isQualified ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
+                                    {isQualified ? '✓ Qualify' : '✗ No'}
+                                  </span>
+                                )}
+                                {!isActive && <span className="text-[9px] text-[#9b9b9b] italic">off</span>}
+                                {l.latestStatus && isActive && <StatusPill status={l.latestStatus} />}
                               </div>
-                            )}
+                              {failReasons.length > 0 && isActive && (
+                                <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0">
+                                  {failReasons.map((r, i) => (
+                                    <span key={i} className="text-[10px] text-red-400 leading-tight">· {r.label}</span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Circular checkbox on the right */}
+                            <div
+                              className={`flex-shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
+                                !isActive
+                                  ? 'border-gray-200 bg-gray-100 cursor-not-allowed'
+                                  : selectedLenderIds.has(l.id)
+                                    ? 'border-indigo-600 bg-indigo-600'
+                                    : 'border-[#d4d4d4] bg-white'
+                              }`}
+                            >
+                              {selectedLenderIds.has(l.id) && (
+                                <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                </svg>
+                              )}
+                            </div>
                           </div>
-                        </label>
-                      );
-                    })}
+                        );
+                      });
+                      return rows;
+                    })()}
                   </div>
                 </div>
 
@@ -752,6 +843,14 @@ export default function SendToLenderModal({
           </div>
         </div>
       </div>
+
+      {/* ── Lender Settings Modal ─────────────────────────────────────────── */}
+      {showLenderSettings && (
+        <LenderSettingsModal
+          onClose={() => { setShowLenderSettings(false); loadAll(); }}
+          onRefresh={() => loadAll()}
+        />
+      )}
 
       {/* ── Upload doc sub-modal ──────────────────────────────────────────── */}
       {showUpload && (

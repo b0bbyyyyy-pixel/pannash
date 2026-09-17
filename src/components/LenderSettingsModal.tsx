@@ -52,19 +52,39 @@ export interface LenderRecord {
 const EMPTY_FORM = {
   name: '',
   tier: 1,
+  is_active: true,
+  // Contact
+  email: '',
+  cc_email: '',
+  rep_name: '',
+  contact_phone: '',
+  submission_method: '',
+  products: '',
+  // Underwriting
   min_monthly_revenue: 10000,
   min_tib_months: 12,
   min_fico: 600,
   min_position: 1,
   max_position: 10,
+  max_nsfs: '',
+  neg_days_max: '',
+  max_withhold: '',
+  min_deposits: '',
+  min_amount: '',
+  max_amount: '',
+  // Flags
   no_credit_pull: false,
   hard_pull_sole_props: false,
-  neg_days_max: '',
-  min_deposits: '',
-  restricted_states: '',
-  restricted_industry_keywords: '',
+  accepts_sole_prop: true,
+  does_buyout: false,
+  does_reverse_consolidation: false,
+  // Restrictions
+  state_restrictions: '',
+  prohibited_industries: '',
+  preferred_industries: '',
+  // Notes
   notes: '',
-  is_active: true,
+  other_requirements: '',
 };
 
 type FormState = typeof EMPTY_FORM;
@@ -73,45 +93,86 @@ function recordToForm(r: LenderRecord): FormState {
   return {
     name: r.name,
     tier: r.tier,
+    is_active: r.is_active,
+    // Contact
+    email: r.email ?? '',
+    cc_email: r.cc_email ?? '',
+    rep_name: r.rep_name ?? '',
+    contact_phone: r.contact_phone ?? '',
+    submission_method: r.submission_method ?? '',
+    products: r.products ?? '',
+    // Underwriting
     min_monthly_revenue: r.min_monthly_revenue,
     min_tib_months: r.min_tib_months,
     min_fico: r.min_fico,
     min_position: r.min_position,
     max_position: r.max_position,
+    max_nsfs: r.max_nsfs != null ? String(r.max_nsfs) : '',
+    neg_days_max: r.neg_days_max != null ? String(r.neg_days_max) : '',
+    max_withhold: r.max_withhold != null ? String(r.max_withhold) : '',
+    min_deposits: r.min_deposits != null ? String(r.min_deposits) : '',
+    min_amount: r.min_amount != null ? String(r.min_amount) : '',
+    max_amount: r.max_amount != null ? String(r.max_amount) : '',
+    // Flags
     no_credit_pull: r.no_credit_pull,
     hard_pull_sole_props: r.hard_pull_sole_props,
-    neg_days_max: r.neg_days_max != null ? String(r.neg_days_max) : '',
-    min_deposits: r.min_deposits != null ? String(r.min_deposits) : '',
-    restricted_states: (r.restricted_states ?? []).join(', '),
-    restricted_industry_keywords: (r.restricted_industry_keywords ?? []).join(', '),
+    accepts_sole_prop: r.accepts_sole_prop ?? true,
+    does_buyout: r.does_buyout ?? false,
+    does_reverse_consolidation: r.does_reverse_consolidation ?? false,
+    // Restrictions — prefer new string columns, fall back to legacy arrays
+    state_restrictions: r.state_restrictions ?? (r.restricted_states ?? []).join(', '),
+    prohibited_industries: r.prohibited_industries ?? (r.restricted_industry_keywords ?? []).join(', '),
+    preferred_industries: r.preferred_industries ?? '',
+    // Notes
     notes: r.notes ?? '',
-    is_active: r.is_active,
+    other_requirements: r.other_requirements ?? '',
   };
 }
 
 function formToPayload(f: FormState) {
+  const num = (v: string | number | undefined | null, fallback: number | null = null) =>
+    v !== '' && v != null && !isNaN(Number(v)) ? Number(v) : fallback;
+
   return {
     name: f.name.trim(),
     tier: Number(f.tier),
-    min_monthly_revenue: Number(f.min_monthly_revenue) || 0,
-    min_tib_months: Number(f.min_tib_months) || 0,
-    min_fico: Number(f.min_fico) || 0,
-    min_position: Number(f.min_position) || 1,
-    max_position: Number(f.max_position) || 10,
+    is_active: f.is_active,
+    // Contact
+    email: f.email.trim() || null,
+    cc_email: f.cc_email.trim() || null,
+    rep_name: f.rep_name.trim() || null,
+    contact_phone: f.contact_phone.trim() || null,
+    submission_method: f.submission_method.trim() || null,
+    products: f.products.trim() || null,
+    // Underwriting
+    min_monthly_revenue: num(f.min_monthly_revenue, 0) ?? 0,
+    min_tib_months: num(f.min_tib_months, 0) ?? 0,
+    min_fico: num(f.min_fico, 0) ?? 0,
+    min_position: num(f.min_position, 1) ?? 1,
+    max_position: num(f.max_position, 10) ?? 10,
+    max_nsfs: num(f.max_nsfs),
+    neg_days_max: num(f.neg_days_max),
+    max_withhold: num(f.max_withhold),
+    min_deposits: num(f.min_deposits),
+    min_amount: num(f.min_amount),
+    max_amount: num(f.max_amount),
+    // Flags
     no_credit_pull: f.no_credit_pull,
     hard_pull_sole_props: f.hard_pull_sole_props,
-    neg_days_max: f.neg_days_max !== '' ? Number(f.neg_days_max) : null,
-    min_deposits: f.min_deposits !== '' ? Number(f.min_deposits) : null,
-    restricted_states: f.restricted_states
-      .split(',')
-      .map((s) => s.trim().toUpperCase())
-      .filter(Boolean),
-    restricted_industry_keywords: f.restricted_industry_keywords
-      .split(',')
-      .map((s) => s.trim().toLowerCase())
-      .filter(Boolean),
-    notes: f.notes.trim(),
-    is_active: f.is_active,
+    accepts_sole_prop: f.accepts_sole_prop,
+    does_buyout: f.does_buyout,
+    does_reverse_consolidation: f.does_reverse_consolidation,
+    // Restrictions — save to both old + new columns for compatibility
+    state_restrictions: f.state_restrictions.trim() || null,
+    prohibited_industries: f.prohibited_industries.trim() || null,
+    preferred_industries: f.preferred_industries.trim() || null,
+    restricted_states: f.state_restrictions
+      .split(',').map((s) => s.trim().toUpperCase()).filter(Boolean),
+    restricted_industry_keywords: f.prohibited_industries
+      .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
+    // Notes
+    notes: f.notes.trim() || null,
+    other_requirements: f.other_requirements.trim() || null,
     tib_fico_tiers: null,
   };
 }
@@ -364,6 +425,7 @@ export default function LenderSettingsModal({ onClose, onRefresh }: Props) {
                   />
                 </FormField>
 
+                {/* ── Tier & Status ── */}
                 <div className="grid grid-cols-2 gap-3">
                   <FormField label="Tier">
                     <select value={form.tier} onChange={(e) => setForm({ ...form, tier: Number(e.target.value) })} className={INPUT}>
@@ -372,47 +434,113 @@ export default function LenderSettingsModal({ onClose, onRefresh }: Props) {
                       ))}
                     </select>
                   </FormField>
+                  <FormField label="Status">
+                    <label className="flex items-center gap-2 h-[30px] cursor-pointer">
+                      <input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} className="w-4 h-4 rounded" />
+                      <span className="text-xs text-gray-700">{form.is_active ? 'Active (enabled)' : 'Inactive (disabled)'}</span>
+                    </label>
+                  </FormField>
+                </div>
 
+                {/* ── Contact ── */}
+                <div className="pt-1 pb-0.5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Contact</div>
+                <div className="grid grid-cols-2 gap-3">
+                  <FormField label="Submission Email">
+                    <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className={INPUT} placeholder="deals@lender.com" />
+                  </FormField>
+                  <FormField label="CC Email">
+                    <input type="email" value={form.cc_email} onChange={(e) => setForm({ ...form, cc_email: e.target.value })} className={INPUT} placeholder="rep@lender.com" />
+                  </FormField>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <FormField label="Rep Name">
+                    <input type="text" value={form.rep_name} onChange={(e) => setForm({ ...form, rep_name: e.target.value })} className={INPUT} placeholder="John Smith" />
+                  </FormField>
+                  <FormField label="Contact Phone">
+                    <input type="text" value={form.contact_phone} onChange={(e) => setForm({ ...form, contact_phone: e.target.value })} className={INPUT} placeholder="555-555-5555" />
+                  </FormField>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <FormField label="Submission Method">
+                    <select value={form.submission_method} onChange={(e) => setForm({ ...form, submission_method: e.target.value })} className={INPUT}>
+                      <option value="">— Select —</option>
+                      <option value="email">Email</option>
+                      <option value="portal">Portal</option>
+                      <option value="api">API</option>
+                    </select>
+                  </FormField>
+                  <FormField label="Products">
+                    <input type="text" value={form.products} onChange={(e) => setForm({ ...form, products: e.target.value })} className={INPUT} placeholder="mca, term, loc" />
+                  </FormField>
+                </div>
+
+                {/* ── Underwriting ── */}
+                <div className="pt-1 pb-0.5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Underwriting Criteria</div>
+                <div className="grid grid-cols-2 gap-3">
                   <FormField label="Min Monthly Revenue ($)">
                     <input type="number" value={form.min_monthly_revenue} onChange={(e) => setForm({ ...form, min_monthly_revenue: Number(e.target.value) })} className={INPUT} min="0" step="1000" />
                   </FormField>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
                   <FormField label="Min TIB (months)">
                     <input type="number" value={form.min_tib_months} onChange={(e) => setForm({ ...form, min_tib_months: Number(e.target.value) })} className={INPUT} min="0" />
                   </FormField>
-
+                </div>
+                <div className="grid grid-cols-2 gap-3">
                   <FormField label="Min FICO (0 = no min)">
                     <input type="number" value={form.min_fico} onChange={(e) => setForm({ ...form, min_fico: Number(e.target.value) })} className={INPUT} min="0" max="850" />
                   </FormField>
+                  <FormField label="Max NSFs (blank = no limit)">
+                    <input type="number" value={form.max_nsfs} onChange={(e) => setForm({ ...form, max_nsfs: e.target.value })} className={INPUT} min="0" placeholder="e.g. 5" />
+                  </FormField>
                 </div>
-
                 <div className="grid grid-cols-2 gap-3">
                   <FormField label="Min Position">
                     <select value={form.min_position} onChange={(e) => setForm({ ...form, min_position: Number(e.target.value) })} className={INPUT}>
                       {[1,2,3,4,5].map((n) => <option key={n} value={n}>{n}{n===1?' (1st pos ok)':` (${n}+ pos only)`}</option>)}
                     </select>
                   </FormField>
-
                   <FormField label="Max Positions">
                     <select value={form.max_position} onChange={(e) => setForm({ ...form, max_position: Number(e.target.value) })} className={INPUT}>
                       {[1,2,3,4,5,6,7,8,10].map((n) => <option key={n} value={n}>{n === 10 ? 'No limit (10)' : n}</option>)}
                     </select>
                   </FormField>
                 </div>
-
                 <div className="grid grid-cols-2 gap-3">
                   <FormField label="Max Neg Days (blank = no limit)">
                     <input type="number" value={form.neg_days_max} onChange={(e) => setForm({ ...form, neg_days_max: e.target.value })} className={INPUT} min="0" placeholder="e.g. 6" />
                   </FormField>
-
                   <FormField label="Min Deposits/mo (blank = no min)">
                     <input type="number" value={form.min_deposits} onChange={(e) => setForm({ ...form, min_deposits: e.target.value })} className={INPUT} min="0" placeholder="e.g. 5" />
                   </FormField>
                 </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <FormField label="Min Advance Amount ($)">
+                    <input type="number" value={form.min_amount} onChange={(e) => setForm({ ...form, min_amount: e.target.value })} className={INPUT} min="0" step="1000" placeholder="e.g. 5000" />
+                  </FormField>
+                  <FormField label="Max Advance Amount ($)">
+                    <input type="number" value={form.max_amount} onChange={(e) => setForm({ ...form, max_amount: e.target.value })} className={INPUT} min="0" step="5000" placeholder="e.g. 500000" />
+                  </FormField>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <FormField label="Max Factor/Withhold (%)">
+                    <input type="number" value={form.max_withhold} onChange={(e) => setForm({ ...form, max_withhold: e.target.value })} className={INPUT} min="0" max="100" placeholder="e.g. 30" />
+                  </FormField>
+                </div>
 
+                {/* ── Flags ── */}
+                <div className="pt-1 pb-0.5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Flags</div>
                 <div className="flex flex-wrap gap-x-6 gap-y-2">
+                  <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+                    <input type="checkbox" checked={form.accepts_sole_prop} onChange={(e) => setForm({ ...form, accepts_sole_prop: e.target.checked })} className="w-4 h-4 rounded" />
+                    Accepts Sole Props
+                  </label>
+                  <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+                    <input type="checkbox" checked={form.does_buyout} onChange={(e) => setForm({ ...form, does_buyout: e.target.checked })} className="w-4 h-4 rounded" />
+                    Does Buyouts
+                  </label>
+                  <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+                    <input type="checkbox" checked={form.does_reverse_consolidation} onChange={(e) => setForm({ ...form, does_reverse_consolidation: e.target.checked })} className="w-4 h-4 rounded" />
+                    Reverse Consolidation
+                  </label>
                   <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
                     <input type="checkbox" checked={form.no_credit_pull} onChange={(e) => setForm({ ...form, no_credit_pull: e.target.checked })} className="w-4 h-4 rounded" />
                     No Credit Pull
@@ -421,40 +549,53 @@ export default function LenderSettingsModal({ onClose, onRefresh }: Props) {
                     <input type="checkbox" checked={form.hard_pull_sole_props} onChange={(e) => setForm({ ...form, hard_pull_sole_props: e.target.checked })} className="w-4 h-4 rounded" />
                     Hard Pull on Sole Props
                   </label>
-                  <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
-                    <input type="checkbox" checked={(form as FormState & { restricts_sole_props?: boolean }).restricts_sole_props ?? false} onChange={(e) => setForm({ ...form, restricts_sole_props: e.target.checked } as FormState)} className="w-4 h-4 rounded" />
-                    Restricts All Sole Props
-                  </label>
-                  <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
-                    <input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} className="w-4 h-4 rounded" />
-                    Active
-                  </label>
                 </div>
 
+                {/* ── Restrictions ── */}
+                <div className="pt-1 pb-0.5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Restrictions</div>
                 <FormField label="Restricted States (comma-separated 2-letter codes)">
                   <input
                     type="text"
-                    value={form.restricted_states}
-                    onChange={(e) => setForm({ ...form, restricted_states: e.target.value })}
+                    value={form.state_restrictions}
+                    onChange={(e) => setForm({ ...form, state_restrictions: e.target.value })}
                     className={INPUT}
                     placeholder="e.g. TX, CA, NY"
                   />
                 </FormField>
-
-                <FormField label="Restricted Industry Keywords (comma-separated, lowercase)">
+                <FormField label="Prohibited Industries (comma-separated keywords)">
                   <textarea
-                    value={form.restricted_industry_keywords}
-                    onChange={(e) => setForm({ ...form, restricted_industry_keywords: e.target.value })}
-                    className={`${INPUT} h-16 resize-none`}
-                    placeholder="e.g. trucking, cannabis, auto dealership, legal"
+                    value={form.prohibited_industries}
+                    onChange={(e) => setForm({ ...form, prohibited_industries: e.target.value })}
+                    className={`${INPUT} h-14 resize-none`}
+                    placeholder="e.g. trucking, cannabis, auto dealership"
+                  />
+                </FormField>
+                <FormField label="Preferred Industries (optional, comma-separated)">
+                  <input
+                    type="text"
+                    value={form.preferred_industries}
+                    onChange={(e) => setForm({ ...form, preferred_industries: e.target.value })}
+                    className={INPUT}
+                    placeholder="e.g. restaurants, retail, healthcare"
                   />
                 </FormField>
 
-                <FormField label="Notes">
+                {/* ── Notes ── */}
+                <div className="pt-1 pb-0.5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Notes</div>
+                <FormField label="Other Requirements">
+                  <input
+                    type="text"
+                    value={form.other_requirements}
+                    onChange={(e) => setForm({ ...form, other_requirements: e.target.value })}
+                    className={INPUT}
+                    placeholder="e.g. Must have 3 months bank statements"
+                  />
+                </FormField>
+                <FormField label="Internal Notes">
                   <textarea
                     value={form.notes}
                     onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                    className={`${INPUT} h-20 resize-none`}
+                    className={`${INPUT} h-16 resize-none`}
                     placeholder="Special conditions, industry sub-tiers, etc."
                   />
                 </FormField>
