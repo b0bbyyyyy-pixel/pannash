@@ -62,8 +62,8 @@ export async function POST(req: NextRequest) {
   const headerLine = lines[0];
   const dataLines  = lines.slice(1);
 
-  const BATCH_SIZE = 150;
-  const allLeads: Array<{ name: string | null; email: string | null; phone: string | null; company: string | null }> = [];
+  // Smaller batches + parallel execution = much faster for large sheets
+  const BATCH_SIZE = 80;
 
   const SYSTEM_PROMPT = `You are a data extraction assistant for a business CRM.
 You will receive CSV data with column headers. Your job is to extract lead information from EVERY data row.
@@ -83,43 +83,52 @@ Rules:
 - Include a result for EVERY data row, even if most fields are null
 - Skip the header row — only return data rows`;
 
+  type ParsedRow = { name: string | null; email: string | null; phone: string | null; company: string | null };
+
+  const parseRow = (row: unknown): ParsedRow | null => {
+    if (!row || typeof row !== 'object') return null;
+    const r = row as Record<string, unknown>;
+    return {
+      name:    typeof r.name    === 'string' && r.name    ? r.name    : null,
+      email:   typeof r.email   === 'string' && r.email   ? r.email   : null,
+      phone:   typeof r.phone   === 'string' && r.phone   ? r.phone   : null,
+      company: typeof r.company === 'string' && r.company ? r.company : null,
+    };
+  };
+
+  // Build all batches
+  const batches: string[][] = [];
   for (let i = 0; i < dataLines.length; i += BATCH_SIZE) {
-    const batch = dataLines.slice(i, i + BATCH_SIZE);
-    const batchCsv = [headerLine, ...batch].join('\n');
-
-    try {
-      const completion = await ai.chat.completions.create({
-        model: GROK_MINI_MODEL,
-        temperature: 0.0,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user',   content: `Parse these ${batch.length} rows:\n\n${batchCsv}` },
-        ],
-      });
-
-      const raw = completion.choices[0]?.message?.content ?? '[]';
-
-      // Extract JSON array even if the model wraps in code fences
-      const jsonMatch = raw.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]) as unknown[];
-        for (const row of parsed) {
-          if (row && typeof row === 'object') {
-            const r = row as Record<string, unknown>;
-            allLeads.push({
-              name:    typeof r.name    === 'string' && r.name    ? r.name    : null,
-              email:   typeof r.email   === 'string' && r.email   ? r.email   : null,
-              phone:   typeof r.phone   === 'string' && r.phone   ? r.phone   : null,
-              company: typeof r.company === 'string' && r.company ? r.company : null,
-            });
-          }
-        }
-      }
-    } catch (batchErr) {
-      console.error(`[ai-parse-leads] batch ${i}–${i + BATCH_SIZE} failed:`, batchErr);
-      // Continue with remaining batches instead of aborting
-    }
+    batches.push(dataLines.slice(i, i + BATCH_SIZE));
   }
+
+  // Run all batches in parallel — dramatically faster than sequential
+  const batchResults = await Promise.all(
+    batches.map(async (batch, idx) => {
+      const batchCsv = [headerLine, ...batch].join('\n');
+      try {
+        const completion = await ai.chat.completions.create({
+          model: GROK_MINI_MODEL,
+          temperature: 0.0,
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user',   content: `Parse these ${batch.length} rows:\n\n${batchCsv}` },
+          ],
+        });
+        const raw = completion.choices[0]?.message?.content ?? '[]';
+        const jsonMatch = raw.match(/\[[\s\S]*\]/);
+        if (!jsonMatch) return [];
+        const parsed = JSON.parse(jsonMatch[0]) as unknown[];
+        return parsed.map(parseRow).filter((r): r is ParsedRow => r !== null);
+      } catch (err) {
+        console.error(`[ai-parse-leads] batch ${idx} failed:`, err);
+        return [];
+      }
+    })
+  );
+
+  // Flatten in original order (Promise.all preserves order)
+  const allLeads = batchResults.flat();
 
   return NextResponse.json({ leads: allLeads });
 }

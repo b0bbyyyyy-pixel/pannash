@@ -306,6 +306,30 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
   };
 
   // Smart column mapper - finds the right value regardless of column name or order
+  /**
+   * Detect "Business Name/Category PersonFirst PersonLast" combined strings
+   * (common in Tracers exports) and extract just the person name.
+   */
+  const extractPersonName = (raw: string | null): string | null => {
+    if (!raw) return null;
+    const words = raw.trim().split(/\s+/);
+    if (words.length < 3) return raw;
+    const last       = words[words.length - 1];
+    const secondLast = words[words.length - 2];
+    const isNameWord = (w: string) =>
+      /^[A-Z][a-zA-Z'\-]{1,}$/.test(w) &&
+      !/^(LLC|Inc|Corp|Ltd|PLC|Co|LLP|LP|PC)\.?$/i.test(w);
+    if (!isNameWord(last) || !isNameWord(secondLast)) return raw;
+    const prefix = words.slice(0, -2).join(' ');
+    const hasBusinessIndicator =
+      /L\.?L\.?C\.?|Inc\.?|Corp\.?|Ltd\.?|PLC|L\.?P\.?/i.test(prefix) ||
+      prefix.includes('&') ||
+      /\b[A-Z]{2,5}\b/.test(prefix) ||
+      prefix === prefix.toUpperCase() ||
+      prefix.split(/\s+/).length >= 3;
+    return hasBusinessIndicator ? `${secondLast} ${last}` : raw;
+  };
+
   const smartColumnMapper = (row: any): any => {
     const rowKeys = Object.keys(row);
 
@@ -360,11 +384,15 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
     } else if (firstName || lastName) {
       name = (firstName || lastName);
     } else {
-      // Fall back to a single combined name column
-      name = findColumn(['full name', 'fullname', 'contact name', 'tracers name', 'lead name', 'person name', 'owner name'])
+      // Fall back to a single combined name column.
+      // Note: 'tracers name' intentionally excluded — it contains "Business Person"
+      // combined strings that need post-processing below.
+      name = findColumn(['full name', 'fullname', 'contact name', 'lead name', 'person name', 'owner name'])
         // Generic single-word headers like "Name", "Owner", "Contact" (exact match
         // only, so "Business Name" still maps to company, not here)
-        || findExact(['name', 'owner', 'contact', 'lead']);
+        || findExact(['name', 'owner', 'contact', 'lead'])
+        // Tracers Name last — only after all others fail, and we'll clean it below
+        || findColumn(['tracers name']);
     }
 
     // Last resort: many exports put First / Last right before the Email column.
@@ -438,13 +466,18 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       findColumn(['organization', 'org', 'employer', 'account'])
     );
 
-    // If the combined fallback name begins with the company name, strip it so we
-    // end up with just the person portion. e.g. "Aircules Mechanical Abel Ybarra"
-    // with company="Aircules Mechanical" → name="Abel Ybarra"
+    // Pass the name through the combined-string extractor.
+    // This handles "Business Category PersonFirst PersonLast" patterns from
+    // Tracers exports and similar data sources.
+    if (name) {
+      name = extractPersonName(name);
+    }
+
+    // If the combined fallback name still begins with the company name, strip it.
+    // e.g. "Aircules Mechanical Abel Ybarra" → "Abel Ybarra" when company="Aircules Mechanical"
     if (name && company) {
       const escaped = company.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const stripped = name.replace(new RegExp(`^${escaped}\\s*`, 'i'), '').trim();
-      // Only use the stripped value if it looks like a real person name (≤4 words, no company keywords)
       if (stripped && stripped !== name && stripped.split(' ').length <= 4 && !isLikelyCompany(stripped)) {
         name = stripped;
       }
@@ -1826,6 +1859,20 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
                 All
               </button>
             </div>
+          )}
+
+          {/* AI parse — prominent button shown whenever a sheet is loaded */}
+          {sheetsAllRows.length > 0 && !aiParsing && (
+            <button
+              onClick={handleAiParse}
+              disabled={!rawSheetsCsv}
+              className="w-full flex items-center justify-center gap-2 py-2.5 border border-dashed border-gray-300 rounded-lg text-sm text-gray-600 hover:border-gray-500 hover:text-gray-900 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              Names look wrong? Re-parse with AI
+            </button>
           )}
 
           {/* AI parsing spinner */}

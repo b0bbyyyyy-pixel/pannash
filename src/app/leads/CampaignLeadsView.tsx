@@ -36,6 +36,45 @@ function relativeTime(dateStr: string | null | undefined): string {
   return `${months}mo ago`;
 }
 
+/**
+ * Many Tracers/data-export sheets store a combined "Business Name Person Name"
+ * string in a single column. This helper detects that pattern and extracts
+ * just the person name (last 2 words) when the prefix looks like a business
+ * or industry category.
+ *
+ * Examples:
+ *   "RIGHTAWAY PAINT L.L.C. Ronald Bannister"     → "Ronald Bannister"
+ *   "Transportation & Logistics Nathaniel Manning" → "Nathaniel Manning"
+ *   "MWP Michael Wilson"                           → "Michael Wilson"
+ *   "Bobby Butler"                                 → "Bobby Butler"  (unchanged)
+ */
+function extractPersonName(raw: string | null | undefined): string {
+  if (!raw) return raw ?? '';
+  const words = raw.trim().split(/\s+/);
+  if (words.length < 3) return raw; // too short to have a prefix
+
+  const last       = words[words.length - 1];
+  const secondLast = words[words.length - 2];
+
+  // A word looks like a person name segment if it starts uppercase + is mostly letters
+  const isNameWord = (w: string) =>
+    /^[A-Z][a-zA-Z'\-]{1,}$/.test(w) &&
+    !/^(LLC|Inc|Corp|Ltd|PLC|Co|LLP|LP|PC)\.?$/i.test(w);
+
+  if (!isNameWord(last) || !isNameWord(secondLast)) return raw;
+
+  const prefix = words.slice(0, -2).join(' ');
+
+  const hasBusinessIndicator =
+    /L\.?L\.?C\.?|Inc\.?|Corp\.?|Ltd\.?|PLC|L\.?P\.?/i.test(prefix) || // entity suffixes
+    prefix.includes('&') ||                     // "Transportation & Logistics"
+    /\b[A-Z]{2,5}\b/.test(prefix) ||           // acronym like "MWP"
+    prefix === prefix.toUpperCase() ||           // all-caps prefix
+    prefix.split(/\s+/).length >= 3;            // 3+ word business category
+
+  return hasBusinessIndicator ? `${secondLast} ${last}` : raw;
+}
+
 function mostRecent(...dates: (string | null | undefined)[]): string | null {
   const valid = dates.filter(Boolean) as string[];
   if (valid.length === 0) return null;
@@ -192,12 +231,22 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
                 <tr key={lead.id} className="border-b border-[#f5f5f5] hover:bg-[#fafafa] transition-colors last:border-b-0">
                   {/* Lead name + company */}
                   <td className="px-4 py-3.5">
-                    <div className="font-semibold text-sm text-[#1a1a1a]">
-                      {(lead.name && !lead.name.includes('@') ? lead.name : null) || lead.company || lead.name || '—'}
-                    </div>
-                    {lead.company && lead.company !== ((lead.name && !lead.name.includes('@') ? lead.name : null) || lead.company) && (
-                      <div className="text-xs text-[#9b9b9b] mt-0.5">{lead.company}</div>
-                    )}
+                    {(() => {
+                      const PHONE_LABELS = new Set(['mobile','cell','home','work','office','direct','landline','voip','personal','fax']);
+                      const rawName = lead.name && !lead.name.includes('@') ? lead.name : null;
+                      const personName = extractPersonName(rawName) || lead.company || lead.name || '—';
+                      const company = lead.company && !PHONE_LABELS.has(lead.company.toLowerCase().trim())
+                        ? lead.company : null;
+                      const showCompany = company && company !== personName;
+                      return (
+                        <>
+                          <div className="font-semibold text-sm text-[#1a1a1a]">{personName}</div>
+                          {showCompany && (
+                            <div className="text-xs text-[#9b9b9b] mt-0.5">{company}</div>
+                          )}
+                        </>
+                      );
+                    })()}
                   </td>
 
                   {/* Contact info */}
