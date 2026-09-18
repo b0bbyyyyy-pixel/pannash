@@ -3,6 +3,8 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
+import { toE164 } from '@/lib/dialer/e164';
+import { useWebPhone } from '@/components/webphone/WebPhone';
 
 const UnderwritingSuite    = dynamic(() => import('@/components/UnderwritingSuite'), { ssr: false });
 const ScheduleEmailModal   = dynamic(() => import('@/components/ScheduleEmailModal'), { ssr: false });
@@ -233,34 +235,28 @@ export default function LeadWorkspaceClient({
   const [showManageStatuses, setShowManageStatuses] = useState(false);
   const [dbStatuses, setDbStatuses]           = useState<DBStatus[]>([]);
 
-  // ── Click-to-call (rings SIP desk phone first, then dials the lead) ────────
+  // ── Click-to-call (in-app WebRTC — audio through headset) ──────────────────
+  const webphone = useWebPhone();
   const [callBusy, setCallBusy]   = useState(false);
   const [callMsg, setCallMsg]     = useState<string | null>(null);
   const [callSeq, setCallSeq]     = useState(0); // remounts CallHistoryPanel to refresh
 
   const startCall = useCallback(async () => {
+    const e164 = toE164(lead.phone);
+    if (!e164) { setCallMsg('No valid phone number'); return; }
+    if (!webphone.ready) { setCallMsg('Phone not ready — check Twilio setup in Settings → Phone.'); return; }
     setCallBusy(true);
     setCallMsg(null);
     try {
-      const res = await fetch('/api/telephony/click-to-call', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ leadId: lead.id }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Call failed');
-      setCallMsg(
-        data.dryRun
-          ? `Dry run — would dial ${data.wouldDial?.to} via ${data.wouldDial?.sip || 'SIP (not set)'}`
-          : 'Ringing your desk phone…'
-      );
+      await webphone.connect(e164, { name: lead.name });
+      setCallMsg('Calling…');
       setCallSeq((s) => s + 1);
     } catch (e) {
       setCallMsg(e instanceof Error ? e.message : 'Call failed');
     } finally {
       setCallBusy(false);
     }
-  }, [lead.id]);
+  }, [lead.phone, lead.name, webphone]);
 
   // Load dynamic statuses
   useEffect(() => {
@@ -1189,14 +1185,14 @@ export default function LeadWorkspaceClient({
               </button>
             </div>
 
-            {/* Call — agent-first SIP dial (desk phone rings, then the lead) */}
+            {/* Call — in-app WebRTC (headset) */}
             <div className="mt-2">
               <button
                 onClick={startCall}
-                disabled={callBusy}
+                disabled={callBusy || !webphone.ready}
                 className="w-full px-3 py-2.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] disabled:opacity-50 transition-colors"
               >
-                {callBusy ? 'Starting call…' : 'Call'}
+                {callBusy ? 'Calling…' : webphone.ready ? 'Call' : 'Phone offline'}
               </button>
               {callMsg && (
                 <p className="text-[11px] text-[#6b6b6b] mt-1.5">{callMsg}</p>

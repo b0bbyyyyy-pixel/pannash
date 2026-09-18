@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { formatDisplay } from '@/lib/dialer/e164';
 import { getPhoneLocation } from '@/lib/phoneLocation';
+import { useWebPhone } from '@/components/webphone/WebPhone';
 import ManualDialPanel from './ManualDialPanel';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -558,6 +559,7 @@ export default function DialerClient() {
   const [testMode, setTestMode] = useState(false);
   const [showCallCount, setShowCallCount] = useState(false);
   const initDone = useRef(false);
+  const webphone = useWebPhone();
 
   // Keep listId as a ref so async callbacks always see the latest value
   const listIdRef = useRef<string | null>(null);
@@ -713,8 +715,16 @@ export default function DialerClient() {
   // ── Start call ──────────────────────────────────────────────────────────────
   const handleCall = async () => {
     if (!lead) return;
-    // In test mode, skip the real phone dial — just walk through the flow
-    if (!testMode) window.open(`tel:${lead.phone_e164}`, '_self');
+    // In test mode, skip the real phone dial — just walk through the flow.
+    // Otherwise dial through the in-app WebRTC phone (audio in your headset).
+    if (!testMode) {
+      try {
+        await webphone.connect(lead.phone_e164, { name: lead.name });
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : 'Could not start call');
+        return;
+      }
+    }
     try {
       const res = await fetch('/api/dialer/start', {
         method: 'POST',
