@@ -70,29 +70,48 @@ You will receive CSV data with column headers. Your job is to extract lead infor
 
 Return ONLY a valid JSON array — no markdown, no explanation, no code fences.
 Each element must be an object with exactly these keys:
-  "name"    — Full name of the contact person (first + last). Combine separate first/last columns.
-  "email"   — Email address (or null)
-  "phone"   — Primary phone number string, preferring mobile/cell. Keep original format. (or null)
-  "company" — Business / company name (or null)
+  "name"       — Full name of the contact person (first + last). Combine separate first/last columns.
+  "email"      — Email address (or null)
+  "phone"      — Primary phone number string, preferring mobile/cell. Keep original format. (or null)
+  "company"    — Business / company name (or null)
+  "industry"   — Industry / business type / category, e.g. "Transportation", "Food & Beverage" (or null)
+  "address"    — Business street address, e.g. "724 Baptist Church Rd" (or null)
+  "city"       — Business city (or null)
+  "state"      — Business state, 2-letter if possible (or null)
+  "zip"        — Business ZIP code (or null)
+  "start_date" — Business start / established date, e.g. "2022-07-22" (or null)
 
 Rules:
 - name should be a person name, NOT an email address or company name
 - If first name and last name are in separate columns, concatenate them with a space
 - If the only name-like column contains a company (LLC, Inc, Corp etc.), put it in company and leave name null
+- NEVER put dollar amounts, revenue figures, or monetary values (e.g. "50,000.00", "$1.2M") into ANY field — leave those fields null instead
 - Return null for any field you cannot find — do not guess or invent data
 - Include a result for EVERY data row, even if most fields are null
 - Skip the header row — only return data rows`;
 
-  type ParsedRow = { name: string | null; email: string | null; phone: string | null; company: string | null };
+  type ParsedRow = {
+    name: string | null; email: string | null; phone: string | null; company: string | null;
+    industry: string | null; address: string | null; city: string | null;
+    state: string | null; zip: string | null; start_date: string | null;
+  };
+
+  const strOrNull = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
 
   const parseRow = (row: unknown): ParsedRow | null => {
     if (!row || typeof row !== 'object') return null;
     const r = row as Record<string, unknown>;
     return {
-      name:    typeof r.name    === 'string' && r.name    ? r.name    : null,
-      email:   typeof r.email   === 'string' && r.email   ? r.email   : null,
-      phone:   typeof r.phone   === 'string' && r.phone   ? r.phone   : null,
-      company: typeof r.company === 'string' && r.company ? r.company : null,
+      name:       strOrNull(r.name),
+      email:      strOrNull(r.email),
+      phone:      strOrNull(r.phone),
+      company:    strOrNull(r.company),
+      industry:   strOrNull(r.industry),
+      address:    strOrNull(r.address),
+      city:       strOrNull(r.city),
+      state:      strOrNull(r.state),
+      zip:        strOrNull(r.zip),
+      start_date: strOrNull(r.start_date),
     };
   };
 

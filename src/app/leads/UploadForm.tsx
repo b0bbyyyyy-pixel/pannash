@@ -19,6 +19,25 @@ interface ParsedLead {
   phone: string | null;
   company: string | null;
   notes: string | null;
+  // Business profile fields → stored in underwriting_data for the lead info card
+  industry?: string | null;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zip?: string | null;
+  startDate?: string | null;
+}
+
+/** Build the underwriting_data JSONB payload from parsed business-profile fields */
+function buildUnderwriting(l: Partial<ParsedLead>): Record<string, string> | null {
+  const ud: Record<string, string> = {};
+  if (l.industry)  ud.industry          = l.industry;
+  if (l.address)   ud.businessAddress   = l.address;
+  if (l.city)      ud.businessCity      = l.city;
+  if (l.state)     ud.businessState     = l.state;
+  if (l.zip)       ud.businessZip       = l.zip;
+  if (l.startDate) ud.businessStartDate = l.startDate;
+  return Object.keys(ud).length ? ud : null;
 }
 
 export default function UploadForm({ selectedListId, onSuccess }: UploadFormProps) {
@@ -147,6 +166,18 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
     if (digitsOnly.length < 10 || digitsOnly.length > 15) return false;
     // Must look like a phone: only digits, spaces, dashes, parens, dots, plus
     return /^[\d\s\-\(\)\+\.]+$/.test(v);
+  };
+
+  // Detect dollar amounts / revenue figures — these must NEVER land in lead info
+  // fields (name, company, industry, address…). They always belong in notes.
+  const isMoney = (value: string): boolean => {
+    const v = value.trim();
+    if (!v) return false;
+    if (/^[-(]?\s*\$/.test(v)) return true;                          // $50,000 / ($1,200)
+    if (/^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(v)) return true;         // 50,000 / 50,000.00
+    if (/^-?\d+\.\d{2}$/.test(v)) return true;                       // 50000.00
+    if (/^-?\d+(\.\d+)?\s?(k|m|mm|usd|dollars?)$/i.test(v)) return true; // 50k / 1.2m / 500 USD
+    return false;
   };
 
   const isLikelyName = (value: string): boolean => {
@@ -285,16 +316,16 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
         return true;
       });
 
-      if (afterKeyColumns.length > 0) {
-        result.company = afterKeyColumns[0].val;
-        const leftover = afterKeyColumns.slice(1).map(r => r.val);
-        result.notes = [...extraPhones, ...leftover].join(' | ') || null;
-      } else if (remaining.length > 0) {
-        result.company = remaining[0].val;
-        const leftover = remaining.slice(1).map(r => r.val);
+      // Pick the first NON-money value as company; money values stay in notes
+      const pool = afterKeyColumns.length > 0 ? afterKeyColumns : remaining;
+      const companyPick = pool.find(item => !isMoney(item.val));
+      if (companyPick) {
+        result.company = companyPick.val;
+        const leftover = pool.filter(item => item.idx !== companyPick.idx).map(r => r.val);
         result.notes = [...extraPhones, ...leftover].join(' | ') || null;
       } else {
-        result.notes = extraPhones.join(' | ') || null;
+        // Everything left is money — all of it goes to notes
+        result.notes = [...extraPhones, ...pool.map(r => r.val)].join(' | ') || null;
       }
     } else {
       // Company already found, remaining columns + extra phones go to notes
@@ -456,8 +487,12 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       if (trimmed.length < 2) return null;
       if (PHONE_TYPE_LABELS.has(trimmed.toLowerCase())) return null;
       if (isPhone(trimmed)) return null; // reject if it's actually a phone number
+      if (isMoney(trimmed)) return null; // dollar amounts never belong in company
       return trimmed;
     };
+
+    // Reject money values from any structured lead-info field → they fall through to notes
+    const noMoney = (v: string | null): string | null => (v && !isMoney(v) ? v : null);
 
     // Company: prefer "Business Name" then "Company Name" then generic
     const company = isValidCompany(
@@ -465,6 +500,33 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       findExact(['company name', 'company_name', 'companyname']) ||
       findColumn(['organization', 'org', 'employer', 'account'])
     );
+
+    // ── Business profile fields (shown in the lead info card) ──────────────────
+    // All wrapped in noMoney() so dollar amounts can never land in the info card.
+    const industry = noMoney(
+      findExact(['industry', 'business type', 'business category', 'category', 'sector', 'naics', 'sic', 'sic code'])
+      || findColumn(['industry', 'business type', 'business category'])
+    );
+
+    const address = noMoney(
+      findExact(['address', 'business address', 'street address', 'address 1', 'address1', 'street', 'addr', 'mailing address'])
+      || findColumn(['business address', 'street address'])
+    );
+
+    const bizCity  = noMoney(findExact(['city', 'business city']));
+    const bizState = noMoney(findExact(['state', 'business state', 'st']));
+    const bizZip   = noMoney(findExact(['zip', 'zip code', 'zipcode', 'postal code', 'business zip']));
+
+    const startDate = noMoney(
+      findExact([
+        'start date', 'business start date', 'date established', 'established',
+        'incorporation date', 'date incorporated', 'registration date',
+        'sos date', 'open date', 'founded', 'year established',
+      ]) || findColumn(['start date', 'established', 'incorporation'])
+    );
+
+    // Dollar amounts can never be a person's name
+    if (name && isMoney(name)) name = null;
 
     // Pass the name through the combined-string extractor.
     // This handles "Business Category PersonFirst PersonLast" patterns from
@@ -495,6 +557,12 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       'notes','note','comments','comment','description','details','memo','remarks',
       // phone-type labels that leak as company / notes
       'mobile','cell','home','work','office','direct','landline','voip','personal',
+      // business profile fields — mapped to underwriting_data, not notes
+      'industry','business type','business category','category','sector','naics','sic','sic code',
+      'address','business address','street address','address 1','address1','street','addr','mailing address',
+      'city','business city','state','business state','st','zip','zip code','zipcode','postal code','business zip',
+      'start date','business start date','date established','established','incorporation date',
+      'date incorporated','registration date','sos date','open date','founded','year established',
     ]);
     const isPhoneKey = (k: string) =>
       ['phone','telephone','tel','mobile','cell','contact number','direct','fax','number'].some(p => k.includes(p));
@@ -522,6 +590,12 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       phone: primaryPhone,
       company: company || null,
       notes: combinedNotes,
+      industry: industry || null,
+      address: address || null,
+      city: bizCity || null,
+      state: bizState || null,
+      zip: bizZip || null,
+      startDate: startDate || null,
     };
   };
 
@@ -609,6 +683,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       phone_e164: toE164(l.phone),
       company: l.company || null,
       notes: l.notes || null,
+      underwriting_data: buildUnderwriting(l),
       list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
       month_key: null,      // keep campaign uploads OUT of the pipeline
       in_pipeline: false,
@@ -676,6 +751,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
                     phone_e164: toE164(mapped.phone),
                     company: mapped.company,
                     notes: mapped.notes,
+                    underwriting_data: buildUnderwriting(mapped),
                     list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
                     month_key: null,      // keep campaign uploads OUT of the pipeline
                     in_pipeline: false,
@@ -706,6 +782,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
                     phone_e164: toE164(mapped.phone),
                     company: mapped.company,
                     notes: mapped.notes,
+                    underwriting_data: buildUnderwriting(mapped),
                     list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
                     month_key: null,      // keep campaign uploads OUT of the pipeline
                     in_pipeline: false,
@@ -802,6 +879,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       phone_e164: toE164(l.phone),
       company: l.company || null,
       notes: l.notes || null,
+      underwriting_data: buildUnderwriting(l),
       list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
       month_key: null,      // keep campaign uploads OUT of the pipeline
       in_pipeline: false,
@@ -1096,6 +1174,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       phone_e164: toE164(l.phone),
       company: l.company || null,
       notes: l.notes || null,
+      underwriting_data: buildUnderwriting(l),
       list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
       month_key: null,      // keep campaign uploads OUT of the pipeline
       in_pipeline: false,
@@ -1256,14 +1335,24 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
         return;
       }
       // Map AI response to ParsedLead shape
-      const aiLeads: ParsedLead[] = (json.leads as Array<{ name: string | null; email: string | null; phone: string | null; company: string | null }>)
+      const aiLeads: ParsedLead[] = (json.leads as Array<{
+        name: string | null; email: string | null; phone: string | null; company: string | null;
+        industry?: string | null; address?: string | null; city?: string | null;
+        state?: string | null; zip?: string | null; start_date?: string | null;
+      }>)
         .filter(l => l.name || l.email || l.phone)
         .map(l => ({
-          name:    l.name    || '',
-          email:   l.email   || '',
-          phone:   l.phone   || null,
-          company: l.company || null,
-          notes:   null,
+          name:      l.name    || '',
+          email:     l.email   || '',
+          phone:     l.phone   || null,
+          company:   l.company || null,
+          notes:     null,
+          industry:  l.industry   || null,
+          address:   l.address    || null,
+          city:      l.city       || null,
+          state:     l.state      || null,
+          zip:       l.zip        || null,
+          startDate: l.start_date || null,
         }));
       setSheetsAllRows(aiLeads);
       const defaultTo = String(aiLeads.length);
@@ -1360,6 +1449,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       phone_e164: toE164(l.phone),
       company: l.company || null,
       notes: l.notes || null,
+      underwriting_data: buildUnderwriting(l),
       list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
       month_key: null,      // keep campaign uploads OUT of the pipeline
       in_pipeline: false,
