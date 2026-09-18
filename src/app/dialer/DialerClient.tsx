@@ -555,6 +555,8 @@ export default function DialerClient() {
   const [error, setError] = useState<string | null>(null);
   const [activeCampaign, setActiveCampaign] = useState<Campaign | null>(null);
   const [showPicker, setShowPicker] = useState(false);
+  const [testMode, setTestMode] = useState(false);
+  const [showCallCount, setShowCallCount] = useState(false);
   const initDone = useRef(false);
 
   // Keep listId as a ref so async callbacks always see the latest value
@@ -590,6 +592,9 @@ export default function DialerClient() {
   useEffect(() => {
     if (initDone.current) return;
     initDone.current = true;
+
+    // Restore test mode preference
+    try { setTestMode(localStorage.getItem('dialer_test_mode') === '1'); } catch { /* ignore */ }
 
     // Restore the last loaded campaign (persisted across refreshes)
     let saved: Campaign | null = null;
@@ -696,10 +701,20 @@ export default function DialerClient() {
     await claimNext(lead?.id ?? null, null);
   };
 
+  // ── Test mode toggle ─────────────────────────────────────────────────────────
+  const toggleTestMode = () => {
+    setTestMode((prev) => {
+      const next = !prev;
+      try { localStorage.setItem('dialer_test_mode', next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  };
+
   // ── Start call ──────────────────────────────────────────────────────────────
   const handleCall = async () => {
     if (!lead) return;
-    window.open(`tel:${lead.phone_e164}`, '_self');
+    // In test mode, skip the real phone dial — just walk through the flow
+    if (!testMode) window.open(`tel:${lead.phone_e164}`, '_self');
     try {
       const res = await fetch('/api/dialer/start', {
         method: 'POST',
@@ -737,6 +752,15 @@ export default function DialerClient() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Failed to save');
+
+      // Bump the campaign's called count so the progress bar updates live
+      setActiveCampaign((prev) => {
+        if (!prev) return prev;
+        const updated = { ...prev, called: Math.min(prev.called + 1, prev.total) };
+        try { localStorage.setItem('dialer_active_campaign', JSON.stringify(updated)); } catch { /* ignore */ }
+        return updated;
+      });
+
       await claimNext(lead.id);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error saving disposition');
@@ -752,7 +776,7 @@ export default function DialerClient() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [state, lead]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [state, lead, testMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
@@ -767,14 +791,33 @@ export default function DialerClient() {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold text-[#1a1a1a]">Dialer</h1>
         <div className="flex items-center gap-3">
+          {/* Test mode toggle */}
+          <button
+            onClick={toggleTestMode}
+            title="Test mode — Call skips the real phone dial"
+            className="flex items-center gap-1.5 shrink-0"
+          >
+            <span className={`text-xs ${testMode ? 'text-[#1a1a1a] font-medium' : 'text-[#c4c4c4]'}`}>Test</span>
+            <span className={`relative inline-block w-7 h-4 rounded-full transition-colors ${testMode ? 'bg-[#1a1a1a]' : 'bg-[#e5e5e5]'}`}>
+              <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${testMode ? 'left-3.5' : 'left-0.5'}`} />
+            </span>
+          </button>
           {activeCampaign && (
-            <div className="flex items-center gap-2 min-w-0">
+            <button
+              onClick={() => setShowCallCount((v) => !v)}
+              title="Click to toggle call count"
+              className="flex items-center gap-2 min-w-0 cursor-pointer"
+            >
               <span className="text-sm font-semibold text-[#1a1a1a] truncate max-w-[200px]">{activeCampaign.name}</span>
               <div className="w-24 h-1.5 bg-[#f0f0f0] rounded-full overflow-hidden shrink-0">
                 <div className="h-full bg-[#1a1a1a] rounded-full transition-all" style={{ width: `${campaignPct}%` }} />
               </div>
-              <span className="text-xs text-[#9ca3af] shrink-0">{campaignPct}%</span>
-            </div>
+              <span className="text-xs text-[#9ca3af] shrink-0">
+                {showCallCount
+                  ? `${activeCampaign.called}/${activeCampaign.total} called · ${campaignPct}%`
+                  : `${campaignPct}%`}
+              </span>
+            </button>
           )}
           <button
             onClick={() => setShowPicker(true)}

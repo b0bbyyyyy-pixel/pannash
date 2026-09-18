@@ -77,6 +77,8 @@ export async function POST(req: NextRequest) {
       next_eligible_at: eligibleAt,
       locked_by: null,
       locked_at: null,
+      // Mark the lead as called for campaign progress + Call badge + last activity
+      call_made_at: now,
     };
 
     if (disposition === 'dnc') {
