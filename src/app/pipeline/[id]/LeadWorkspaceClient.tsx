@@ -9,6 +9,7 @@ const ScheduleEmailModal   = dynamic(() => import('@/components/ScheduleEmailMod
 const DocumentsModal       = dynamic(() => import('@/components/DocumentsModal'), { ssr: false });
 const SendToLenderModal    = dynamic(() => import('@/components/SendToLenderModal'), { ssr: false });
 const CallHistoryPanel     = dynamic(() => import('@/components/CallHistoryPanel'), { ssr: false });
+const ManageStatusesModal  = dynamic(() => import('@/components/ManageStatusesModal'), { ssr: false });
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface Lead {
@@ -229,6 +230,7 @@ export default function LeadWorkspaceClient({
   const [showDocsModal, setShowDocsModal]       = useState(false);
   const [showSendModal, setShowSendModal]       = useState(false);
   const [showFinancials, setShowFinancials]     = useState(false);
+  const [showManageStatuses, setShowManageStatuses] = useState(false);
   const [dbStatuses, setDbStatuses]           = useState<DBStatus[]>([]);
 
   // ── Click-to-call (rings SIP desk phone first, then dials the lead) ────────
@@ -1215,18 +1217,24 @@ export default function LeadWorkspaceClient({
           {/* STATUS & OWNERSHIP */}
           <Section title="Status & Ownership">
             {/* Lead Status dropdown */}
-            <div className="flex items-start gap-2 py-2 border-b border-[#f5f5f5]">
-              <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0 pt-0.5">Lead Status</span>
-              <div className="flex-1 min-w-0">
-                <select
-                  value={lead.lead_status || lead.stage || ''}
-                  onChange={e => saveLeadStatus(e.target.value)}
-                  className="w-full text-sm border border-[#e5e5e5] rounded px-2 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-[#1a1a1a]"
-                >
-                  <option value="">— Select —</option>
-                  {dbStatuses.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
-                </select>
-              </div>
+            <div className="flex items-center gap-2 py-2 border-b border-[#f5f5f5]">
+              <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0">Lead Status</span>
+              {/* Kanban icon — manage statuses */}
+              <button
+                onClick={() => setShowManageStatuses(true)}
+                title="Manage statuses"
+                className="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded hover:bg-[#f0f0f0] transition-colors"
+              >
+                <img src="/images/icons/kanban-icon.png" alt="Manage statuses" width={13} height={13} style={{ opacity: 0.55 }} />
+              </button>
+              <select
+                value={lead.lead_status || lead.stage || ''}
+                onChange={e => saveLeadStatus(e.target.value)}
+                className="flex-1 min-w-0 text-sm border border-[#e5e5e5] rounded px-2 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-[#1a1a1a]"
+              >
+                <option value="">— Select —</option>
+                {dbStatuses.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+              </select>
             </div>
 
             {/* Temperature pills */}
@@ -1439,6 +1447,20 @@ export default function LeadWorkspaceClient({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Manage Statuses modal */}
+      {showManageStatuses && (
+        <ManageStatusesModal
+          onClose={() => setShowManageStatuses(false)}
+          onSaved={() => {
+            // Reload statuses after editing
+            fetch('/api/lead-statuses', { credentials: 'include' })
+              .then(r => r.json())
+              .then(j => { if (j.statuses) setDbStatuses(j.statuses); })
+              .catch(() => {});
+          }}
+        />
       )}
     </div>
   );

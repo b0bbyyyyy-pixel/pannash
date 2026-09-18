@@ -247,6 +247,29 @@ export default function PipelineClient({ leads, userId }: PipelineClientProps) {
   }, [sorted, search, applied]);
 
   const activeCount  = countActive(applied);
+
+  // Count how many filters differ from the smart default so we only badge
+  // when the user has intentionally changed something.
+  const defaultFilters = buildDefaultFilters();
+  const nonDefaultCount = useMemo(() => {
+    let n = 0;
+    if (applied.leadId !== defaultFilters.leadId) n++;
+    if (applied.assignedTo !== defaultFilters.assignedTo) n++;
+    if (applied.temperature !== defaultFilters.temperature) n++;
+    if (applied.phone !== defaultFilters.phone) n++;
+    if (applied.email !== defaultFilters.email) n++;
+    if (applied.company !== defaultFilters.company) n++;
+    if (applied.industry !== defaultFilters.industry) n++;
+    // Date range: only flag if different from the default 30-day window
+    if (applied.dateFrom !== defaultFilters.dateFrom || applied.dateTo !== defaultFilters.dateTo) n++;
+    // Statuses: flag if the excluded set differs from default (['Prospect'])
+    const defExcl = ['Prospect'];
+    const appliedExcl = [...applied.excludedStatuses].sort();
+    const defaultExcl = [...defExcl].sort();
+    if (JSON.stringify(appliedExcl) !== JSON.stringify(defaultExcl)) n++;
+    return n;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applied]);
   const statusNames  = useMemo(() => dbStatuses.map(s => s.name), [dbStatuses]);
   const [leadOverlayId, setLeadOverlayId] = useState<string | null>(null);
   const goTo = (id: string) => setLeadOverlayId(id);
@@ -277,42 +300,28 @@ export default function PipelineClient({ leads, userId }: PipelineClientProps) {
             />
           </div>
 
-          {/* Manage Statuses */}
-          <button
-            onClick={() => setShowManageStatuses(true)}
-            className="px-3 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white text-[#6b6b6b] hover:bg-[#f5f5f5] transition-colors flex items-center gap-1.5"
-            title="Manage pipeline statuses"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
-            </svg>
-            Statuses
-          </button>
+          {/* Manage Statuses — tiny kanban icon, now lives next to the Status dropdown in the workspace */}
 
-          {/* Filters button */}
+          {/* Filters button — plain text, badge only when non-default */}
           <button
             onClick={openDrawer}
-            className={`px-4 py-2 text-sm border rounded-md transition-colors flex items-center gap-2 ${
-              activeCount > 0
-                ? 'bg-[#1a1a1a] text-white border-[#1a1a1a]'
-                : 'border-[#e5e5e5] text-[#1a1a1a] bg-white hover:bg-[#f5f5f5]'
-            }`}
+            className="flex items-center gap-1.5 text-sm text-[#1a1a1a] hover:text-[#555] transition-colors"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z" />
             </svg>
             Filters
-            {activeCount > 0 && (
-              <span className="bg-white text-[#1a1a1a] text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center">
-                {activeCount}
+            {nonDefaultCount > 0 && (
+              <span className="w-[18px] h-[18px] rounded-full border border-[#1a1a1a] text-[#1a1a1a] text-[10px] font-bold flex items-center justify-center leading-none">
+                {nonDefaultCount}
               </span>
             )}
           </button>
 
-          {/* Add Lead */}
+          {/* Add Lead — plain text */}
           <button
             onClick={() => setShowAddModal(true)}
-            className="px-4 py-2 bg-[#1a1a1a] text-white text-sm font-medium rounded-md hover:bg-[#333] transition-colors flex items-center gap-1.5"
+            className="flex items-center gap-1.5 text-sm text-[#1a1a1a] hover:text-[#555] transition-colors"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
