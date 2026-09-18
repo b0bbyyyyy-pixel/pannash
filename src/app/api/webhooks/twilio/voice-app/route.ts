@@ -2,23 +2,20 @@
  * POST /api/webhooks/twilio/voice-app
  *
  * Voice URL of the TwiML App (browser dialer) AND the inbound Voice webhook
- * for the Twilio number. One endpoint, two directions:
+ * for the Twilio number.
  *
- *  OUTGOING (browser → PSTN): From = "client:agent", To = "+1…"
- *    → <Dial callerId=YOUR_NUMBER><Number>To</Number></Dial>
+ * OUTGOING (browser → PSTN): From = "client:agent"
+ *   Destination is the custom `phone` param (NOT Twilio's `To`, which is client:agent).
+ *   → <Dial callerId=YOUR_NUMBER><Number>+1…</Number></Dial>
  *
- *  INBOUND (PSTN → your number): From = caller's number
- *    → <Dial><Client>agent</Client></Dial>  (rings the browser)
- *
- * Both directions log a dialer_calls row and match the lead by phone_e164.
- * Single-user CRM: creds/user come from the sole phone_connections row
- * (env fallback for creds).
+ * INBOUND (PSTN → your number): From = caller's number
+ *   → <Dial><Client>agent</Client></Dial>
  */
 import { NextRequest, NextResponse } from 'next/server';
 import twilio from 'twilio';
 import {
   serviceClient,
-  validateTwilioSignature,
+  validateTwilioSignatureUrls,
   formDataToParams,
   publicAppUrl,
 } from '@/lib/telephony/twilio';
@@ -27,10 +24,35 @@ function twimlResponse(xml: string, status = 200) {
   return new NextResponse(xml, { status, headers: { 'Content-Type': 'text/xml' } });
 }
 
-function hangupTwiml() {
+function hangupTwiml(message?: string) {
   const vr = new twilio.twiml.VoiceResponse();
+  if (message) vr.say({ voice: 'Polly.Joanna' }, message);
   vr.hangup();
   return vr.toString();
+}
+
+function isE164(v: string | undefined | null): v is string {
+  return !!v && /^\+[1-9]\d{6,14}$/.test(v.trim());
+}
+
+function destNumber(params: Record<string, string>): string | null {
+  for (const key of ['phone', 'Phone', 'To', 'Called', 'tophone']) {
+    const v = params[key]?.trim();
+    if (isE164(v)) return v;
+  }
+  return null;
+}
+
+/** Candidate URLs Twilio may have signed (ngrok / Vercel / PUBLIC_APP_URL). */
+function signedUrlCandidates(req: NextRequest): string[] {
+  const path = '/api/webhooks/twilio/voice-app';
+  const proto = req.headers.get('x-forwarded-proto') || 'https';
+  const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || '';
+  return [
+    `${publicAppUrl()}${path}`,
+    req.url,
+    host ? `${proto}://${host}${path}` : '',
+  ].filter(Boolean);
 }
 
 /** Single-user lookup: the sole Twilio connection row (or env fallback). */
@@ -57,34 +79,42 @@ async function getSoleUser(supabase: any): Promise<{
   };
 }
 
+export async function GET() {
+  return NextResponse.json({ ok: true, hint: 'Twilio should POST here. TwiML App Voice URL must be this path.' });
+}
+
 export async function POST(req: NextRequest) {
   try {
     const supabase = serviceClient();
     const { userId, authToken, fromNumber } = await getSoleUser(supabase);
-    if (!authToken) return twimlResponse(hangupTwiml(), 500);
-
-    // ── Validate signature ────────────────────────────────────────────────────
-    const fd = await req.formData();
-    const params = formDataToParams(fd);
-    const fullUrl = `${publicAppUrl()}/api/webhooks/twilio/voice-app`;
-    const signature = req.headers.get('x-twilio-signature');
-    if (!validateTwilioSignature(authToken, signature, fullUrl, params)) {
-      console.warn('[twilio/voice-app] Invalid signature — rejecting');
-      return twimlResponse(hangupTwiml(), 403);
+    if (!authToken) {
+      console.error('[twilio/voice-app] No Twilio auth token (phone_connections or TWILIO_AUTH_TOKEN)');
+      return twimlResponse(hangupTwiml('Phone is not configured.'), 500);
     }
 
-    const from    = params.From ?? '';
-    const to      = params.To ?? '';
+    const fd = await req.formData();
+    const params = formDataToParams(fd);
+    const signature = req.headers.get('x-twilio-signature');
+    const urls = signedUrlCandidates(req);
+
+    if (!validateTwilioSignatureUrls(authToken, signature, urls, params)) {
+      console.warn('[twilio/voice-app] Invalid signature. Tried:', urls, 'From:', params.From, 'To:', params.To, 'phone:', params.phone);
+      // Do not Hangup-on-fail with empty TwiML only — 31005. Still reject, but log enough to fix URL mismatch.
+      return twimlResponse(hangupTwiml('Could not verify this call.'), 403);
+    }
+
+    const from = params.From ?? '';
     const callSid = params.CallSid ?? null;
-    const base    = publicAppUrl();
-    const vr      = new twilio.twiml.VoiceResponse();
-
+    const base = publicAppUrl();
+    const vr = new twilio.twiml.VoiceResponse();
     const isOutgoing = from.startsWith('client:');
+    const outboundTo = destNumber(params);
 
-    // ── Log the call + match the lead by phone ───────────────────────────────
+    console.log('[twilio/voice-app]', { isOutgoing, from, To: params.To, phone: params.phone, outboundTo, fromNumber });
+
     let dbId: string | null = null;
     if (userId) {
-      const otherParty = isOutgoing ? to : from;
+      const otherParty = isOutgoing ? (outboundTo ?? params.To ?? '') : from;
       const { data: lead } = await supabase
         .from('leads')
         .select('id, name')
@@ -99,7 +129,7 @@ export async function POST(req: NextRequest) {
           lead_id: lead?.id ?? null,
           agent_id: userId,
           lead_name: lead?.name ?? otherParty,
-          to_number: isOutgoing ? to : (fromNumber ?? to),
+          to_number: isOutgoing ? (outboundTo ?? params.To) : (fromNumber ?? params.To),
           from_number: isOutgoing ? (fromNumber ?? '') : from,
           direction: isOutgoing ? 'outbound' : 'inbound',
           status: 'in_progress',
@@ -116,10 +146,16 @@ export async function POST(req: NextRequest) {
       : `${base}/api/webhooks/twilio/voice-app-status`;
 
     if (isOutgoing) {
-      // Browser dialing out — bridge to the PSTN number with our caller ID
-      if (!to) return twimlResponse(hangupTwiml(), 400);
+      if (!outboundTo) {
+        console.error('[twilio/voice-app] No E.164 destination. Params:', params);
+        return twimlResponse(hangupTwiml('No number to dial.'), 400);
+      }
+      if (!fromNumber) {
+        console.error('[twilio/voice-app] No caller ID (phone_connections.phone_number or TWILIO_FROM_NUMBER)');
+        return twimlResponse(hangupTwiml('Caller I D is not set.'), 500);
+      }
       const dial = vr.dial({
-        callerId: fromNumber ?? undefined,
+        callerId: fromNumber,
         answerOnBridge: true,
         timeout: 30,
       });
@@ -129,10 +165,9 @@ export async function POST(req: NextRequest) {
           statusCallbackMethod: 'POST',
           statusCallbackEvent: ['answered', 'completed'],
         },
-        to
+        outboundTo
       );
     } else {
-      // Inbound call — ring the browser client
       const dial = vr.dial({ timeout: 25, action: statusCb, method: 'POST' });
       dial.client(
         {
@@ -147,6 +182,6 @@ export async function POST(req: NextRequest) {
     return twimlResponse(vr.toString());
   } catch (err) {
     console.error('[twilio/voice-app]', err);
-    return twimlResponse(hangupTwiml(), 500);
+    return twimlResponse(hangupTwiml('An error occurred.'), 500);
   }
 }

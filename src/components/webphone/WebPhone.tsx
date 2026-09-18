@@ -159,7 +159,8 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     setActiveNumber(e164);
     setActiveName(meta?.name ?? null);
     setStatus('connecting');
-    const call = await device.connect({ params: { To: e164 } });
+    // Use `phone` not `To` — Twilio's own `To` on Client calls is client:agent, not the PSTN number.
+    const call = await device.connect({ params: { phone: e164 } });
     wireCall(call);
     call.on('ringing', () => setStatus('ringing'));
   }, [wireCall]);

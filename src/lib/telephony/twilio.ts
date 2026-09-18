@@ -123,6 +123,26 @@ export function validateTwilioSignature(
   return twilio.validateRequest(authToken, signature, url, params);
 }
 
+/** Try several URL shapes — Twilio signs the exact URL it requested (proto/host/path). */
+export function validateTwilioSignatureUrls(
+  authToken: string,
+  signature: string | null,
+  urls: string[],
+  params: Record<string, string>
+): boolean {
+  if (process.env.TWILIO_VALIDATE_WEBHOOKS === 'false') return true;
+  if (!signature) return false;
+  const seen = new Set<string>();
+  for (const url of urls) {
+    const u = url.replace(/\/$/, '');
+    if (!u || seen.has(u)) continue;
+    seen.add(u);
+    if (twilio.validateRequest(authToken, signature, u, params)) return true;
+    if (twilio.validateRequest(authToken, signature, u + '/', params)) return true;
+  }
+  return false;
+}
+
 /** Turn a Next.js request formData into the flat object Twilio signature check needs. */
 export function formDataToParams(fd: FormData): Record<string, string> {
   const params: Record<string, string> = {};
