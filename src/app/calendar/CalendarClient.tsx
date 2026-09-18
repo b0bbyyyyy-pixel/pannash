@@ -23,12 +23,12 @@ interface CalendarEvent {
 }
 
 const COLOR_OPTIONS = [
-  { id: 'blue', label: 'Blue', bg: 'bg-blue-500', dot: 'bg-blue-500', light: 'bg-blue-50 border-blue-200 text-blue-800' },
-  { id: 'green', label: 'Green', bg: 'bg-green-500', dot: 'bg-green-500', light: 'bg-green-50 border-green-200 text-green-800' },
-  { id: 'red', label: 'Red', bg: 'bg-red-500', dot: 'bg-red-500', light: 'bg-red-50 border-red-200 text-red-800' },
-  { id: 'yellow', label: 'Yellow', bg: 'bg-yellow-400', dot: 'bg-yellow-400', light: 'bg-yellow-50 border-yellow-200 text-yellow-800' },
-  { id: 'purple', label: 'Purple', bg: 'bg-purple-500', dot: 'bg-purple-500', light: 'bg-purple-50 border-purple-200 text-purple-800' },
-  { id: 'orange', label: 'Orange', bg: 'bg-orange-500', dot: 'bg-orange-500', light: 'bg-orange-50 border-orange-200 text-orange-800' },
+  { id: 'blue',   label: 'Blue',   bg: 'bg-blue-500',   dot: 'bg-blue-500',   light: 'bg-blue-50 border-blue-200 text-blue-800',     text: 'text-blue-700'   },
+  { id: 'green',  label: 'Green',  bg: 'bg-green-500',  dot: 'bg-green-500',  light: 'bg-green-50 border-green-200 text-green-800',   text: 'text-green-700'  },
+  { id: 'red',    label: 'Red',    bg: 'bg-red-500',    dot: 'bg-red-500',    light: 'bg-red-50 border-red-200 text-red-800',         text: 'text-red-700'    },
+  { id: 'yellow', label: 'Yellow', bg: 'bg-yellow-400', dot: 'bg-yellow-400', light: 'bg-yellow-50 border-yellow-200 text-yellow-800',text: 'text-yellow-700' },
+  { id: 'purple', label: 'Purple', bg: 'bg-purple-500', dot: 'bg-purple-500', light: 'bg-purple-50 border-purple-200 text-purple-800',text: 'text-purple-700' },
+  { id: 'orange', label: 'Orange', bg: 'bg-orange-500', dot: 'bg-orange-500', light: 'bg-orange-50 border-orange-200 text-orange-800',text: 'text-orange-700' },
 ];
 
 function getColor(colorId: string) {
@@ -380,26 +380,26 @@ export default function CalendarClient() {
                         >
                           {day}
                         </div>
-                        {/* Event + timer pills */}
-                        <div className="space-y-0.5">
-                          {dayEvents.slice(0, 2).map(ev => {
+                        {/* Events */}
+                        <div className="space-y-px">
+                          {dayEvents.slice(0, 3).map(ev => {
                             const c = getColor(ev.color);
                             return (
-                              <div key={ev.id} className={`text-xs px-1.5 py-0.5 rounded font-medium truncate border ${c.light}`}>
-                                {ev.alert_enabled && !ev.alert_sent && <span className="mr-1">🔔</span>}
+                              <div key={ev.id} className={`text-[10px] leading-[14px] truncate font-medium pl-0.5 ${c.text}`}>
+                                {ev.alert_enabled && !ev.alert_sent && <span className="mr-0.5">🔔</span>}
                                 {ev.title}
                               </div>
                             );
                           })}
-                          {/* Lead timer pills */}
-                          {(timersByDate[key!] ?? []).slice(0, 2).map(t => (
-                            <div key={t.leadId} className="text-xs px-1.5 py-0.5 rounded font-medium truncate border bg-orange-50 border-orange-200 text-orange-700">
+                          {/* Lead timers */}
+                          {(timersByDate[key!] ?? []).slice(0, 3 - Math.min(dayEvents.length, 3)).map(t => (
+                            <div key={t.leadId} className="text-[10px] leading-[14px] truncate font-medium pl-0.5 text-orange-600">
                               ⏱ {t.label}
                             </div>
                           ))}
-                          {(dayEvents.length + (timersByDate[key!]?.length ?? 0)) > 4 && (
-                            <div className="text-xs text-gray-400 pl-1">
-                              +{dayEvents.length + (timersByDate[key!]?.length ?? 0) - 4} more
+                          {(dayEvents.length + (timersByDate[key!]?.length ?? 0)) > 3 && (
+                            <div className="text-[9px] text-gray-400 pl-0.5">
+                              +{dayEvents.length + (timersByDate[key!]?.length ?? 0) - 3} more
                             </div>
                           )}
                         </div>
