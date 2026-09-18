@@ -842,15 +842,6 @@ export default function LeadWorkspaceClient({
         {/* Right: actions + prev/next */}
         <div className="flex items-center gap-2">
           <button
-            onClick={() => router.push(`/pipeline/${lead.id}?edit=true`)}
-            className="p-2 rounded-md border border-[#e5e5e5] hover:bg-[#f5f5f5] text-[#6b6b6b] transition-colors"
-            title="Edit"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-            </svg>
-          </button>
-          <button
             onClick={() => setConfirmDelete(true)}
             className="p-2 rounded-md border border-[#e5e5e5] hover:bg-red-50 text-[#9b9b9b] hover:text-red-600 transition-colors"
             title="Delete"

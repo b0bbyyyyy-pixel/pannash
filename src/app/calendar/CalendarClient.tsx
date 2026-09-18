@@ -500,6 +500,8 @@ export default function CalendarClient() {
                     <div className="flex items-start justify-between gap-2">
                       <p className="text-sm font-semibold">{ev.title}</p>
                       <div className="flex gap-1 flex-shrink-0">
+                        <button onClick={() => openEditForm(ev)}
+                          className="text-xs text-gray-500 hover:text-gray-700 underline">Edit</button>
                         <button
                           onClick={() => deleteEvent(ev.id)}
                           disabled={deleting === ev.id}
