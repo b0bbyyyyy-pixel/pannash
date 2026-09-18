@@ -25,17 +25,18 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await req.json();
-  const { title, notes, alertEnabled, alertAt, alertPhone, color } = body;
+  const { title, end_date, notes, alertEnabled, alertAt, alertPhone, color } = body;
 
   const { data, error } = await supabase
     .from('calendar_events')
     .update({
       title,
+      end_date: end_date || null,
       notes: notes || null,
       alert_enabled: alertEnabled ?? false,
       alert_at: alertAt || null,
       alert_phone: alertPhone || null,
-      alert_sent: false, // reset so updated alert fires again
+      alert_sent: false,
       color: color || 'blue',
       updated_at: new Date().toISOString(),
     })

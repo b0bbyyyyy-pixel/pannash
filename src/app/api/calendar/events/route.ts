@@ -52,13 +52,14 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await req.json();
-  const { date, title, notes, alertEnabled, alertAt, alertPhone, color } = body;
+  const { date, end_date, title, notes, alertEnabled, alertAt, alertPhone, color } = body;
 
   const { data, error } = await supabase
     .from('calendar_events')
     .insert({
       user_id: user.id,
       date,
+      end_date: end_date || null,
       title,
       notes: notes || null,
       alert_enabled: alertEnabled ?? false,

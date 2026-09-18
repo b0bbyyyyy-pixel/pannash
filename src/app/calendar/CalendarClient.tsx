@@ -11,7 +11,8 @@ interface LeadTimer {
 
 interface CalendarEvent {
   id: string;
-  date: string; // "YYYY-MM-DD"
+  date: string;     // "YYYY-MM-DD" start date
+  end_date: string | null; // "YYYY-MM-DD" end date (multi-day), null = single day
   title: string;
   notes: string | null;
   alert_enabled: boolean;
@@ -62,11 +63,14 @@ interface EventFormState {
   alertEnabled: boolean;
   alertAt: string;
   alertPhone: string;
+  multiDay: boolean;
+  endDate: string;
 }
 
 const blankForm = (): EventFormState => ({
   title: '', notes: '', color: 'blue',
   alertEnabled: false, alertAt: '', alertPhone: '',
+  multiDay: false, endDate: '',
 });
 
 export default function CalendarClient() {
@@ -189,8 +193,17 @@ export default function CalendarClient() {
 
   const eventsByDate: Record<string, CalendarEvent[]> = {};
   events.forEach(e => {
-    if (!eventsByDate[e.date]) eventsByDate[e.date] = [];
-    eventsByDate[e.date].push(e);
+    // For multi-day events, add the event to every date it spans
+    const start = e.date;
+    const end   = (e.end_date && e.end_date >= start) ? e.end_date : start;
+    const cursor = new Date(start + 'T00:00:00');
+    const endDate = new Date(end   + 'T00:00:00');
+    while (cursor <= endDate) {
+      const key = cursor.toISOString().slice(0, 10);
+      if (!eventsByDate[key]) eventsByDate[key] = [];
+      eventsByDate[key].push(e);
+      cursor.setDate(cursor.getDate() + 1);
+    }
   });
 
   // Group timers by LOCAL date key (computed client-side to respect user's timezone)
@@ -208,14 +221,14 @@ export default function CalendarClient() {
 
   function openAddForm(date: string) {
     setEditingEvent(null);
-    // Pre-fill alert_at to 9am on that date
     const alertDefault = `${date}T09:00`;
-    setForm({ ...blankForm(), alertAt: alertDefault });
+    setForm({ ...blankForm(), alertAt: alertDefault, endDate: date });
     setShowForm(true);
   }
 
   function openEditForm(event: CalendarEvent) {
     setEditingEvent(event);
+    const hasEndDate = !!event.end_date && event.end_date !== event.date;
     setForm({
       title: event.title,
       notes: event.notes ?? '',
@@ -223,6 +236,8 @@ export default function CalendarClient() {
       alertEnabled: event.alert_enabled,
       alertAt: event.alert_at ? event.alert_at.slice(0, 16) : '',
       alertPhone: event.alert_phone ?? '',
+      multiDay: hasEndDate,
+      endDate: event.end_date ?? event.date,
     });
     setShowForm(true);
   }
@@ -232,8 +247,12 @@ export default function CalendarClient() {
     setSaving(true);
     setSaveError('');
     try {
+      const resolvedEndDate = form.multiDay && form.endDate && form.endDate >= selectedDate!
+        ? form.endDate
+        : null;
       const payload = {
         date: selectedDate,
+        end_date: resolvedEndDate,
         title: form.title.trim(),
         notes: form.notes.trim() || null,
         color: form.color,
@@ -520,6 +539,33 @@ export default function CalendarClient() {
                     placeholder="Event title"
                     className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
+
+                  {/* Multi-day toggle */}
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setForm(f => ({ ...f, multiDay: !f.multiDay }))}
+                      className={`px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors ${
+                        form.multiDay
+                          ? 'bg-gray-900 text-white border-gray-900'
+                          : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400'
+                      }`}
+                    >
+                      Multi-day
+                    </button>
+                    {form.multiDay && (
+                      <div className="flex items-center gap-1.5 flex-1">
+                        <span className="text-xs text-gray-400">ends</span>
+                        <input
+                          type="date"
+                          value={form.endDate}
+                          min={selectedDate ?? undefined}
+                          onChange={e => setForm(f => ({ ...f, endDate: e.target.value }))}
+                          className="flex-1 px-2 py-1 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                    )}
+                  </div>
 
                   <textarea
                     value={form.notes}

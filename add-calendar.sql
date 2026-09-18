@@ -5,7 +5,8 @@
 CREATE TABLE IF NOT EXISTS calendar_events (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id      UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  date         DATE NOT NULL,            -- YYYY-MM-DD, stored as a real DATE
+  date         DATE NOT NULL,            -- YYYY-MM-DD start date (real DATE column)
+  end_date     DATE,                     -- YYYY-MM-DD end date for multi-day events (null = single day)
   title        TEXT NOT NULL,
   notes        TEXT,
   color        TEXT NOT NULL DEFAULT 'blue',
