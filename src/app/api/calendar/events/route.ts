@@ -32,7 +32,12 @@ export async function GET(req: NextRequest) {
     .order('created_at', { ascending: true });
 
   if (month) {
-    query = query.gte('date', `${month}-01`).lte('date', `${month}-31`);
+    // Compute the real last day of the month so the filter is always valid
+    // (e.g. September has 30 days, not 31 — Postgres would error on an invalid DATE)
+    const [y, m] = month.split('-').map(Number);
+    const lastDay = new Date(y, m, 0).getDate(); // day 0 of next month = last day of this month
+    const lastDate = `${month}-${String(lastDay).padStart(2, '0')}`;
+    query = query.gte('date', `${month}-01`).lte('date', lastDate);
   }
 
   const { data, error } = await query;

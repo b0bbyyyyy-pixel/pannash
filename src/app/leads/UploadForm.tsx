@@ -37,6 +37,9 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
   const [sheetsPreview, setSheetsPreview] = useState<ParsedLead[]>([]); // filtered slice
   const [sheetsLoading, setSheetsLoading] = useState(false);
   const [sheetsAddToDialer, setSheetsAddToDialer] = useState(false);
+  const [rawSheetsCsv, setRawSheetsCsv] = useState<string>(''); // original CSV for AI re-parse
+  const [aiParsing, setAiParsing] = useState(false);
+  const [aiParseError, setAiParseError] = useState<string>('');
   const [rangeFrom, setRangeFrom] = useState<string>('1');
   const [rangeTo, setRangeTo] = useState<string>('');
   // Google OAuth state
@@ -347,9 +350,9 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       return null;
     };
 
-    const firstName = findExact(['first name', 'firstname', 'first_name', 'fname', 'given name'])
-      || findNameByContains(['first name', 'firstname', 'first_name', 'fname', 'first']);
-    const lastName  = findExact(['last name', 'lastname', 'last_name', 'lname', 'surname', 'family name'])
+    const firstName = findExact(['first name', 'firstname', 'first_name', 'fname', 'given name', 'first'])
+      || findNameByContains(['first name', 'firstname', 'first_name', 'fname']);
+    const lastName  = findExact(['last name', 'lastname', 'last_name', 'lname', 'surname', 'family name', 'last'])
       || findNameByContains(['last name', 'lastname', 'last_name', 'lname', 'surname']);
     let name: string | null = null;
     if (firstName && lastName) {
@@ -414,11 +417,38 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
     const rawEmail = findColumn(['email', 'e-mail', 'email address', 'emailaddress', 'contact email', 'mail']);
     const email = rawEmail && !rawEmail.toLowerCase().includes('noemail') ? rawEmail : null;
 
+    // Words that are phone-type labels, not company names — reject these
+    const PHONE_TYPE_LABELS = new Set([
+      'mobile', 'cell', 'home', 'work', 'office', 'fax', 'direct',
+      'main', 'other', 'business', 'personal', 'landline', 'voip',
+    ]);
+    const isValidCompany = (v: string | null): string | null => {
+      if (!v) return null;
+      const trimmed = v.trim();
+      if (trimmed.length < 2) return null;
+      if (PHONE_TYPE_LABELS.has(trimmed.toLowerCase())) return null;
+      if (isPhone(trimmed)) return null; // reject if it's actually a phone number
+      return trimmed;
+    };
+
     // Company: prefer "Business Name" then "Company Name" then generic
-    const company =
+    const company = isValidCompany(
       findExact(['business name', 'business_name', 'dba', 'dba name']) ||
       findExact(['company name', 'company_name', 'companyname']) ||
-      findColumn(['organization', 'org', 'employer', 'account']);
+      findColumn(['organization', 'org', 'employer', 'account'])
+    );
+
+    // If the combined fallback name begins with the company name, strip it so we
+    // end up with just the person portion. e.g. "Aircules Mechanical Abel Ybarra"
+    // with company="Aircules Mechanical" → name="Abel Ybarra"
+    if (name && company) {
+      const escaped = company.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const stripped = name.replace(new RegExp(`^${escaped}\\s*`, 'i'), '').trim();
+      // Only use the stripped value if it looks like a real person name (≤4 words, no company keywords)
+      if (stripped && stripped !== name && stripped.split(' ').length <= 4 && !isLikelyCompany(stripped)) {
+        name = stripped;
+      }
+    }
 
     const baseNotes = findColumn(['notes', 'note', 'comments', 'comment', 'description', 'details', 'memo', 'remarks']);
 
@@ -430,6 +460,8 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       'business name','business_name','company name','company_name','companyname',
       'organization','org','employer','account','dba','dba name',
       'notes','note','comments','comment','description','details','memo','remarks',
+      // phone-type labels that leak as company / notes
+      'mobile','cell','home','work','office','direct','landline','voip','personal',
     ]);
     const isPhoneKey = (k: string) =>
       ['phone','telephone','tel','mobile','cell','contact number','direct','fax','number'].some(p => k.includes(p));
@@ -1161,6 +1193,57 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
   };
   // ─────────────────────────────────────────────────────────────────────────
 
+  // ── Parse-quality detector ──────────────────────────────────────────────
+  // Returns true when >20% of parsed leads have an email as name or no name at all
+  const parseQualityPoor = (rows: ParsedLead[]): boolean => {
+    if (rows.length === 0) return false;
+    const bad = rows.filter(r =>
+      !r.name ||
+      r.name === '—' ||
+      r.name.includes('@') ||
+      /^\d/.test(r.name)
+    ).length;
+    return bad / rows.length > 0.2;
+  };
+
+  // ── AI-powered re-parse ─────────────────────────────────────────────────
+  const handleAiParse = async () => {
+    if (!rawSheetsCsv) return;
+    setAiParsing(true);
+    setAiParseError('');
+    try {
+      const res = await fetch('/api/import/ai-parse-leads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ csv: rawSheetsCsv }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setAiParseError(json.error || 'AI parse failed. Check your XAI_API_KEY.');
+        return;
+      }
+      // Map AI response to ParsedLead shape
+      const aiLeads: ParsedLead[] = (json.leads as Array<{ name: string | null; email: string | null; phone: string | null; company: string | null }>)
+        .filter(l => l.name || l.email || l.phone)
+        .map(l => ({
+          name:    l.name    || '',
+          email:   l.email   || '',
+          phone:   l.phone   || null,
+          company: l.company || null,
+          notes:   null,
+        }));
+      setSheetsAllRows(aiLeads);
+      const defaultTo = String(aiLeads.length);
+      setRangeFrom('1');
+      setRangeTo(defaultTo);
+      setSheetsPreview(applyRange(aiLeads, '1', defaultTo));
+    } catch (e: any) {
+      setAiParseError(e.message || 'Unexpected error during AI parse.');
+    } finally {
+      setAiParsing(false);
+    }
+  };
+
   // ── Google Sheets import ────────────────────────────────────────────────
   const handleSheetsFetch = async (overrideSheetId?: string) => {
     const sheetId = overrideSheetId || selectedDriveSheet;
@@ -1170,6 +1253,8 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
     setMessage('');
     setSheetsPreview([]);
     setSheetsAllRows([]);
+    setRawSheetsCsv('');
+    setAiParseError('');
     const gidParam = sheetId && selectedTab ? `&gid=${encodeURIComponent(selectedTab)}` : '';
     const apiUrl = sheetId
       ? `/api/import/google-sheets?sheetId=${encodeURIComponent(sheetId)}${gidParam}`
@@ -1179,6 +1264,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       const json = await res.json();
       if (!res.ok) { setMessage(json.error || 'Failed to fetch sheet'); setSheetsLoading(false); return; }
 
+      setRawSheetsCsv(json.csv); // store for optional AI re-parse
       const result = Papa.parse<string[]>(json.csv, { skipEmptyLines: true, header: false });
       if (!result.data || result.data.length === 0) { setMessage('Sheet appears empty'); setSheetsLoading(false); return; }
 
@@ -1742,6 +1828,24 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
             </div>
           )}
 
+          {/* AI parsing spinner */}
+          {aiParsing && (
+            <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+              <svg className="w-4 h-4 animate-spin text-gray-600" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+              </svg>
+              <span className="text-xs text-gray-600">AI is reading your sheet… this may take 10–30 seconds for large files.</span>
+            </div>
+          )}
+
+          {/* AI parse error */}
+          {aiParseError && (
+            <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+              {aiParseError}
+            </div>
+          )}
+
           {/* Preview table */}
           {sheetsPreview.length > 0 && (
             <div className="border border-gray-200 rounded-lg overflow-hidden">
@@ -1752,7 +1856,16 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
                     <span className="text-gray-400 font-normal"> (of {sheetsAllRows.length})</span>
                   )}
                 </p>
-                <p className="text-xs text-gray-400">scroll for all</p>
+                <button
+                  onClick={handleAiParse}
+                  disabled={aiParsing || !rawSheetsCsv}
+                  className="text-xs font-medium text-gray-500 hover:text-gray-900 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                  Parse with AI
+                </button>
               </div>
               <div className="max-h-52 overflow-y-auto">
                 <table className="w-full text-xs">

@@ -93,6 +93,7 @@ export default function CalendarClient() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<EventFormState>(blankForm());
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string>('');
   const [deleting, setDeleting] = useState<string | null>(null);
   const [clearingTimer, setClearingTimer] = useState<string | null>(null);
 
@@ -229,6 +230,7 @@ export default function CalendarClient() {
   async function saveEvent() {
     if (!form.title.trim() || !selectedDate) return;
     setSaving(true);
+    setSaveError('');
     try {
       const payload = {
         date: selectedDate,
@@ -245,18 +247,39 @@ export default function CalendarClient() {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
-        if (res.ok) { const d = await res.json(); setEvents(prev => prev.map(e => e.id === editingEvent.id ? d.event : e)); }
+        if (res.ok) {
+          const d = await res.json();
+          setEvents(prev => prev.map(e => e.id === editingEvent.id ? d.event : e));
+          setShowForm(false);
+          setEditingEvent(null);
+          setForm(blankForm());
+        } else {
+          const err = await res.json().catch(() => ({}));
+          setSaveError(err.error || 'Save failed — see console');
+          console.error('[calendar] update failed:', err);
+        }
       } else {
         const res = await fetch('/api/calendar/events', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
-        if (res.ok) { const d = await res.json(); setEvents(prev => [...prev, d.event]); }
+        if (res.ok) {
+          const d = await res.json();
+          setEvents(prev => [...prev, d.event]);
+          setShowForm(false);
+          setEditingEvent(null);
+          setForm(blankForm());
+        } else {
+          const err = await res.json().catch(() => ({}));
+          setSaveError(err.error || 'Save failed — the calendar_events table may not exist in Supabase yet. Run add-calendar.sql first.');
+          console.error('[calendar] insert failed:', err);
+        }
       }
-      setShowForm(false);
-      setEditingEvent(null);
-      setForm(blankForm());
-    } finally { setSaving(false); }
+    } catch (e: any) {
+      setSaveError(e.message || 'Network error');
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function deleteEvent(id: string) {
@@ -572,6 +595,12 @@ export default function CalendarClient() {
                     )}
                   </div>
 
+                  {saveError && (
+                    <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                      {saveError}
+                    </p>
+                  )}
+
                   <div className="flex gap-2 pt-1">
                     <button
                       onClick={saveEvent}
@@ -581,7 +610,7 @@ export default function CalendarClient() {
                       {saving ? 'Saving…' : editingEvent ? 'Update' : 'Save Event'}
                     </button>
                     <button
-                      onClick={() => { setShowForm(false); setEditingEvent(null); setForm(blankForm()); }}
+                      onClick={() => { setShowForm(false); setEditingEvent(null); setForm(blankForm()); setSaveError(''); }}
                       className="px-4 py-2 text-sm text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-100 transition-colors"
                     >
                       Cancel
