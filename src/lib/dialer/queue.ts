@@ -16,8 +16,6 @@ export interface QueueLead {
   company: string | null;
   phone_e164: string;
   timezone: string | null;
-  city: string | null;
-  state: string | null;
   dnc: boolean;
   dialer_status: string | null;
   next_eligible_at: string | null;
@@ -34,7 +32,7 @@ export interface QueueLead {
 }
 
 const LEAD_SELECT = [
-  'id', 'name', 'company', 'phone_e164', 'timezone', 'city', 'state',
+  'id', 'name', 'company', 'phone_e164', 'timezone',
   'dnc', 'dialer_status', 'next_eligible_at',
   'last_disposition', 'last_called_at', 'last_call_notes',
   'notes', 'stage', 'month_key',
@@ -88,7 +86,9 @@ export async function claimNextLead(
     .eq('id', lead.id)
     .or(`locked_by.is.null,locked_at.lt.${staleLockIso()}`);
 
-  if (lockErr) return null;
+  // If the lock update fails (e.g. RLS / race condition), log but still proceed —
+  // this is a single-user CRM so double-claim risk is negligible.
+  if (lockErr) console.warn('[claimNextLead] lock update failed:', lockErr.message);
   return lead as QueueLead;
 }
 

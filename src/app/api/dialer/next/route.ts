@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
-import { claimNextLead, unlockLead, getCurrentLead, peekQueue } from '@/lib/dialer/queue';
+import { claimNextLead, unlockLead, peekQueue } from '@/lib/dialer/queue';
 
 async function getSupabase() {
   const cookieStore = await cookies();
@@ -29,11 +29,15 @@ export async function POST(req: Request) {
     // Release previous lock if explicitly requested
     if (releasePreviousId) {
       await unlockLead(supabase, releasePreviousId, user.id);
-    } else {
-      // Auto-release any stale lock this agent holds
-      const existing = await getCurrentLead(supabase, user.id, listId);
-      if (existing) await unlockLead(supabase, existing.id, user.id);
     }
+
+    // Always clear ALL stale/active locks held by this agent (across all campaigns)
+    // so switching campaigns never leaves ghost locks blocking the new queue.
+    await supabase
+      .from('leads')
+      .update({ locked_by: null, locked_at: null })
+      .eq('locked_by', user.id)
+      .neq('id', releasePreviousId ?? '00000000-0000-0000-0000-000000000000');
 
     const next = await claimNextLead(supabase, user.id, listId);
     const queue = await peekQueue(supabase, user.id, next?.id ?? null, 10, listId);

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { formatDisplay } from '@/lib/dialer/e164';
+import { getPhoneLocation } from '@/lib/phoneLocation';
 import ManualDialPanel from './ManualDialPanel';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -12,8 +13,6 @@ interface Lead {
   company: string | null;
   phone_e164: string;
   timezone: string | null;
-  city: string | null;
-  state: string | null;
   last_disposition: string | null;
   last_called_at: string | null;
   last_call_notes: string | null;
@@ -147,13 +146,17 @@ function LeadCard({
   onCall: () => void;
 }) {
   const [copied, setCopied] = useState(false);
-  const [localT, setLocalT] = useState(localTime(lead.timezone));
+  // Derive city/state/timezone from the phone's area code
+  const phoneLoc = getPhoneLocation(lead.phone_e164);
+  const effectiveTz = lead.timezone || phoneLoc?.timezone || null;
+
+  const [localT, setLocalT] = useState(localTime(effectiveTz));
   const [showOverlay, setShowOverlay] = useState(false);
 
   useEffect(() => {
-    const t = setInterval(() => setLocalT(localTime(lead.timezone)), 30_000);
+    const t = setInterval(() => setLocalT(localTime(effectiveTz)), 30_000);
     return () => clearInterval(t);
-  }, [lead.timezone]);
+  }, [effectiveTz]);
 
   const copyNumber = () => {
     navigator.clipboard.writeText(lead.phone_e164).catch(() => {});
@@ -237,18 +240,18 @@ function LeadCard({
       </div>
 
       {/* Location + local time */}
-      {(lead.city || lead.state || localT) && (
+      {(phoneLoc || localT) && (
         <div className="flex items-center gap-2 text-sm text-[#6b7280] mb-5">
           <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
               d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          {(lead.city || lead.state) && (
+          {phoneLoc && (
             <span className="text-[#1a1a1a] font-medium">
-              {[lead.city, lead.state].filter(Boolean).join(', ')}
+              {[phoneLoc.city, phoneLoc.state].filter(Boolean).join(', ')}
             </span>
           )}
-          {(lead.city || lead.state) && localT && (
+          {phoneLoc && localT && (
             <span className="text-[#d4d4d4]">·</span>
           )}
           {localT && (
@@ -444,16 +447,16 @@ function EmptyState({ onRefresh, queueLen }: { onRefresh: () => void; queueLen: 
     <div className="bg-white border border-[#e5e5e5] rounded-2xl p-12 text-center shadow-sm">
       {queueLen > 0 ? (
         <>
-          <h2 className="text-xl font-semibold text-[#1a1a1a] mb-2">{queueLen} leads on deck</h2>
+          <h2 className="text-xl font-semibold text-[#1a1a1a] mb-2">{queueLen} leads ready</h2>
           <p className="text-sm text-[#6b7280] mb-6 max-w-xs mx-auto">
-            None are dial-eligible right now — they may be in a call-back window or outside business hours.
+            Hit &ldquo;Check again&rdquo; to load the first lead.
           </p>
         </>
       ) : (
         <>
-          <h2 className="text-xl font-semibold text-[#1a1a1a] mb-2">Queue's clear</h2>
+          <h2 className="text-xl font-semibold text-[#1a1a1a] mb-2">Queue&apos;s clear</h2>
           <p className="text-sm text-[#6b7280] mb-6 max-w-xs mx-auto">
-            No eligible leads right now — check back soon.
+            No eligible leads right now — load a campaign or check back soon.
           </p>
         </>
       )}
@@ -585,8 +588,62 @@ export default function DialerClient() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!initDone.current) { initDone.current = true; loadCurrent(null); }
+    if (initDone.current) return;
+    initDone.current = true;
+
+    // Restore the last loaded campaign (persisted across refreshes)
+    let saved: Campaign | null = null;
+    try {
+      const raw = localStorage.getItem('dialer_active_campaign');
+      if (raw) saved = JSON.parse(raw) as Campaign;
+    } catch { /* ignore corrupt state */ }
+
+    if (saved?.id) {
+      setActiveCampaign(saved);
+      listIdRef.current = saved.id;
+      loadCurrent(saved.id);
+      // Refresh stats (called/total) since the saved copy may be stale
+      fetch('/api/dialer/campaigns')
+        .then((r) => r.json())
+        .then((d) => {
+          const fresh = (d.campaigns ?? []).find((c: Campaign) => c.id === saved!.id);
+          if (fresh) {
+            setActiveCampaign(fresh);
+            try { localStorage.setItem('dialer_active_campaign', JSON.stringify(fresh)); } catch { /* ignore */ }
+          }
+        })
+        .catch(() => {});
+    } else {
+      loadCurrent(null);
+    }
   }, [loadCurrent]);
+
+  // ── Claim a specific lead by ID (fallback when claimNextLead returns null) ──
+  const claimSpecific = async (leadId: string, listId: string | null = listIdRef.current) => {
+    setState('loading');
+    setError(null);
+    try {
+      const res = await fetch('/api/dialer/claim-specific', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadId, listId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Failed to load lead');
+      setQueue(data.queue ?? []);
+      if (data.current) {
+        setLead(data.current);
+        setCallId(null);
+        setState('ready');
+      } else {
+        setLead(null);
+        setState('empty');
+      }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error');
+      setState('empty');
+    }
+  };
 
   // ── Claim next lead ─────────────────────────────────────────────────────────
   const claimNext = async (releasePreviousId: string | null, listId: string | null = listIdRef.current) => {
@@ -601,12 +658,17 @@ export default function DialerClient() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Failed to load next lead');
 
-      setQueue(data.queue ?? []);
+      const freshQueue: QueuePreview[] = data.queue ?? [];
+      setQueue(freshQueue);
 
       if (data.current) {
         setLead(data.current);
         setCallId(null);
         setState('ready');
+      } else if (freshQueue.length > 0) {
+        // claimNextLead returned null but peekQueue has leads —
+        // directly claim the first queued lead as a fallback.
+        await claimSpecific(freshQueue[0].id, listId);
       } else {
         setLead(null);
         setState('empty');
@@ -622,35 +684,16 @@ export default function DialerClient() {
     setShowPicker(false);
     setActiveCampaign(campaign);
     listIdRef.current = campaign.id;
+    try { localStorage.setItem('dialer_active_campaign', JSON.stringify(campaign)); } catch { /* ignore */ }
     // Release current lead and start fresh with new campaign
-    if (lead) await fetch('/api/dialer/next', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ releasePreviousId: lead.id, listId: campaign.id }),
-    }).then((r) => r.json()).then((d) => {
-      setQueue(d.queue ?? []);
-      if (d.current) { setLead(d.current); setCallId(null); setState('ready'); }
-      else { setLead(null); setState('empty'); }
-    }).catch(() => {});
-    else await claimNext(null, campaign.id);
+    await claimNext(lead?.id ?? null, campaign.id);
   };
 
   const handleClearCampaign = async () => {
     setActiveCampaign(null);
     listIdRef.current = null;
-    if (lead) {
-      await fetch('/api/dialer/next', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ releasePreviousId: lead.id, listId: null }),
-      }).then((r) => r.json()).then((d) => {
-        setQueue(d.queue ?? []);
-        if (d.current) { setLead(d.current); setCallId(null); setState('ready'); }
-        else { setLead(null); setState('empty'); }
-      }).catch(() => {});
-    } else {
-      await claimNext(null, null);
-    }
+    try { localStorage.removeItem('dialer_active_campaign'); } catch { /* ignore */ }
+    await claimNext(lead?.id ?? null, null);
   };
 
   // ── Start call ──────────────────────────────────────────────────────────────
@@ -725,11 +768,12 @@ export default function DialerClient() {
         <h1 className="text-2xl font-semibold text-[#1a1a1a]">Dialer</h1>
         <div className="flex items-center gap-3">
           {activeCampaign && (
-            <div className="flex items-center gap-2">
-              <div className="w-24 h-1.5 bg-[#f0f0f0] rounded-full overflow-hidden">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-sm font-semibold text-[#1a1a1a] truncate max-w-[200px]">{activeCampaign.name}</span>
+              <div className="w-24 h-1.5 bg-[#f0f0f0] rounded-full overflow-hidden shrink-0">
                 <div className="h-full bg-[#1a1a1a] rounded-full transition-all" style={{ width: `${campaignPct}%` }} />
               </div>
-              <span className="text-xs text-[#9ca3af]">{campaignPct}%</span>
+              <span className="text-xs text-[#9ca3af] shrink-0">{campaignPct}%</span>
             </div>
           )}
           <button
@@ -738,30 +782,17 @@ export default function DialerClient() {
           >
             {activeCampaign ? 'Switch Campaign' : 'Load Campaign'}
           </button>
+          {activeCampaign && (
+            <button
+              onClick={handleClearCampaign}
+              className="text-xs text-[#9ca3af] hover:text-[#1a1a1a] transition-colors"
+              title="Clear campaign"
+            >
+              Clear
+            </button>
+          )}
         </div>
       </div>
-
-      {/* Active campaign bar */}
-      {activeCampaign && (
-        <div className="mb-6 bg-white border border-[#e5e5e5] rounded-xl px-5 py-3.5 flex items-center gap-4">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="text-sm font-semibold text-[#1a1a1a] truncate">{activeCampaign.name}</span>
-              <span className="text-xs text-[#9ca3af] ml-4 shrink-0">{activeCampaign.called}/{activeCampaign.total} called · {campaignPct}%</span>
-            </div>
-            <div className="w-full h-1.5 bg-[#f0f0f0] rounded-full overflow-hidden">
-              <div className="h-full bg-[#1a1a1a] rounded-full transition-all" style={{ width: `${campaignPct}%` }} />
-            </div>
-          </div>
-          <button
-            onClick={handleClearCampaign}
-            className="shrink-0 text-xs text-[#9ca3af] hover:text-[#1a1a1a] transition-colors"
-            title="Clear campaign"
-          >
-            Clear
-          </button>
-        </div>
-      )}
 
       {/* Error banner */}
       {error && (
