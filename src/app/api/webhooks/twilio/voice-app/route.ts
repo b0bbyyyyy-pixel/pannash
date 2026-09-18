@@ -60,6 +60,7 @@ function signedUrlCandidates(req: NextRequest): string[] {
 async function getSoleUser(supabase: any): Promise<{
   userId: string | null;
   authToken: string | null;
+  authTokenCandidates: string[];
   fromNumber: string | null;
 }> {
   const { data } = await supabase
@@ -69,13 +70,16 @@ async function getSoleUser(supabase: any): Promise<{
     .limit(1)
     .maybeSingle();
 
-  if (data?.auth_token) {
-    return { userId: data.user_id, authToken: data.auth_token, fromNumber: data.phone_number };
-  }
+  const envToken = process.env.TWILIO_AUTH_TOKEN ?? null;
+  const dbToken = data?.auth_token ?? null;
+  const candidates = [...new Set([dbToken, envToken].filter(Boolean) as string[])];
+
   return {
-    userId: null,
-    authToken: process.env.TWILIO_AUTH_TOKEN ?? null,
-    fromNumber: process.env.TWILIO_FROM_NUMBER ?? null,
+    userId: data?.user_id ?? null,
+    // Prefer env when present so a fresh Vercel Auth Token wins over a stale Settings → Phone token.
+    authToken: envToken || dbToken,
+    authTokenCandidates: candidates,
+    fromNumber: data?.phone_number ?? process.env.TWILIO_FROM_NUMBER ?? null,
   };
 }
 
@@ -86,8 +90,8 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const supabase = serviceClient();
-    const { userId, authToken, fromNumber } = await getSoleUser(supabase);
-    if (!authToken) {
+    const { userId, authToken, authTokenCandidates, fromNumber } = await getSoleUser(supabase);
+    if (!authToken && authTokenCandidates.length === 0) {
       console.error('[twilio/voice-app] No Twilio auth token (phone_connections or TWILIO_AUTH_TOKEN)');
       return twimlResponse(hangupTwiml('Phone is not configured.'), 500);
     }
@@ -97,8 +101,11 @@ export async function POST(req: NextRequest) {
     const signature = req.headers.get('x-twilio-signature');
     const urls = signedUrlCandidates(req);
 
-    if (!validateTwilioSignatureUrls(authToken, signature, urls, params)) {
-      console.warn('[twilio/voice-app] Invalid signature. Tried:', urls, 'From:', params.From, 'To:', params.To, 'phone:', params.phone);
+    const signatureOk = authTokenCandidates.some((token) =>
+      validateTwilioSignatureUrls(token, signature, urls, params)
+    );
+    if (!signatureOk) {
+      console.warn('[twilio/voice-app] Invalid signature. Tried:', urls, 'tokensTried:', authTokenCandidates.length, 'From:', params.From, 'To:', params.To, 'phone:', params.phone);
       // Do not Hangup-on-fail with empty TwiML only — 31005. Still reject, but log enough to fix URL mismatch.
       return twimlResponse(hangupTwiml('Could not verify this call.'), 403);
     }
