@@ -11,52 +11,49 @@ async function getSupabase() {
   );
 }
 
-// GET /api/calendar/day-notes?date=2026-08-15
+// GET /api/calendar/planner?month=2026-09
 export async function GET(req: NextRequest) {
   const supabase = await getSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const date = req.nextUrl.searchParams.get('date');
-  if (!date) return NextResponse.json({ notes: '' });
+  const month = req.nextUrl.searchParams.get('month');
+  if (!month) return NextResponse.json({ error: 'month required' }, { status: 400 });
 
   const { data } = await supabase
-    .from('calendar_day_notes')
-    .select('notes, finished, tasks, slots')
+    .from('calendar_planner')
+    .select('month_notes, habits')
     .eq('user_id', user.id)
-    .eq('date', date)
+    .eq('month_key', month)
     .maybeSingle();
 
   return NextResponse.json({
-    notes: data?.notes ?? '',
-    finished: data?.finished ?? false,
-    tasks: data?.tasks ?? [],
-    slots: data?.slots ?? {},
+    month_notes: data?.month_notes ?? '',
+    habits: data?.habits ?? [],
   });
 }
 
-// PUT /api/calendar/day-notes
+// PUT /api/calendar/planner
 export async function PUT(req: NextRequest) {
   const supabase = await getSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { date, notes, finished, tasks, slots } = await req.json();
-  if (!date) return NextResponse.json({ error: 'Missing date' }, { status: 400 });
-
-  const row: Record<string, unknown> = {
-    user_id: user.id,
-    date,
-    notes: notes ?? '',
-    updated_at: new Date().toISOString(),
-  };
-  if (typeof finished === 'boolean') row.finished = finished;
-  if (tasks !== undefined) row.tasks = tasks;
-  if (slots !== undefined) row.slots = slots;
+  const { month, month_notes, habits } = await req.json();
+  if (!month) return NextResponse.json({ error: 'month required' }, { status: 400 });
 
   const { error } = await supabase
-    .from('calendar_day_notes')
-    .upsert(row, { onConflict: 'user_id,date' });
+    .from('calendar_planner')
+    .upsert(
+      {
+        user_id: user.id,
+        month_key: month,
+        month_notes: month_notes ?? '',
+        habits: habits ?? [],
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id,month_key' }
+    );
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });

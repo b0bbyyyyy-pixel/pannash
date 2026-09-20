@@ -11,52 +11,45 @@ async function getSupabase() {
   );
 }
 
-// GET /api/calendar/day-notes?date=2026-08-15
 export async function GET(req: NextRequest) {
   const supabase = await getSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const date = req.nextUrl.searchParams.get('date');
-  if (!date) return NextResponse.json({ notes: '' });
+  if (!date) return NextResponse.json({ image: '', text: '' });
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('calendar_day_notes')
-    .select('notes, finished, tasks, slots')
+    .select('jot_image, jot_text')
     .eq('user_id', user.id)
     .eq('date', date)
     .maybeSingle();
 
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({
-    notes: data?.notes ?? '',
-    finished: data?.finished ?? false,
-    tasks: data?.tasks ?? [],
-    slots: data?.slots ?? {},
+    image: data?.jot_image ?? '',
+    text: data?.jot_text ?? '',
   });
 }
 
-// PUT /api/calendar/day-notes
 export async function PUT(req: NextRequest) {
   const supabase = await getSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { date, notes, finished, tasks, slots } = await req.json();
+  const { date, image, text } = await req.json();
   if (!date) return NextResponse.json({ error: 'Missing date' }, { status: 400 });
-
-  const row: Record<string, unknown> = {
-    user_id: user.id,
-    date,
-    notes: notes ?? '',
-    updated_at: new Date().toISOString(),
-  };
-  if (typeof finished === 'boolean') row.finished = finished;
-  if (tasks !== undefined) row.tasks = tasks;
-  if (slots !== undefined) row.slots = slots;
 
   const { error } = await supabase
     .from('calendar_day_notes')
-    .upsert(row, { onConflict: 'user_id,date' });
+    .upsert({
+      user_id: user.id,
+      date,
+      jot_image: image || null,
+      jot_text: typeof text === 'string' ? text : '',
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'user_id,date' });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });

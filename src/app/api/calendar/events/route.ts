@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await req.json();
-  const { date, end_date, title, notes, alertEnabled, alertAt, alertPhone, color } = body;
+  const { date, end_date, title, notes, alertEnabled, alertAt, alertPhone, color, start_time } = body;
 
   const { data, error } = await supabase
     .from('calendar_events')
@@ -66,7 +66,8 @@ export async function POST(req: NextRequest) {
       alert_at: alertAt || null,
       alert_phone: alertPhone || null,
       alert_sent: false,
-      color: color || 'blue',
+      color: color || 'black',
+      start_time: start_time || null,
     })
     .select()
     .single();

@@ -392,9 +392,9 @@ export default function PipelineClient({ leads, userId }: PipelineClientProps) {
                 </div>
 
                 {/* Status */}
-                <div className="flex items-center">
+                <div className="flex items-center pr-3">
                   <span
-                    className="px-2 py-0.5 rounded text-[11px] font-medium whitespace-nowrap"
+                    className="w-full px-2 py-0.5 rounded text-[11px] font-medium text-center truncate"
                     style={{ background: statusStyle.bg, color: statusStyle.text }}
                   >
                     {status}

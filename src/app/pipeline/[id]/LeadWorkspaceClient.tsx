@@ -904,9 +904,6 @@ export default function LeadWorkspaceClient({
               type="number"
               valueStyle={{ color: creditScoreColor, fontWeight: 700 }}
             />
-            <Field label="Credit Util %" value={str(ud.creditUtilization)} onSave={v => saveField('creditUtilization', v)} type="number" />
-            <Field label="Inquiries"     value={str(ud.creditInquiries)}   onSave={v => saveField('creditInquiries', v)} type="number" />
-            <Field label="Lates"         value={str(ud.creditLates)}       onSave={v => saveField('creditLates', v)} type="number" />
           </Section>
 
           {/* COMPANY */}

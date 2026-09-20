@@ -11,52 +11,51 @@ async function getSupabase() {
   );
 }
 
-// GET /api/calendar/day-notes?date=2026-08-15
+const empty = { top_priorities: '', personal: '', work: '', coming_up: '' };
+
+// GET /api/calendar/week?start=2026-09-29
 export async function GET(req: NextRequest) {
   const supabase = await getSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const date = req.nextUrl.searchParams.get('date');
-  if (!date) return NextResponse.json({ notes: '' });
+  const start = req.nextUrl.searchParams.get('start');
+  if (!start) return NextResponse.json({ error: 'start required' }, { status: 400 });
 
   const { data } = await supabase
-    .from('calendar_day_notes')
-    .select('notes, finished, tasks, slots')
+    .from('calendar_week_planner')
+    .select('top_priorities, personal, work, coming_up')
     .eq('user_id', user.id)
-    .eq('date', date)
+    .eq('week_start', start)
     .maybeSingle();
 
-  return NextResponse.json({
-    notes: data?.notes ?? '',
-    finished: data?.finished ?? false,
-    tasks: data?.tasks ?? [],
-    slots: data?.slots ?? {},
-  });
+  return NextResponse.json(data ?? empty);
 }
 
-// PUT /api/calendar/day-notes
+// PUT /api/calendar/week
 export async function PUT(req: NextRequest) {
   const supabase = await getSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { date, notes, finished, tasks, slots } = await req.json();
-  if (!date) return NextResponse.json({ error: 'Missing date' }, { status: 400 });
-
-  const row: Record<string, unknown> = {
-    user_id: user.id,
-    date,
-    notes: notes ?? '',
-    updated_at: new Date().toISOString(),
-  };
-  if (typeof finished === 'boolean') row.finished = finished;
-  if (tasks !== undefined) row.tasks = tasks;
-  if (slots !== undefined) row.slots = slots;
+  const body = await req.json();
+  const { start, top_priorities, personal, work, coming_up } = body;
+  if (!start) return NextResponse.json({ error: 'start required' }, { status: 400 });
 
   const { error } = await supabase
-    .from('calendar_day_notes')
-    .upsert(row, { onConflict: 'user_id,date' });
+    .from('calendar_week_planner')
+    .upsert(
+      {
+        user_id: user.id,
+        week_start: start,
+        top_priorities: top_priorities ?? '',
+        personal: personal ?? '',
+        work: work ?? '',
+        coming_up: coming_up ?? '',
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id,week_start' }
+    );
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });
