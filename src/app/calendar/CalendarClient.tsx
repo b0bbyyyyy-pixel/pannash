@@ -126,10 +126,20 @@ function isoWeek(d: Date) {
 }
 
 function fmtHour(h: number) {
-  if (h === 0) return '12:00';
-  if (h < 12) return `${h}:00`;
-  if (h === 12) return '12:00';
-  return `${h - 12}:00`;
+  const hour12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return h >= 12 ? `${hour12}:00 pm` : `${hour12}:00`;
+}
+
+/** "19:15" → "7:15 pm"  |  "09:00" → "9:00" */
+function fmtClock(t: string | null | undefined): string {
+  if (!t) return '';
+  const [hs, ms] = t.split(':');
+  const h = parseInt(hs, 10);
+  const m = parseInt(ms ?? '0', 10);
+  if (!Number.isFinite(h)) return t;
+  const hour12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  const mm = String(Number.isFinite(m) ? m : 0).padStart(2, '0');
+  return h >= 12 ? `${hour12}:${mm} pm` : `${hour12}:${mm}`;
 }
 
 function hourFromTime(t: string | null | undefined): number | null {
@@ -695,7 +705,7 @@ function MonthView({
                             className="text-[10px] leading-[13px] truncate font-medium"
                             style={{ color: eventTextColor(ev.color) }}
                           >
-                            {ev.start_time ? `${ev.start_time} ` : ''}{ev.title}
+                            {ev.title}
                           </div>
                         ))}
                         {dayTimers.slice(0, Math.max(0, 3 - dayEvents.length)).map(t => (
@@ -761,7 +771,7 @@ function WeekView({
                     className="text-xs truncate font-medium"
                     style={{ color: eventTextColor(ev.color) }}
                   >
-                    {ev.start_time ? <span className="text-[#9b9b9b]">{ev.start_time} </span> : null}
+                    {ev.start_time ? <span className="text-[#9b9b9b]">{fmtClock(ev.start_time)} </span> : null}
                     {ev.title}
                   </p>
                 ))}
@@ -1039,13 +1049,18 @@ function DayPanel(props: {
             const slotText = props.daySlots[String(h)] ?? '';
             return (
               <div key={h} className="flex items-stretch border-b border-[#f0f0f0]">
-                <span className="w-14 shrink-0 py-2 pr-2 text-right text-[10px] text-[#9b9b9b] border-r border-[#e5e5e5]">
+                <span className="w-16 shrink-0 py-2 pr-2 text-right text-[10px] text-[#9b9b9b] border-r border-[#e5e5e5]">
                   {fmtHour(h)}
                 </span>
                 <div className="flex-1 min-h-[36px] px-2 py-1 flex flex-col justify-center gap-0.5">
                   {hourEvents.map(ev => (
                     <div key={ev.id} className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-medium text-[#1a1a1a] truncate">{ev.title}</span>
+                      <span className="text-xs font-medium text-[#1a1a1a] truncate">
+                        {(ev.start_time ?? '').split(':')[1] && (ev.start_time ?? '').split(':')[1] !== '00'
+                          ? `${fmtClock(ev.start_time)} `
+                          : ''}
+                        {ev.title}
+                      </span>
                       <div className="flex gap-1.5 shrink-0">
                         <button type="button" onClick={() => props.onEdit(ev)} className="text-[10px] text-[#9b9b9b] hover:text-[#1a1a1a]">Edit</button>
                         <button type="button" onClick={() => props.onDelete(ev.id)} className="text-[10px] text-[#9b9b9b] hover:text-[#1a1a1a]">Delete</button>
@@ -1109,16 +1124,6 @@ function DayPanel(props: {
             ))}
           </div>
         )}
-
-        {props.events.filter(e => hourFromTime(e.start_time) != null).map(ev => (
-          <div key={ev.id} className="px-5 py-2 flex justify-between gap-2 border-b border-[#f5f5f5]">
-            <p className="text-xs"><span className="text-[#9b9b9b]">{ev.start_time} </span>{ev.title}</p>
-            <div className="flex gap-2">
-              <button onClick={() => props.onEdit(ev)} className="text-[10px] text-[#9b9b9b] hover:text-[#1a1a1a]">Edit</button>
-              <button onClick={() => props.onDelete(ev.id)} className="text-[10px] text-[#9b9b9b] hover:text-[#1a1a1a]">Delete</button>
-            </div>
-          </div>
-        ))}
 
         {props.showForm && (
           <div className="px-5 py-4 space-y-3 border-t border-[#e5e5e5]">
