@@ -1267,7 +1267,10 @@ function DayPanel(props: {
       )}
 
       {showJot && (
-        <div className="absolute inset-0 z-20 bg-white flex flex-col">
+        <div
+          className="absolute inset-0 z-20 bg-white flex flex-col select-none"
+          style={{ overscrollBehavior: 'none', touchAction: 'none', WebkitUserSelect: 'none' }}
+        >
           <div className="px-5 py-4 border-b border-[#e5e5e5] flex items-start justify-between gap-3 shrink-0">
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide">
