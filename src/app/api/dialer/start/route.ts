@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
-import { incrementAttempts, getCurrentLead } from '@/lib/dialer/queue';
+import { incrementAttempts, lockLead } from '@/lib/dialer/queue';
 import { isValidE164 } from '@/lib/dialer/e164';
 
 async function getSupabase() {
@@ -30,10 +30,11 @@ export async function POST(req: NextRequest) {
     const { leadId } = await req.json();
     if (!leadId) return NextResponse.json({ error: 'leadId required' }, { status: 400 });
 
-    // Confirm this agent holds the lock
-    const current = await getCurrentLead(supabase, user.id);
-    if (!current || current.id !== leadId) {
-      return NextResponse.json({ error: 'Lead not locked by this agent' }, { status: 409 });
+    // Take / refresh the lock on this lead. Sitting on the card past the
+    // 5-minute lock TTL (common in test mode) used to 409 here.
+    const current = await lockLead(supabase, leadId, user.id);
+    if (!current) {
+      return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
     }
 
     if (!isValidE164(current.phone_e164)) {

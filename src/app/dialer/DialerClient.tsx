@@ -23,6 +23,7 @@ interface Lead {
   last_call_notes: string | null;
   notes: string | null;
   stage: string | null;
+  lead_status: string | null;
   month_key: string | null;
 }
 
@@ -49,17 +50,30 @@ type DialerState = 'loading' | 'ready' | 'on_call' | 'wrap_up' | 'saving' | 'emp
 
 const LIVE_PHONE = new Set(['connecting', 'ringing', 'in-call']);
 
+// The only 3 outcomes on this card — keys 1-3
 const DISPOSITIONS = [
-  { key: 'connected',  label: 'Connected',   color: '#16a34a', shortcut: '1' },
-  { key: 'voicemail',  label: 'Voicemail',   color: '#2563eb', shortcut: '2' },
-  { key: 'no_answer',  label: 'No Answer',   color: '#6b7280', shortcut: '3' },
-  { key: 'busy',       label: 'Busy',        color: '#d97706', shortcut: '4' },
-  { key: 'bad_number', label: 'Bad Number',  color: '#dc2626', shortcut: '5' },
-  { key: 'dnc',        label: 'DNC',         color: '#1a1a1a', shortcut: '6' },
-  { key: 'callback',   label: 'Callback',    color: '#7c3aed', shortcut: '7' },
+  { key: 'pipeline',  label: 'Pipeline',  shortcut: '1' },
+  { key: 'dnc',       label: 'DNC',       shortcut: '2' },
+  { key: 'no_answer', label: 'No Answer', shortcut: '3' },
 ] as const;
 
-type DispositionKey = typeof DISPOSITIONS[number]['key'];
+type TileKey = typeof DISPOSITIONS[number]['key'];
+type DispositionKey = 'prospect' | 'new_lead' | 'dnc' | 'no_answer';
+type PipelineChoice = 'Prospect' | 'New Lead';
+
+// Full label/color map — still needed to display historical last_disposition values
+const DISPOSITION_META: Record<string, { label: string; color: string }> = {
+  connected:  { label: 'Connected',  color: '#16a34a' },
+  voicemail:  { label: 'Voicemail',  color: '#2563eb' },
+  no_answer:  { label: 'No Answer',  color: '#6b7280' },
+  busy:       { label: 'Busy',       color: '#d97706' },
+  bad_number: { label: 'Bad Number', color: '#dc2626' },
+  dnc:        { label: 'DNC',        color: '#1a1a1a' },
+  callback:   { label: 'Callback',   color: '#7c3aed' },
+  prospect:   { label: 'Prospect',   color: '#16a34a' },
+  new_lead:   { label: 'New Lead',   color: '#0369a1' },
+  pipeline:   { label: 'Pipeline',   color: '#16a34a' },
+};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -87,12 +101,12 @@ function timeAgo(iso: string | null): string {
 
 function dispositionLabel(key: string | null): string {
   if (!key) return '—';
-  return DISPOSITIONS.find((d) => d.key === key)?.label ?? key;
+  return DISPOSITION_META[key]?.label ?? key;
 }
 
 function dispositionColor(key: string | null): string {
   if (!key) return '#9ca3af';
-  return DISPOSITIONS.find((d) => d.key === key)?.color ?? '#6b7280';
+  return DISPOSITION_META[key]?.color ?? '#6b7280';
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -145,20 +159,26 @@ function LeadInfoOverlay({ leadId, onClose }: { leadId: string; onClose: () => v
   );
 }
 
-function LeadCard({
+type CardView = 'idle' | 'on_call' | 'wrap';
+
+function DialerCard({
   lead,
+  view,
   onCall,
-  inCall,
   phoneStatus,
   onHangup,
+  onSave,
+  saving,
   onEmailSaved,
   onQuickEmail,
 }: {
   lead: Lead;
+  view: CardView;
   onCall: () => void;
-  inCall?: boolean;
   phoneStatus?: string;
   onHangup?: () => void;
+  onSave: (disposition: DispositionKey, notes: string) => void;
+  saving: boolean;
   onEmailSaved: (email: string) => void;
   onQuickEmail: () => void;
 }) {
@@ -174,6 +194,12 @@ function LeadCard({
   const [savingEmail, setSavingEmail] = useState(false);
   const [emailError, setEmailError] = useState('');
 
+  // Wrap-up state lives here so a disposition punched during the call
+  // survives the swap into the wrap view (same card, content swaps in place)
+  const [selected, setSelected] = useState<TileKey | null>(null);
+  const [pipelineChoice, setPipelineChoice] = useState<PipelineChoice | null>(null);
+  const [notes, setNotes] = useState('');
+
   useEffect(() => {
     const t = setInterval(() => setLocalT(localTime(effectiveTz)), 30_000);
     return () => clearInterval(t);
@@ -184,6 +210,46 @@ function LeadCard({
     setEditingEmail(!lead.email);
     setEmailError('');
   }, [lead.id, lead.email]);
+
+  // New lead → clear the wrap-up form
+  useEffect(() => {
+    setSelected(null);
+    setPipelineChoice(null);
+    setNotes('');
+  }, [lead.id]);
+
+  const pickTile = (key: TileKey) => {
+    setSelected(key);
+    if (key !== 'pipeline') setPipelineChoice(null);
+  };
+
+  const handleSave = useCallback(() => {
+    if (!selected || saving) return;
+    if (selected === 'pipeline') {
+      if (!pipelineChoice) return;
+      onSave(pipelineChoice === 'Prospect' ? 'prospect' : 'new_lead', notes);
+      return;
+    }
+    onSave(selected, notes);
+  }, [selected, pipelineChoice, saving, notes, onSave]);
+
+  // Keyboard: 1-3 pick a disposition (on call or wrap), N / Enter saves on wrap.
+  // Ignored while typing in inputs / notes.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag)) return;
+      if (view === 'on_call' || view === 'wrap') {
+        const d = DISPOSITIONS.find((d) => d.shortcut === e.key);
+        if (d) { pickTile(d.key); return; }
+      }
+      if (view === 'wrap' && (e.key.toLowerCase() === 'n' || (e.key === 'Enter' && tag !== 'BUTTON'))) {
+        handleSave();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [view, handleSave]);
 
   const copyNumber = () => {
     navigator.clipboard.writeText(lead.phone_e164).catch(() => {});
@@ -225,15 +291,59 @@ function LeadCard({
     }
   };
 
+  // Gray status pill — same on idle + wrap. Light lives inside it.
+  // Ready → In Progress → Connected → Call Ended → Ready
+  const statusMeta =
+    view === 'wrap'
+      ? { label: 'Call Ended', live: false }
+      : view === 'on_call' && phoneStatus === 'in-call'
+        ? { label: 'Connected', live: true }
+        : view === 'on_call'
+          ? { label: 'In Progress', live: true }
+          : { label: 'Ready', live: false };
+
+  const statusPill = (
+    <span className="inline-flex items-center gap-1.5 text-[13px] text-[#6b7280] bg-[#f4f4f4] px-3 py-1.5 rounded-full shrink-0">
+      <span
+        className={`w-2 h-2 rounded-full ${statusMeta.live ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}
+      />
+      {statusMeta.label}
+    </span>
+  );
+
+  const canSave = !!selected && !saving && (selected !== 'pipeline' || !!pipelineChoice);
+
+  const pillClass = (active: boolean) =>
+    `flex-1 h-full rounded-xl border text-sm font-medium transition-all ${
+      active
+        ? 'border-[#1a1a1a] bg-[#1a1a1a] text-white'
+        : 'border-[#e5e5e5] bg-white text-[#1a1a1a] hover:border-[#1a1a1a] hover:bg-[#f9f9f9]'
+    }`;
+
+  // ── ONE CARD: idle / on call / wrap ─────────────────────────────────────────
   return (
     <div className="bg-white border border-[#e5e5e5] rounded-2xl p-8 shadow-sm">
       {/* Header row */}
       <div className="flex items-start justify-between mb-6">
         <div className="min-w-0 pr-4">
           <div className="flex items-baseline gap-2.5 flex-wrap">
-            <h2 className="text-2xl font-semibold text-[#1a1a1a] leading-tight">{lead.name}</h2>
+            <button
+              type="button"
+              onClick={() => setShowOverlay(true)}
+              title="View lead info"
+              className="text-2xl font-semibold text-[#1a1a1a] leading-tight hover:underline text-left"
+            >
+              {lead.name}
+            </button>
             {lead.company && (
-              <span className="text-sm text-[#6b7280] leading-tight">{lead.company}</span>
+              <button
+                type="button"
+                onClick={() => setShowOverlay(true)}
+                title="View lead info"
+                className="text-sm text-[#6b7280] leading-tight hover:underline hover:text-[#1a1a1a] text-left"
+              >
+                {lead.company}
+              </button>
             )}
           </div>
           <div className="flex items-center gap-1.5 mt-1.5 min-w-0">
@@ -245,8 +355,8 @@ function LeadCard({
                   autoFocus={editingEmail && !!lead.email}
                   onChange={(e) => { setEmailDraft(e.target.value); setEmailError(''); }}
                   onBlur={() => { void saveEmail(); }}
-                  placeholder="Add email…"
-                  className="w-56 max-w-full px-2 py-0.5 border border-[#e5e5e5] rounded-md text-sm text-[#1a1a1a] placeholder:text-[#c4c4c4] focus:outline-none focus:ring-1 focus:ring-[#1a1a1a]"
+                  placeholder="Add email"
+                  className="w-56 max-w-full bg-transparent border-0 p-0 text-sm text-[#1a1a1a] placeholder:text-[#c4c4c4] focus:outline-none"
                 />
               </form>
             ) : (
@@ -273,25 +383,16 @@ function LeadCard({
             </button>
           </div>
           {emailError && <p className="text-xs text-red-600 mt-1">{emailError}</p>}
-          {lead.stage && (
+          {lead.lead_status === 'Prospect' && (
             <span className="inline-block mt-2 text-xs px-2.5 py-1 rounded-full bg-[#f0f0f0] text-[#555]">
-              {lead.stage}
+              Prospect
             </span>
           )}
         </div>
-        <div className="text-right text-xs text-[#9ca3af] space-y-1">
-          <div className="flex items-center justify-end gap-2">
-            <button
-              onClick={() => setShowOverlay(true)}
-              title="View lead info"
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#f4f4f4] hover:bg-[#e8e8e8] text-[#555] hover:text-[#1a1a1a] transition-colors text-[10px] font-medium"
-            >
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              Info
-            </button>
-            <span>Last called: <span className="text-[#1a1a1a]">{timeAgo(lead.last_called_at)}</span></span>
+        <div className="text-right text-xs text-[#9ca3af] space-y-1.5">
+          <div className="flex justify-end">{statusPill}</div>
+          <div>
+            Last called: <span className="text-[#1a1a1a]">{timeAgo(lead.last_called_at)}</span>
           </div>
           {lead.last_disposition && (
             <div>
@@ -307,58 +408,58 @@ function LeadCard({
       {/* Full lead info overlay */}
       {showOverlay && <LeadInfoOverlay leadId={lead.id} onClose={() => setShowOverlay(false)} />}
 
-      {/* Phone */}
+      {/* Phone (half width) + city / state / local time */}
       <div className="flex items-center gap-3 mb-6">
-        <div className="flex items-center gap-2 bg-[#f4f4f4] rounded-xl px-4 py-3 flex-1">
-          <svg className="w-4 h-4 text-[#6b7280] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
-              d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498A1 1 0 0121 15.72V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 7V5z" />
-          </svg>
-          <a
-            href={`tel:${lead.phone_e164}`}
-            className="text-[#1a1a1a] font-mono text-lg hover:text-blue-600 transition-colors"
-          >
-            {formatDisplay(lead.phone_e164)}
-          </a>
-        </div>
-        <button
-          onClick={copyNumber}
-          className="p-3 rounded-xl border border-[#e5e5e5] hover:bg-[#f4f4f4] text-[#6b7280] hover:text-[#1a1a1a] transition-colors"
-          title="Copy number"
-        >
-          {copied ? (
-            <svg className="w-4 h-4 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-            </svg>
-          ) : (
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <div className="flex items-center gap-2 min-w-0 w-1/2">
+          <div className="flex items-center gap-2 bg-[#f4f4f4] rounded-xl px-3 py-2 min-w-0 flex-1">
+            <svg className="w-3.5 h-3.5 text-[#6b7280] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
-                d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498A1 1 0 0121 15.72V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 7V5z" />
             </svg>
-          )}
-        </button>
-      </div>
-
-      {/* Location + local time */}
-      {(phoneLoc || localT) && (
-        <div className="flex items-center gap-2 text-sm text-[#6b7280] mb-5">
-          <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-              d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          {phoneLoc && (
-            <span className="text-[#1a1a1a] font-medium">
-              {[phoneLoc.city, phoneLoc.state].filter(Boolean).join(', ')}
-            </span>
-          )}
-          {phoneLoc && localT && (
-            <span className="text-[#d4d4d4]">·</span>
-          )}
-          {localT && (
-            <span className="text-[#1a1a1a] font-medium">{localT}</span>
-          )}
+            <a
+              href={`tel:${lead.phone_e164}`}
+              className="text-[#1a1a1a] font-mono text-sm hover:text-blue-600 transition-colors truncate"
+            >
+              {formatDisplay(lead.phone_e164)}
+            </a>
+          </div>
+          <button
+            onClick={copyNumber}
+            className="p-2 rounded-xl border border-[#e5e5e5] hover:bg-[#f4f4f4] text-[#6b7280] hover:text-[#1a1a1a] transition-colors shrink-0"
+            title="Copy number"
+          >
+            {copied ? (
+              <svg className="w-3.5 h-3.5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            ) : (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
+                  d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+            )}
+          </button>
         </div>
-      )}
+        {(phoneLoc || localT) && (
+          <div className="flex items-center gap-2 text-sm text-[#6b7280] min-w-0 flex-1">
+            <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            {phoneLoc && (
+              <span className="text-[#1a1a1a] font-medium truncate">
+                {[phoneLoc.city, phoneLoc.state].filter(Boolean).join(', ')}
+              </span>
+            )}
+            {phoneLoc && localT && (
+              <span className="text-[#d4d4d4]">·</span>
+            )}
+            {localT && (
+              <span className="text-[#1a1a1a] font-medium truncate">{localT}</span>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Last call notes */}
       {lead.last_call_notes && (
@@ -374,25 +475,74 @@ function LeadCard({
         </div>
       )}
 
-      {/* Call button / live status */}
-      {inCall ? (
-        <div className="space-y-3">
-          <div className="w-full py-3 rounded-xl bg-[#f4f4f4] text-[#1a1a1a] text-sm font-medium flex items-center justify-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-            {phoneStatus === 'ringing' && 'Ringing…'}
-            {phoneStatus === 'connecting' && 'Connecting…'}
-            {phoneStatus === 'in-call' && 'On call'}
-            {phoneStatus !== 'ringing' && phoneStatus !== 'connecting' && phoneStatus !== 'in-call' && 'Call in progress'}
-          </div>
-          {onHangup && (
-            <button
-              onClick={onHangup}
-              className="w-full py-3 rounded-xl bg-red-600 text-white text-sm font-medium hover:bg-red-700 active:scale-[0.98] transition-all"
-            >
-              Hang up
-            </button>
+      {/* Footer: Call → Ringing/Hang up → 3 outcomes + Save & next */}
+      {view === 'wrap' ? (
+        <div>
+          {selected === 'pipeline' && (
+            <div className="flex items-center gap-2 mb-2">
+              {(['Prospect', 'New Lead'] as const).map((choice) => (
+                <button
+                  key={choice}
+                  onClick={() => setPipelineChoice(choice)}
+                  className={`flex-1 py-2 rounded-xl border text-sm font-medium transition-all ${
+                    pipelineChoice === choice
+                      ? 'border-[#1a1a1a] bg-[#1a1a1a] text-white'
+                      : 'border-[#e5e5e5] bg-white text-[#1a1a1a] hover:border-[#1a1a1a] hover:bg-[#f9f9f9]'
+                  }`}
+                >
+                  {choice}
+                </button>
+              ))}
+            </div>
           )}
+          <div className="flex items-stretch gap-2 h-14">
+            <div className="flex flex-1 min-w-0 gap-2">
+              {DISPOSITIONS.map((d) => (
+                <button
+                  key={d.key}
+                  onClick={() => pickTile(d.key)}
+                  className={pillClass(selected === d.key)}
+                >
+                  {d.label}
+                  <span className={`ml-1 text-[10px] ${selected === d.key ? 'text-[#aaa]' : 'text-[#ccc]'}`}>[{d.shortcut}]</span>
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={handleSave}
+              disabled={!canSave}
+              className="shrink-0 px-5 rounded-xl bg-[#1a1a1a] text-white text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[#333] active:scale-[0.98] transition-all"
+            >
+              {saving ? (
+                <>
+                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Saving…
+                </>
+              ) : (
+                'Save & next →'
+              )}
+            </button>
+          </div>
+          <input
+            type="text"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Call notes (optional)"
+            className="mt-2 w-full bg-transparent border-0 p-0 text-sm text-[#1a1a1a] placeholder:text-[#c4c4c4] focus:outline-none"
+          />
         </div>
+      ) : view === 'on_call' ? (
+        <button
+          onClick={onHangup}
+          className="w-full py-4 rounded-xl bg-[#f4f4f4] text-[#1a1a1a] text-base font-medium hover:bg-[#ececec] active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+        >
+          <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+          {phoneStatus === 'ringing' && 'Ringing…'}
+          {phoneStatus === 'connecting' && 'Connecting…'}
+          {phoneStatus === 'in-call' && 'On call'}
+          {phoneStatus !== 'ringing' && phoneStatus !== 'connecting' && phoneStatus !== 'in-call' && 'Call in progress'}
+          <span className="text-[#9ca3af] text-sm font-normal">· Hang up</span>
+        </button>
       ) : (
         <button
           onClick={onCall}
@@ -406,121 +556,6 @@ function LeadCard({
           <span className="text-[#888] text-xs ml-1">[C]</span>
         </button>
       )}
-    </div>
-  );
-}
-
-function WrapUpCard({
-  lead,
-  callId,
-  onSave,
-  saving,
-}: {
-  lead: Lead;
-  callId: string;
-  onSave: (disposition: DispositionKey, notes: string, callbackAt: string) => void;
-  saving: boolean;
-}) {
-  const [selected, setSelected] = useState<DispositionKey | null>(null);
-  const [notes, setNotes] = useState('');
-  const [callbackAt, setCallbackAt] = useState('');
-
-  // Keyboard shortcuts for dispositions
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) return;
-      const d = DISPOSITIONS.find((d) => d.shortcut === e.key);
-      if (d) setSelected(d.key as DispositionKey);
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, []);
-
-  const handleSave = () => {
-    if (!selected) return;
-    if (selected === 'callback' && !callbackAt) return;
-    onSave(selected, notes, callbackAt);
-  };
-
-  return (
-    <div className="bg-white border border-[#e5e5e5] rounded-2xl p-8 shadow-sm">
-      {/* Who we just called */}
-      <div className="flex items-center gap-3 mb-7">
-        <div className="w-9 h-9 rounded-full bg-[#1a1a1a] flex items-center justify-center text-white text-sm font-semibold shrink-0">
-          {lead.name[0]}
-        </div>
-        <div>
-          <p className="text-sm text-[#6b7280]">Just called</p>
-          <p className="font-semibold text-[#1a1a1a]">{lead.name} · {formatDisplay(lead.phone_e164)}</p>
-        </div>
-        <div className="ml-auto">
-          <span className="inline-flex items-center gap-1.5 text-xs text-[#6b7280] bg-[#f4f4f4] px-2.5 py-1 rounded-full">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#9ca3af]" />
-            Call ended
-          </span>
-        </div>
-      </div>
-
-      <p className="text-sm font-medium text-[#1a1a1a] mb-3">How did it go?</p>
-
-      {/* Disposition grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-6">
-        {DISPOSITIONS.map((d) => (
-          <button
-            key={d.key}
-            onClick={() => setSelected(d.key as DispositionKey)}
-            className={`relative flex flex-col items-center gap-1 py-3 px-2 rounded-xl border text-sm font-medium transition-all ${
-              selected === d.key
-                ? 'border-[#1a1a1a] bg-[#1a1a1a] text-white shadow'
-                : 'border-[#e5e5e5] bg-white text-[#1a1a1a] hover:border-[#1a1a1a] hover:bg-[#f9f9f9]'
-            }`}
-          >
-            <span>{d.label}</span>
-            <span className={`text-[10px] ${selected === d.key ? 'text-[#aaa]' : 'text-[#ccc]'}`}>[{d.shortcut}]</span>
-          </button>
-        ))}
-      </div>
-
-      {/* Callback datetime */}
-      {selected === 'callback' && (
-        <div className="mb-4">
-          <label className="block text-xs font-medium text-[#6b7280] mb-1.5">Callback date & time</label>
-          <input
-            type="datetime-local"
-            value={callbackAt}
-            onChange={(e) => setCallbackAt(e.target.value)}
-            className="w-full border border-[#e5e5e5] rounded-xl px-4 py-2.5 text-sm text-[#1a1a1a] focus:outline-none focus:ring-2 focus:ring-[#1a1a1a]/10"
-          />
-        </div>
-      )}
-
-      {/* Notes */}
-      <div className="mb-6">
-        <label className="block text-xs font-medium text-[#6b7280] mb-1.5">Call notes (optional)</label>
-        <textarea
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          placeholder="What happened? Objections, next steps..."
-          rows={3}
-          className="w-full border border-[#e5e5e5] rounded-xl px-4 py-3 text-sm text-[#1a1a1a] placeholder-[#ccc] resize-none focus:outline-none focus:ring-2 focus:ring-[#1a1a1a]/10"
-        />
-      </div>
-
-      {/* Save */}
-      <button
-        onClick={handleSave}
-        disabled={!selected || saving || (selected === 'callback' && !callbackAt)}
-        className="w-full py-3.5 rounded-xl bg-[#1a1a1a] text-white font-medium flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[#333] active:scale-[0.98] transition-all"
-      >
-        {saving ? (
-          <>
-            <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            Saving…
-          </>
-        ) : (
-          'Save & next lead →'
-        )}
-      </button>
     </div>
   );
 }
@@ -860,24 +895,25 @@ export default function DialerClient() {
     }
   };
 
-  // After hangup, show wrap-up. Stay on the lead card while ringing / on call.
+  // Hang up → wrap immediately. Remote hangup also snaps here via status.
+  const handleHangup = () => {
+    webphone.hangup();
+    setState('wrap_up');
+  };
+
   const wasLiveRef = useRef(false);
   useEffect(() => {
     const live = LIVE_PHONE.has(webphone.status);
     if (live) wasLiveRef.current = true;
-    if (state === 'on_call' && wasLiveRef.current && !live && callId) {
+    if (state === 'on_call' && wasLiveRef.current && !live) {
       wasLiveRef.current = false;
       setState('wrap_up');
     }
     if (state !== 'on_call') wasLiveRef.current = live;
-  }, [webphone.status, state, callId]);
+  }, [webphone.status, state]);
 
   // ── Save disposition ────────────────────────────────────────────────────────
-  const handleDisposition = async (
-    disposition: DispositionKey,
-    notes: string,
-    callbackAt: string
-  ) => {
+  const handleDisposition = async (disposition: DispositionKey, notes: string) => {
     if (!lead || !callId) return;
     setState('saving');
     try {
@@ -889,7 +925,6 @@ export default function DialerClient() {
           leadId: lead.id,
           disposition,
           notes: notes || undefined,
-          callbackAt: callbackAt || undefined,
         }),
       });
       const data = await res.json();
@@ -996,31 +1031,24 @@ export default function DialerClient() {
 
         {/* Left: lead card / empty / loading */}
         <div className="lg:col-span-2">
-          {state === 'loading' || state === 'saving' ? (
+          {state === 'loading' ? (
             <div className="bg-white border border-[#e5e5e5] rounded-2xl p-12 flex flex-col items-center justify-center shadow-sm">
               <div className="w-8 h-8 border-2 border-[#e5e5e5] border-t-[#1a1a1a] rounded-full animate-spin mb-4" />
-              <p className="text-sm text-[#9ca3af]">
-                {state === 'saving' ? 'Saving disposition…' : 'Loading next lead…'}
-              </p>
+              <p className="text-sm text-[#9ca3af]">Loading next lead…</p>
             </div>
           ) : state === 'empty' ? (
             <EmptyState onRefresh={() => claimNext(null)} queueLen={queue.length} />
-          ) : (state === 'ready' || state === 'on_call') && lead ? (
-            <LeadCard
+          ) : lead && (state === 'ready' || state === 'on_call' || state === 'wrap_up' || state === 'saving') ? (
+            <DialerCard
               lead={lead}
+              view={state === 'on_call' ? 'on_call' : state === 'ready' ? 'idle' : 'wrap'}
               onCall={handleCall}
-              inCall={state === 'on_call'}
               phoneStatus={webphone.status}
-              onHangup={webphone.hangup}
+              onHangup={handleHangup}
+              onSave={handleDisposition}
+              saving={state === 'saving'}
               onEmailSaved={(email) => setLead((prev) => prev ? { ...prev, email } : prev)}
               onQuickEmail={() => setShowEmailModal(true)}
-            />
-          ) : state === 'wrap_up' && lead && callId ? (
-            <WrapUpCard
-              lead={lead}
-              callId={callId}
-              onSave={handleDisposition}
-              saving={false}
             />
           ) : null}
         </div>
@@ -1035,7 +1063,10 @@ export default function DialerClient() {
       {/* Keyboard reference */}
       <div className="mt-8 flex flex-wrap gap-x-6 gap-y-1 text-xs text-[#ccc]">
         <span><kbd className="bg-[#f0f0f0] text-[#888] px-1.5 py-0.5 rounded">C</kbd> Call</span>
-        <span><kbd className="bg-[#f0f0f0] text-[#888] px-1.5 py-0.5 rounded">1-7</kbd> Disposition</span>
+        <span><kbd className="bg-[#f0f0f0] text-[#888] px-1.5 py-0.5 rounded">1</kbd> Pipeline</span>
+        <span><kbd className="bg-[#f0f0f0] text-[#888] px-1.5 py-0.5 rounded">2</kbd> DNC</span>
+        <span><kbd className="bg-[#f0f0f0] text-[#888] px-1.5 py-0.5 rounded">3</kbd> No Answer</span>
+        <span><kbd className="bg-[#f0f0f0] text-[#888] px-1.5 py-0.5 rounded">N</kbd> Save & next</span>
       </div>
 
       {/* Campaign picker */}

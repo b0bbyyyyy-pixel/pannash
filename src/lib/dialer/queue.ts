@@ -25,6 +25,7 @@ export interface QueueLead {
   last_call_notes: string | null;
   notes: string | null;
   stage: string | null;
+  lead_status: string | null;
   month_key: string | null;
   attempts_today: number;
   attempts_today_on: string | null;
@@ -36,7 +37,7 @@ const LEAD_SELECT = [
   'id', 'name', 'company', 'email', 'phone_e164', 'timezone',
   'dnc', 'dialer_status', 'next_eligible_at',
   'last_disposition', 'last_called_at', 'last_call_notes',
-  'notes', 'stage', 'month_key',
+  'notes', 'stage', 'lead_status', 'month_key',
   'attempts_today', 'attempts_today_on',
   'locked_by', 'locked_at',
 ].join(', ');
@@ -104,6 +105,31 @@ export async function unlockLead(
     .update({ locked_by: null, locked_at: null })
     .eq('id', leadId)
     .eq('locked_by', userId);
+}
+
+/** Take or refresh a lock on a specific lead owned by this user. */
+export async function lockLead(
+  supabase: SupabaseClient,
+  leadId: string,
+  userId: string
+): Promise<QueueLead | null> {
+  const { data: lead } = await supabase
+    .from('leads')
+    .select(LEAD_SELECT)
+    .eq('id', leadId)
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (!lead) return null;
+
+  const { error } = await supabase
+    .from('leads')
+    .update({ locked_by: userId, locked_at: new Date().toISOString() })
+    .eq('id', leadId)
+    .eq('user_id', userId);
+
+  if (error) console.warn('[lockLead] lock update failed:', error.message);
+  return lead as QueueLead;
 }
 
 /** Return the lead currently locked by this agent (or null) */

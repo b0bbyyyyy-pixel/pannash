@@ -55,7 +55,7 @@ export default async function PipelineLeadPage({
     .from('leads')
     .select('id')
     .eq('user_id', user.id)
-    .or('in_pipeline.eq.true,month_key.not.is.null')
+    .or('in_pipeline.eq.true,and(month_key.not.is.null,list_id.is.null)')
     .order('created_at', { ascending: false });
 
   const pipelineIds = (pipelineLeads || []).map((l: { id: string }) => l.id);
@@ -73,6 +73,7 @@ export default async function PipelineLeadPage({
             userId={user.id}
             userName={userName}
             fromLeads={fromLeads}
+            isModal
           />
         </div>
       </div>

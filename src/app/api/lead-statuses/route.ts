@@ -7,6 +7,7 @@ export const dynamic = 'force-dynamic';
 // ── Default full status list (seeded on first load) ────────────────────────────
 const DEFAULT_STATUSES: { name: string; color: string; bg_color: string }[] = [
   { name: 'New Lead',                    color: '#0369a1', bg_color: '#e0f2fe' },
+  { name: 'Prospect',                    color: '#166534', bg_color: '#dcfce7' },
   { name: 'Contacted',                   color: '#a16207', bg_color: '#fef9c3' },
   { name: 'Callback Scheduled',          color: '#7c3aed', bg_color: '#f5f3ff' },
   { name: 'Revisit',                     color: '#a16207', bg_color: '#fefce8' },

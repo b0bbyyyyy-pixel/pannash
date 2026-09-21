@@ -15,6 +15,7 @@ interface Lead {
   company?: string | null;
   notes?: string | null;
   last_contact?: string | null;
+  last_called_at?: string | null;
   updated_at?: string | null;
   created_at?: string | null;
   lead_status?: string | null;
@@ -55,6 +56,10 @@ function relativeTime(dateStr: string | null | undefined): string {
   const months = Math.floor(days / 30);
   if (months < 12) return `${months}mo ago`;
   return `${Math.floor(months / 12)}y ago`;
+}
+
+function activityAt(lead: Lead): string | null {
+  return lead.last_contact || lead.last_called_at || lead.updated_at || lead.created_at || null;
 }
 
 function absDate(dateStr: string | null | undefined): string {
@@ -195,8 +200,8 @@ export default function PipelineClient({ leads, userId }: PipelineClientProps) {
   // ── Sort + filter (most-recent first) ─────────────────────────────────────
   const sorted = useMemo(() => {
     return [...leads].sort((a, b) => {
-      const tA = new Date(a.updated_at || a.created_at || 0).getTime();
-      const tB = new Date(b.updated_at || b.created_at || 0).getTime();
+      const tA = new Date(activityAt(a) || 0).getTime();
+      const tB = new Date(activityAt(b) || 0).getTime();
       return tB - tA;
     });
   }, [leads]);
@@ -219,15 +224,14 @@ export default function PipelineClient({ leads, userId }: PipelineClientProps) {
       if (f.leadId && !lead.id.toLowerCase().includes(f.leadId.toLowerCase())) return false;
       // Status (multi-exclude)
       if (f.excludedStatuses.length > 0) {
-        const s = lead.lead_status || lead.stage || '';
+        const s = lead.lead_status || '';
         if (f.excludedStatuses.includes(s)) return false;
       }
       // Assigned to
       if (f.assignedTo && lead.assigned_to !== f.assignedTo) return false;
       // Temperature
       if (f.temperature && lead.temperature !== f.temperature) return false;
-      // Date range (by updated_at or created_at)
-      const activityDate = lead.updated_at || lead.created_at;
+      const activityDate = activityAt(lead);
       if (f.dateFrom && activityDate) {
         if (new Date(activityDate) < new Date(f.dateFrom + 'T00:00:00')) return false;
       }
@@ -364,9 +368,9 @@ export default function PipelineClient({ leads, userId }: PipelineClientProps) {
           </div>
         ) : (
           filtered.map((lead, idx) => {
-            const status      = lead.lead_status || lead.stage || 'New Lead';
+            const status      = lead.lead_status || '';
             const statusStyle = getStatusStyleFrom(status, dbStatuses);
-            const activityDate = lead.last_contact || lead.updated_at || lead.created_at;
+            const activityDate = activityAt(lead);
             return (
               <div
                 key={lead.id}
@@ -393,12 +397,16 @@ export default function PipelineClient({ leads, userId }: PipelineClientProps) {
 
                 {/* Status */}
                 <div className="flex items-center pr-3">
-                  <span
-                    className="w-full px-2 py-0.5 rounded text-[11px] font-medium text-center truncate"
-                    style={{ background: statusStyle.bg, color: statusStyle.text }}
-                  >
-                    {status}
-                  </span>
+                  {status ? (
+                    <span
+                      className="w-full px-2 py-0.5 rounded text-[11px] font-medium text-center truncate"
+                      style={{ background: statusStyle.bg, color: statusStyle.text }}
+                    >
+                      {status}
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-[#c4c4c4]">—</span>
+                  )}
                 </div>
 
                 {/* Activity */}

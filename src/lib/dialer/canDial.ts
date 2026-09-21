@@ -102,6 +102,8 @@ export function nextEligibleAt(disposition: string, callbackAt?: string | null):
   const now = Date.now();
   switch (disposition) {
     case 'connected':  return new Date(now + 24 * 3_600_000).toISOString();
+    case 'prospect':
+    case 'new_lead':   return new Date(now + 24 * 3_600_000).toISOString();
     case 'voicemail':  return new Date(now + 48 * 3_600_000).toISOString();
     case 'no_answer':  return new Date(now +  4 * 3_600_000).toISOString();
     case 'busy':       return new Date(now +  2 * 3_600_000).toISOString();

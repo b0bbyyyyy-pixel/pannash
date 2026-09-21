@@ -26,13 +26,13 @@ export default async function PipelinePage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/auth');
 
-  // Fetch pipeline leads: in_pipeline = true OR has a month_key (backcompat for before migration runs)
+  // Pipeline = explicitly sent (in_pipeline) OR legacy CRM leads (month_key, no campaign list).
+  // Campaign leads stay out unless they were sent here (in_pipeline = true).
   const { data: leads, error } = await supabase
     .from('leads')
     .select('*')
     .eq('user_id', user.id)
-    .or('in_pipeline.eq.true,month_key.not.is.null')
-    .is('list_id', null) // campaign/list leads never belong in the pipeline
+    .or('in_pipeline.eq.true,and(month_key.not.is.null,list_id.is.null)')
     .order('created_at', { ascending: false });
 
   if (error) {

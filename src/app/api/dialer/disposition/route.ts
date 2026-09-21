@@ -14,7 +14,7 @@ async function getSupabase() {
 }
 
 const VALID_DISPOSITIONS = [
-  'connected', 'voicemail', 'no_answer', 'busy', 'bad_number', 'dnc', 'callback',
+  'connected', 'voicemail', 'no_answer', 'busy', 'bad_number', 'dnc', 'callback', 'prospect', 'new_lead',
 ] as const;
 type Disposition = typeof VALID_DISPOSITIONS[number];
 
@@ -77,8 +77,8 @@ export async function POST(req: NextRequest) {
       next_eligible_at: eligibleAt,
       locked_by: null,
       locked_at: null,
-      // Mark the lead as called for campaign progress + Call badge + last activity
       call_made_at: now,
+      updated_at: now,
     };
 
     if (disposition === 'dnc') {
@@ -89,6 +89,38 @@ export async function POST(req: NextRequest) {
     if (disposition === 'bad_number') {
       leadUpdate.dialer_status = 'bad_number';
       leadUpdate.next_eligible_at = null;
+    }
+
+    if (disposition === 'prospect' || disposition === 'new_lead') {
+      const statusName = disposition === 'prospect' ? 'Prospect' : 'New Lead';
+      leadUpdate.in_pipeline = true;
+      leadUpdate.lead_status = statusName;
+      leadUpdate.last_contact = now;
+
+      const { data: existingStatus } = await supabase
+        .from('lead_statuses')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('name', statusName)
+        .maybeSingle();
+
+      if (!existingStatus) {
+        const { data: maxRow } = await supabase
+          .from('lead_statuses')
+          .select('sort_order')
+          .eq('user_id', user.id)
+          .order('sort_order', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        await supabase.from('lead_statuses').insert({
+          user_id: user.id,
+          name: statusName,
+          color: statusName === 'Prospect' ? '#166534' : '#0369a1',
+          bg_color: statusName === 'Prospect' ? '#dcfce7' : '#e0f2fe',
+          sort_order: (maxRow?.sort_order ?? -1) + 1,
+        });
+      }
     }
 
     // 3. Update the lead

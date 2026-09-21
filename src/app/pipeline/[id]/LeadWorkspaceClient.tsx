@@ -43,6 +43,8 @@ interface LeadWorkspaceClientProps {
   userName: string;
   /** True when opened from the Leads page — always shows "Add to Pipeline" */
   fromLeads?: boolean;
+  /** True when opened in the iframe overlay (dialer / pipeline modal) */
+  isModal?: boolean;
 }
 
 // ── Status helpers (dynamic) ───────────────────────────────────────────────────
@@ -221,6 +223,7 @@ export default function LeadWorkspaceClient({
   userId,
   userName,
   fromLeads = false,
+  isModal = false,
 }: LeadWorkspaceClientProps) {
   const router = useRouter();
   const [lead, setLead]               = useState(initialLead);
@@ -273,7 +276,7 @@ export default function LeadWorkspaceClient({
   const prevId = currentIdx > 0 ? allLeadIds[currentIdx - 1] : null;
   const nextId = currentIdx < allLeadIds.length - 1 ? allLeadIds[currentIdx + 1] : null;
 
-  const status = lead.lead_status || lead.stage || 'New Lead';
+  const status = lead.lead_status || '';
   const statusStyle = getStatusStyle(status, dbStatuses);
 
   // ── SOS / Google lookup (header buttons) ──────────────────────────────────
@@ -727,57 +730,52 @@ export default function LeadWorkspaceClient({
       <div className="bg-white border-b border-[#e5e5e5] px-6 py-3 flex items-center justify-between flex-shrink-0">
         {/* Left: back + title */}
         <div className="flex items-center gap-4">
-          {lead.in_pipeline && !fromLeads ? (
-            <a
-              href="/pipeline"
-              onClick={e => {
-                if (typeof window !== 'undefined' && window.top && window.top !== window.self) {
-                  e.preventDefault();
-                  window.top.location.href = '/pipeline';
-                }
-              }}
-              className="flex items-center gap-1.5 text-sm text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-              Back to Pipeline
-            </a>
-          ) : (
-            <button
-              onClick={async () => {
-                await fetch('/api/leads/pipeline', {
-                  method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ leadId: lead.id }),
-                });
-                setLead(prev => ({ ...prev, in_pipeline: true }));
-                const dest = '/pipeline';
-                if (typeof window !== 'undefined' && window.top && window.top !== window.self) {
-                  window.top.location.href = dest;
-                } else {
-                  router.push(dest);
-                }
-              }}
-              className="flex items-center gap-1.5 text-sm font-semibold text-white bg-[#1a1a1a] hover:bg-[#333] px-3 py-1 rounded-md transition-colors"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-              Add to Pipeline
-            </button>
+          {!isModal && (
+            <>
+              {lead.in_pipeline && !fromLeads ? (
+                <a
+                  href="/pipeline"
+                  className="flex items-center gap-1.5 text-sm text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                  Back to Pipeline
+                </a>
+              ) : (
+                <button
+                  onClick={async () => {
+                    await fetch('/api/leads/pipeline', {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ leadId: lead.id }),
+                    });
+                    setLead(prev => ({ ...prev, in_pipeline: true }));
+                    router.push('/pipeline');
+                  }}
+                  className="flex items-center gap-1.5 text-sm font-semibold text-white bg-[#1a1a1a] hover:bg-[#333] px-3 py-1 rounded-md transition-colors"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                  </svg>
+                  Add to Pipeline
+                </button>
+              )}
+              <span className="text-[#e5e5e5]">|</span>
+            </>
           )}
-          <span className="text-[#e5e5e5]">|</span>
           <div className="flex items-center gap-2">
             <h2 className="text-base font-bold text-[#1a1a1a]">{lead.company || lead.name}</h2>
             <span className="text-xs text-[#9b9b9b] font-mono">#{lead.id.slice(0, 8)}</span>
           </div>
-          <span
-            className="px-2.5 py-0.5 rounded text-xs font-medium"
-            style={{ background: statusStyle.bg, color: statusStyle.text }}
-          >
-            {status}
-          </span>
+          {status && (
+            <span
+              className="px-2.5 py-0.5 rounded text-xs font-medium"
+              style={{ background: statusStyle.bg, color: statusStyle.text }}
+            >
+              {status}
+            </span>
+          )}
 
           {/* SOS + Google quick lookup buttons */}
           <div className="relative flex items-center gap-1.5">
@@ -1223,7 +1221,7 @@ export default function LeadWorkspaceClient({
                 <img src="/images/icons/kanban-icon.png" alt="Manage statuses" width={13} height={13} style={{ opacity: 0.55 }} />
               </button>
               <select
-                value={lead.lead_status || lead.stage || ''}
+                value={lead.lead_status || ''}
                 onChange={e => saveLeadStatus(e.target.value)}
                 className="flex-1 min-w-0 text-sm border border-[#e5e5e5] rounded px-2 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-[#1a1a1a]"
               >
@@ -1391,7 +1389,7 @@ export default function LeadWorkspaceClient({
           leadName={lead.name}
           leadCompany={lead.company}
           leadValue={lead.value ?? null}
-          leadStatus={lead.lead_status || lead.stage || undefined}
+          leadStatus={lead.lead_status || undefined}
           userName={userName}
           criteria={{
             timeInBusiness:    derivedTIB ?? Number(ud.timeInBusiness ?? 0),
