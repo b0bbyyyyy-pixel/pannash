@@ -40,7 +40,7 @@ export async function POST(req: Request) {
     const { data: lead, error: fetchErr } = await supabase
       .from('leads')
       .select([
-        'id', 'name', 'company', 'phone_e164', 'timezone',
+        'id', 'name', 'company', 'email', 'phone_e164', 'timezone',
         'dnc', 'dialer_status', 'next_eligible_at',
         'last_disposition', 'last_called_at', 'last_call_notes',
         'notes', 'stage', 'month_key',

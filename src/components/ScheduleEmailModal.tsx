@@ -116,6 +116,11 @@ export default function ScheduleEmailModal({ lead, onClose }: ScheduleEmailModal
   const [editSubject, setEditSubject]               = useState('');
   const [editBody, setEditBody]                     = useState('');
   const [savingTemplate, setSavingTemplate]         = useState(false);
+  const [managing, setManaging]                     = useState(false);
+  const [deletingId, setDeletingId]                 = useState<string | null>(null);
+  const [signature, setSignature]                   = useState('');
+  const [savingSignature, setSavingSignature]       = useState(false);
+  const [signatureSaved, setSignatureSaved]         = useState(false);
 
   // Schedule state
   const [scheduledDate, setScheduledDate]           = useState('');
@@ -138,6 +143,10 @@ export default function ScheduleEmailModal({ lead, onClose }: ScheduleEmailModal
       .then(d => setTemplates(d.templates || []))
       .catch(console.error)
       .finally(() => setLoadingTemplates(false));
+    fetch('/api/settings/email-signature', { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => setSignature(d.signature || ''))
+      .catch(console.error);
   }, []);
 
   // ── Helpers: insert into textarea ─────────────────────────────────────────
@@ -185,30 +194,71 @@ export default function ScheduleEmailModal({ lead, onClose }: ScheduleEmailModal
   const saveTemplate = async () => {
     if (!editName.trim() || !editSubject.trim() || !editBody.trim()) return;
     setSavingTemplate(true);
+    const isEdit = !!(editingTemplate && editingTemplate.id);
     try {
-      const method = editingTemplate ? 'PUT' : 'POST';
-      const body   = editingTemplate
-        ? { id: editingTemplate.id, name: editName, subject: editSubject, body: editBody }
-        : { name: editName, subject: editSubject, body: editBody };
-
       const res = await fetch('/api/email-templates', {
-        method,
+        method: isEdit ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
         credentials: 'include',
+        body: JSON.stringify(isEdit
+          ? { id: editingTemplate!.id, name: editName, subject: editSubject, body: editBody }
+          : { name: editName, subject: editSubject, body: editBody }),
       });
       if (res.ok) {
         const { template } = await res.json();
-        if (editingTemplate) {
+        if (isEdit) {
           setTemplates(prev => prev.map(t => t.id === template.id ? template : t));
         } else {
           setTemplates(prev => [...prev, template]);
           setSelectedId(template.id);
         }
+        setManaging(false);
         cancelEdit();
       }
     } finally {
       setSavingTemplate(false);
+    }
+  };
+
+  const deleteTemplate = async (id: string) => {
+    if (!confirm('Delete this template?')) return;
+    setDeletingId(id);
+    try {
+      const res = await fetch(`/api/email-templates?id=${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setSendError(d.error || 'Could not delete template');
+        return;
+      }
+      setTemplates(prev => prev.filter(t => t.id !== id));
+      if (selectedId === id) setSelectedId('');
+      if (editingTemplate?.id === id) cancelEdit();
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const saveSignature = async () => {
+    setSavingSignature(true);
+    setSignatureSaved(false);
+    try {
+      const res = await fetch('/api/settings/email-signature', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ signature }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setSendError(d.error || 'Could not save signature');
+        return;
+      }
+      setSignatureSaved(true);
+    } finally {
+      setSavingSignature(false);
     }
   };
 
@@ -334,15 +384,85 @@ export default function ScheduleEmailModal({ lead, onClose }: ScheduleEmailModal
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-sm font-semibold text-[#1a1a1a]">Email Template *</label>
-              <button
-                onClick={() => { setEditingTemplate(null); setEditName(''); setEditSubject(''); setEditBody(''); startEdit({ id: '', name: '', subject: '', body: '' }); }}
-                className="text-xs text-[#5a7fc7] hover:text-[#4a6fb7] font-medium"
-              >
-                + New Template
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => { setManaging(m => !m); cancelEdit(); }}
+                  className="text-xs text-[#6b6b6b] hover:text-[#1a1a1a] font-medium"
+                >
+                  {managing ? 'Done' : 'Manage'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setManaging(false); startEdit({ id: '', name: '', subject: '', body: '' }); }}
+                  className="text-xs text-[#5a7fc7] hover:text-[#4a6fb7] font-medium"
+                >
+                  + New Template
+                </button>
+              </div>
             </div>
             {loadingTemplates ? (
               <div className="px-3 py-2.5 border border-[#e5e5e5] rounded-lg bg-[#fafafa] text-sm text-[#9b9b9b]">Loading templates…</div>
+            ) : managing ? (
+              <div className="border border-[#e5e5e5] rounded-lg overflow-hidden">
+                {templates.length === 0 ? (
+                  <p className="px-3 py-3 text-sm text-[#9b9b9b]">No templates yet.</p>
+                ) : (
+                  <ul className="divide-y divide-[#f0f0f0]">
+                    {templates.map(t => (
+                      <li key={t.id} className="flex items-center gap-2 px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => { setSelectedId(t.id); setManaging(false); }}
+                          className="flex-1 text-left text-sm text-[#1a1a1a] truncate hover:underline"
+                        >
+                          {t.name}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setManaging(false); startEdit(t); }}
+                          className="p-1 text-[#9b9b9b] hover:text-[#1a1a1a] transition-colors"
+                          title="Edit"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                          </svg>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteTemplate(t.id)}
+                          disabled={deletingId === t.id}
+                          className="p-1 text-[#9b9b9b] hover:text-red-600 transition-colors disabled:opacity-40"
+                          title="Delete"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <div className="border-t border-[#e5e5e5] px-3 py-3 bg-[#fafafa]">
+                  <label className="block text-xs font-semibold text-[#1a1a1a] mb-1.5">Email signature</label>
+                  <p className="text-[11px] text-[#9b9b9b] mb-2">Added to the bottom of every email you send.</p>
+                  <textarea
+                    value={signature}
+                    onChange={e => { setSignature(e.target.value); setSignatureSaved(false); }}
+                    rows={4}
+                    placeholder={"Best,\nYour name\nYour company"}
+                    className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm resize-y focus:outline-none focus:ring-1 focus:ring-[#1a1a1a] bg-white"
+                  />
+                  <button
+                    type="button"
+                    onClick={saveSignature}
+                    disabled={savingSignature}
+                    className="mt-2 px-3 py-1.5 bg-[#1a1a1a] text-white rounded-md text-xs font-medium hover:bg-[#333] disabled:opacity-40"
+                  >
+                    {savingSignature ? 'Saving…' : signatureSaved ? 'Saved' : 'Save signature'}
+                  </button>
+                </div>
+              </div>
             ) : (
               <select
                 value={selectedId}
@@ -434,21 +554,31 @@ export default function ScheduleEmailModal({ lead, onClose }: ScheduleEmailModal
           )}
 
           {/* ── Email preview ── */}
-          {selectedTemplate && !editingTemplate && (
+          {selectedTemplate && !editingTemplate && !managing && (
             <div className="border border-[#e5e5e5] rounded-lg bg-[#fafafa] p-4">
               <div className="flex items-center justify-between mb-3">
                 <span className="text-xs font-semibold text-[#6b6b6b]">
                   {lead.email ? 'Preview with lead data' : 'Template preview'}
                 </span>
-                <button
-                  onClick={() => startEdit(selectedTemplate)}
-                  className="text-xs text-[#5a7fc7] hover:text-[#4a6fb7] font-medium flex items-center gap-1"
-                >
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                  </svg>
-                  Edit Template
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => startEdit(selectedTemplate)}
+                    className="text-xs text-[#5a7fc7] hover:text-[#4a6fb7] font-medium flex items-center gap-1"
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deleteTemplate(selectedTemplate.id)}
+                    disabled={deletingId === selectedTemplate.id}
+                    className="text-xs text-[#9b9b9b] hover:text-red-600 font-medium disabled:opacity-40"
+                  >
+                    Delete
+                  </button>
+                </div>
               </div>
               <div className="bg-white rounded-lg p-3 space-y-3 text-sm">
                 <div>
@@ -470,12 +600,19 @@ export default function ScheduleEmailModal({ lead, onClose }: ScheduleEmailModal
                         : replacePlaceholdersWithExamples(selectedTemplate.body).replace(/\n/g, '<br/>')
                     }}
                   />
+                  {signature.trim() && (
+                    <div
+                      className="mt-4 pt-3 border-t border-[#f0f0f0] text-[#6b6b6b]"
+                      dangerouslySetInnerHTML={{ __html: signature.replace(/\n/g, '<br/>') }}
+                    />
+                  )}
                 </div>
               </div>
             </div>
           )}
 
           {/* ── Sending options ── */}
+          {!managing && !editingTemplate && (
           <div className="border-t border-[#e5e5e5] pt-4">
             <h3 className="text-sm font-semibold text-[#1a1a1a] mb-3">Sending Options</h3>
 
@@ -539,23 +676,35 @@ export default function ScheduleEmailModal({ lead, onClose }: ScheduleEmailModal
               </p>
             </div>
           </div>
+          )}
         </div>
 
         {/* Footer */}
         <div className="flex gap-3 px-6 py-4 border-t border-[#e5e5e5] flex-shrink-0">
-          <button
-            onClick={onClose}
-            className="flex-1 py-2.5 border border-[#e5e5e5] text-[#1a1a1a] rounded-lg text-sm font-medium hover:bg-[#f5f5f5] transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={() => scheduleEmail()}
-            disabled={!selectedId || !scheduledDate || sending || scheduling}
-            className="flex-1 py-2.5 bg-[#5a7fc7] text-white rounded-lg text-sm font-semibold hover:bg-[#4a6fb7] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          >
-            {scheduling ? 'Scheduling…' : 'Schedule Email'}
-          </button>
+          {managing || editingTemplate ? (
+            <button
+              onClick={() => { setManaging(false); cancelEdit(); }}
+              className="flex-1 py-2.5 border border-[#e5e5e5] text-[#1a1a1a] rounded-lg text-sm font-medium hover:bg-[#f5f5f5] transition-colors"
+            >
+              Done
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={onClose}
+                className="flex-1 py-2.5 border border-[#e5e5e5] text-[#1a1a1a] rounded-lg text-sm font-medium hover:bg-[#f5f5f5] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => scheduleEmail()}
+                disabled={!selectedId || !scheduledDate || sending || scheduling}
+                className="flex-1 py-2.5 bg-[#5a7fc7] text-white rounded-lg text-sm font-semibold hover:bg-[#4a6fb7] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                {scheduling ? 'Scheduling…' : 'Schedule Email'}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>

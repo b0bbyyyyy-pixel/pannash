@@ -14,6 +14,7 @@ export interface QueueLead {
   id: string;
   name: string;
   company: string | null;
+  email: string | null;
   phone_e164: string;
   timezone: string | null;
   dnc: boolean;
@@ -32,7 +33,7 @@ export interface QueueLead {
 }
 
 const LEAD_SELECT = [
-  'id', 'name', 'company', 'phone_e164', 'timezone',
+  'id', 'name', 'company', 'email', 'phone_e164', 'timezone',
   'dnc', 'dialer_status', 'next_eligible_at',
   'last_disposition', 'last_called_at', 'last_call_notes',
   'notes', 'stage', 'month_key',

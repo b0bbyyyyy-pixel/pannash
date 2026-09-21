@@ -7,6 +7,7 @@ import { Resend } from 'resend';
 import { replaceTemplateVariables } from '@/lib/queue';
 import { addEmailTracking, convertToHtml, generateTrackingId } from '@/lib/email-tracking';
 import { refreshGmailToken, isTokenExpired } from '@/lib/gmail-refresh';
+import { appendEmailSignature } from '@/lib/email-signature';
 
 // Lazy initialization to avoid build-time errors
 function getResend() {
@@ -39,6 +40,13 @@ export async function POST(req: NextRequest) {
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    const { data: settings } = await supabase
+      .from('user_settings')
+      .select('email_signature')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    const emailSignature = settings?.email_signature as string | undefined;
 
     // Fetch pending emails that are ready to send (scheduled_for <= now)
     // ONLY for active campaigns
@@ -117,7 +125,8 @@ export async function POST(req: NextRequest) {
         // Add email tracking (pixel + link tracking)
         const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
         body = addEmailTracking(body, item.campaign_lead_id, baseUrl);
-        
+        body = appendEmailSignature(body, emailSignature);
+
         // Convert to HTML for tracking pixel support
         const htmlBody = convertToHtml(body);
 

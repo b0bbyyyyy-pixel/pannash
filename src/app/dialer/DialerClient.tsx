@@ -1,10 +1,13 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import dynamic from 'next/dynamic';
 import { formatDisplay } from '@/lib/dialer/e164';
 import { getPhoneLocation } from '@/lib/phoneLocation';
 import { useWebPhone } from '@/components/webphone/WebPhone';
 import ManualDialPanel from './ManualDialPanel';
+
+const ScheduleEmailModal = dynamic(() => import('@/components/ScheduleEmailModal'), { ssr: false });
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -12,6 +15,7 @@ interface Lead {
   id: string;
   name: string;
   company: string | null;
+  email: string | null;
   phone_e164: string;
   timezone: string | null;
   last_disposition: string | null;
@@ -41,7 +45,9 @@ interface DialerCall {
   callback_at: string | null;
 }
 
-type DialerState = 'loading' | 'ready' | 'wrap_up' | 'saving' | 'empty';
+type DialerState = 'loading' | 'ready' | 'on_call' | 'wrap_up' | 'saving' | 'empty';
+
+const LIVE_PHONE = new Set(['connecting', 'ringing', 'in-call']);
 
 const DISPOSITIONS = [
   { key: 'connected',  label: 'Connected',   color: '#16a34a', shortcut: '1' },
@@ -142,9 +148,19 @@ function LeadInfoOverlay({ leadId, onClose }: { leadId: string; onClose: () => v
 function LeadCard({
   lead,
   onCall,
+  inCall,
+  phoneStatus,
+  onHangup,
+  onEmailSaved,
+  onQuickEmail,
 }: {
   lead: Lead;
   onCall: () => void;
+  inCall?: boolean;
+  phoneStatus?: string;
+  onHangup?: () => void;
+  onEmailSaved: (email: string) => void;
+  onQuickEmail: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   // Derive city/state/timezone from the phone's area code
@@ -153,11 +169,21 @@ function LeadCard({
 
   const [localT, setLocalT] = useState(localTime(effectiveTz));
   const [showOverlay, setShowOverlay] = useState(false);
+  const [emailDraft, setEmailDraft] = useState(lead.email || '');
+  const [editingEmail, setEditingEmail] = useState(!lead.email);
+  const [savingEmail, setSavingEmail] = useState(false);
+  const [emailError, setEmailError] = useState('');
 
   useEffect(() => {
     const t = setInterval(() => setLocalT(localTime(effectiveTz)), 30_000);
     return () => clearInterval(t);
   }, [effectiveTz]);
+
+  useEffect(() => {
+    setEmailDraft(lead.email || '');
+    setEditingEmail(!lead.email);
+    setEmailError('');
+  }, [lead.id, lead.email]);
 
   const copyNumber = () => {
     navigator.clipboard.writeText(lead.phone_e164).catch(() => {});
@@ -165,15 +191,88 @@ function LeadCard({
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const saveEmail = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    const value = emailDraft.trim();
+    if (value === (lead.email || '')) {
+      setEditingEmail(!!lead.email ? false : true);
+      return;
+    }
+    if (!value || !value.includes('@') || !value.includes('.')) {
+      setEmailError('Enter a valid email');
+      return;
+    }
+    setSavingEmail(true);
+    setEmailError('');
+    try {
+      const res = await fetch('/api/leads/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ leadId: lead.id, field: 'email', value }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setEmailError(d.error || 'Could not save email');
+        return;
+      }
+      onEmailSaved(value);
+      setEditingEmail(false);
+    } catch {
+      setEmailError('Could not save email');
+    } finally {
+      setSavingEmail(false);
+    }
+  };
+
   return (
     <div className="bg-white border border-[#e5e5e5] rounded-2xl p-8 shadow-sm">
       {/* Header row */}
       <div className="flex items-start justify-between mb-6">
-        <div>
-          <h2 className="text-2xl font-semibold text-[#1a1a1a] leading-tight">{lead.name}</h2>
-          {lead.company && (
-            <p className="text-sm text-[#6b7280] mt-0.5">{lead.company}</p>
-          )}
+        <div className="min-w-0 pr-4">
+          <div className="flex items-baseline gap-2.5 flex-wrap">
+            <h2 className="text-2xl font-semibold text-[#1a1a1a] leading-tight">{lead.name}</h2>
+            {lead.company && (
+              <span className="text-sm text-[#6b7280] leading-tight">{lead.company}</span>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5 mt-1.5 min-w-0">
+            {editingEmail || !lead.email ? (
+              <form onSubmit={saveEmail} className="flex items-center gap-1.5 min-w-0">
+                <input
+                  type="email"
+                  value={emailDraft}
+                  autoFocus={editingEmail && !!lead.email}
+                  onChange={(e) => { setEmailDraft(e.target.value); setEmailError(''); }}
+                  onBlur={() => { void saveEmail(); }}
+                  placeholder="Add email…"
+                  className="w-56 max-w-full px-2 py-0.5 border border-[#e5e5e5] rounded-md text-sm text-[#1a1a1a] placeholder:text-[#c4c4c4] focus:outline-none focus:ring-1 focus:ring-[#1a1a1a]"
+                />
+              </form>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setEditingEmail(true)}
+                title="Edit email"
+                className="text-sm text-[#6b7280] truncate hover:text-[#1a1a1a] transition-colors"
+              >
+                {lead.email}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onQuickEmail}
+              disabled={!lead.email}
+              title="Send email"
+              className="shrink-0 p-0.5 text-[#9ca3af] hover:text-[#6b7280] disabled:opacity-30 disabled:hover:text-[#9ca3af] transition-colors"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
+                  d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+            </button>
+          </div>
+          {emailError && <p className="text-xs text-red-600 mt-1">{emailError}</p>}
           {lead.stage && (
             <span className="inline-block mt-2 text-xs px-2.5 py-1 rounded-full bg-[#f0f0f0] text-[#555]">
               {lead.stage}
@@ -275,18 +374,38 @@ function LeadCard({
         </div>
       )}
 
-      {/* Call button */}
-      <button
-        onClick={onCall}
-        className="w-full py-4 rounded-xl bg-[#1a1a1a] text-white text-base font-medium hover:bg-[#333] active:scale-[0.98] transition-all flex items-center justify-center gap-2.5"
-      >
-        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-            d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498A1 1 0 0121 15.72V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 7V5z" />
-        </svg>
-        Call {lead.name.split(' ')[0]}
-        <span className="text-[#888] text-xs ml-1">[C]</span>
-      </button>
+      {/* Call button / live status */}
+      {inCall ? (
+        <div className="space-y-3">
+          <div className="w-full py-3 rounded-xl bg-[#f4f4f4] text-[#1a1a1a] text-sm font-medium flex items-center justify-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+            {phoneStatus === 'ringing' && 'Ringing…'}
+            {phoneStatus === 'connecting' && 'Connecting…'}
+            {phoneStatus === 'in-call' && 'On call'}
+            {phoneStatus !== 'ringing' && phoneStatus !== 'connecting' && phoneStatus !== 'in-call' && 'Call in progress'}
+          </div>
+          {onHangup && (
+            <button
+              onClick={onHangup}
+              className="w-full py-3 rounded-xl bg-red-600 text-white text-sm font-medium hover:bg-red-700 active:scale-[0.98] transition-all"
+            >
+              Hang up
+            </button>
+          )}
+        </div>
+      ) : (
+        <button
+          onClick={onCall}
+          className="w-full py-4 rounded-xl bg-[#1a1a1a] text-white text-base font-medium hover:bg-[#333] active:scale-[0.98] transition-all flex items-center justify-center gap-2.5"
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498A1 1 0 0121 15.72V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 7V5z" />
+          </svg>
+          Call {lead.name.split(' ')[0]}
+          <span className="text-[#888] text-xs ml-1">[C]</span>
+        </button>
+      )}
     </div>
   );
 }
@@ -336,8 +455,8 @@ function WrapUpCard({
         </div>
         <div className="ml-auto">
           <span className="inline-flex items-center gap-1.5 text-xs text-[#6b7280] bg-[#f4f4f4] px-2.5 py-1 rounded-full">
-            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-            Call in progress
+            <span className="w-1.5 h-1.5 rounded-full bg-[#9ca3af]" />
+            Call ended
           </span>
         </div>
       </div>
@@ -558,6 +677,7 @@ export default function DialerClient() {
   const [showPicker, setShowPicker] = useState(false);
   const [testMode, setTestMode] = useState(false);
   const [showCallCount, setShowCallCount] = useState(false);
+  const [showEmailModal, setShowEmailModal] = useState(false);
   const initDone = useRef(false);
   const webphone = useWebPhone();
 
@@ -578,7 +698,7 @@ export default function DialerClient() {
         setLead(data.current);
         if (data.activeCall) {
           setCallId(data.activeCall.id);
-          setState('wrap_up');
+          setState(LIVE_PHONE.has(webphone.status) ? 'on_call' : 'wrap_up');
         } else {
           setState('ready');
         }
@@ -734,11 +854,23 @@ export default function DialerClient() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Failed to start call');
       setCallId(data.callId);
-      setState('wrap_up');
+      setState(testMode ? 'wrap_up' : 'on_call');
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error starting call');
     }
   };
+
+  // After hangup, show wrap-up. Stay on the lead card while ringing / on call.
+  const wasLiveRef = useRef(false);
+  useEffect(() => {
+    const live = LIVE_PHONE.has(webphone.status);
+    if (live) wasLiveRef.current = true;
+    if (state === 'on_call' && wasLiveRef.current && !live && callId) {
+      wasLiveRef.current = false;
+      setState('wrap_up');
+    }
+    if (state !== 'on_call') wasLiveRef.current = live;
+  }, [webphone.status, state, callId]);
 
   // ── Save disposition ────────────────────────────────────────────────────────
   const handleDisposition = async (
@@ -873,8 +1005,16 @@ export default function DialerClient() {
             </div>
           ) : state === 'empty' ? (
             <EmptyState onRefresh={() => claimNext(null)} queueLen={queue.length} />
-          ) : state === 'ready' && lead ? (
-            <LeadCard lead={lead} onCall={handleCall} />
+          ) : (state === 'ready' || state === 'on_call') && lead ? (
+            <LeadCard
+              lead={lead}
+              onCall={handleCall}
+              inCall={state === 'on_call'}
+              phoneStatus={webphone.status}
+              onHangup={webphone.hangup}
+              onEmailSaved={(email) => setLead((prev) => prev ? { ...prev, email } : prev)}
+              onQuickEmail={() => setShowEmailModal(true)}
+            />
           ) : state === 'wrap_up' && lead && callId ? (
             <WrapUpCard
               lead={lead}
@@ -903,6 +1043,18 @@ export default function DialerClient() {
         <CampaignPickerModal
           onSelect={handleLoadCampaign}
           onClose={() => setShowPicker(false)}
+        />
+      )}
+
+      {showEmailModal && lead && (
+        <ScheduleEmailModal
+          lead={{
+            id: lead.id,
+            name: lead.name,
+            email: lead.email,
+            company: lead.company,
+          }}
+          onClose={() => setShowEmailModal(false)}
         />
       )}
     </div>

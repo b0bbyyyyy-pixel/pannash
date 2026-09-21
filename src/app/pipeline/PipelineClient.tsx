@@ -202,19 +202,19 @@ export default function PipelineClient({ leads, userId }: PipelineClientProps) {
   }, [leads]);
 
   const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    // Search looks at every pipeline lead — filters do not narrow it
+    if (q) {
+      return sorted.filter(lead =>
+        lead.name?.toLowerCase().includes(q) ||
+        lead.email?.toLowerCase().includes(q) ||
+        lead.phone?.toLowerCase().includes(q) ||
+        lead.company?.toLowerCase().includes(q) ||
+        lead.id.toLowerCase().includes(q)
+      );
+    }
     const f = applied;
-    const q = search.toLowerCase();
     return sorted.filter(lead => {
-      // Search bar (quick)
-      if (q) {
-        const match =
-          lead.name?.toLowerCase().includes(q) ||
-          lead.email?.toLowerCase().includes(q) ||
-          lead.phone?.toLowerCase().includes(q) ||
-          lead.company?.toLowerCase().includes(q) ||
-          lead.id.toLowerCase().includes(q);
-        if (!match) return false;
-      }
       // Lead ID
       if (f.leadId && !lead.id.toLowerCase().includes(f.leadId.toLowerCase())) return false;
       // Status (multi-exclude)

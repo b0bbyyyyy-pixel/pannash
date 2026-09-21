@@ -5,6 +5,7 @@ import { google } from 'googleapis';
 import nodemailer from 'nodemailer';
 import { Resend } from 'resend';
 import { addEmailTracking, convertToHtml } from '@/lib/email-tracking';
+import { appendEmailSignature } from '@/lib/email-signature';
 
 // Lazy initialization to avoid build-time errors
 function getResend() {
@@ -36,6 +37,13 @@ export async function POST(req: NextRequest) {
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    const { data: settings } = await supabase
+      .from('user_settings')
+      .select('email_signature')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    const emailSignature = settings?.email_signature as string | undefined;
 
     // Fetch scheduled follow-ups that are ready to send
     const now = new Date().toISOString();
@@ -81,7 +89,10 @@ export async function POST(req: NextRequest) {
         
         // Add tracking
         const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
-        const trackedBody = addEmailTracking(followUp.body, followUp.campaign_lead_id, baseUrl);
+        const trackedBody = appendEmailSignature(
+          addEmailTracking(followUp.body, followUp.campaign_lead_id, baseUrl),
+          emailSignature
+        );
         const htmlBody = convertToHtml(trackedBody);
 
         let success = false;

@@ -153,8 +153,16 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   // ── Actions ─────────────────────────────────────────────────────────────────
   const connect = useCallback(async (e164: string, meta?: { name?: string }) => {
     const device = deviceRef.current;
-    if (!device) { setError('Phone not ready — check Twilio setup in Settings.'); return; }
-    if (callRef.current) { setError('Already on a call.'); return; }
+    if (!device) {
+      const msg = 'Phone not ready — check Twilio setup in Settings.';
+      setError(msg);
+      throw new Error(msg);
+    }
+    if (callRef.current) {
+      const msg = 'Already on a call.';
+      setError(msg);
+      throw new Error(msg);
+    }
     setError(null);
     setActiveNumber(e164);
     setActiveName(meta?.name ?? null);

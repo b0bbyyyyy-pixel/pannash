@@ -4,6 +4,7 @@ import { cookies } from 'next/headers';
 import { google } from 'googleapis';
 import nodemailer from 'nodemailer';
 import { refreshGmailToken, isTokenExpired } from '@/lib/gmail-refresh';
+import { appendEmailSignature } from '@/lib/email-signature';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -94,7 +95,13 @@ export async function POST(req: NextRequest) {
     if (leadErr || !lead) return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
     if (!lead.email) return NextResponse.json({ error: 'This lead has no email address' }, { status: 400 });
 
-    const htmlBody = toHtml(html);
+    const { data: settings } = await supabase
+      .from('user_settings')
+      .select('email_signature')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    const htmlBody = toHtml(appendEmailSignature(html, settings?.email_signature));
     let lastError = '';
     let needsGmail = false;
 
