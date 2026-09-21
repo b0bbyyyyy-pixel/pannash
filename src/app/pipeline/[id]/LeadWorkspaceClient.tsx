@@ -9,6 +9,7 @@ import { useWebPhone } from '@/components/webphone/WebPhone';
 const UnderwritingSuite    = dynamic(() => import('@/components/UnderwritingSuite'), { ssr: false });
 const ScheduleEmailModal   = dynamic(() => import('@/components/ScheduleEmailModal'), { ssr: false });
 const DocumentsModal       = dynamic(() => import('@/components/DocumentsModal'), { ssr: false });
+const DocumentVault        = dynamic(() => import('@/components/DocumentVault'), { ssr: false });
 const SendToLenderModal    = dynamic(() => import('@/components/SendToLenderModal'), { ssr: false });
 const CallHistoryPanel     = dynamic(() => import('@/components/CallHistoryPanel'), { ssr: false });
 const ManageStatusesModal  = dynamic(() => import('@/components/ManageStatusesModal'), { ssr: false });
@@ -230,6 +231,7 @@ export default function LeadWorkspaceClient({
   const [deleting, setDeleting] = useState(false);
   const [showEmailModal, setShowEmailModal]     = useState(false);
   const [showDocsModal, setShowDocsModal]       = useState(false);
+  const [showVault, setShowVault]               = useState(false);
   const [showSendModal, setShowSendModal]       = useState(false);
   const [showFinancials, setShowFinancials]     = useState(false);
   const [showManageStatuses, setShowManageStatuses] = useState(false);
@@ -838,6 +840,15 @@ export default function LeadWorkspaceClient({
         {/* Right: actions + prev/next */}
         <div className="flex items-center gap-2">
           <button
+            onClick={() => setShowVault(true)}
+            className="p-2 rounded-md border border-[#e5e5e5] hover:bg-[#f5f5f5] text-[#9b9b9b] hover:text-[#1a1a1a] transition-colors"
+            title="Document vault"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2m-9 0h10a2 2 0 012 2v9a2 2 0 01-2 2H7a2 2 0 01-2-2V9a2 2 0 012-2zm5 5v3" />
+            </svg>
+          </button>
+          <button
             onClick={() => setConfirmDelete(true)}
             className="p-2 rounded-md border border-[#e5e5e5] hover:bg-red-50 text-[#9b9b9b] hover:text-red-600 transition-colors"
             title="Delete"
@@ -1352,6 +1363,10 @@ export default function LeadWorkspaceClient({
           onAnalyze={analyzeBankAttachment}
           onClose={() => setShowDocsModal(false)}
         />
+      )}
+
+      {showVault && (
+        <DocumentVault onClose={() => setShowVault(false)} />
       )}
 
       {/* ── SCHEDULE EMAIL MODAL ─────────────────────────────────────────── */}

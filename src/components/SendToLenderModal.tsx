@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo, DragEvent } from 'react';
 import dynamic from 'next/dynamic';
+import DocumentVault from './DocumentVault';
 
 const LenderSettingsModal = dynamic(() => import('./LenderSettingsModal'), { ssr: false });
 
@@ -196,6 +197,7 @@ export default function SendToLenderModal({
   const [dragOver, setDragOver]         = useState(false);
   const [uploadFiles, setUploadFiles]   = useState<File[]>([]);
   const [uploading, setUploading]       = useState(false);
+  const [showVaultPick, setShowVaultPick] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Edit submission status
@@ -890,6 +892,13 @@ export default function SendToLenderModal({
               </div>
               <input ref={fileRef} type="file" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" className="hidden"
                 onChange={e => { if (e.target.files) setUploadFiles(Array.from(e.target.files)); }} />
+              <button
+                type="button"
+                onClick={() => setShowVaultPick(true)}
+                className="mt-3 w-full text-[11px] uppercase tracking-wide text-[#9b9b9b] hover:text-[#1a1a1a]"
+              >
+                Pull from vault
+              </button>
               {uploadFiles.length > 0 && (
                 <div className="mt-3 space-y-1">
                   {uploadFiles.map((f, i) => (
@@ -910,6 +919,15 @@ export default function SendToLenderModal({
             </div>
           </div>
         </div>
+      )}
+
+      {showVaultPick && (
+        <DocumentVault
+          pick
+          accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+          onPick={(picked) => setUploadFiles(prev => [...prev, ...picked])}
+          onClose={() => setShowVaultPick(false)}
+        />
       )}
     </>
   );

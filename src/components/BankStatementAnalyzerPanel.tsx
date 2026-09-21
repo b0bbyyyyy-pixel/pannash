@@ -7,6 +7,7 @@ import {
   mapAnalyzerMetricsToUnderwritingFields,
 } from '@/lib/bankAnalyzer';
 import CashFlowSankeyChart, { type TxnRow } from '@/components/CashFlowSankeyChart';
+import DocumentVault from '@/components/DocumentVault';
 
 type UnderwritingPatch = {
   month1Revenue: number;
@@ -123,6 +124,7 @@ export default function BankStatementAnalyzerPanel({
   const [pdfFilename, setPdfFilename] = useState<string>('analysis.pdf');
   const [livePayload, setLivePayload] = useState<AnalyzeSuccessJson | null>(null);
   const [openPf, setOpenPf] = useState<Record<number, boolean>>({});
+  const [showVaultPick, setShowVaultPick] = useState(false);
 
   useEffect(() => {
     setFiles([]);
@@ -617,6 +619,14 @@ export default function BankStatementAnalyzerPanel({
         <div className="mt-2 text-xs text-gray-500">Click to browse</div>
       </div>
 
+      <button
+        type="button"
+        onClick={() => setShowVaultPick(true)}
+        className="mt-2 w-full text-[11px] uppercase tracking-wide text-[#9b9b9b] hover:text-[#1a1a1a]"
+      >
+        Pull from vault
+      </button>
+
       {files.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
           {files.map((f, i) => (
@@ -676,6 +686,15 @@ export default function BankStatementAnalyzerPanel({
       >
         {files.length > 1 ? `Analyze ${files.length} Statements` : 'Analyze Statement'}
       </button>
+
+      {showVaultPick && (
+        <DocumentVault
+          pick
+          accept=".pdf,.csv"
+          onPick={(picked) => addFiles(picked)}
+          onClose={() => setShowVaultPick(false)}
+        />
+      )}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback, DragEvent } from 'react';
+import DocumentVault from '@/components/DocumentVault';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Attachment {
@@ -134,6 +135,7 @@ export default function DocumentsModal({
   const [downloading, setDownloading] = useState<string | null>(null);
   const [deleting, setDeleting]       = useState<string | null>(null);
   const [reExtracting, setReExtracting] = useState<string | null>(null);
+  const [showVaultPick, setShowVaultPick] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -672,6 +674,13 @@ export default function DocumentsModal({
                     ref={fileInputRef} type="file" multiple accept={ALLOWED_TYPES} className="hidden"
                     onChange={e => { if (e.target.files) addFiles(Array.from(e.target.files)); }}
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowVaultPick(true)}
+                    className="mt-3 w-full text-[11px] uppercase tracking-wide text-[#9b9b9b] hover:text-[#1a1a1a]"
+                  >
+                    Pull from vault
+                  </button>
                 </div>
 
                 {/* Pending file list */}
@@ -847,6 +856,15 @@ export default function DocumentsModal({
             )}
           </div>
         </div>
+      )}
+
+      {showVaultPick && (
+        <DocumentVault
+          pick
+          accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.xls,.xlsx"
+          onPick={(files) => addFiles(files)}
+          onClose={() => setShowVaultPick(false)}
+        />
       )}
     </>
   );
