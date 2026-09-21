@@ -712,6 +712,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
       month_key: null,      // keep campaign uploads OUT of the pipeline
       in_pipeline: false,
+      lead_status: 'New Lead',
     }));
 
     const { error } = await supabase.from('leads').insert(leads);
@@ -780,6 +781,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
                     list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
                     month_key: null,      // keep campaign uploads OUT of the pipeline
                     in_pipeline: false,
+                    lead_status: 'New Lead',
                   };
                 })
                 .filter((lead: any) => lead !== null);
@@ -811,6 +813,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
                     list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
                     month_key: null,      // keep campaign uploads OUT of the pipeline
                     in_pipeline: false,
+                    lead_status: 'New Lead',
                   };
                 })
                 .filter((lead: any) => lead !== null);
@@ -908,6 +911,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
       month_key: null,      // keep campaign uploads OUT of the pipeline
       in_pipeline: false,
+      lead_status: 'New Lead',
     }));
 
     const { error } = await supabase.from('leads').insert(leads);
@@ -1203,6 +1207,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
       month_key: null,      // keep campaign uploads OUT of the pipeline
       in_pipeline: false,
+      lead_status: 'New Lead',
     }));
 
     const { error } = await supabase.from('leads').insert(leads);
@@ -1478,6 +1483,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
       month_key: null,      // keep campaign uploads OUT of the pipeline
       in_pipeline: false,
+      lead_status: 'New Lead',
       // Add to dialer queue if toggled
       ...(sheetsAddToDialer ? { dialer_status: 'queued' } : {}),
     }));

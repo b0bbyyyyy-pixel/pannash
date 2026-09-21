@@ -42,6 +42,7 @@ export async function POST(req: NextRequest) {
         notes: notes || null,
         list_id: list_id || null,
         last_contact: new Date().toISOString(),
+        lead_status: 'New Lead',
         ...(underwriting_data && Object.keys(underwriting_data).length > 0
           ? { underwriting_data }
           : {}),
