@@ -284,9 +284,6 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
             </div>
             <div>
               <p className="text-sm font-bold text-[#1a1a1a] leading-none">Add Pipeline Lead</p>
-              <p className="text-[11px] text-[#9b9b9b] mt-0.5">
-                {method === 'choose' ? 'Choose how to add' : method === 'manual' ? 'Manual entry' : method === 'paste' ? 'Quick paste' : 'Upload application'}
-              </p>
             </div>
           </div>
           <button onClick={onClose} className="text-[#9b9b9b] hover:text-[#1a1a1a] transition-colors">
@@ -302,8 +299,6 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
           {/* ── METHOD CHOOSER ─────────────────────────────────────────── */}
           {method === 'choose' && (
             <div className="space-y-3">
-              <p className="text-xs text-[#9b9b9b] mb-4">Select how you'd like to add a new lead to your pipeline.</p>
-
               {/* Manual */}
               <button onClick={() => setMethod('manual')}
                 className="w-full flex items-center gap-4 p-4 rounded-xl border border-[#e5e5e5] hover:border-[#1a1a1a] hover:bg-[#fafafa] transition-all text-left group">
@@ -314,7 +309,6 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
                 </div>
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-[#1a1a1a]">Enter manually</p>
-                  <p className="text-xs text-[#9b9b9b] mt-0.5">Type in name, email, phone, and company</p>
                 </div>
                 <svg className="w-4 h-4 text-[#d4d4d4] group-hover:text-[#6b6b6b] ml-auto flex-shrink-0 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -331,7 +325,6 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
                 </div>
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-[#1a1a1a]">Quick paste</p>
-                  <p className="text-xs text-[#9b9b9b] mt-0.5">Paste a signature, spreadsheet row, or vCard — we auto-parse it</p>
                 </div>
                 <svg className="w-4 h-4 text-[#d4d4d4] group-hover:text-[#6b6b6b] ml-auto flex-shrink-0 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -348,7 +341,6 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
                 </div>
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-[#1a1a1a]">Upload application</p>
-                  <p className="text-xs text-[#9b9b9b] mt-0.5">Drop a PDF or DOCX — AI parses the fields directly into the lead</p>
                 </div>
                 <svg className="w-4 h-4 text-[#d4d4d4] group-hover:text-[#6b6b6b] ml-auto flex-shrink-0 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
