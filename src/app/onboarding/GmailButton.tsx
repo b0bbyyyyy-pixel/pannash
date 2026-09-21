@@ -2,7 +2,7 @@
 
 export default function GmailButton() {
   const handleGmailConnect = () => {
-    window.location.href = '/api/auth/google';
+    window.location.href = '/api/auth/google?redirect=/dashboard';
   };
 
   return (

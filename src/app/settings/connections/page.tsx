@@ -8,7 +8,12 @@ import SMTPForm from './SMTPForm';
 import DisconnectButton from './DisconnectButton';
 import TwilioForm from './TwilioForm';
 
-export default async function ConnectionsPage() {
+export default async function ConnectionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ gmail_connected?: string; gmail_error?: string }>;
+}) {
+  const sp = await searchParams;
   const cookieStore = await cookies();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -220,7 +225,7 @@ export default async function ConnectionsPage() {
                       <div>
                         <div className="font-medium text-gray-900">Gmail</div>
                         <div className="text-sm text-gray-600">
-                          {gmailConnection.from_email || 'Connected'}
+                          {gmailConnection.from_email || gmailConnection.email || 'Connected'}
                         </div>
                       </div>
                     </div>
@@ -264,7 +269,7 @@ export default async function ConnectionsPage() {
               <p className="text-sm text-[#6b6b6b] mb-5">
                 Use OAuth to securely connect your Gmail account
               </p>
-              <GmailConnectButton />
+              <GmailConnectButton error={sp.gmail_error} />
             </div>
           )}
 

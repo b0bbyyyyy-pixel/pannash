@@ -122,11 +122,14 @@ export default function ScheduleEmailModal({ lead, onClose }: ScheduleEmailModal
   const [scheduledTime, setScheduledTime]           = useState('09:00');
   const [frequency, setFrequency]                   = useState('once');
 
-  // Submitting
-  const [submitting, setSubmitting]                 = useState(false);
+  const [sending, setSending]                       = useState(false);
+  const [scheduling, setScheduling]                 = useState(false);
   const [successMsg, setSuccessMsg]                 = useState('');
+  const [sendError, setSendError]                   = useState('');
+  const [needsGmail, setNeedsGmail]                 = useState(false);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
 
   // ── Fetch templates on mount ───────────────────────────────────────────────
   useEffect(() => {
@@ -209,53 +212,71 @@ export default function ScheduleEmailModal({ lead, onClose }: ScheduleEmailModal
     }
   };
 
-  // ── Copy to clipboard (Send Now) ──────────────────────────────────────────
-  const copyToClipboard = async () => {
+  // ── Send now ──────────────────────────────────────────────────────────────
+  const sendNow = async () => {
     const tpl = templates.find(t => t.id === selectedId);
     if (!tpl) return;
-    const subject = replacePlaceholders(tpl.subject, lead);
-    const body    = replacePlaceholders(tpl.body, lead);
-    const div = document.createElement('div');
-    div.innerHTML = body;
-    const plain = div.textContent || div.innerText || '';
-    const text  = `Subject: ${subject}\n\n${plain}`;
+    if (!lead.email) { setSendError('This lead has no email address.'); return; }
+    setSending(true);
+    setSendError('');
+    setSuccessMsg('');
+    setNeedsGmail(false);
     try {
-      await navigator.clipboard.writeText(text);
-      setSuccessMsg('Copied to clipboard! Paste into your email client.');
+      const res = await fetch('/api/leads/send-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          leadId: lead.id,
+          subject: replacePlaceholders(tpl.subject, lead),
+          html: replacePlaceholders(tpl.body, lead),
+        }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setSendError(d.error || 'Send failed');
+        setNeedsGmail(!!d.needsGmail);
+        return;
+      }
+      setSuccessMsg(`Sent to ${d.to || lead.email}`);
+      bodyRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
     } catch {
-      alert('Failed to copy. Please copy manually.');
+      setSendError('Network error — email was not sent.');
+    } finally {
+      setSending(false);
     }
   };
 
   // ── Schedule email ────────────────────────────────────────────────────────
-  const scheduleEmail = async (sendNow: boolean) => {
+  const scheduleEmail = async () => {
     if (!selectedId) return;
-    if (!sendNow && !scheduledDate) { alert('Please select a date.'); return; }
-    setSubmitting(true);
+    if (!scheduledDate) { alert('Please select a date.'); return; }
+    setScheduling(true);
+    setSendError('');
+    setSuccessMsg('');
     try {
-      const scheduledTime_iso = sendNow
-        ? new Date().toISOString()
-        : new Date(`${scheduledDate}T${scheduledTime}`).toISOString();
+      const scheduledTime_iso = new Date(`${scheduledDate}T${scheduledTime}`).toISOString();
 
-      await fetch('/api/leads/schedule-email', {
+      const res = await fetch('/api/leads/schedule-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           leadId: lead.id,
           templateId: selectedId,
           scheduledTime: scheduledTime_iso,
-          frequency: sendNow ? 'once' : frequency,
+          frequency,
         }),
         credentials: 'include',
       });
-
-      if (sendNow) {
-        await copyToClipboard();
-      } else {
-        setSuccessMsg(`Email scheduled${frequency !== 'once' ? ` (${frequency})` : ''} for ${new Date(scheduledDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} at ${scheduledTime}.`);
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setSendError(d.error || 'Could not schedule');
+        return;
       }
+      setSuccessMsg(`Email scheduled${frequency !== 'once' ? ` (${frequency})` : ''} for ${new Date(scheduledDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} at ${scheduledTime}.`);
+      bodyRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
     } finally {
-      setSubmitting(false);
+      setScheduling(false);
     }
   };
 
@@ -284,7 +305,7 @@ export default function ScheduleEmailModal({ lead, onClose }: ScheduleEmailModal
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+        <div ref={bodyRef} className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
 
           {/* Success banner */}
           {successMsg && (
@@ -293,6 +314,19 @@ export default function ScheduleEmailModal({ lead, onClose }: ScheduleEmailModal
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
               <p className="text-sm text-green-800">{successMsg}</p>
+            </div>
+          )}
+          {sendError && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3 space-y-2">
+              <p className="text-sm text-red-700">{sendError}</p>
+              {needsGmail && (
+                <a
+                  href="/api/auth/google?redirect=/settings/connections"
+                  className="inline-flex items-center px-3 py-1.5 bg-[#1a1a1a] text-white rounded-md text-xs font-medium hover:bg-[#2a2a2a]"
+                >
+                  Connect Gmail
+                </a>
+              )}
             </div>
           )}
 
@@ -447,14 +481,14 @@ export default function ScheduleEmailModal({ lead, onClose }: ScheduleEmailModal
 
             {/* Send Now */}
             <button
-              onClick={() => scheduleEmail(true)}
-              disabled={!selectedId || submitting}
+              onClick={sendNow}
+              disabled={!selectedId || sending || scheduling || !lead.email}
               className="w-full py-3 bg-[#22c55e] text-white rounded-lg text-sm font-semibold hover:bg-[#16a34a] disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 mb-4"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
               </svg>
-              Copy &amp; Send Now
+              {sending ? 'Sending…' : 'Send Now'}
             </button>
 
             <div className="flex items-center gap-3 mb-4">
@@ -505,12 +539,6 @@ export default function ScheduleEmailModal({ lead, onClose }: ScheduleEmailModal
               </p>
             </div>
           </div>
-
-          {/* Info note */}
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800">
-            <p className="font-semibold mb-0.5">📋 Manual Send (Until Email Connected)</p>
-            <p>Click "Copy &amp; Send Now" to grab the email content, then paste it into your email client. Once email service is connected, scheduling will send automatically.</p>
-          </div>
         </div>
 
         {/* Footer */}
@@ -522,11 +550,11 @@ export default function ScheduleEmailModal({ lead, onClose }: ScheduleEmailModal
             Cancel
           </button>
           <button
-            onClick={() => scheduleEmail(false)}
-            disabled={!selectedId || !scheduledDate || submitting}
+            onClick={() => scheduleEmail()}
+            disabled={!selectedId || !scheduledDate || sending || scheduling}
             className="flex-1 py-2.5 bg-[#5a7fc7] text-white rounded-lg text-sm font-semibold hover:bg-[#4a6fb7] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
-            {submitting ? 'Scheduling…' : 'Schedule Email'}
+            {scheduling ? 'Scheduling…' : 'Schedule Email'}
           </button>
         </div>
       </div>

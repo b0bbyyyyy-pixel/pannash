@@ -83,7 +83,7 @@ export default function GmailConnectButton({
         </div>
       ) : (
         <a
-          href="/api/auth/google"
+          href="/api/auth/google?redirect=/dashboard"
           className="block p-6 border-2 border-blue-200 rounded-lg hover:border-blue-400 hover:bg-blue-50 transition-all"
         >
           <div className="flex items-center justify-between">

@@ -221,6 +221,9 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   const [scheduledEmailTime, setScheduledEmailTime] = useState('09:00');
   const [scheduledEmailFrequency, setScheduledEmailFrequency] = useState('once');
   const [scheduledEmailCountdowns, setScheduledEmailCountdowns] = useState<{ [key: string]: { days: number; time: string } | 'READY' }>({});
+  const [sendingEmail, setSendingEmail] = useState(false);
+  const [emailSendMsg, setEmailSendMsg] = useState('');
+  const [emailSendError, setEmailSendError] = useState('');
   const [savedEmailTemplates, setSavedEmailTemplates] = useState<EmailTemplate[]>([]);
   const [showTemplateManager, setShowTemplateManager] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<EmailTemplate | null>(null);
@@ -766,29 +769,64 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         setScheduledEmailFrequency(lead.scheduled_email_frequency);
       }
     }
+    setEmailSendMsg('');
+    setEmailSendError('');
     setShowScheduleEmailModal(leadId);
   };
 
-  const handleScheduleEmail = async (leadId: string, sendNow: boolean = false) => {
+  const handleSendEmailNow = async (leadId: string) => {
+    if (!selectedEmailTemplate) {
+      alert('Please select an email template');
+      return;
+    }
+    const lead = leads.find(l => l.id === leadId);
+    const template = savedEmailTemplates.find(t => t.id === selectedEmailTemplate);
+    if (!lead || !template) return;
+    if (!lead.email) {
+      setEmailSendError('This lead has no email address.');
+      return;
+    }
+    setSendingEmail(true);
+    setEmailSendError('');
+    setEmailSendMsg('');
+    try {
+      const res = await fetch('/api/leads/send-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          leadId,
+          subject: replacePlaceholders(template.subject, lead),
+          html: replacePlaceholders(template.body, lead),
+        }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setEmailSendError(d.error || 'Send failed');
+        return;
+      }
+      setEmailSendMsg(`Sent to ${d.to || lead.email}`);
+      const now = new Date().toISOString();
+      setLeads(prev => prev.map(l => l.id === leadId ? { ...l, last_contact: now } : l));
+      onLeadUpdate(leadId, { last_contact: now });
+    } catch {
+      setEmailSendError('Network error — email was not sent.');
+    } finally {
+      setSendingEmail(false);
+    }
+  };
+
+  const handleScheduleEmail = async (leadId: string) => {
     if (!selectedEmailTemplate) {
       alert('Please select an email template');
       return;
     }
 
-    let scheduledTimeISO = null;
-    
-    if (!sendNow) {
-      if (!scheduledEmailDate) {
-        alert('Please select a date');
-        return;
-      }
-      // Combine date and time
-      const scheduledDateTime = new Date(`${scheduledEmailDate}T${scheduledEmailTime}`);
-      scheduledTimeISO = scheduledDateTime.toISOString();
-    } else {
-      // Send now = set to current time (will show as READY)
-      scheduledTimeISO = new Date().toISOString();
+    if (!scheduledEmailDate) {
+      alert('Please select a date');
+      return;
     }
+    const scheduledTimeISO = new Date(`${scheduledEmailDate}T${scheduledEmailTime}`).toISOString();
 
     // Optimistically update local state
     setLeads(prev => prev.map(lead => 
@@ -796,7 +834,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         ...lead, 
         scheduled_email_template_id: selectedEmailTemplate,
         scheduled_email_time: scheduledTimeISO,
-        scheduled_email_frequency: sendNow ? 'once' : scheduledEmailFrequency
+        scheduled_email_frequency: scheduledEmailFrequency
       } : lead
     ));
 
@@ -804,7 +842,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     onLeadUpdate(leadId, { 
       scheduled_email_template_id: selectedEmailTemplate,
       scheduled_email_time: scheduledTimeISO,
-      scheduled_email_frequency: sendNow ? 'once' : scheduledEmailFrequency
+      scheduled_email_frequency: scheduledEmailFrequency
     });
 
     try {
@@ -815,7 +853,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
           leadId, 
           templateId: selectedEmailTemplate,
           scheduledTime: scheduledTimeISO,
-          frequency: sendNow ? 'once' : scheduledEmailFrequency
+          frequency: scheduledEmailFrequency
         }),
         credentials: 'include',
       });
@@ -3461,6 +3499,20 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-lg font-bold text-[#1a1a1a] mb-4">Schedule Email</h2>
+
+            {emailSendMsg && (
+              <div className="mb-4 bg-green-50 border border-green-200 rounded-lg p-3 flex items-start gap-2">
+                <svg className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                <p className="text-sm text-green-800">{emailSendMsg}</p>
+              </div>
+            )}
+            {emailSendError && (
+              <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3">
+                <p className="text-sm text-red-700">{emailSendError}</p>
+              </div>
+            )}
             
             <div className="space-y-4">
               {/* Template Selection */}
@@ -3634,11 +3686,11 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                 
                 {/* Send Now Button */}
                 <button
-                  onClick={() => showScheduleEmailModal && handleScheduleEmail(showScheduleEmailModal, true)}
-                  disabled={!selectedEmailTemplate}
+                  onClick={() => showScheduleEmailModal && handleSendEmailNow(showScheduleEmailModal)}
+                  disabled={!selectedEmailTemplate || sendingEmail}
                   className="w-full px-4 py-3 bg-[#00cc00] text-white rounded-md text-sm font-medium hover:bg-[#00b300] transition-colors mb-3 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  📨 Send Now (Copy & Paste)
+                  {sendingEmail ? 'Sending…' : '📨 Send Now'}
                 </button>
 
                 <div className="text-center text-xs text-[#6b6b6b] mb-3">— OR —</div>
@@ -3690,12 +3742,6 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                   </div>
                 </div>
               </div>
-
-              {/* Info Box */}
-              <div className="bg-[#f0f7ff] border border-[#5a7fc7] rounded-lg p-3 text-xs text-[#1a1a1a]">
-                <p className="font-semibold mb-1">📋 Manual Send (Until Email Connected):</p>
-                <p>When ready, click "Copy" to get the email content. Paste into your email client manually. After email service is connected, emails will send automatically.</p>
-              </div>
             </div>
 
             {/* Action Buttons */}
@@ -3707,8 +3753,8 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                 Cancel
               </button>
               <button
-                onClick={() => showScheduleEmailModal && handleScheduleEmail(showScheduleEmailModal, false)}
-                disabled={!selectedEmailTemplate || !scheduledEmailDate}
+                onClick={() => showScheduleEmailModal && handleScheduleEmail(showScheduleEmailModal)}
+                disabled={!selectedEmailTemplate || !scheduledEmailDate || sendingEmail}
                 className="flex-1 px-4 py-2 bg-[#5a7fc7] text-white rounded-md text-sm font-medium hover:bg-[#4a6fb7] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Schedule Email

@@ -1,10 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { google } from 'googleapis';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 
+export const dynamic = 'force-dynamic';
+
+function safeRedirect(raw: string | null, fallback: string) {
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return fallback;
+  return raw;
+}
+
+/**
+ * GET /api/auth/google?redirect=/settings/connections
+ * Gmail send OAuth. Shares the Google Cloud callback URL with Sheets connect,
+ * but stores tokens in email_connections so Sheets tokens are not overwritten.
+ */
 export async function GET(req: NextRequest) {
-  // Verify user is authenticated
   const cookieStore = await cookies();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -20,44 +30,37 @@ export async function GET(req: NextRequest) {
     }
   );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const clientId = process.env.GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-
-  if (!clientId || !clientSecret) {
-    return NextResponse.json(
-      { error: 'Google OAuth not configured' },
-      { status: 500 }
-    );
+  if (!clientId) {
+    return NextResponse.json({ error: 'Google OAuth not configured' }, { status: 500 });
   }
 
-  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
-  const redirectUri = `${baseUrl}/api/auth/google/callback`;
-
-  const oauth2Client = new google.auth.OAuth2(
-    clientId,
-    clientSecret,
-    redirectUri
+  const origin = req.nextUrl.origin;
+  const callbackUrl = `${origin}/api/auth/google/callback`;
+  const redirectAfter = safeRedirect(
+    req.nextUrl.searchParams.get('redirect'),
+    '/settings/connections'
   );
 
-  // Generate OAuth URL
-  const authUrl = oauth2Client.generateAuthUrl({
-    access_type: 'offline',
+  const state = Buffer.from(
+    JSON.stringify({ redirectAfter, userId: user.id, purpose: 'gmail' })
+  ).toString('base64url');
+
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: callbackUrl,
+    response_type: 'code',
     scope: [
       'https://www.googleapis.com/auth/gmail.send',
       'https://www.googleapis.com/auth/userinfo.email',
-    ],
+    ].join(' '),
+    access_type: 'offline',
     prompt: 'consent',
-    state: user.id, // Pass user ID in state
+    state,
   });
 
-  // Redirect to Google OAuth
-  return NextResponse.redirect(authUrl);
+  return NextResponse.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
 }
