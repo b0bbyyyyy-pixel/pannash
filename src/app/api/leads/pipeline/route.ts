@@ -28,7 +28,7 @@ export async function PATCH(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { leadId, field, value } = body;
+    const { leadId, field, value, status } = body;
 
     if (!leadId) {
       return NextResponse.json({ error: 'leadId is required' }, { status: 400 });
@@ -64,7 +64,9 @@ export async function PATCH(req: NextRequest) {
       .single();
 
     const updatePayload: Record<string, unknown> = { in_pipeline: true };
-    if (!existing?.lead_status) {
+    if (typeof status === 'string' && status.trim()) {
+      updatePayload.lead_status = status.trim();
+    } else if (!existing?.lead_status) {
       updatePayload.lead_status = 'New Lead';
     }
 

@@ -26,9 +26,11 @@ interface ParsedLead {
   state?: string | null;
   zip?: string | null;
   startDate?: string | null;
+  listedRevenue?: string | null;
 }
 
-/** Build the underwriting_data JSONB payload from parsed business-profile fields */
+/** Build the underwriting_data JSONB payload from parsed business-profile fields.
+ * Spreadsheet revenue is NEVER stored here — it belongs in notes only. */
 function buildUnderwriting(l: Partial<ParsedLead>): Record<string, string> | null {
   const ud: Record<string, string> = {};
   if (l.industry)  ud.industry          = l.industry;
@@ -37,7 +39,19 @@ function buildUnderwriting(l: Partial<ParsedLead>): Record<string, string> | nul
   if (l.state)     ud.businessState     = l.state;
   if (l.zip)       ud.businessZip       = l.zip;
   if (l.startDate) ud.businessStartDate = l.startDate;
+  delete ud.monthlyRevenue;
+  delete ud.month1Revenue;
+  delete ud.month2Revenue;
+  delete ud.month3Revenue;
+  delete ud.month4Revenue;
   return Object.keys(ud).length ? ud : null;
+}
+
+function isRevenueHeader(key: string): boolean {
+  const s = key.toLowerCase().trim();
+  if (/\b(email|phone|name|address|street|zip)\b/.test(s)) return false;
+  return /^(rev|revenue|monthly revenue|annual revenue|yearly revenue|gross revenue|avg revenue|average revenue|estimated revenue|sales volume|monthly sales|annual sales|gross sales)$/.test(s)
+    || /\brevenue\b/.test(s);
 }
 
 export default function UploadForm({ selectedListId, onSuccess }: UploadFormProps) {
@@ -525,6 +539,14 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       ]) || findColumn(['start date', 'established', 'incorporation'])
     );
 
+    // Spreadsheet revenue → notes only. Never underwriting / lead-card revenue.
+    let listedRevenue: string | null = null;
+    for (const key of rowKeys) {
+      if (!isRevenueHeader(key)) continue;
+      const v = cellVal(key);
+      if (v) { listedRevenue = v; break; }
+    }
+
     // Dollar amounts can never be a person's name
     if (name && isMoney(name)) name = null;
 
@@ -575,6 +597,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       const lowerKey = key.toLowerCase().trim();
       if (SKIP_LABELS.has(lowerKey)) continue;
       if (isPhoneKey(lowerKey)) continue; // phones already handled
+      if (isRevenueHeader(lowerKey)) continue; // listed in notes as Listed revenue, never UW
       const v = cellVal(key);
       if (!v) continue;
       // If this value was picked up by the phone value-scan fallback, skip it from notes
@@ -582,7 +605,8 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       extraCols.push(`${key}: ${v}`);
     }
 
-    const combinedNotes = [extraPhoneNote, baseNotes, ...extraCols].filter(Boolean).join(' | ') || null;
+    const listedRevNote = listedRevenue ? `Listed revenue: ${listedRevenue}` : null;
+    const combinedNotes = [listedRevNote, extraPhoneNote, baseNotes, ...extraCols].filter(Boolean).join(' | ') || null;
 
     return {
       name: name || '',
@@ -596,6 +620,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       state: bizState || null,
       zip: bizZip || null,
       startDate: startDate || null,
+      listedRevenue: listedRevenue || null,
     };
   };
 

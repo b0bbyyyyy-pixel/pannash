@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 
 export interface CampaignLead {
@@ -14,6 +14,7 @@ export interface CampaignLead {
   call_made_at?: string | null;
   last_contact?: string | null;
   created_at?: string | null;
+  underwriting_data?: Record<string, unknown> | null;
 }
 
 interface Props {
@@ -81,22 +82,60 @@ function mostRecent(...dates: (string | null | undefined)[]): string | null {
   return valid.reduce((a, b) => (new Date(a) > new Date(b) ? a : b));
 }
 
+function leadLocation(lead: CampaignLead): string {
+  const ud = lead.underwriting_data || {};
+  const city = String(ud.businessCity ?? ud.city ?? '').trim();
+  const state = String(ud.businessState ?? ud.state ?? '').trim();
+  if (city && state) return `${city}, ${state}`;
+  return city || state || '';
+}
+
+function listedRevenue(notes: string | null | undefined): string {
+  if (!notes) return '';
+  const tagged = notes.match(/Listed revenue:\s*([^|]+)/i);
+  if (tagged?.[1]) return tagged[1].trim();
+  for (const part of notes.split('|')) {
+    if (/\b(revenue|monthly sales|annual sales|gross sales|sales volume)\b/i.test(part)) {
+      const val = part.split(':').slice(1).join(':').trim();
+      if (val) return val;
+    }
+  }
+  return '';
+}
+
 export default function CampaignLeadsView({ leads: initialLeads, campaignName, listId }: Props) {
   const router = useRouter();
   const [leads, setLeads] = useState<CampaignLead[]>(initialLeads);
   const [search, setSearch] = useState('');
   const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [pipelineMoving, setPipelineMoving] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; lead: CampaignLead } | null>(null);
+  const contextRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = (e: MouseEvent) => {
+      if (contextRef.current && !contextRef.current.contains(e.target as Node)) setContextMenu(null);
+    };
+    window.addEventListener('mousedown', close);
+    return () => window.removeEventListener('mousedown', close);
+  }, [contextMenu]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return leads;
     const q = search.toLowerCase();
-    return leads.filter(
-      (l) =>
+    return leads.filter((l) => {
+      const loc = leadLocation(l).toLowerCase();
+      const rev = listedRevenue(l.notes).toLowerCase();
+      return (
         l.name?.toLowerCase().includes(q) ||
         l.email?.toLowerCase().includes(q) ||
         l.phone?.includes(q) ||
-        l.company?.toLowerCase().includes(q)
-    );
+        l.company?.toLowerCase().includes(q) ||
+        loc.includes(q) ||
+        rev.includes(q)
+      );
+    });
   }, [leads, search]);
 
   const smsCount = leads.filter((l) => l.sms_sent_at).length;
@@ -151,6 +190,24 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
     }
 
     setLoadingId(null);
+  };
+
+  const sendToPipeline = async (lead: CampaignLead) => {
+    setContextMenu(null);
+    setPipelineMoving(lead.id);
+    try {
+      const res = await fetch('/api/leads/pipeline', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadId: lead.id, status: 'Prospect' }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        alert(d.error || 'Could not send to pipeline');
+      }
+    } finally {
+      setPipelineMoving(null);
+    }
   };
 
   return (
@@ -208,17 +265,19 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
         <table className="w-full">
           <thead>
             <tr className="border-b border-[#f5f5f5]">
-              <th className="text-[11px] font-bold text-[#9b9b9b] uppercase tracking-wider px-4 py-3 text-left">Lead</th>
-              <th className="text-[11px] font-bold text-[#9b9b9b] uppercase tracking-wider px-4 py-3 text-left">Contact</th>
-              <th className="text-[11px] font-bold text-[#9b9b9b] uppercase tracking-wider px-4 py-3 text-left">SMS</th>
-              <th className="text-[11px] font-bold text-[#9b9b9b] uppercase tracking-wider px-4 py-3 text-left">Call</th>
-              <th className="text-[11px] font-bold text-[#9b9b9b] uppercase tracking-wider px-4 py-3 text-left">Last Activity</th>
+              <th className="text-[11px] font-bold text-[#9b9b9b] uppercase tracking-wider px-4 py-2 text-left">Lead</th>
+              <th className="text-[11px] font-bold text-[#9b9b9b] uppercase tracking-wider px-4 py-2 text-left">Location</th>
+              <th className="text-[11px] font-bold text-[#9b9b9b] uppercase tracking-wider px-4 py-2 text-left">Revenue</th>
+              <th className="text-[11px] font-bold text-[#9b9b9b] uppercase tracking-wider px-4 py-2 text-left">Contact</th>
+              <th className="text-[11px] font-bold text-[#9b9b9b] uppercase tracking-wider px-4 py-2 text-left">SMS</th>
+              <th className="text-[11px] font-bold text-[#9b9b9b] uppercase tracking-wider px-4 py-2 text-left">Call</th>
+              <th className="text-[11px] font-bold text-[#9b9b9b] uppercase tracking-wider px-4 py-2 text-left">Last Activity</th>
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-12 text-center text-[#9b9b9b] text-sm">
+                <td colSpan={7} className="px-4 py-12 text-center text-[#9b9b9b] text-sm">
                   {search ? 'No leads match your search.' : 'No leads in this campaign yet.'}
                 </td>
               </tr>
@@ -226,44 +285,43 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
             {filtered.map((lead) => {
               const lastActivity = mostRecent(lead.last_contact, lead.sms_sent_at, lead.call_made_at);
               const isLoading = loadingId === lead.id;
+              const PHONE_LABELS = new Set(['mobile','cell','home','work','office','direct','landline','voip','personal','fax']);
+              const rawName = lead.name && !lead.name.includes('@') ? lead.name : null;
+              const personName = extractPersonName(rawName) || lead.company || lead.name || '—';
+              const company = lead.company && !PHONE_LABELS.has(lead.company.toLowerCase().trim())
+                ? lead.company : null;
+              const showCompany = company && company !== personName;
+              const loc = leadLocation(lead);
+              const rev = listedRevenue(lead.notes);
+              const contact = [lead.phone, lead.email].filter(Boolean).join('  ·  ');
 
               return (
-                <tr key={lead.id} className="border-b border-[#f5f5f5] hover:bg-[#fafafa] transition-colors last:border-b-0">
-                  {/* Lead name + company */}
-                  <td className="px-4 py-3.5">
-                    {(() => {
-                      const PHONE_LABELS = new Set(['mobile','cell','home','work','office','direct','landline','voip','personal','fax']);
-                      const rawName = lead.name && !lead.name.includes('@') ? lead.name : null;
-                      const personName = extractPersonName(rawName) || lead.company || lead.name || '—';
-                      const company = lead.company && !PHONE_LABELS.has(lead.company.toLowerCase().trim())
-                        ? lead.company : null;
-                      const showCompany = company && company !== personName;
-                      return (
-                        <>
-                          <div className="font-semibold text-sm text-[#1a1a1a]">{personName}</div>
-                          {showCompany && (
-                            <div className="text-xs text-[#9b9b9b] mt-0.5">{company}</div>
-                          )}
-                        </>
-                      );
-                    })()}
+                <tr
+                  key={lead.id}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setContextMenu({ x: e.clientX, y: e.clientY, lead });
+                  }}
+                  className="border-b border-[#f5f5f5] hover:bg-[#fafafa] transition-colors last:border-b-0"
+                >
+                  <td className="px-4 py-1.5 whitespace-nowrap max-w-[280px]">
+                    <span className="text-sm truncate block">
+                      <span className="font-semibold text-[#1a1a1a]">{personName}</span>
+                      {showCompany ? <span className="text-[#6b6b6b]">  ·  {company}</span> : null}
+                    </span>
                   </td>
-
-                  {/* Contact info */}
-                  <td className="px-4 py-3.5">
-                    {lead.phone && (
-                      <div className="text-xs text-[#6b6b6b]">{lead.phone}</div>
-                    )}
-                    {lead.email && (
-                      <div className="text-xs text-[#9b9b9b] mt-0.5">{lead.email}</div>
-                    )}
-                    {!lead.phone && !lead.email && (
-                      <span className="text-xs text-[#c4c4c4]">—</span>
-                    )}
+                  <td className="px-4 py-1.5 whitespace-nowrap">
+                    <span className="text-xs text-[#6b6b6b]">{loc || '—'}</span>
+                  </td>
+                  <td className="px-4 py-1.5 whitespace-nowrap">
+                    <span className="text-xs text-[#6b6b6b]">{rev || '—'}</span>
+                  </td>
+                  <td className="px-4 py-1.5 whitespace-nowrap max-w-[260px]">
+                    <span className="text-xs text-[#6b6b6b] truncate block">{contact || '—'}</span>
                   </td>
 
                   {/* SMS badge */}
-                  <td className="px-4 py-3.5">
+                  <td className="px-4 py-1.5">
                     <button
                       disabled={isLoading}
                       onClick={() => handleOutreach(lead.id, 'sms')}
@@ -279,7 +337,7 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
                   </td>
 
                   {/* Call badge */}
-                  <td className="px-4 py-3.5">
+                  <td className="px-4 py-1.5">
                     <button
                       disabled={isLoading}
                       onClick={() => handleOutreach(lead.id, 'call')}
@@ -295,7 +353,7 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
                   </td>
 
                   {/* Last activity */}
-                  <td className="px-4 py-3.5">
+                  <td className="px-4 py-1.5">
                     <span className="text-xs text-[#9b9b9b]">{relativeTime(lastActivity)}</span>
                   </td>
                 </tr>
@@ -304,6 +362,26 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
           </tbody>
         </table>
       </div>
+
+      {contextMenu && (
+        <div
+          ref={contextRef}
+          style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x, zIndex: 9999 }}
+          className="bg-white border border-[#e5e5e5] rounded-xl shadow-2xl py-1 min-w-[220px]"
+        >
+          <div className="px-4 py-2 border-b border-[#f0f0f0]">
+            <p className="text-xs font-semibold text-[#1a1a1a] truncate">{contextMenu.lead.name}</p>
+            <p className="text-xs text-[#9b9b9b] truncate">{contextMenu.lead.company || contextMenu.lead.email}</p>
+          </div>
+          <button
+            onClick={() => sendToPipeline(contextMenu.lead)}
+            disabled={pipelineMoving === contextMenu.lead.id}
+            className="w-full text-left px-4 py-2.5 text-sm text-[#1a1a1a] hover:bg-[#fafafa] disabled:opacity-50"
+          >
+            {pipelineMoving === contextMenu.lead.id ? 'Sending…' : 'Send to pipeline as Prospect'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -80,7 +80,7 @@ export default async function LeadsPage({
   if (selectedListId) {
     const { data: leads } = await supabase
       .from('leads')
-      .select('id, name, email, phone, company, notes, sms_sent_at, call_made_at, last_contact, created_at')
+      .select('id, name, email, phone, company, notes, sms_sent_at, call_made_at, last_contact, created_at, underwriting_data')
       .eq('list_id', selectedListId)
       .eq('user_id', user.id)
       .order('created_at', { ascending: false });
