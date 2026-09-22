@@ -58,6 +58,16 @@ const MONTHS_SHORT = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT
 const HOURS = Array.from({ length: 18 }, (_, i) => i + 5); // 5am–10pm
 const PAGE_NOTES_KEY = '_notes';
 
+interface DayTask {
+  id: string;
+  text: string;
+  done: boolean;
+}
+
+function newTaskId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 const EVENT_COLORS = [
   { id: 'black',  label: 'Black',  hex: '#1a1a1a' },
   { id: 'gray',   label: 'Gray',   hex: '#6b6b6b' },
@@ -164,6 +174,7 @@ export default function CalendarClient() {
   const [dayNotes, setDayNotes] = useState('');
   const [dayFinished, setDayFinished] = useState(false);
   const [daySlots, setDaySlots] = useState<Record<string, string>>({});
+  const [dayTasks, setDayTasks] = useState<DayTask[]>([]);
   const [dayJot, setDayJot] = useState<string | null>(null);
   const [dayNotesSaved, setDayNotesSaved] = useState(true);
   const dayNotesDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -226,6 +237,7 @@ export default function CalendarClient() {
     setDayNotes('');
     setDayFinished(false);
     setDaySlots({});
+    setDayTasks([]);
     setDayJot(null);
     setDayNotesSaved(true);
     fetch(`/api/calendar/day-notes?date=${selectedDate}`)
@@ -234,6 +246,7 @@ export default function CalendarClient() {
         setDayNotes(d.notes ?? '');
         setDayFinished(!!d.finished);
         setDaySlots(d.slots && typeof d.slots === 'object' ? d.slots : {});
+        setDayTasks(Array.isArray(d.tasks) ? d.tasks : []);
       })
       .catch(() => {});
     fetch(`/api/calendar/jot?date=${selectedDate}`)
@@ -255,7 +268,7 @@ export default function CalendarClient() {
       .catch(() => setWeekNotes(blankWeek()));
   }, [weekStart]);
 
-  function persistDay(next: { notes: string; finished: boolean; slots: Record<string, string> }) {
+  function persistDay(next: { notes: string; finished: boolean; slots: Record<string, string>; tasks: DayTask[] }) {
     const dateToSave = editingDateRef.current;
     if (!dateToSave) return;
     setDayNotesSaved(false);
@@ -553,24 +566,29 @@ export default function CalendarClient() {
             deleting={deleting}
             clearingTimer={clearingTimer}
             onClose={() => { setSelectedDate(null); setShowForm(false); }}
-            onNotes={(t) => { setDayNotes(t); persistDay({ notes: t, finished: dayFinished, slots: daySlots }); }}
+            onNotes={(t) => { setDayNotes(t); persistDay({ notes: t, finished: dayFinished, slots: daySlots, tasks: dayTasks }); }}
             onFinished={() => {
               const next = !dayFinished;
               setDayFinished(next);
-              persistDay({ notes: dayNotes, finished: next, slots: daySlots });
+              persistDay({ notes: dayNotes, finished: next, slots: daySlots, tasks: dayTasks });
             }}
             onSlotChange={(h, text) => {
               const next = { ...daySlots, [String(h)]: text };
               if (!text.trim()) delete next[String(h)];
               setDaySlots(next);
-              persistDay({ notes: dayNotes, finished: dayFinished, slots: next });
+              persistDay({ notes: dayNotes, finished: dayFinished, slots: next, tasks: dayTasks });
             }}
             onPageNotes={(t) => {
               const next = { ...daySlots };
               if (t.trim()) next[PAGE_NOTES_KEY] = t;
               else delete next[PAGE_NOTES_KEY];
               setDaySlots(next);
-              persistDay({ notes: dayNotes, finished: dayFinished, slots: next });
+              persistDay({ notes: dayNotes, finished: dayFinished, slots: next, tasks: dayTasks });
+            }}
+            dayTasks={dayTasks}
+            onTasks={(next) => {
+              setDayTasks(next);
+              persistDay({ notes: dayNotes, finished: dayFinished, slots: daySlots, tasks: next });
             }}
             onJotSave={async (image) => {
               if (!selectedDate) return;
@@ -605,7 +623,7 @@ export default function CalendarClient() {
               const next = { ...daySlots };
               delete next[String(h)];
               setDaySlots(next);
-              persistDay({ notes: dayNotes, finished: dayFinished, slots: next });
+              persistDay({ notes: dayNotes, finished: dayFinished, slots: next, tasks: dayTasks });
             }}
             onAdd={() => openAddForm(selectedDate)}
             onEdit={openEditForm}
@@ -922,6 +940,7 @@ function DayPanel(props: {
   dayNotes: string;
   dayFinished: boolean;
   daySlots: Record<string, string>;
+  dayTasks: DayTask[];
   jotImage: string | null;
   dayNotesSaved: boolean;
   showForm: boolean;
@@ -937,6 +956,7 @@ function DayPanel(props: {
   onFinished: () => void;
   onSlotChange: (h: number, text: string) => void;
   onPageNotes: (t: string) => void;
+  onTasks: (tasks: DayTask[]) => void;
   onJotSave: (image: string) => Promise<void>;
   onMakeEvent: (h: number) => void;
   onAdd: () => void;
@@ -947,11 +967,40 @@ function DayPanel(props: {
   onClearTimer: (leadId: string) => void;
 }) {
   const [hoursOpen, setHoursOpen] = useState(false);
+  const [localTasks, setLocalTasks] = useState<DayTask[]>(props.dayTasks);
+  const [taskDraft, setTaskDraft] = useState('');
   const [showJot, setShowJot] = useState(false);
   const [jotSaving, setJotSaving] = useState(false);
   const [jotError, setJotError] = useState('');
   const jotRef = useRef<JotPadHandle>(null);
-  useEffect(() => { setHoursOpen(false); setShowJot(false); setJotError(''); }, [props.date]);
+  const taskDraftRef = useRef(taskDraft);
+  taskDraftRef.current = taskDraft;
+  const localTasksRef = useRef(localTasks);
+  localTasksRef.current = localTasks;
+  const onTasksRef = useRef(props.onTasks);
+  onTasksRef.current = props.onTasks;
+
+  useEffect(() => {
+    setHoursOpen(false);
+    setShowJot(false);
+    setJotError('');
+    const leftover = taskDraftRef.current.trim();
+    if (leftover) {
+      onTasksRef.current([...localTasksRef.current, { id: newTaskId(), text: leftover, done: false }]);
+    }
+    setTaskDraft('');
+    setLocalTasks(props.dayTasks);
+  }, [props.date]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (taskDraftRef.current) return;
+    setLocalTasks(props.dayTasks);
+  }, [props.dayTasks]);
+
+  function writeTasks(next: DayTask[]) {
+    setLocalTasks(next);
+    props.onTasks(next);
+  }
   useEffect(() => {
     if (!showJot) return;
     const onKey = (e: KeyboardEvent) => {
@@ -1089,6 +1138,61 @@ function DayPanel(props: {
               </div>
             );
           })}
+        </div>
+
+        <div className="px-5 py-3 border-b border-[#e5e5e5] shrink-0">
+          <p className="text-[10px] uppercase tracking-wider text-[#9b9b9b] mb-1.5">Tasks</p>
+          {localTasks.map((task) => (
+            <div key={task.id} className="flex items-center gap-3 py-1">
+              <input
+                value={task.text}
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                onChange={e => {
+                  writeTasks(localTasks.map(t => t.id === task.id ? { ...t, text: e.target.value } : t));
+                }}
+                onBlur={() => {
+                  if (!task.text.trim()) {
+                    writeTasks(localTasks.filter(t => t.id !== task.id));
+                  }
+                }}
+                className="flex-1 min-w-0 text-sm text-[#1a1a1a] bg-transparent focus:outline-none py-0.5"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  writeTasks(localTasks.map(t => t.id === task.id ? { ...t, done: !t.done } : t));
+                }}
+                title={task.done ? 'Completed' : 'Mark complete'}
+                className={`w-3.5 h-3.5 rounded-full border shrink-0 ${
+                  task.done
+                    ? 'bg-[#1a1a1a] border-[#1a1a1a]'
+                    : 'border-[#9b9b9b] bg-transparent'
+                }`}
+              />
+            </div>
+          ))}
+          <div className="flex items-center gap-3 py-1">
+            <input
+              value={taskDraft}
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              onChange={e => setTaskDraft(e.target.value)}
+              onKeyDown={e => {
+                if (e.key !== 'Enter') return;
+                e.preventDefault();
+                e.stopPropagation();
+                const text = taskDraft.trim();
+                if (!text) return;
+                writeTasks([...localTasks, { id: newTaskId(), text, done: false }]);
+                setTaskDraft('');
+              }}
+              className="flex-1 min-w-0 text-sm text-[#1a1a1a] bg-transparent focus:outline-none py-0.5"
+            />
+            <span className="w-3.5 h-3.5 rounded-full border border-[#9b9b9b] shrink-0 opacity-30" />
+          </div>
         </div>
 
         {props.untimed.length > 0 && (
