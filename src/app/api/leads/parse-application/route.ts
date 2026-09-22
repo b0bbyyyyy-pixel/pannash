@@ -57,29 +57,51 @@ JSON schema (all fields optional, only include fields clearly present):
   "owner2SSN": "Second owner SSN"
 }`;
 
-const BANK_PROMPT = `You are a financial analyst extracting data from a bank statement.
-Extract ALL financial metrics and return ONLY a raw JSON object — no markdown fences.
+const BANK_PROMPT = `You are a financial analyst extracting data from a business bank statement for MCA underwriting.
+Extract EVERY metric you can. Return ONLY a raw JSON object — no markdown fences.
 
-JSON schema (all optional, only include what is clearly present):
+Look at: summary boxes, daily balances, deposit totals, NSF/overdraft fees, AND the transaction list.
+
+MCA positions: scan ACH withdrawals / debits for merchant-cash-advance or factoring funders
+(Rapid, OnDeck, Kapitus, Credibly, National Funding, Forward Financing, Libertas, Pearl, Everest,
+IOU, Yellowstone, ClearFund, Fox Business, BFS, Strategic, etc.) and any recurring daily or weekly
+debit of similar amount that is clearly a loan/advance remittance. List EACH distinct funder as its own position.
+
+JSON schema (all optional, only include what is present or can be reasonably inferred):
 {
   "company": "Business / account holder name",
   "bankName": "Name of bank",
   "accountNumber": "Account number (last 4 digits only if masked)",
   "statementMonth": "Statement month/year",
-  "openingBalance": "Opening balance (digits only)",
-  "endingBalance": "Ending balance (digits only)",
-  "totalDeposits": "Total deposits (digits only)",
+  "openingBalance": "Opening balance (digits only, allow negatives)",
+  "endingBalance": "Ending balance (digits only, allow negatives)",
+  "totalDeposits": "Total deposits / credits for the statement period (digits only)",
   "totalWithdrawals": "Total withdrawals (digits only)",
-  "monthlyRevenue": "Total deposits / monthly revenue (digits only)",
-  "avgDailyBalance": "Average daily balance (digits only)",
-  "nsfCount": "Number of NSF / overdraft charges",
-  "depositCount": "Number of deposits",
+  "monthlyRevenue": "Same as total deposits for this statement (digits only)",
+  "avgDailyBalance": "Average daily balance if printed. If not printed, estimate from daily ending balances or (opening+ending)/2 (digits only)",
+  "nsfCount": "Count of NSF, overdraft, returned-item, and insufficient-funds fees (integer)",
+  "negativeDays": "Number of calendar days the ledger balance was below $0 (integer)",
+  "depositCount": "Number of deposit / credit transactions, excluding transfers and loan proceeds (integer)",
   "largestDeposit": "Largest single deposit (digits only)",
-  "month1Revenue": "Month 1 revenue (digits only)",
-  "month2Revenue": "Month 2 revenue (digits only)",
-  "month3Revenue": "Month 3 revenue (digits only)",
-  "month4Revenue": "Month 4 revenue (digits only)"
-}`;
+  "month1Revenue": "Month 1 deposits if a multi-month statement (digits only)",
+  "month2Revenue": "Month 2 deposits (digits only)",
+  "month3Revenue": "Month 3 deposits (digits only)",
+  "month4Revenue": "Month 4 deposits (digits only)",
+  "hasOtherMCALoans": true,
+  "mcaPositions": [
+    {
+      "lender": "Funder or ACH name as printed",
+      "payment": 185.50,
+      "frequency": "daily",
+      "monthlyPayment": 3885,
+      "outstanding": 0
+    }
+  ]
+}
+
+frequency must be "daily", "weekly", or "monthly".
+monthlyPayment = payment * 21 if daily, * 4.33 if weekly, * 1 if monthly.
+If no MCA / advance remittances are found, omit mcaPositions and set hasOtherMCALoans to false.`;
 
 // ── Detect bank statement ──────────────────────────────────────────────────────
 function isBankStatement(filename: string, text: string): boolean {
@@ -88,7 +110,7 @@ function isBankStatement(filename: string, text: string): boolean {
     'bank statement','statement of account','account statement',
     'chase','bank of america','wells fargo','citibank','td bank',
     'us bank','pnc bank','capital one','regions','suntrust','truist',
-    'fifth third','huntington','citizens bank',
+    'fifth third','huntington','citizens bank','cross river','mercury',
     'ending balance','beginning balance','opening balance',
     'total deposits','total withdrawals','nsf','overdraft',
   ].some(k => lower.includes(k));
@@ -101,7 +123,14 @@ function safeJson(raw: string): Record<string, string> {
     const obj = JSON.parse(clean);
     const result: Record<string, string> = {};
     for (const [k, v] of Object.entries(obj)) {
-      const s = String(v ?? '').trim();
+      if (v == null || v === '') continue;
+      if (typeof v === 'boolean') { result[k] = v ? 'true' : 'false'; continue; }
+      if (typeof v === 'object') {
+        const encoded = JSON.stringify(v);
+        if (encoded && encoded !== '[]' && encoded !== '{}') result[k] = encoded;
+        continue;
+      }
+      const s = String(v).trim();
       if (s && s !== 'null' && s !== 'undefined') result[k] = s;
     }
     return result;
@@ -139,7 +168,7 @@ async function extractWithTextAI(text: string, prompt: string): Promise<Record<s
     const completion = await ai.chat.completions.create({
       model: GROK_MODEL,
       temperature: 0,
-      max_tokens: 2000,
+      max_tokens: 4000,
       messages: [
         { role: 'system', content: prompt + '\n\nReturn ONLY raw JSON, no markdown.' },
         { role: 'user', content: `DOCUMENT TEXT:\n\n${text.slice(0, 18000)}` },
@@ -169,7 +198,7 @@ async function extractWithVisionAI(buffer: Buffer, filename: string, prompt: str
     const ai = getAIClient();
     const completion = await ai.chat.completions.create({
       model: GROK_VISION_MODEL,
-      max_tokens: 2000,
+      max_tokens: 4000,
       messages: [
         { role: 'system', content: prompt + '\n\nReturn ONLY raw JSON, no markdown.' },
         {

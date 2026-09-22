@@ -1,5 +1,6 @@
 'use client';
 import React from 'react';
+import { parseMcaPositions, parseStatementMonths, averagesFromMonths } from '@/lib/bankAnalyzer';
 
 export type BankSnap = {
   analyzedAt?: string;
@@ -29,8 +30,9 @@ type Props = {
 };
 
 function fmtMoney(n: number): string {
-  if (n <= 0) return '--';
-  return '$' + Math.round(n).toLocaleString();
+  if (!Number.isFinite(n) || n === 0) return '--';
+  const formatted = Math.round(Math.abs(n)).toLocaleString();
+  return (n < 0 ? '-$' : '$') + formatted;
 }
 
 function fmtNum(n: number): string {
@@ -38,12 +40,52 @@ function fmtNum(n: number): string {
   return n.toFixed(1);
 }
 
-function buildMonthRows(snap: BankSnap | undefined): MonthRow[] {
+function acctLabel(raw: unknown): string {
+  const digits = String(raw ?? '').replace(/\D/g, '').slice(-4);
+  return digits ? `…${digits}` : '--';
+}
+
+function buildMonthRows(snap: BankSnap | undefined, ud: Record<string, unknown>): MonthRow[] {
+  const fromUd = parseStatementMonths(ud.statementMonths);
+  if (fromUd.length) {
+    return fromUd.map(m => ({
+      month: m.month,
+      acct: acctLabel(m.accountNumber),
+      revenue: m.totalDeposits ?? 0,
+      deposits: m.totalDeposits ?? 0,
+      endBal: m.endingBalance ?? 0,
+      depCount: m.depositCount ?? 0,
+      neg: m.negativeDays ?? 0,
+      nsf: m.nsfCount ?? 0,
+    }));
+  }
+
   const rows: MonthRow[] = [];
   if (!snap) return rows;
 
   const perFile = snap.per_file ?? [];
   const m = snap.displayMetrics;
+  const summary = (m?.monthly_summary as Array<Record<string, unknown>> | undefined) ?? [];
+
+  // Parsed snapshot already has one row per submitted month — prefer that over analyzer per_file.
+  if (summary.length > 0 && !perFile.length) {
+    const mr = (m?.monthly_revenue as Array<{ month?: string; amount?: number }>) ?? [];
+    for (const row of summary) {
+      const month = String(row.month ?? '');
+      const revEntry = mr.find((r) => r.month === month);
+      rows.push({
+        month,
+        acct: acctLabel(row.account ?? row.accountNumber),
+        revenue: Number(revEntry?.amount ?? row.true_deposits ?? row.total_deposits ?? 0),
+        deposits: Number(row.total_deposits ?? row.true_deposits ?? 0),
+        endBal: Number(row.ending_balance ?? 0),
+        depCount: Number(row.deposit_count ?? 0),
+        neg: Number(row.negative_days ?? 0),
+        nsf: Number(row.nsf_count ?? 0),
+      });
+    }
+    return rows;
+  }
 
   if (perFile.length > 0) {
     for (const pf of perFile) {
@@ -57,7 +99,7 @@ function buildMonthRows(snap: BankSnap | undefined): MonthRow[] {
         const revEntry = mr.find((r) => r.month === month);
         rows.push({
           month,
-          acct: label,
+          acct: acctLabel(row.account) !== '--' ? acctLabel(row.account) : label,
           revenue: Number(revEntry?.amount ?? 0),
           deposits: Number(row.total_deposits ?? row.true_deposits ?? 0),
           endBal: Number(row.ending_balance ?? 0),
@@ -67,7 +109,10 @@ function buildMonthRows(snap: BankSnap | undefined): MonthRow[] {
         });
       }
     }
-  } else if (m) {
+    return rows;
+  }
+
+  if (m) {
     const ms = (m.monthly_summary as Array<Record<string, unknown>>) ?? [];
     const mr = (m.monthly_revenue as Array<{ month?: string; amount?: number }>) ?? [];
     for (const row of ms) {
@@ -75,7 +120,7 @@ function buildMonthRows(snap: BankSnap | undefined): MonthRow[] {
       const revEntry = mr.find((r) => r.month === month);
       rows.push({
         month,
-        acct: '--',
+        acct: acctLabel(row.account ?? row.accountNumber),
         revenue: Number(revEntry?.amount ?? 0),
         deposits: Number(row.total_deposits ?? row.true_deposits ?? 0),
         endBal: Number(row.ending_balance ?? 0),
@@ -98,26 +143,35 @@ const CHECKBOXES: [string, string][] = [
 
 export default function FinancialsModal({ snap, ud, leadName, leadCompany, derivedTIB, onSaveField, onClose }: Props) {
   const m = snap?.displayMetrics;
-  const rows = buildMonthRows(snap);
+  const rows = buildMonthRows(snap, ud);
+  const monthAvgs = averagesFromMonths(parseStatementMonths(ud.statementMonths));
 
-  const avgRevenue    = Number(m?.avg_monthly_true_deposits ?? m?.avg_monthly_deposits ?? ud.monthlyRevenue ?? 0);
-  const avgDailyBal   = Number(m?.avg_monthly_daily_balance ?? ud.avgDailyBalance ?? 0);
-  const depositsPerMo = Number(m?.avg_monthly_deposit_count ?? ud.depositsCount ?? 0);
-  const negDays3mo    = Number(m?.negative_days ?? 0);
-  const nsfs3mo       = Number(m?.nsf_count ?? ud.nsfCount ?? 0);
-  const numMonths     = rows.length || 1;
+  const avgRevenue    = Number(ud.monthlyRevenue ?? monthAvgs.monthlyRevenue ?? m?.avg_monthly_true_deposits ?? m?.avg_monthly_deposits ?? 0);
+  const avgDailyBal   = Number(ud.avgDailyBalance ?? monthAvgs.avgDailyBalance ?? m?.avg_monthly_daily_balance ?? 0);
+  const depositsPerMo = Number(ud.depositsCount ?? monthAvgs.depositsCount ?? m?.avg_monthly_deposit_count ?? 0);
+  const last3         = rows.slice(-3);
+  const negDays3mo    = last3.length
+    ? last3.reduce((s, r) => s + r.neg, 0)
+    : Number(ud.negativeDays ?? monthAvgs.negativeDays ?? m?.negative_days ?? 0);
+  const nsfs3mo       = last3.length
+    ? last3.reduce((s, r) => s + r.nsf, 0)
+    : Number(ud.nsfCount ?? monthAvgs.nsfCount ?? m?.nsf_count ?? 0);
   const lowestRev     = rows.filter((r) => r.revenue > 0).length > 0
     ? Math.min(...rows.filter((r) => r.revenue > 0).map((r) => r.revenue)) : 0;
   const lowestDep     = rows.filter((r) => r.depCount > 0).length > 0
     ? Math.min(...rows.filter((r) => r.depCount > 0).map((r) => r.depCount)) : 0;
-  const negDaysPerMo  = negDays3mo / numMonths;
-  const nsfsPerMo     = nsfs3mo / numMonths;
+  const last3Count    = last3.length || 1;
+  const negDaysPerMo  = negDays3mo / last3Count;
+  const nsfsPerMo     = nsfs3mo / last3Count;
   const fico          = Number(ud.creditScore ?? 0);
   const tib           = derivedTIB ?? Number(ud.timeInBusiness ?? 0);
   const displayName   = leadCompany || leadName;
   const analyzedStr   = snap?.analyzedAt
     ? new Date(snap.analyzedAt).toLocaleDateString('en-US')
     : '';
+  const mcaPositions  = parseMcaPositions(ud.mcaPositions);
+  const mcaMonthly    = Number(ud.otherMCAMonthlyPayment ?? 0) || mcaPositions.reduce((s, p) => s + (p.monthlyPayment || 0), 0);
+  const hasParsedFin  = Boolean(ud.monthlyRevenue || ud.avgDailyBalance || ud.nsfCount || mcaPositions.length);
 
   const statPairs: [string, string][] = [
     ['Avg revenue',   fmtMoney(avgRevenue)],
@@ -133,6 +187,8 @@ export default function FinancialsModal({ snap, ud, leadName, leadCompany, deriv
     ['FICO',          fico ? String(fico) : '--'],
     ['State',         String(ud.businessState ?? '--')],
     ['Time in biz',   tib > 0 ? tib + ' mo' : '--'],
+    ['MCA positions', mcaPositions.length ? String(mcaPositions.length) : ((ud.hasOtherMCALoans === true || ud.hasOtherMCALoans === 'true') ? String(ud.mcaPositionCount ?? 1) : '0')],
+    ['MCA / mo',      mcaMonthly > 0 ? fmtMoney(mcaMonthly) : '--'],
   ];
 
   const tableHeaders = ['Month', 'Acct', 'Revenue', 'Deposits', 'End Bal', '# Dep', 'Neg', 'NSF'];
@@ -188,6 +244,16 @@ export default function FinancialsModal({ snap, ud, leadName, leadCompany, deriv
                         <td className={row.nsf > 0 ? 'px-3 py-2 text-red-600 font-semibold' : 'px-3 py-2 text-[#9b9b9b]'}>{row.nsf}</td>
                       </tr>
                     ))}
+                    <tr className="border-t border-[#e5e5e5] bg-[#fafafa]">
+                      <td className="px-3 py-2 font-semibold text-[#1a1a1a]">Average</td>
+                      <td className="px-3 py-2 text-[#9b9b9b]">—</td>
+                      <td className="px-3 py-2 font-semibold text-[#1a1a1a]">{fmtMoney(avgRevenue)}</td>
+                      <td className="px-3 py-2 font-semibold text-[#1a1a1a]">{fmtMoney(avgRevenue)}</td>
+                      <td className="px-3 py-2 font-semibold text-[#1a1a1a]">{fmtMoney(Number(ud.endingBalance ?? rows[rows.length - 1]?.endBal ?? 0))}</td>
+                      <td className="px-3 py-2 font-semibold text-[#1a1a1a]">{depositsPerMo > 0 ? fmtNum(depositsPerMo) : '--'}</td>
+                      <td className="px-3 py-2 text-[#6b6b6b]">{fmtNum(negDaysPerMo)}</td>
+                      <td className="px-3 py-2 text-[#6b6b6b]">{fmtNum(nsfsPerMo)}</td>
+                    </tr>
                   </tbody>
                 </table>
               </div>
@@ -209,6 +275,44 @@ export default function FinancialsModal({ snap, ud, leadName, leadCompany, deriv
             </div>
           </div>
 
+          {/* MCA Positions */}
+          {mcaPositions.length > 0 && (
+            <div>
+              <h3 className="text-[10px] font-bold uppercase tracking-widest text-[#9b9b9b] mb-3">MCA Positions</h3>
+              <div className="border border-[#e5e5e5] rounded-xl overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-[#f5f5f5] text-[#6b6b6b] font-semibold uppercase tracking-wide text-[10px]">
+                      <th className="px-3 py-2 text-left">Funder</th>
+                      <th className="px-3 py-2 text-left">Payment</th>
+                      <th className="px-3 py-2 text-left">Frequency</th>
+                      <th className="px-3 py-2 text-left">Monthly</th>
+                      <th className="px-3 py-2 text-left">Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {mcaPositions.map((p, i) => (
+                      <tr key={`${p.lender}-${i}`} className="border-t border-[#f0f0f0]">
+                        <td className="px-3 py-2 font-medium text-[#1a1a1a]">{p.lender}</td>
+                        <td className="px-3 py-2 text-[#1a1a1a]">
+                          ${p.payment.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                        <td className="px-3 py-2 text-[#6b6b6b] capitalize">{p.frequency}</td>
+                        <td className="px-3 py-2 text-[#1a1a1a]">{fmtMoney(p.monthlyPayment)}</td>
+                        <td className="px-3 py-2 text-[#6b6b6b]">{p.outstanding ? fmtMoney(p.outstanding) : '--'}</td>
+                      </tr>
+                    ))}
+                    <tr className="border-t border-[#e5e5e5] bg-[#fafafa]">
+                      <td className="px-3 py-2 font-semibold text-[#1a1a1a]" colSpan={3}>Total</td>
+                      <td className="px-3 py-2 font-semibold text-[#1a1a1a]">{fmtMoney(mcaMonthly)}</td>
+                      <td className="px-3 py-2" />
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           {/* Flags */}
           <div>
             <h3 className="text-[10px] font-bold uppercase tracking-widest text-[#9b9b9b] mb-3">Flags</h3>
@@ -228,9 +332,9 @@ export default function FinancialsModal({ snap, ud, leadName, leadCompany, deriv
           </div>
 
           {/* Empty state when no analysis run yet */}
-          {!snap && (
+          {!snap && !hasParsedFin && (
             <p className="text-xs text-[#9b9b9b] text-center py-4 border border-dashed border-[#e5e5e5] rounded-xl">
-              No bank statement analysis yet. Upload statements in Documents and click Analyze.
+              No bank statement analysis yet. Upload statements in Documents and apply the parsed fields.
             </p>
           )}
 

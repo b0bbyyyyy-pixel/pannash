@@ -2,6 +2,15 @@
 
 import { useState, useEffect, useRef, useCallback, DragEvent } from 'react';
 import DocumentVault from '@/components/DocumentVault';
+import {
+  parseMcaPositions,
+  coerceNumber,
+  statementMonthFromFields,
+  mergeStatementMonths,
+  averagesFromMonths,
+  parseStatementMonths,
+  type StatementMonth,
+} from '@/lib/bankAnalyzer';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Attachment {
@@ -86,6 +95,8 @@ const FIELD_LABELS: Record<string, string> = {
   openingBalance: 'Opening Balance', endingBalance: 'Ending Balance',
   totalDeposits: 'Total Deposits', totalWithdrawals: 'Total Withdrawals',
   nsfCount: 'NSF / OD Count', depositCount: 'Deposit Count', largestDeposit: 'Largest Deposit',
+  negativeDays: 'Negative Days', hasOtherMCALoans: 'Has MCA Loans',
+  mcaPositions: 'MCA Positions',
   month1Revenue: 'Month 1 Deposits', month2Revenue: 'Month 2 Deposits',
   month3Revenue: 'Month 3 Deposits', month4Revenue: 'Month 4 Deposits',
 };
@@ -93,10 +104,59 @@ const FIELD_LABELS: Record<string, string> = {
 const PARSE_SECTIONS = [
   { label: 'Person',          keys: ['name','email','phone','dob','ssn','homeAddress','city','state','zip','creditScore'] },
   { label: 'Company',         keys: ['company','dba','businessAddress','businessCity','businessState','businessZip','industry','businessStartDate','ein','entityType','ownershipPercent','businessPhone','fax'] },
-  { label: 'Deal / Financials', keys: ['requestedAmount','monthlyRevenue','avgDailyBalance','purposeOfFunds'] },
+  { label: 'Deal / Financials', keys: ['requestedAmount','monthlyRevenue','avgDailyBalance','purposeOfFunds','nsfCount','depositCount','negativeDays','hasOtherMCALoans'] },
+  { label: 'MCA Positions',   keys: ['mcaPositions'] },
   { label: 'Owner 2',         keys: ['owner2FirstName','owner2LastName','owner2Ownership','owner2DOB','owner2SSN'] },
-  { label: 'Bank Statement',  keys: ['bankName','accountNumber','statementMonth','openingBalance','endingBalance','totalDeposits','totalWithdrawals','nsfCount','depositCount','largestDeposit','month1Revenue','month2Revenue','month3Revenue','month4Revenue'] },
+  { label: 'Bank Statement',  keys: ['bankName','accountNumber','statementMonth','openingBalance','endingBalance','totalDeposits','totalWithdrawals','largestDeposit','month1Revenue','month2Revenue','month3Revenue','month4Revenue'] },
 ];
+
+const SUM_PARSE_KEYS = new Set(['nsfCount', 'negativeDays']);
+const LAST_WINS_PARSE = new Set(['endingBalance', 'statementMonth']);
+
+function mergeParseFields(into: Record<string, string>, incoming: Record<string, string>) {
+  for (const [k, v] of Object.entries(incoming)) {
+    if (!v) continue;
+    if (k === 'mcaPositions') {
+      const byKey = new Map<string, ReturnType<typeof parseMcaPositions>[number]>();
+      for (const p of [...parseMcaPositions(into[k]), ...parseMcaPositions(v)]) {
+        const key = p.lender.toLowerCase();
+        if (!byKey.has(key)) byKey.set(key, p);
+      }
+      if (byKey.size) {
+        into.mcaPositions = JSON.stringify([...byKey.values()]);
+        into.hasOtherMCALoans = 'true';
+      }
+      continue;
+    }
+    if (SUM_PARSE_KEYS.has(k)) {
+      into[k] = String((coerceNumber(into[k]) ?? 0) + (coerceNumber(v) ?? 0));
+      continue;
+    }
+    if (LAST_WINS_PARSE.has(k) || !into[k]) into[k] = v;
+  }
+}
+
+function attachStatementMonths(merged: Record<string, string>, months: StatementMonth[]) {
+  const unique = mergeStatementMonths([], months);
+  if (!unique.length) return;
+  merged.statementMonths = JSON.stringify(unique);
+  const avgs = averagesFromMonths(unique);
+  for (const [k, v] of Object.entries(avgs)) merged[k] = String(v);
+  if (avgs.depositsCount != null) merged.depositCount = String(avgs.depositsCount);
+}
+
+function formatReviewValue(key: string, value: string): string {
+  if (key === 'hasOtherMCALoans') return value === 'true' ? 'Yes' : 'No';
+  if (key === 'mcaPositions') {
+    const positions = parseMcaPositions(value);
+    if (!positions.length) return value;
+    return positions.map(p => {
+      const pay = p.payment.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      return `${p.lender}  $${pay}/${p.frequency}  ($${p.monthlyPayment.toLocaleString()}/mo)`;
+    }).join('\n');
+  }
+  return value;
+}
 
 const ALLOWED_TYPES = '.pdf,.doc,.docx,.jpg,.jpeg,.png,.xls,.xlsx';
 const MAX_SIZE_MB   = 20;
@@ -241,7 +301,7 @@ export default function DocumentsModal({
       setParseStep('parsing');
 
       const mergedFields: Record<string, string> = {};
-      let anySuccess = false;
+      const months: StatementMonth[] = [];
 
       for (const file of pendingFiles) {
         const fd = new FormData();
@@ -250,16 +310,17 @@ export default function DocumentsModal({
           const res  = await fetch('/api/leads/parse-application', { method: 'POST', body: fd, credentials: 'include' });
           const json = await res.json();
           if (res.ok && json.fields && Object.keys(json.fields).length > 0) {
-            // Merge — later files don't overwrite already-filled fields
-            for (const [k, v] of Object.entries(json.fields as Record<string, string>)) {
-              if (!mergedFields[k]) mergedFields[k] = v;
-            }
-            anySuccess = true;
+            const incoming = json.fields as Record<string, string>;
+            const row = statementMonthFromFields(incoming);
+            if (row) months.push(row);
+            mergeParseFields(mergedFields, incoming);
           }
         } catch {
           console.warn('Parse failed for', file.name);
         }
       }
+
+      attachStatementMonths(mergedFields, months);
 
       if (Object.keys(mergedFields).length > 0) {
         setParsedFields(mergedFields);
@@ -282,7 +343,9 @@ export default function DocumentsModal({
   const handleApplyFields = async () => {
     if (!onApplyParsed) return;
     setApplying(true);
-    await onApplyParsed(parsedFields, parsedSelected);
+    const selected = new Set(parsedSelected);
+    if (parsedFields.statementMonths) selected.add('statementMonths');
+    await onApplyParsed(parsedFields, selected);
     setApplying(false);
     closeUpload();
   };
@@ -331,7 +394,9 @@ export default function DocumentsModal({
       const res  = await fetch('/api/leads/parse-application', { method: 'POST', body: fd, credentials: 'include' });
       const json = await res.json();
       if (res.ok) {
-        const extractedFields = json.fields ?? {};
+        const extractedFields = { ...(json.fields ?? {}) } as Record<string, string>;
+        const row = statementMonthFromFields(extractedFields);
+        if (row) attachStatementMonths(extractedFields, [row]);
         setParsedFields(extractedFields);
         setParsedSelected(new Set(Object.keys(extractedFields)));
         setParseStep('review');
@@ -361,6 +426,7 @@ export default function DocumentsModal({
     setShowUpload(true);
 
     const merged: Record<string, string> = {};
+    const months: StatementMonth[] = [];
     let anySuccess = false;
     for (const a of targets) {
       try {
@@ -373,13 +439,15 @@ export default function DocumentsModal({
         const res = await fetch('/api/leads/parse-application', { method: 'POST', body: fd, credentials: 'include' });
         const json = await res.json();
         if (res.ok && json.fields && Object.keys(json.fields).length > 0) {
-          for (const [k, v] of Object.entries(json.fields as Record<string, string>)) {
-            if (!merged[k]) merged[k] = v;
-          }
+          const incoming = json.fields as Record<string, string>;
+          const row = statementMonthFromFields(incoming);
+          if (row) months.push(row);
+          mergeParseFields(merged, incoming);
           anySuccess = true;
         }
       } catch { /* skip */ }
     }
+    attachStatementMonths(merged, months);
 
     setAnalyzing(false);
     if (anySuccess) {
@@ -803,8 +871,48 @@ export default function DocumentsModal({
                     </div>
                   </div>
 
+                  {parseStatementMonths(parsedFields.statementMonths).length > 0 && (
+                    <div className="mb-4">
+                      <p className="text-[10px] font-bold text-[#9b9b9b] uppercase tracking-widest mb-1.5">
+                        Months submitted
+                      </p>
+                      <div className="border border-[#f0f0f0] rounded-xl overflow-hidden">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="bg-[#f5f5f5] text-[#6b6b6b] font-semibold uppercase tracking-wide text-[10px]">
+                              <th className="px-3 py-2 text-left">Month</th>
+                              <th className="px-3 py-2 text-left">Acct</th>
+                              <th className="px-3 py-2 text-left">Deposits</th>
+                              <th className="px-3 py-2 text-left">End Bal</th>
+                              <th className="px-3 py-2 text-left"># Dep</th>
+                              <th className="px-3 py-2 text-left">Neg</th>
+                              <th className="px-3 py-2 text-left">NSF</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {parseStatementMonths(parsedFields.statementMonths).map((m, i) => (
+                              <tr key={`${m.month}-${m.accountNumber}-${i}`} className="border-t border-[#f0f0f0]">
+                                <td className="px-3 py-2 font-medium text-[#1a1a1a]">{m.month}</td>
+                                <td className="px-3 py-2 text-[#6b6b6b] font-mono">{m.accountNumber ? `…${m.accountNumber}` : '—'}</td>
+                                <td className="px-3 py-2 text-[#1a1a1a]">{m.totalDeposits != null ? `$${Math.round(m.totalDeposits).toLocaleString()}` : '—'}</td>
+                                <td className="px-3 py-2 text-[#1a1a1a]">{m.endingBalance != null ? `$${Math.round(m.endingBalance).toLocaleString()}` : '—'}</td>
+                                <td className="px-3 py-2 text-[#1a1a1a]">{m.depositCount ?? '—'}</td>
+                                <td className={m.negativeDays ? 'px-3 py-2 text-red-600 font-semibold' : 'px-3 py-2 text-[#9b9b9b]'}>{m.negativeDays ?? 0}</td>
+                                <td className={m.nsfCount ? 'px-3 py-2 text-red-600 font-semibold' : 'px-3 py-2 text-[#9b9b9b]'}>{m.nsfCount ?? 0}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <p className="text-[10px] text-[#9b9b9b] mt-1.5">Deal fields use the averages of these months. NSF / negative days are the last-3-month totals.</p>
+                    </div>
+                  )}
+
                   {PARSE_SECTIONS.map(section => {
-                    const visible = section.keys.filter(k => parsedFields[k] != null);
+                    const hideWhenMonths = parseStatementMonths(parsedFields.statementMonths).length > 1
+                      ? new Set(['month1Revenue','month2Revenue','month3Revenue','month4Revenue','statementMonth','totalDeposits','openingBalance','endingBalance','largestDeposit'])
+                      : new Set<string>();
+                    const visible = section.keys.filter(k => parsedFields[k] != null && !hideWhenMonths.has(k));
                     if (!visible.length) return null;
                     return (
                       <div key={section.label} className="mb-4">
@@ -819,7 +927,9 @@ export default function DocumentsModal({
                                 className="w-4 h-4 rounded border-[#d4d4d4] accent-[#1a1a1a] cursor-pointer flex-shrink-0"
                               />
                               <span className="text-xs text-[#6b6b6b] w-36 flex-shrink-0">{FIELD_LABELS[key] ?? key}</span>
-                              <span className="text-xs font-medium text-[#1a1a1a] truncate">{parsedFields[key]}</span>
+                              <span className={`text-xs font-medium text-[#1a1a1a] ${key === 'mcaPositions' ? 'whitespace-pre-line' : 'truncate'}`}>
+                                {formatReviewValue(key, parsedFields[key])}
+                              </span>
                             </label>
                           ))}
                         </div>

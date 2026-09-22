@@ -216,6 +216,16 @@ function Section({ title, children, collapsible = false }: { title: string; chil
 }
 
 import FinancialsModal, { type BankSnap } from '@/components/FinancialsModal';
+import {
+  mapAnalyzerMetricsToUnderwritingFields,
+  mapParsedBankFieldsToUd,
+  parseMcaPositions,
+  parseStatementMonths,
+  seedBankAnalysisFromParsed,
+  statementMonthFromFields,
+  statementMonthsFromUd,
+  mergeStatementMonths,
+} from '@/lib/bankAnalyzer';
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function LeadWorkspaceClient({
   lead: initialLead,
@@ -404,7 +414,13 @@ export default function LeadWorkspaceClient({
   // ── Save bank analysis snapshot to underwriting_data ────────────────────────
   const saveBankAnalysis = useCallback(async (snapshot: Record<string, unknown>) => {
     const currentUd = (lead.underwriting_data || {}) as Record<string, unknown>;
-    const updatedUd = { ...currentUd, bankStatementAnalysis: snapshot };
+    const metrics = (snapshot.displayMetrics ?? {}) as Record<string, unknown>;
+    const mapped = mapAnalyzerMetricsToUnderwritingFields(metrics);
+    const filled: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(mapped)) {
+      if (typeof v === 'number' && v !== 0) filled[k] = v;
+    }
+    const updatedUd = { ...currentUd, ...filled, bankStatementAnalysis: snapshot };
     const res = await fetch('/api/leads/underwriting', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -464,16 +480,54 @@ export default function LeadWorkspaceClient({
       setLead(prev => ({ ...prev, [field]: value }));
     }
 
-    // Normalize parse-application field names
-    if ('depositCount' in udUpdates && !('depositsCount' in udUpdates)) {
-      udUpdates.depositsCount = udUpdates.depositCount;
-      delete udUpdates.depositCount;
+    const currentUd = (lead.underwriting_data || {}) as Record<string, unknown>;
+    const incomingMonths = parseStatementMonths(udUpdates.statementMonths);
+    const single = incomingMonths.length ? [] : (() => {
+      const one = statementMonthFromFields(udUpdates);
+      return one ? [one] : [];
+    })();
+    const combinedMonths = mergeStatementMonths(
+      statementMonthsFromUd(currentUd),
+      incomingMonths.length ? incomingMonths : single,
+    );
+    if (combinedMonths.length) udUpdates.statementMonths = JSON.stringify(combinedMonths);
+
+    const mappedBank = mapParsedBankFieldsToUd(udUpdates);
+    const BANK_KEYS = new Set([
+      'totalDeposits', 'totalWithdrawals', 'openingBalance', 'depositCount', 'depositsCount',
+      'mcaPositions', 'hasOtherMCALoans', 'nsfCount', 'negativeDays', 'avgDailyBalance',
+      'endingBalance', 'monthlyRevenue', 'largestDeposit', 'statementMonth', 'bankName',
+      'accountNumber', 'month1Revenue', 'month2Revenue', 'month3Revenue', 'month4Revenue',
+      'statementMonths',
+    ]);
+    const leftover: Record<string, string> = {};
+    for (const [k, v] of Object.entries(udUpdates)) {
+      if (k in mappedBank || BANK_KEYS.has(k)) continue;
+      leftover[k] = v;
     }
 
-    // Underwriting fields — merge into existing ud
-    if (Object.keys(udUpdates).length) {
-      const currentUd = (lead.underwriting_data || {}) as Record<string, unknown>;
-      const mergedUd  = { ...currentUd, ...udUpdates };
+    if (Object.keys(mappedBank).length || Object.keys(leftover).length) {
+      if (mappedBank.mcaPositions && currentUd.mcaPositions) {
+        const byKey = new Map<string, ReturnType<typeof parseMcaPositions>[number]>();
+        for (const p of [...parseMcaPositions(currentUd.mcaPositions), ...parseMcaPositions(mappedBank.mcaPositions)]) {
+          const key = p.lender.toLowerCase();
+          if (!byKey.has(key)) byKey.set(key, p);
+        }
+        const combined = [...byKey.values()];
+        mappedBank.mcaPositions = combined;
+        mappedBank.mcaPositionCount = combined.length;
+        mappedBank.hasOtherMCALoans = combined.length > 0;
+        mappedBank.otherMCALenders = combined.map(p => p.lender).filter(Boolean).join(', ');
+        mappedBank.otherMCAMonthlyPayment = combined.reduce((s, p) => s + (p.monthlyPayment || 0), 0);
+      }
+      const hasBank = Object.keys(mappedBank).length > 0;
+      const mergedUd: Record<string, unknown> = { ...currentUd, ...leftover, ...mappedBank };
+      if (hasBank) {
+        mergedUd.bankStatementAnalysis = seedBankAnalysisFromParsed(
+          udUpdates,
+          (currentUd.bankStatementAnalysis as BankSnap | undefined) ?? null,
+        );
+      }
       await fetch('/api/leads/underwriting', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -565,6 +619,7 @@ export default function LeadWorkspaceClient({
   const creditScore = (ud.creditScore != null ? Number(ud.creditScore) : null);
   /** Safely extract a string from unknown JSON value */
   const str = (v: unknown): string | null => (v != null ? String(v) : null);
+  const mcaPositions = parseMcaPositions(ud.mcaPositions);
 
   // Auto-derive TIB from businessStartDate if timeInBusiness is not set
   const derivedTIB: number | null = (() => {
@@ -955,6 +1010,27 @@ export default function LeadWorkspaceClient({
               checked={(ud as Record<string, unknown>).hasOtherMCALoans === true || (ud as Record<string, unknown>).hasOtherMCALoans === 'true'}
               onToggle={() => saveField('hasOtherMCALoans', !((ud as Record<string, unknown>).hasOtherMCALoans === true || (ud as Record<string, unknown>).hasOtherMCALoans === 'true'))}
             />
+            {mcaPositions.length > 0 && mcaPositions.map((p, i) => (
+              <div key={`${p.lender}-${i}`} className="flex items-start gap-2 py-2 border-b border-[#f5f5f5]">
+                <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0 pt-0.5">
+                  {i === 0 ? 'MCA Positions' : ''}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm text-[#1a1a1a] truncate">{p.lender}</div>
+                  <div className="text-[11px] text-[#6b6b6b]">
+                    ${p.payment.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/{p.frequency}
+                    {' · '}${p.monthlyPayment.toLocaleString()}/mo
+                    {p.outstanding ? ` · $${p.outstanding.toLocaleString()} bal` : ''}
+                  </div>
+                </div>
+              </div>
+            ))}
+            {(mcaPositions.length > 0 || ud.hasOtherMCALoans === true || ud.hasOtherMCALoans === 'true') && (
+              <>
+                <Field label="# Positions" value={str(ud.mcaPositionCount ?? (mcaPositions.length || null))} onSave={v => saveField('mcaPositionCount', v)} type="number" />
+                <Field label="Total MCA / Mo" value={str(ud.otherMCAMonthlyPayment)} onSave={v => saveField('otherMCAMonthlyPayment', v)} type="number" />
+              </>
+            )}
           </Section>
 
           {/* OWNER 2 — collapsible, show only if any owner2 field exists */}
@@ -1395,7 +1471,7 @@ export default function LeadWorkspaceClient({
             timeInBusiness:    derivedTIB ?? Number(ud.timeInBusiness ?? 0),
             creditScore:       Number(ud.creditScore     ?? 0),
             avgMonthlyRevenue: Number(ud.monthlyRevenue  ?? 0),
-            currentPositions:  ud.hasOtherMCALoans ? Number(ud.mcaPositionCount ?? 1) : 0,
+            currentPositions:  Number(ud.mcaPositionCount ?? mcaPositions.length) || ((ud.hasOtherMCALoans === true || ud.hasOtherMCALoans === 'true') ? 1 : 0),
             businessState:     String(ud.businessState   ?? ''),
             industry:          String(ud.industry        ?? ''),
             nsfCount:          Number(ud.nsfCount        ?? 0),
