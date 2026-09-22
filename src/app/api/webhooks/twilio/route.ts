@@ -52,7 +52,7 @@ async function findLeadByPhone(from: string, userId: string | null) {
     return null;
   };
 
-  return (await tryMatch(userId)) || (userId ? await tryMatch(null) : null);
+  return (await tryMatch(userId)) || (await tryMatch(null));
 }
 
 export async function GET() {
@@ -72,12 +72,22 @@ export async function POST(req: NextRequest) {
 
     if (!from || !body) return emptyTwiml();
 
+    // SECURITY DEFINER RPC — works even when the webhook has no login / RLS blocks reads.
+    const { data: ingested, error: ingestErr } = await supabase.rpc('ingest_inbound_sms', {
+      p_from: from,
+      p_to: to,
+      p_body: body,
+      p_sid: messageSid,
+    });
+    if (ingestErr) console.error('[SMS Webhook] ingest_inbound_sms:', ingestErr);
+    else console.log('[SMS Webhook] ingest_inbound_sms:', ingested);
+
     const to10 = last10(to);
 
     const { data: conns } = await supabase
       .from('phone_connections')
       .select('user_id, phone_number');
-    const conn = (conns ?? []).find(c => last10(c.phone_number) === to10) ?? null;
+    const conn = (conns ?? []).find(c => last10(c.phone_number) === to10) ?? conns?.[0] ?? null;
     const userId = conn?.user_id ?? null;
 
     const lead = await findLeadByPhone(from, userId);
@@ -93,8 +103,12 @@ export async function POST(req: NextRequest) {
       await supabase.from('leads').update({ sms_opt_out: true }).eq('id', lead.id);
     }
 
-    // Always write the reply into Inbox
-    try {
+    const rpcOk = Boolean(ingested && typeof ingested === 'object' && (ingested as { ok?: boolean }).ok);
+
+    // Fallback write if the SQL function isn't installed yet
+    if (rpcOk) {
+      // already stored
+    } else try {
       let { data: conv } = await supabase
         .from('inbox_conversations')
         .select('id, unread_count')
