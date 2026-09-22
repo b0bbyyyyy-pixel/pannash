@@ -33,6 +33,7 @@ interface Lead {
   stage?: string | null;
   value?: number | null;
   lead_source?: string | null;
+  follow_up_at?: string | null;
   underwriting_data?: Record<string, unknown> | null;
 }
 
@@ -366,7 +367,7 @@ export default function LeadWorkspaceClient({
   // Fields that can be updated directly via update-crm
   const DIRECT_FIELDS = new Set([
     'company', 'name', 'email', 'phone', 'notes', 'stage',
-    'value', 'lead_source', 'last_contact', 'offers',
+    'value', 'lead_source', 'last_contact', 'offers', 'follow_up_at',
   ]);
 
   // ── Field save helper ────────────────────────────────────────────────────────
@@ -999,6 +1000,12 @@ export default function LeadWorkspaceClient({
           {/* DEAL */}
           <Section title="Deal">
             <Field label="Amount Requested"  value={lead.value != null ? String(lead.value) : str(ud.requestedAmount)} onSave={v => saveField('value', v)} />
+            <Field
+              label="Follow-up"
+              value={lead.follow_up_at ? String(lead.follow_up_at).slice(0, 10) : null}
+              onSave={v => saveField('follow_up_at', v.trim() || null)}
+              type="date"
+            />
             <Field label="Use of Funds"      value={str(ud.purposeOfFunds)}   onSave={v => saveField('purposeOfFunds', v)} />
             <Field label="Avg Monthly Rev"   value={str(ud.monthlyRevenue)}   onSave={v => saveField('monthlyRevenue', v)} type="number" />
             <Field label="Avg Daily Balance" value={str(ud.avgDailyBalance)}  onSave={v => saveField('avgDailyBalance', v)} type="number" />

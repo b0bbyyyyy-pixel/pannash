@@ -74,6 +74,7 @@ export async function POST(req: NextRequest) {
       'text_template_id',
       'last_email_sent',
       'last_text_sent',
+      'follow_up_at',
     ];
 
     if (!allowedFields.includes(field)) {

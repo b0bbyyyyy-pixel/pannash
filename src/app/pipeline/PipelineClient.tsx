@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 
 const AddPipelineLeadModal   = dynamic(() => import('@/components/AddPipelineLeadModal'),   { ssr: false });
@@ -24,6 +23,9 @@ interface Lead {
   in_pipeline?: boolean;
   month_key?: string | null;
   stage?: string | null;
+  value?: number | string | null;
+  follow_up_at?: string | null;
+  underwriting_data?: Record<string, unknown> | null;
 }
 
 interface PipelineClientProps {
@@ -65,9 +67,74 @@ function activityAt(lead: Lead): string | null {
 function absDate(dateStr: string | null | undefined): string {
   if (!dateStr) return '';
   return new Date(dateStr).toLocaleDateString('en-US', {
-    month: 'short', day: 'numeric', year: 'numeric',
+    month: 'short', day: 'numeric',
   });
 }
+
+function parseAmount(raw: unknown): number | null {
+  if (raw == null || raw === '') return null;
+  const n = typeof raw === 'number' ? raw : Number(String(raw).replace(/[^0-9.-]/g, ''));
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.round(n);
+}
+
+function formatAmount(n: number): string {
+  return `$${n.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+}
+
+function lastOfferAmount(ud: Record<string, unknown> | null | undefined): number | null {
+  if (!ud) return null;
+  const adjusted = parseAmount(ud.adjustedAmount);
+  if (adjusted) return adjusted;
+  const offers = Array.isArray(ud.actualOffers) ? ud.actualOffers as Array<Record<string, unknown>> : [];
+  const selected = offers.find(o => o?.id === ud.selectedOfferId);
+  const selectedAmt = parseAmount(selected?.amount);
+  if (selectedAmt) return selectedAmt;
+  for (let i = offers.length - 1; i >= 0; i--) {
+    const amt = parseAmount(offers[i]?.amount);
+    if (amt) return amt;
+  }
+  return parseAmount(ud.approvedAmount);
+}
+
+function requestedAmount(lead: Lead): number | null {
+  return parseAmount(lead.value) ?? parseAmount(lead.underwriting_data?.requestedAmount);
+}
+
+function amountForLead(lead: Lead): number | null {
+  const status = (lead.lead_status || '').toLowerCase().replace(/\s+/g, '');
+  const requested = requestedAmount(lead);
+  const offer = lastOfferAmount(lead.underwriting_data);
+  if (status === 'newlead' || status === 'new') return requested;
+  if (status === 'submitted' || status === 'conditionallyapproved') return offer ?? requested;
+  return offer ?? requested;
+}
+
+function parseLocalDate(dateStr: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateStr.slice(0, 10));
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const d = new Date(dateStr);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function followUpLabel(lead: Lead): string {
+  const raw = lead.follow_up_at || (typeof lead.underwriting_data?.followUpDate === 'string'
+    ? lead.underwriting_data.followUpDate
+    : null);
+  if (!raw) return '';
+  const d = parseLocalDate(raw);
+  if (!d) return '';
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(d);
+  target.setHours(0, 0, 0, 0);
+  const diff = Math.round((target.getTime() - today.getTime()) / 86400000);
+  if (diff === 0) return 'Today';
+  if (diff === 1) return 'Tomorrow';
+  return target.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+const PIPELINE_COLS = 'grid-cols-[minmax(0,1fr)_196px_108px_104px_84px]';
 
 // ── Filter state shape ────────────────────────────────────────────────────────
 interface Filters {
@@ -141,7 +208,6 @@ function FilterSection({
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function PipelineClient({ leads, userId }: PipelineClientProps) {
-  const router = useRouter();
   const [search, setSearch]                 = useState('');
   const [showAddModal, setShowAddModal]     = useState(false);
   const [showManageStatuses, setShowManageStatuses] = useState(false);
@@ -279,7 +345,7 @@ export default function PipelineClient({ leads, userId }: PipelineClientProps) {
   const goTo = (id: string) => setLeadOverlayId(id);
 
   return (
-    <div>
+    <div className="w-full lg:w-[60%]">
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
@@ -300,7 +366,7 @@ export default function PipelineClient({ leads, userId }: PipelineClientProps) {
               placeholder="Search leads…"
               value={search}
               onChange={e => setSearch(e.target.value)}
-              className="pl-9 pr-4 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white text-[#1a1a1a] placeholder:text-[#9b9b9b] focus:outline-none focus:ring-1 focus:ring-[#1a1a1a] w-56"
+              className="pl-9 pr-2 py-2 text-sm bg-transparent text-[#1a1a1a] placeholder:text-[#9b9b9b] focus:outline-none w-56"
             />
           </div>
 
@@ -338,17 +404,17 @@ export default function PipelineClient({ leads, userId }: PipelineClientProps) {
       {/* ── Table ──────────────────────────────────────────────────────────── */}
       <div className="bg-white border border-[#e5e5e5] rounded-lg overflow-hidden">
         {/* Table header */}
-        <div className="grid grid-cols-[1fr_190px_160px_130px_68px] gap-0 border-b border-[#e5e5e5] bg-[#fafafa] px-3 py-2">
-          <div className="text-[10px] font-bold text-[#9b9b9b] uppercase tracking-wider">Lead</div>
-          <div className="text-[10px] font-bold text-[#9b9b9b] uppercase tracking-wider">Contact</div>
-          <div className="text-[10px] font-bold text-[#9b9b9b] uppercase tracking-wider">Status</div>
-          <div className="text-[10px] font-bold text-[#9b9b9b] uppercase tracking-wider flex items-center gap-1">
+        <div className={`grid ${PIPELINE_COLS} gap-x-3 border-b border-[#e5e5e5] bg-[#fafafa] px-3 py-2`}>
+          <div className="text-[11px] font-semibold text-[#9b9b9b] uppercase tracking-wide">Lead</div>
+          <div className="text-[11px] font-semibold text-[#9b9b9b] uppercase tracking-wide">Status</div>
+          <div className="text-[11px] font-semibold text-[#9b9b9b] uppercase tracking-wide text-right px-1">Amount</div>
+          <div className="text-[11px] font-semibold text-[#9b9b9b] uppercase tracking-wide px-1">Follow-up</div>
+          <div className="text-[11px] font-semibold text-[#9b9b9b] uppercase tracking-wide flex items-center justify-end gap-1">
             Activity
             <svg className="w-3 h-3 text-[#9b9b9b]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
             </svg>
           </div>
-          <div />
         </div>
 
         {/* Rows */}
@@ -371,71 +437,58 @@ export default function PipelineClient({ leads, userId }: PipelineClientProps) {
             const status      = lead.lead_status || '';
             const statusStyle = getStatusStyleFrom(status, dbStatuses);
             const activityDate = activityAt(lead);
+            const amount = amountForLead(lead);
+            const followUp = followUpLabel(lead);
             return (
               <div
                 key={lead.id}
                 onClick={() => goTo(lead.id)}
-                className={`grid grid-cols-[1fr_190px_160px_130px_68px] gap-0 px-3 py-1.5 cursor-pointer hover:bg-[#fafafa] transition-colors border-b border-[#f5f5f5] ${
+                className={`grid ${PIPELINE_COLS} gap-x-3 px-3 py-1 cursor-pointer hover:bg-[#fafafa] transition-colors border-b border-[#f5f5f5] ${
                   idx === filtered.length - 1 ? 'border-b-0' : ''
                 }`}
               >
                 {/* Lead info — company bold + name inline */}
                 <div className="flex flex-col justify-center min-w-0 pr-3">
-                  <span className="text-xs font-semibold text-[#1a1a1a] truncate leading-tight">
+                  <span className="text-[15px] font-semibold text-[#1a1a1a] truncate leading-snug">
                     {lead.company || lead.name}
                   </span>
                   {lead.company && (
-                    <span className="text-[11px] text-[#9b9b9b] truncate leading-tight">{lead.name}</span>
+                    <span className="text-[13px] text-[#9b9b9b] truncate leading-snug">{lead.name}</span>
                   )}
                 </div>
 
-                {/* Contact */}
-                <div className="flex flex-col justify-center min-w-0 pr-3">
-                  <span className="text-[11px] text-[#6b6b6b] truncate leading-tight">{lead.email || '—'}</span>
-                  <span className="text-[11px] text-[#9b9b9b] leading-tight">{lead.phone || ''}</span>
-                </div>
-
                 {/* Status */}
-                <div className="flex items-center pr-3">
+                <div className="flex items-center pr-1">
                   {status ? (
                     <span
-                      className="w-full px-2 py-0.5 rounded text-[11px] font-medium text-center truncate"
+                      className="w-full px-2.5 py-0.5 rounded text-[13px] font-medium text-center whitespace-nowrap"
                       style={{ background: statusStyle.bg, color: statusStyle.text }}
                     >
                       {status}
                     </span>
                   ) : (
-                    <span className="text-[11px] text-[#c4c4c4]">—</span>
+                    <span className="text-[13px] text-[#c4c4c4]">—</span>
+                  )}
+                </div>
+
+                {/* Amount */}
+                <div className="flex items-center justify-end px-1">
+                  {amount != null && (
+                    <span className="text-[15px] font-semibold text-[#1a1a1a] tabular-nums">{formatAmount(amount)}</span>
+                  )}
+                </div>
+
+                {/* Follow-up */}
+                <div className="flex items-center px-1">
+                  {followUp && (
+                    <span className="text-[13px] text-[#1a1a1a]">{followUp}</span>
                   )}
                 </div>
 
                 {/* Activity */}
-                <div className="flex flex-col justify-center">
-                  <span className="text-[11px] font-medium text-[#1a1a1a] leading-tight">{relativeTime(activityDate)}</span>
-                  <span className="text-[10px] text-[#9b9b9b] leading-tight">{absDate(activityDate)}</span>
-                </div>
-
-                {/* Actions */}
-                <div className="flex items-center justify-end gap-0.5" onClick={e => e.stopPropagation()}>
-                  <button
-                    onClick={() => goTo(lead.id)}
-                    className="p-1 rounded hover:bg-[#f0f0f0] text-[#9b9b9b] hover:text-[#1a1a1a] transition-colors"
-                    title="View"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                    </svg>
-                  </button>
-                  <button
-                    onClick={() => router.push(`/pipeline/${lead.id}?edit=true`)}
-                    className="p-1 rounded hover:bg-[#f0f0f0] text-[#9b9b9b] hover:text-[#1a1a1a] transition-colors"
-                    title="Edit"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                    </svg>
-                  </button>
+                <div className="flex flex-col justify-center items-end text-right">
+                  <span className="text-[13px] font-medium text-[#1a1a1a] leading-snug">{relativeTime(activityDate)}</span>
+                  <span className="text-[11px] text-[#9b9b9b] leading-snug">{absDate(activityDate)}</span>
                 </div>
               </div>
             );
