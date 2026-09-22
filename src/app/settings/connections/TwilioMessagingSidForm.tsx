@@ -8,6 +8,8 @@ export default function TwilioMessagingSidForm({ initialSid }: { initialSid?: st
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
+  const [hooking, setHooking] = useState(false);
+  const [hookMsg, setHookMsg] = useState('');
   const router = useRouter();
 
   const save = async () => {
@@ -58,6 +60,28 @@ export default function TwilioMessagingSidForm({ initialSid }: { initialSid?: st
       <p className="text-[11px] text-gray-500 mt-1.5">
         Twilio Console → Messaging → Services. After approval, send through this SID or carriers drop the texts.
       </p>
+      <button
+        type="button"
+        onClick={async () => {
+          setHooking(true);
+          setHookMsg('');
+          try {
+            const res = await fetch('/api/settings/phone/inbound-webhook', { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Could not set webhook');
+            setHookMsg('Replies will now land in Inbox. Text back again to test.');
+          } catch (e) {
+            setHookMsg(e instanceof Error ? e.message : 'Could not set webhook');
+          } finally {
+            setHooking(false);
+          }
+        }}
+        disabled={hooking}
+        className="mt-3 px-3 py-2 border border-gray-300 bg-white text-sm text-gray-900 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+      >
+        {hooking ? 'Pointing Twilio…' : 'Point inbound SMS at Inbox'}
+      </button>
+      {hookMsg && <p className="text-xs text-gray-600 mt-1.5">{hookMsg}</p>}
     </div>
   );
 }

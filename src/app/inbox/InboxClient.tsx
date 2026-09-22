@@ -186,10 +186,12 @@ export default function InboxClient({
   useEffect(() => { loadLeads(); }, [loadLeads]);
 
   // ── Load messages on lead select ────────────────────────────────────────────
-  const loadMessages = useCallback(async (leadId: string) => {
-    setLoadingMsgs(true);
-    setMessages([]);
-    setSendError(null);
+  const loadMessages = useCallback(async (leadId: string, opts?: { quiet?: boolean }) => {
+    if (!opts?.quiet) {
+      setLoadingMsgs(true);
+      setMessages([]);
+      setSendError(null);
+    }
     try {
       const res = await fetch(`/api/inbox/messages?leadId=${leadId}`);
       if (!res.ok) return;
@@ -204,12 +206,19 @@ export default function InboxClient({
           : l
       ));
     } finally {
-      setLoadingMsgs(false);
+      if (!opts?.quiet) setLoadingMsgs(false);
     }
   }, []);
 
   useEffect(() => {
     if (selectedLeadId) loadMessages(selectedLeadId);
+  }, [selectedLeadId, loadMessages]);
+
+  // Replies arrive via Twilio webhook — poll so they show without a refresh.
+  useEffect(() => {
+    if (!selectedLeadId) return;
+    const id = window.setInterval(() => { loadMessages(selectedLeadId, { quiet: true }); }, 4000);
+    return () => window.clearInterval(id);
   }, [selectedLeadId, loadMessages]);
 
   // ── Scroll to bottom on new messages ───────────────────────────────────────

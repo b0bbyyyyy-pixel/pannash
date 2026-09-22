@@ -3,6 +3,8 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import twilio from 'twilio';
 import { toE164 } from '@/lib/dialer/e164';
+import { configureInboundSmsWebhooks } from '@/lib/telephony/sms';
+import { getTwilioCreds } from '@/lib/telephony/twilio';
 
 export async function POST(req: NextRequest) {
   try {
@@ -70,6 +72,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: insertError.message }, { status: 500 });
     }
 
+    const creds = await getTwilioCreds(supabase, user.id);
+    if (creds) await configureInboundSmsWebhooks(creds);
+
     return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error('Phone connection error:', error);
@@ -122,6 +127,9 @@ export async function PATCH(req: NextRequest) {
           : error.message,
       }, { status: 500 });
     }
+
+    const creds = await getTwilioCreds(supabase, user.id);
+    if (creds) await configureInboundSmsWebhooks(creds);
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
