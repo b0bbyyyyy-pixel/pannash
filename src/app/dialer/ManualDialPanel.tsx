@@ -17,7 +17,7 @@ const KEYPAD: { d: string; letters: string }[] = [
   { d: '*', letters: '' },     { d: '0', letters: '+' },   { d: '#', letters: '' },
 ];
 
-export default function ManualDialPanel() {
+export default function ManualDialPanel({ onClose, className = '' }: { onClose?: () => void; className?: string }) {
   const [number, setNumber] = useState('');
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -47,13 +47,27 @@ export default function ManualDialPanel() {
   const display = e164 ? formatDisplay(e164) : number;
 
   return (
-    <div className="bg-white border border-[#e5e5e5] rounded-2xl shadow-sm p-5">
+    <div className={`bg-white border border-[#e5e5e5] rounded-2xl shadow-sm p-5 ${className}`}>
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-semibold text-[#1a1a1a]">Phone</h3>
-        <span
-          className={`inline-block w-2 h-2 rounded-full ${webphone.ready ? 'bg-green-500' : 'bg-[#d4d4d4]'}`}
-          title={webphone.ready ? 'Phone ready' : 'Phone offline'}
-        />
+        <div className="flex items-center gap-2">
+          <span
+            className={`inline-block w-2 h-2 rounded-full ${webphone.ready ? 'bg-green-500' : 'bg-[#d4d4d4]'}`}
+            title={webphone.ready ? 'Phone ready' : 'Phone offline'}
+          />
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors p-0.5 rounded hover:bg-[#f5f5f5]"
+              title="Close"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Number display / input */}

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState } from 'react';
+import ManualDialPanel from '@/app/dialer/ManualDialPanel';
 
 interface NavbarProps {
   userName: string;
@@ -14,6 +15,7 @@ export default function Navbar({ userName }: NavbarProps) {
   const [showDropdown, setShowDropdown] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
   const [showAgent, setShowAgent] = useState(false);
+  const [showPhone, setShowPhone] = useState(false);
 
   const isActive = (path: string) => pathname === path || pathname?.startsWith(path + '/');
 
@@ -79,11 +81,26 @@ export default function Navbar({ userName }: NavbarProps) {
             </Link>
           </div>
 
-          {/* Right Side - Agent popup + Calendar popup + Settings menu */}
+          {/* Right Side - Phone popup + Agent popup + Calendar popup + Settings menu */}
           <div className="relative flex items-center gap-4">
+            {/* Phone icon → live keypad popup */}
+            <button
+              onClick={() => { setShowPhone((v) => !v); setShowAgent(false); setShowCalendar(false); setShowDropdown(false); }}
+              className="focus:outline-none hover:opacity-70 transition-opacity"
+              title="Phone"
+            >
+              <img
+                src="/images/icons/phone-icon.png"
+                alt="Phone"
+                width={22}
+                height={22}
+                className="w-[22px] h-[22px]"
+              />
+            </button>
+
             {/* Agent icon → popup */}
             <button
-              onClick={() => { setShowAgent(true); setShowCalendar(false); setShowDropdown(false); }}
+              onClick={() => { setShowAgent(true); setShowPhone(false); setShowCalendar(false); setShowDropdown(false); }}
               className="focus:outline-none hover:opacity-70 transition-opacity"
               title="Agent"
             >
@@ -98,7 +115,7 @@ export default function Navbar({ userName }: NavbarProps) {
 
             {/* Calendar icon → popup */}
             <button
-              onClick={() => { setShowCalendar(true); setShowAgent(false); setShowDropdown(false); }}
+              onClick={() => { setShowCalendar(true); setShowAgent(false); setShowPhone(false); setShowDropdown(false); }}
               className="focus:outline-none hover:opacity-70 transition-opacity"
               title="Calendar"
             >
@@ -113,7 +130,7 @@ export default function Navbar({ userName }: NavbarProps) {
 
             {/* Settings (kanban icon) */}
             <button
-              onClick={() => setShowDropdown(!showDropdown)}
+              onClick={() => { setShowDropdown(!showDropdown); setShowPhone(false); }}
               className="focus:outline-none hover:opacity-70 transition-opacity"
               title="Settings"
             >
@@ -194,6 +211,22 @@ export default function Navbar({ userName }: NavbarProps) {
           </div>
         </div>
       </div>
+
+      {/* Phone keypad popup — live WebRTC pad, same Device as Dialer */}
+      {showPhone && (
+        <>
+          <div
+            className="fixed inset-0 z-[80]"
+            onClick={() => setShowPhone(false)}
+          />
+          <div
+            className="fixed top-24 left-1/2 -translate-x-1/2 z-[81] w-[min(92vw,340px)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <ManualDialPanel onClose={() => setShowPhone(false)} className="shadow-2xl" />
+          </div>
+        </>
+      )}
 
       {/* Agent popup overlay */}
       {showAgent && (
