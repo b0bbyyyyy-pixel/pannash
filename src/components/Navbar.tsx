@@ -40,16 +40,6 @@ export default function Navbar({ userName }: NavbarProps) {
           {/* Center Links */}
           <div className="flex items-center space-x-12">
             <Link
-              href="/pipeline"
-              className={`text-sm font-medium transition-colors ${
-                isActive('/pipeline')
-                  ? 'text-[#1a1a1a]'
-                  : 'text-[#6b6b6b] hover:text-[#1a1a1a]'
-              }`}
-            >
-              Pipeline
-            </Link>
-            <Link
               href="/inbox"
               className={`text-sm font-medium transition-colors ${
                 isActive('/inbox')
@@ -58,6 +48,16 @@ export default function Navbar({ userName }: NavbarProps) {
               }`}
             >
               Inbox
+            </Link>
+            <Link
+              href="/pipeline"
+              className={`text-sm font-medium transition-colors ${
+                isActive('/pipeline')
+                  ? 'text-[#1a1a1a]'
+                  : 'text-[#6b6b6b] hover:text-[#1a1a1a]'
+              }`}
+            >
+              Pipeline
             </Link>
             <Link
               href="/dialer"
