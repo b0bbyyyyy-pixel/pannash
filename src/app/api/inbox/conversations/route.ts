@@ -1,8 +1,10 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 
-export async function GET() {
+const LEAD_COLS = 'id, name, company, phone, stage, month_key, last_contact, notes, in_pipeline';
+
+export async function GET(req: NextRequest) {
   try {
     const cookieStore = await cookies();
     const supabase = createServerClient(
@@ -14,15 +16,17 @@ export async function GET() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    // All CRM leads (month_key set) with phone numbers
-    // Note: sms_opt_out omitted here — added separately once column exists
+    const pinLeadId = req.nextUrl.searchParams.get('leadId');
+
+    // Pipeline leads + legacy CRM (month_key, no campaign list) that have a phone.
+    // New pipeline adds set in_pipeline and leave month_key null.
     const { data: leads, error } = await supabase
       .from('leads')
-      .select('id, name, company, phone, stage, month_key, last_contact, notes')
+      .select(LEAD_COLS)
       .eq('user_id', user.id)
       .not('phone', 'is', null)
       .not('phone', 'eq', '')
-      .not('month_key', 'is', null)
+      .or('in_pipeline.eq.true,and(month_key.not.is.null,list_id.is.null)')
       .order('last_contact', { ascending: false, nullsFirst: false });
 
     if (error) {
@@ -30,23 +34,38 @@ export async function GET() {
       return NextResponse.json({ leads: [], phoneConnection: null, dbError: error.message });
     }
 
-    // Try to get opt-out status (column may not exist until SQL is run)
-    let optOutMap: Record<string, boolean> = {};
-    try {
-      const { data: optOuts } = await supabase
+    const list = [...(leads ?? [])];
+
+    // Send SMS from a lead workspace always passes leadId — include that row even if
+    // it wouldn't match the default filter (no phone, campaign list, etc.).
+    if (pinLeadId && !list.some(l => l.id === pinLeadId)) {
+      const { data: pinned } = await supabase
         .from('leads')
-        .select('id, sms_opt_out')
+        .select(LEAD_COLS)
+        .eq('id', pinLeadId)
         .eq('user_id', user.id)
-        .not('month_key', 'is', null);
-      for (const r of optOuts ?? []) {
-        optOutMap[r.id] = r.sms_opt_out ?? false;
-      }
-    } catch {
-      // Column not created yet — ignore
+        .maybeSingle();
+      if (pinned) list.unshift(pinned);
     }
 
-    // Try to fetch conversations (table may not exist until SQL is run)
-    let convMap: Record<string, any> = {};
+    const ids = list.map(l => l.id);
+
+    let optOutMap: Record<string, boolean> = {};
+    if (ids.length) {
+      try {
+        const { data: optOuts } = await supabase
+          .from('leads')
+          .select('id, sms_opt_out')
+          .in('id', ids);
+        for (const r of optOuts ?? []) {
+          optOutMap[r.id] = r.sms_opt_out ?? false;
+        }
+      } catch {
+        // Column not created yet — ignore
+      }
+    }
+
+    let convMap: Record<string, Record<string, unknown>> = {};
     try {
       const { data: convs } = await supabase
         .from('inbox_conversations')
@@ -57,21 +76,23 @@ export async function GET() {
       // Table not created yet — ignore
     }
 
-    // Merge
-    const merged = (leads || []).map(lead => ({
+    const merged = list.map(lead => ({
       ...lead,
+      phone: lead.phone || '',
       sms_opt_out: optOutMap[lead.id] ?? false,
       conversation: convMap[lead.id] ?? null,
     }));
 
-    // Sort: leads with recent messages first, then by last_contact
     merged.sort((a, b) => {
-      const aTime = a.conversation?.last_message_at ?? a.last_contact ?? '0';
-      const bTime = b.conversation?.last_message_at ?? b.last_contact ?? '0';
+      if (pinLeadId) {
+        if (a.id === pinLeadId) return -1;
+        if (b.id === pinLeadId) return 1;
+      }
+      const aTime = (a.conversation as { last_message_at?: string } | null)?.last_message_at ?? a.last_contact ?? '0';
+      const bTime = (b.conversation as { last_message_at?: string } | null)?.last_message_at ?? b.last_contact ?? '0';
       return bTime > aTime ? 1 : -1;
     });
 
-    // Check if user has a Twilio connection
     let phoneConn = null;
     try {
       const { data } = await supabase
@@ -85,8 +106,9 @@ export async function GET() {
     }
 
     return NextResponse.json({ leads: merged, phoneConnection: phoneConn });
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
     console.error('[inbox/conversations] unexpected error:', err);
-    return NextResponse.json({ leads: [], phoneConnection: null, dbError: err?.message ?? 'Unknown error' });
+    return NextResponse.json({ leads: [], phoneConnection: null, dbError: message });
   }
 }

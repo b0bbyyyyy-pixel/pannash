@@ -19,14 +19,33 @@ export async function POST(req: NextRequest) {
     const messageSid = formData.get('MessageSid') as string;
     const messageStatus = formData.get('MessageStatus') as string;
     const to = formData.get('To') as string;
+    const errorCode = String(formData.get('ErrorCode') ?? '');
+    const errorMessage = String(formData.get('ErrorMessage') ?? '');
 
-    console.log(`[SMS Status] SID: ${messageSid}, Status: ${messageStatus}, To: ${to}`);
+    console.log(`[SMS Status] SID: ${messageSid}, Status: ${messageStatus}, To: ${to}`, errorCode || '');
 
     if (!messageSid || !messageStatus) {
       return new NextResponse('<?xml version="1.0" encoding="UTF-8"?><Response></Response>', {
         headers: { 'Content-Type': 'text/xml' }
       });
     }
+
+    let inboxStatus: 'queued' | 'sent' | 'delivered' | 'failed' = 'sent';
+    if (messageStatus === 'failed' || messageStatus === 'undelivered') inboxStatus = 'failed';
+    else if (messageStatus === 'delivered') inboxStatus = 'delivered';
+    else if (messageStatus === 'queued' || messageStatus === 'accepted' || messageStatus === 'sending') inboxStatus = 'queued';
+
+    const inboxError = errorCode
+      ? `${errorCode}${errorMessage ? `: ${errorMessage}` : ''}`
+      : inboxStatus === 'failed' ? (errorMessage || messageStatus) : null;
+
+    await supabase
+      .from('inbox_messages')
+      .update({
+        status: inboxStatus,
+        ...(inboxError ? { error_message: inboxError } : {}),
+      })
+      .eq('twilio_sid', messageSid);
 
     // Update sms_queue status
     const { data: queueItem } = await supabase

@@ -166,7 +166,8 @@ export default function InboxClient({
   // ── Load lead list ──────────────────────────────────────────────────────────
   const loadLeads = useCallback(async () => {
     try {
-      const res = await fetch('/api/inbox/conversations');
+      const qs = initialLeadId ? `?leadId=${encodeURIComponent(initialLeadId)}` : '';
+      const res = await fetch(`/api/inbox/conversations${qs}`);
       if (!res.ok) {
         setLoadingLeads(false);
         return;
@@ -180,7 +181,7 @@ export default function InboxClient({
     } finally {
       setLoadingLeads(false);
     }
-  }, []);
+  }, [initialLeadId]);
 
   useEffect(() => { loadLeads(); }, [loadLeads]);
 
@@ -374,6 +375,9 @@ export default function InboxClient({
         ));
 
         if (data.error) setSendError(data.error);
+        if (data.message?.id && selectedLeadId) {
+          window.setTimeout(() => { loadMessages(selectedLeadId); }, 4000);
+        }
       }
     } catch {
       setMessages(prev =>

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
-import twilio from 'twilio';
+import { getTwilioCreds } from '@/lib/telephony/twilio';
+import { sendTwilioSms } from '@/lib/telephony/sms';
 
 export async function POST(req: NextRequest) {
   try {
@@ -31,38 +32,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing to or body' }, { status: 400 });
     }
 
-    // Get user's Twilio connection
-    const { data: connection } = await supabase
-      .from('phone_connections')
-      .select('*')
-      .eq('user_id', user.id)
-      .single();
-
-    if (!connection) {
+    const creds = await getTwilioCreds(supabase, user.id);
+    if (!creds) {
       return NextResponse.json({ error: 'No phone connection found. Please connect Twilio first.' }, { status: 400 });
     }
 
-    // Send SMS via Twilio
-    const client = twilio(connection.account_sid, connection.auth_token);
+    const sent = await sendTwilioSms(creds, to, body);
 
-    const message = await client.messages.create({
-      body: body,
-      from: connection.phone_number,
-      to: to,
+    return NextResponse.json({
+      success: sent.status !== 'failed',
+      messageSid: sent.sid,
+      status: sent.status,
+      ...(sent.error ? { error: sent.error } : {}),
     });
-
-    console.log(`SMS sent to ${to}, SID: ${message.sid}`);
-
-    return NextResponse.json({ 
-      success: true, 
-      messageSid: message.sid,
-      status: message.status 
-    });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'SMS send error';
     console.error('SMS send error:', error);
-    return NextResponse.json(
-      { error: error.message },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

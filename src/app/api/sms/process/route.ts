@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
-import twilio from 'twilio';
 import { replaceTemplateVariables } from '@/lib/queue';
+import { getTwilioCreds } from '@/lib/telephony/twilio';
+import { sendTwilioSms } from '@/lib/telephony/sms';
 
 export async function POST(req: NextRequest) {
   try {
@@ -65,18 +66,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ message: 'No SMS to send', processed: 0 });
     }
 
-    // Get user's Twilio connection
-    const { data: connection } = await supabase
-      .from('phone_connections')
-      .select('*')
-      .eq('user_id', user.id)
-      .single();
-
-    if (!connection) {
+    const creds = await getTwilioCreds(supabase, user.id);
+    if (!creds) {
       return NextResponse.json({ error: 'No Twilio connection found' }, { status: 400 });
     }
-
-    const client = twilio(connection.account_sid, connection.auth_token);
 
     let successCount = 0;
     let failureCount = 0;
@@ -111,13 +104,10 @@ export async function POST(req: NextRequest) {
         // Replace template variables in the body
         const personalizedBody = replaceTemplateVariables(item.sms_body, lead);
 
-        // Send SMS via Twilio
-        const message = await client.messages.create({
-          body: personalizedBody,
-          from: connection.phone_number,
-          to: lead.phone,
-          statusCallback: `${process.env.NEXT_PUBLIC_BASE_URL}/api/webhooks/twilio/status`,
-        });
+        const message = await sendTwilioSms(creds, lead.phone, personalizedBody);
+        if (message.status === 'failed') {
+          throw new Error(message.error || 'Twilio delivery failed');
+        }
 
         console.log(`SMS sent to ${lead.phone}, SID: ${message.sid}`);
 
@@ -147,7 +137,7 @@ export async function POST(req: NextRequest) {
             campaign_lead_id: item.campaign_lead_id,
             direction: 'outbound',
             body: personalizedBody,
-            from_number: connection.phone_number,
+            from_number: creds.fromNumber,
             to_number: lead.phone,
             twilio_sid: message.sid,
             ai_generated: false,

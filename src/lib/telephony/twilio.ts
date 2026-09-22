@@ -24,6 +24,7 @@ export interface TwilioCreds {
   accountSid: string;
   authToken: string;
   fromNumber: string;
+  messagingServiceSid?: string | null;
 }
 
 /**
@@ -32,28 +33,44 @@ export interface TwilioCreds {
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function getTwilioCreds(supabase: any, userId: string): Promise<TwilioCreds | null> {
-  const { data } = await supabase
+  let { data } = await supabase
     .from('phone_connections')
-    .select('account_sid, auth_token, phone_number')
+    .select('*')
     .eq('user_id', userId)
     .eq('provider', 'twilio')
     .limit(1)
     .maybeSingle();
 
-  if (data?.account_sid && data?.auth_token && data?.phone_number) {
+  if (!data?.account_sid) {
+    const fallback = await supabase
+      .from('phone_connections')
+      .select('*')
+      .eq('user_id', userId)
+      .limit(1)
+      .maybeSingle();
+    data = fallback.data;
+  }
+
+  const messagingServiceSid =
+    data?.messaging_service_sid ||
+    process.env.TWILIO_MESSAGING_SERVICE_SID ||
+    null;
+
+  if (data?.account_sid && data?.auth_token && (data?.phone_number || messagingServiceSid)) {
     return {
       accountSid: data.account_sid,
       authToken: data.auth_token,
-      fromNumber: data.phone_number,
+      fromNumber: data.phone_number || process.env.TWILIO_FROM_NUMBER || '',
+      messagingServiceSid,
     };
   }
 
-  // Env fallback
-  if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_FROM_NUMBER) {
+  if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && (process.env.TWILIO_FROM_NUMBER || process.env.TWILIO_MESSAGING_SERVICE_SID)) {
     return {
       accountSid: process.env.TWILIO_ACCOUNT_SID,
       authToken: process.env.TWILIO_AUTH_TOKEN,
-      fromNumber: process.env.TWILIO_FROM_NUMBER,
+      fromNumber: process.env.TWILIO_FROM_NUMBER || '',
+      messagingServiceSid: process.env.TWILIO_MESSAGING_SERVICE_SID || null,
     };
   }
 

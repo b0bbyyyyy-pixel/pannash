@@ -7,6 +7,7 @@ export default function TwilioForm() {
   const [accountSid, setAccountSid] = useState('');
   const [authToken, setAuthToken] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
+  const [messagingSid, setMessagingSid] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const router = useRouter();
@@ -24,6 +25,7 @@ export default function TwilioForm() {
           account_sid: accountSid,
           auth_token: authToken,
           phone_number: phoneNumber,
+          messaging_service_sid: messagingSid || undefined,
         }),
       });
 
@@ -94,6 +96,22 @@ export default function TwilioForm() {
         />
         <p className="mt-1 text-xs text-gray-500">
           Include country code (e.g., +1 for US)
+        </p>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          Messaging Service SID <span className="text-gray-400 font-normal">(for A2P / 10DLC)</span>
+        </label>
+        <input
+          type="text"
+          value={messagingSid}
+          onChange={(e) => setMessagingSid(e.target.value)}
+          className="w-full px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
+          placeholder="MGxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        />
+        <p className="mt-1 text-xs text-gray-500">
+          From Twilio Console → Messaging → Services. Required after carrier approval or texts get dropped.
         </p>
       </div>
 

@@ -7,6 +7,7 @@ import GmailConnectButton from './GmailConnectButton';
 import SMTPForm from './SMTPForm';
 import DisconnectButton from './DisconnectButton';
 import TwilioForm from './TwilioForm';
+import TwilioMessagingSidForm from './TwilioMessagingSidForm';
 
 export default async function ConnectionsPage({
   searchParams,
@@ -296,22 +297,25 @@ export default async function ConnectionsPage({
             </p>
 
             {twilioConnection ? (
-              <div className="flex items-center justify-between p-4 bg-purple-50 border border-purple-200 rounded-lg">
-                <div className="flex items-center space-x-3">
-                  <div className="w-10 h-10 bg-purple-600 rounded-lg flex items-center justify-center text-white font-semibold">
-                    T
-                  </div>
-                  <div>
-                    <div className="font-medium text-gray-900">Twilio</div>
-                    <div className="text-sm text-gray-600">
-                      {twilioConnection.phone_number}
+              <div className="p-4 bg-purple-50 border border-purple-200 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 bg-purple-600 rounded-lg flex items-center justify-center text-white font-semibold">
+                      T
+                    </div>
+                    <div>
+                      <div className="font-medium text-gray-900">Twilio</div>
+                      <div className="text-sm text-gray-600">
+                        {twilioConnection.phone_number}
+                      </div>
                     </div>
                   </div>
+                  <DisconnectButton
+                    provider="Twilio"
+                    disconnectAction={disconnectTwilio}
+                  />
                 </div>
-                <DisconnectButton 
-                  provider="Twilio"
-                  disconnectAction={disconnectTwilio}
-                />
+                <TwilioMessagingSidForm initialSid={twilioConnection.messaging_service_sid} />
               </div>
             ) : (
               <div>

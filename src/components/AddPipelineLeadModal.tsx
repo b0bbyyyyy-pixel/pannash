@@ -228,8 +228,9 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
   const inputCls = 'w-full px-3.5 py-2.5 bg-white border border-[#e5e5e5] rounded-lg text-sm text-[#1a1a1a] placeholder:text-[#b0b0b0] focus:outline-none focus:ring-2 focus:ring-[#1a1a1a]/10 focus:border-[#1a1a1a] transition-colors';
   const labelCls = 'block text-xs font-semibold text-[#6b6b6b] uppercase tracking-wider mb-1.5';
 
-  // ── The shared lead fields form ────────────────────────────────────────────
-  const LeadForm = () => (
+  // Keep this as JSX, not an inner component — a nested <LeadForm /> remounts
+  // on every keystroke and steals focus after the first letter.
+  const leadForm = (
     <div className="space-y-3.5">
       <div className="grid grid-cols-2 gap-3.5">
         <div>
@@ -396,7 +397,7 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
                   )}
                 </div>
               )}
-              <LeadForm />
+              {leadForm}
             </div>
           )}
 
