@@ -23,30 +23,55 @@ function newPack(name: string, templates: string[] = DEFAULT_TEMPLATES): Templat
   return { id: crypto.randomUUID(), name, templates: [...templates] };
 }
 
+export type ExistingDripJob = {
+  id: string;
+  status: string;
+  templates?: string[] | null;
+  window_hours?: number | null;
+  pace_min_seconds?: number | null;
+  pace_max_seconds?: number | null;
+  quiet_start?: string | null;
+  quiet_end?: string | null;
+  skip_states?: string[] | null;
+};
+
 interface Props {
   listId: string;
   campaignName: string;
   leadCount: number;
   savedTemplates?: string[] | null;
+  existingJob?: ExistingDripJob | null;
   onClose: () => void;
   onStarted: () => void;
 }
 
-export default function RunSmsModal({ listId, campaignName, leadCount, savedTemplates, onClose, onStarted }: Props) {
-  const [windowHours, setWindowHours] = useState(5);
-  const [customWindow, setCustomWindow] = useState('');
-  const [useCustomWindow, setUseCustomWindow] = useState(false);
-  const [paceMin, setPaceMin] = useState(60);
-  const [paceMax, setPaceMax] = useState(120);
+const WINDOW_PRESET_HOURS = [3, 5, 8];
+
+function windowParts(hours: number | null | undefined) {
+  const h = Number(hours);
+  if (!Number.isFinite(h) || h <= 0) return { hours: 5, mins: 0, custom: false };
+  if (WINDOW_PRESET_HOURS.includes(h)) return { hours: h, mins: 0, custom: false };
+  const total = Math.round(h * 60);
+  return { hours: Math.floor(total / 60), mins: total % 60, custom: true };
+}
+
+export default function RunSmsModal({ listId, campaignName, leadCount, savedTemplates, existingJob, onClose, onStarted }: Props) {
+  const initialWindow = windowParts(existingJob?.window_hours);
+  const [windowHours, setWindowHours] = useState(initialWindow.custom ? 5 : initialWindow.hours);
+  const [customHours, setCustomHours] = useState(initialWindow.custom ? String(initialWindow.hours || '') : '');
+  const [customMins, setCustomMins] = useState(initialWindow.custom ? String(initialWindow.mins || '') : '');
+  const [useCustomWindow, setUseCustomWindow] = useState(initialWindow.custom);
+  const [paceMin, setPaceMin] = useState(existingJob?.pace_min_seconds || 60);
+  const [paceMax, setPaceMax] = useState(existingJob?.pace_max_seconds || 120);
   const [packs, setPacks] = useState<TemplatePack[]>(() => [
     newPack('Set 1', savedTemplates?.length ? savedTemplates : DEFAULT_TEMPLATES),
   ]);
   const [activePackId, setActivePackId] = useState(() => packs[0].id);
   const [namingNew, setNamingNew] = useState(false);
   const [newPackName, setNewPackName] = useState('');
-  const [quietStart, setQuietStart] = useState('09:00');
-  const [quietEnd, setQuietEnd] = useState('20:00');
-  const [skipStates, setSkipStates] = useState<string[]>([]);
+  const [quietStart, setQuietStart] = useState(existingJob?.quiet_start || '09:00');
+  const [quietEnd, setQuietEnd] = useState(existingJob?.quiet_end || '20:00');
+  const [skipStates, setSkipStates] = useState<string[]>(existingJob?.skip_states ?? []);
   const [showSkipPicker, setShowSkipPicker] = useState(false);
   const [includeAlreadyTexted, setIncludeAlreadyTexted] = useState(false);
   const [starting, setStarting] = useState(false);
@@ -73,11 +98,34 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
     }
   };
 
+  const jobPayload = () => ({
+    templates: filledTemplates,
+    paceMinSeconds: paceMin,
+    paceMaxSeconds: paceMax,
+    windowHours: effectiveWindow > 0 ? effectiveWindow : 5,
+    quietStart,
+    quietEnd,
+    skipStates,
+  });
+
   const saveSets = async () => {
     setSaving(true);
     setSavedMsg(null);
     setError(null);
     const ok = await persistPacks(packs);
+    if (existingJob?.id) {
+      const res = await fetch('/api/sms/drip', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId: existingJob.id, action: 'update', ...jobPayload() }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setSaving(false);
+        setError(data.error || 'Could not save drip');
+        return;
+      }
+    }
     setSaving(false);
     setSavedMsg(ok ? 'Saved' : 'Saved on this device');
     setTimeout(() => setSavedMsg(null), 2000);
@@ -98,19 +146,24 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
         }
         if (loaded.length) {
           setPacks(loaded);
-          const match = savedTemplates?.length
-            ? loaded.find(p => JSON.stringify(p.templates.filter(Boolean)) === JSON.stringify(savedTemplates.filter(Boolean)))
+          const seed = existingJob?.templates?.length ? existingJob.templates : savedTemplates;
+          const match = seed?.length
+            ? loaded.find(p => JSON.stringify(p.templates.filter(Boolean)) === JSON.stringify(seed.filter(Boolean)))
             : null;
           setActivePackId(match?.id ?? loaded[0].id);
+        } else if (existingJob?.templates?.length) {
+          setPacks(prev => prev.map((p, i) => (i === 0 ? { ...p, templates: existingJob.templates as string[] } : p)));
         } else if (savedTemplates?.length) {
           setPacks(prev => prev.map((p, i) => (i === 0 ? { ...p, templates: savedTemplates } : p)));
         }
       })
       .catch(() => { /* keep local default */ });
     return () => { cancelled = true; };
-  }, [savedTemplates]);
+  }, [savedTemplates, existingJob?.templates]);
 
-  const effectiveWindow = useCustomWindow ? Number(customWindow) || 0 : windowHours;
+  const effectiveWindow = useCustomWindow
+    ? (Number(customHours) || 0) + (Number(customMins) || 0) / 60
+    : windowHours;
   const setTemplates = (updater: (prev: string[]) => string[]) => {
     setPacks(prev => prev.map(p => p.id === activePackId ? { ...p, templates: updater(p.templates) } : p));
   };
@@ -151,26 +204,27 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
     if (filledTemplates.length < 1) { setError('Add at least one template.'); return; }
     if (paceMin < 30) { setError('Minimum pace is 30 seconds.'); return; }
     if (paceMax < paceMin) { setError('Max pace must be ≥ min pace.'); return; }
+    if (useCustomWindow && effectiveWindow <= 0) { setError('Set custom hours or minutes.'); return; }
     setStarting(true);
     persistPacks(packs);
     try {
-      const res = await fetch('/api/sms/drip', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          listId,
-          templates: filledTemplates,
-          paceMinSeconds: paceMin,
-          paceMaxSeconds: paceMax,
-          windowHours: effectiveWindow || 5,
-          quietStart,
-          quietEnd,
-          skipStates,
-          includeAlreadyTexted,
-        }),
-      });
+      const res = existingJob?.id
+        ? await fetch('/api/sms/drip', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jobId: existingJob.id, action: 'resume', ...jobPayload() }),
+          })
+        : await fetch('/api/sms/drip', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              listId,
+              ...jobPayload(),
+              includeAlreadyTexted,
+            }),
+          });
       const data = await res.json();
-      if (!res.ok) { setError(data.error || 'Could not start drip'); return; }
+      if (!res.ok) { setError(data.error || (existingJob ? 'Could not resume drip' : 'Could not start drip')); return; }
       onStarted();
       onClose();
     } catch {
@@ -186,7 +240,9 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
       <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="px-6 py-4 border-b border-[#f0f0f0] flex items-center justify-between flex-shrink-0">
-          <h3 className="font-bold text-[#1a1a1a]">Run SMS — {campaignName}</h3>
+          <h3 className="font-bold text-[#1a1a1a]">
+            {existingJob ? 'Edit SMS' : 'Run SMS'} — {campaignName}
+          </h3>
           <button onClick={onClose} className="text-[#9b9b9b] hover:text-[#1a1a1a] transition-colors">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -215,19 +271,32 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
               ))}
               <input
                 type="number"
-                min={1}
+                min={0}
                 max={24}
-                placeholder="Custom"
-                value={customWindow}
+                placeholder="0"
+                value={customHours}
                 onFocus={() => setUseCustomWindow(true)}
-                onChange={e => { setCustomWindow(e.target.value); setUseCustomWindow(true); }}
-                className={`w-20 px-2 py-1.5 text-sm border rounded-lg focus:outline-none focus:border-[#1a1a1a] ${
+                onChange={e => { setCustomHours(e.target.value); setUseCustomWindow(true); }}
+                className={`w-14 px-2 py-1.5 text-sm border rounded-lg focus:outline-none focus:border-[#1a1a1a] ${
                   useCustomWindow ? 'border-[#1a1a1a]' : 'border-[#e5e5e5]'
                 }`}
               />
-              <span className="text-xs text-[#9b9b9b]">hours</span>
+              <span className="text-xs text-[#9b9b9b]">h</span>
+              <input
+                type="number"
+                min={0}
+                max={59}
+                placeholder="0"
+                value={customMins}
+                onFocus={() => setUseCustomWindow(true)}
+                onChange={e => { setCustomMins(e.target.value); setUseCustomWindow(true); }}
+                className={`w-14 px-2 py-1.5 text-sm border rounded-lg focus:outline-none focus:border-[#1a1a1a] ${
+                  useCustomWindow ? 'border-[#1a1a1a]' : 'border-[#e5e5e5]'
+                }`}
+              />
+              <span className="text-xs text-[#9b9b9b]">min</span>
             </div>
-            <p className="text-[11px] text-[#9b9b9b] mt-1.5">Stretch sends over this many hours.</p>
+            <p className="text-[11px] text-[#9b9b9b] mt-1.5">Stretch sends over this window. Use minutes for small lists.</p>
           </div>
 
           {/* Human pace */}
@@ -413,16 +482,17 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
               )}
             </div>
 
-            {/* Include already texted */}
-            <label className="flex items-center gap-2 mt-3 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={includeAlreadyTexted}
-                onChange={e => setIncludeAlreadyTexted(e.target.checked)}
-                className="w-3.5 h-3.5 accent-[#1a1a1a]"
-              />
-              <span className="text-xs text-[#6b6b6b]">Include leads already marked SMS in this campaign</span>
-            </label>
+            {!existingJob && (
+              <label className="flex items-center gap-2 mt-3 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={includeAlreadyTexted}
+                  onChange={e => setIncludeAlreadyTexted(e.target.checked)}
+                  className="w-3.5 h-3.5 accent-[#1a1a1a]"
+                />
+                <span className="text-xs text-[#6b6b6b]">Include leads already marked SMS in this campaign</span>
+              </label>
+            )}
           </div>
 
           {error && (
@@ -453,7 +523,7 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
             disabled={starting || filledTemplates.length < 1}
             className="px-5 py-2 text-sm font-medium text-white bg-[#1a1a1a] hover:bg-[#333] rounded-lg disabled:opacity-50 transition-colors"
           >
-            {starting ? 'Starting…' : 'Start'}
+            {starting ? (existingJob ? 'Resuming…' : 'Starting…') : (existingJob ? 'Resume' : 'Start')}
           </button>
         </div>
       </div>

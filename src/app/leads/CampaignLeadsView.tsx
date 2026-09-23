@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import RunSmsModal from '@/components/RunSmsModal';
+import RunSmsModal, { type ExistingDripJob } from '@/components/RunSmsModal';
 import QuickTextPopup from '@/components/QuickTextPopup';
 import { zoneForLocation, formatLocal } from '@/lib/smsDrip/timezones';
 
@@ -12,6 +12,13 @@ interface DripJob {
   sent_count: number;
   total_count: number;
   next_send_at: string | null;
+  templates?: string[] | null;
+  window_hours?: number | null;
+  pace_min_seconds?: number | null;
+  pace_max_seconds?: number | null;
+  quiet_start?: string | null;
+  quiet_end?: string | null;
+  skip_states?: string[] | null;
 }
 
 interface DripSend {
@@ -377,6 +384,12 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
                   Paused · {dripJob.sent_count}/{dripJob.total_count} sent
                 </span>
                 <button
+                  onClick={() => setShowRunSms(true)}
+                  className="text-[10px] font-semibold text-[#1a1a1a] hover:underline underline-offset-2"
+                >
+                  Edit
+                </button>
+                <button
                   onClick={() => dripAction('cancel')}
                   disabled={dripBusy}
                   className="text-[10px] text-[#9b9b9b] hover:text-red-600 transition-colors"
@@ -597,8 +610,9 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
           campaignName={campaignName}
           leadCount={leads.length}
           savedTemplates={savedTemplates}
+          existingJob={dripJob?.status === 'paused' ? dripJob as ExistingDripJob : null}
           onClose={() => setShowRunSms(false)}
-          onStarted={refreshDrip}
+          onStarted={async () => { setShowRunSms(false); await refreshDrip(); }}
         />
       )}
     </div>

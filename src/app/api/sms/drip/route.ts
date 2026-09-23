@@ -157,7 +157,7 @@ export async function POST(req: NextRequest) {
         templates: tpl,
         pace_min_seconds: Math.max(30, Number(paceMinSeconds) || 60),
         pace_max_seconds: Math.max(Number(paceMinSeconds) || 60, Number(paceMaxSeconds) || 120),
-        window_hours: Number(windowHours) || 5,
+        window_hours: Number.isFinite(Number(windowHours)) && Number(windowHours) > 0 ? Number(windowHours) : 5,
         quiet_start: quietStart,
         quiet_end: quietEnd,
         skip_states: [...skip],
@@ -191,21 +191,54 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// PATCH /api/sms/drip — { jobId, action: 'pause' | 'resume' | 'cancel' }
+// PATCH /api/sms/drip — { jobId, action: 'pause' | 'resume' | 'cancel' | 'update' }
 export async function PATCH(req: NextRequest) {
   try {
     const supabase = await getClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { jobId, action } = await req.json();
-    if (!jobId || !['pause', 'resume', 'cancel'].includes(action)) {
+    const body = await req.json();
+    const { jobId, action } = body;
+    if (!jobId || !['pause', 'resume', 'cancel', 'update'].includes(action)) {
       return NextResponse.json({ error: 'jobId and valid action required' }, { status: 400 });
     }
 
-    const status = action === 'pause' ? 'paused' : action === 'resume' ? 'active' : 'cancelled';
-    const patch: Record<string, unknown> = { status, updated_at: new Date().toISOString() };
-    if (action === 'resume') patch.next_send_at = new Date().toISOString();
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (action === 'pause') patch.status = 'paused';
+    if (action === 'resume') {
+      patch.status = 'active';
+      patch.next_send_at = new Date().toISOString();
+    }
+    if (action === 'cancel') patch.status = 'cancelled';
+
+    if (action === 'update' || action === 'resume') {
+      const tpl: string[] = (body.templates ?? []).map((t: string) => String(t).trim()).filter(Boolean);
+      if (tpl.length) {
+        patch.templates = tpl;
+        const { data: job } = await supabase
+          .from('sms_drip_jobs')
+          .select('list_id')
+          .eq('id', jobId)
+          .eq('user_id', user.id)
+          .maybeSingle();
+        if (job?.list_id) {
+          await supabase.from('lead_lists').update({ sms_templates: tpl }).eq('id', job.list_id).eq('user_id', user.id);
+        }
+      }
+      if (body.windowHours != null) {
+        const wh = Number(body.windowHours);
+        if (Number.isFinite(wh) && wh > 0) patch.window_hours = wh;
+      }
+      if (body.paceMinSeconds != null) patch.pace_min_seconds = Math.max(30, Number(body.paceMinSeconds) || 60);
+      if (body.paceMaxSeconds != null) {
+        const minS = Number(patch.pace_min_seconds ?? body.paceMinSeconds) || 60;
+        patch.pace_max_seconds = Math.max(minS, Number(body.paceMaxSeconds) || 120);
+      }
+      if (body.quietStart) patch.quiet_start = body.quietStart;
+      if (body.quietEnd) patch.quiet_end = body.quietEnd;
+      if (Array.isArray(body.skipStates)) patch.skip_states = body.skipStates;
+    }
 
     const { data, error } = await supabase
       .from('sms_drip_jobs')
