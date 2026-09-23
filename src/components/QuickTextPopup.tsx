@@ -30,6 +30,15 @@ function msgTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 }
 
+type SavedTpl = { id: string; name: string; body: string };
+
+function fillTpl(body: string, lead: QuickTextLead) {
+  const first = (lead.name || '').trim().split(/\s+/)[0] || '';
+  return body
+    .replace(/\{first_name\}/gi, first)
+    .replace(/\{company\}/gi, (lead.company || '').trim());
+}
+
 export default function QuickTextPopup({
   lead,
   onClose,
@@ -42,6 +51,11 @@ export default function QuickTextPopup({
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showTpls, setShowTpls] = useState(false);
+  const [tpls, setTpls] = useState<SavedTpl[]>([]);
+  const [draftName, setDraftName] = useState('');
+  const [draftBody, setDraftBody] = useState('');
+  const [savingTpl, setSavingTpl] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -77,6 +91,49 @@ export default function QuickTextPopup({
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
+
+  const loadTpls = useCallback(async () => {
+    try {
+      const res = await fetch('/api/text-templates');
+      const data = await res.json();
+      setTpls((data.templates ?? []).map((t: SavedTpl) => ({ id: t.id, name: t.name, body: t.body })));
+    } catch { /* keep */ }
+  }, []);
+
+  useEffect(() => { void loadTpls(); }, [loadTpls]);
+
+  const useTpl = (body: string) => {
+    setText(fillTpl(body, lead));
+    setShowTpls(false);
+    inputRef.current?.focus();
+  };
+
+  const saveTpl = async () => {
+    const name = draftName.trim() || `Template ${tpls.length + 1}`;
+    const body = draftBody.trim();
+    if (!body || savingTpl) return;
+    setSavingTpl(true);
+    try {
+      const res = await fetch('/api/text-templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, body }),
+      });
+      const data = await res.json();
+      if (data.template) {
+        setTpls(prev => [{ id: data.template.id, name: data.template.name, body: data.template.body }, ...prev]);
+        setDraftName('');
+        setDraftBody('');
+      }
+    } finally {
+      setSavingTpl(false);
+    }
+  };
+
+  const deleteTpl = async (id: string) => {
+    setTpls(prev => prev.filter(t => t.id !== id));
+    await fetch(`/api/text-templates?id=${id}`, { method: 'DELETE' });
+  };
 
   const send = async () => {
     const body = text.trim();
@@ -186,7 +243,70 @@ export default function QuickTextPopup({
 
         <div className="border-t border-[#f0f0f0] px-3 py-2 shrink-0">
           {error && <p className="text-[10px] text-amber-600 mb-1">{error}</p>}
+          {showTpls && (
+            <div className="mb-2 max-h-[180px] overflow-y-auto border border-[#f0f0f0] rounded-lg p-2 space-y-1.5">
+              <p className="text-[10px] text-[#9b9b9b]">
+                Tap a template to use it · {'{first_name} {company}'}
+              </p>
+              {tpls.length === 0 && (
+                <p className="text-[11px] text-[#c4c4c4] py-1">No templates yet</p>
+              )}
+              {tpls.map(t => (
+                <div key={t.id} className="flex items-start gap-1.5 group">
+                  <button
+                    type="button"
+                    onClick={() => useTpl(t.body)}
+                    className="flex-1 min-w-0 text-left px-2 py-1.5 bg-[#f5f5f5] hover:bg-[#ececec] rounded text-[11px] text-[#1a1a1a]"
+                  >
+                    <span className="block font-medium truncate">{t.name}</span>
+                    <span className="block text-[#6b6b6b] truncate">{t.body}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void deleteTpl(t.id)}
+                    className="shrink-0 text-[#c4c4c4] hover:text-red-500 text-[11px] pt-1"
+                    title="Delete"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+              <input
+                value={draftName}
+                onChange={e => setDraftName(e.target.value)}
+                placeholder="Name"
+                className="w-full px-2 py-1 text-[11px] border border-[#e5e5e5] rounded focus:outline-none focus:border-[#1a1a1a]"
+              />
+              <textarea
+                value={draftBody}
+                onChange={e => setDraftBody(e.target.value)}
+                placeholder="Template text…"
+                rows={2}
+                className="w-full px-2 py-1 text-[11px] border border-[#e5e5e5] rounded focus:outline-none focus:border-[#1a1a1a] resize-none"
+              />
+              <button
+                type="button"
+                onClick={() => void saveTpl()}
+                disabled={!draftBody.trim() || savingTpl}
+                className="text-[11px] font-medium text-[#1a1a1a] disabled:opacity-40"
+              >
+                {savingTpl ? 'Saving…' : 'Save template'}
+              </button>
+            </div>
+          )}
           <div className="flex items-end gap-1.5">
+            <button
+              type="button"
+              onClick={() => setShowTpls(v => !v)}
+              className={`shrink-0 w-7 h-7 flex items-center justify-center border text-[16px] leading-none transition-colors ${
+                showTpls
+                  ? 'border-[#1a1a1a] text-[#1a1a1a] bg-[#f5f5f5]'
+                  : 'border-[#e5e5e5] text-[#6b6b6b] hover:text-[#1a1a1a] hover:border-[#c4c4c4]'
+              }`}
+              title="Text templates"
+            >
+              +
+            </button>
             <textarea
               ref={inputRef}
               value={text}
