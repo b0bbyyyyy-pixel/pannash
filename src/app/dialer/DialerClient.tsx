@@ -965,53 +965,8 @@ export default function DialerClient() {
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
 
       {/* Page header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="mb-6">
         <h1 className="text-2xl font-semibold text-[#1a1a1a]">Dialer</h1>
-        <div className="flex items-center gap-3">
-          {/* Test mode toggle */}
-          <button
-            onClick={toggleTestMode}
-            title="Test mode — Call skips the real phone dial"
-            className="flex items-center gap-1.5 shrink-0"
-          >
-            <span className={`text-xs ${testMode ? 'text-[#1a1a1a] font-medium' : 'text-[#c4c4c4]'}`}>Test</span>
-            <span className={`relative inline-block w-7 h-4 rounded-full transition-colors ${testMode ? 'bg-[#1a1a1a]' : 'bg-[#e5e5e5]'}`}>
-              <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${testMode ? 'left-3.5' : 'left-0.5'}`} />
-            </span>
-          </button>
-          {activeCampaign && (
-            <button
-              onClick={() => setShowCallCount((v) => !v)}
-              title="Click to toggle call count"
-              className="flex items-center gap-2 min-w-0 cursor-pointer"
-            >
-              <span className="text-sm font-semibold text-[#1a1a1a] truncate max-w-[200px]">{activeCampaign.name}</span>
-              <div className="w-24 h-1.5 bg-[#f0f0f0] rounded-full overflow-hidden shrink-0">
-                <div className="h-full bg-[#1a1a1a] rounded-full transition-all" style={{ width: `${campaignPct}%` }} />
-              </div>
-              <span className="text-xs text-[#9ca3af] shrink-0">
-                {showCallCount
-                  ? `${activeCampaign.called}/${activeCampaign.total} called · ${campaignPct}%`
-                  : `${campaignPct}%`}
-              </span>
-            </button>
-          )}
-          <button
-            onClick={() => setShowPicker(true)}
-            className="text-sm font-medium text-[#1a1a1a] hover:text-[#555] transition-colors"
-          >
-            {activeCampaign ? 'Switch Campaign' : 'Load Campaign'}
-          </button>
-          {activeCampaign && (
-            <button
-              onClick={handleClearCampaign}
-              className="text-xs text-[#9ca3af] hover:text-[#1a1a1a] transition-colors"
-              title="Clear campaign"
-            >
-              Clear
-            </button>
-          )}
-        </div>
       </div>
 
       {/* Error banner */}
@@ -1031,6 +986,50 @@ export default function DialerClient() {
 
         {/* Left: lead card / empty / loading */}
         <div className="lg:col-span-2">
+          <div className="flex items-center justify-end gap-3 mb-2 min-h-[20px]">
+            <button
+              onClick={toggleTestMode}
+              title="Test mode — Call skips the real phone dial"
+              className="flex items-center gap-1.5 shrink-0"
+            >
+              <span className={`text-xs ${testMode ? 'text-[#1a1a1a] font-medium' : 'text-[#c4c4c4]'}`}>Test</span>
+              <span className={`relative inline-block w-7 h-4 rounded-full transition-colors ${testMode ? 'bg-[#1a1a1a]' : 'bg-[#e5e5e5]'}`}>
+                <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${testMode ? 'left-3.5' : 'left-0.5'}`} />
+              </span>
+            </button>
+            {activeCampaign && (
+              <button
+                onClick={() => setShowCallCount((v) => !v)}
+                title="Click to toggle call count"
+                className="flex items-center gap-2 min-w-0 cursor-pointer"
+              >
+                <span className="text-sm font-semibold text-[#1a1a1a] truncate max-w-[200px]">{activeCampaign.name}</span>
+                <div className="w-24 h-1.5 bg-[#f0f0f0] rounded-full overflow-hidden shrink-0">
+                  <div className="h-full bg-[#1a1a1a] rounded-full transition-all" style={{ width: `${campaignPct}%` }} />
+                </div>
+                <span className="text-xs text-[#9ca3af] shrink-0">
+                  {showCallCount
+                    ? `${activeCampaign.called}/${activeCampaign.total} called · ${campaignPct}%`
+                    : `${campaignPct}%`}
+                </span>
+              </button>
+            )}
+            <button
+              onClick={() => setShowPicker(true)}
+              className="text-sm font-medium text-[#1a1a1a] hover:text-[#555] transition-colors"
+            >
+              {activeCampaign ? 'Switch Campaign' : 'Load Campaign'}
+            </button>
+            {activeCampaign && (
+              <button
+                onClick={handleClearCampaign}
+                className="text-xs text-[#9ca3af] hover:text-[#1a1a1a] transition-colors"
+                title="Clear campaign"
+              >
+                Clear
+              </button>
+            )}
+          </div>
           {state === 'loading' ? (
             <div className="bg-white border border-[#e5e5e5] rounded-2xl p-12 flex flex-col items-center justify-center shadow-sm">
               <div className="w-8 h-8 border-2 border-[#e5e5e5] border-t-[#1a1a1a] rounded-full animate-spin mb-4" />
