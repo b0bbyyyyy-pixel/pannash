@@ -4,14 +4,14 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { formatDisplay } from '@/lib/dialer/e164';
 import { getPhoneLocation } from '@/lib/phoneLocation';
-import { useWebPhone } from '@/components/webphone/WebPhone';
 import ManualDialPanel from './ManualDialPanel';
+import { useDialerSession } from './useDialerSession';
 
 const ScheduleEmailModal = dynamic(() => import('@/components/ScheduleEmailModal'), { ssr: false });
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface Lead {
+export interface Lead {
   id: string;
   name: string;
   company: string | null;
@@ -161,7 +161,7 @@ function LeadInfoOverlay({ leadId, onClose }: { leadId: string; onClose: () => v
 
 type CardView = 'idle' | 'on_call' | 'wrap';
 
-function DialerCard({
+export function DialerCard({
   lead,
   view,
   onCall,
@@ -171,6 +171,8 @@ function DialerCard({
   saving,
   onEmailSaved,
   onQuickEmail,
+  className = '',
+  compact = false,
 }: {
   lead: Lead;
   view: CardView;
@@ -181,6 +183,8 @@ function DialerCard({
   saving: boolean;
   onEmailSaved: (email: string) => void;
   onQuickEmail: () => void;
+  className?: string;
+  compact?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   // Derive city/state/timezone from the phone's area code
@@ -314,7 +318,9 @@ function DialerCard({
   const canSave = !!selected && !saving && (selected !== 'pipeline' || !!pipelineChoice);
 
   const pillClass = (active: boolean) =>
-    `flex-1 h-full rounded-xl border text-sm font-medium transition-all ${
+    `flex-1 border font-medium transition-all whitespace-nowrap ${
+      compact ? 'rounded-none py-1 px-0.5 text-[10px] -ml-px first:ml-0' : 'rounded-xl h-full text-sm'
+    } ${
       active
         ? 'border-[#1a1a1a] bg-[#1a1a1a] text-white'
         : 'border-[#e5e5e5] bg-white text-[#1a1a1a] hover:border-[#1a1a1a] hover:bg-[#f9f9f9]'
@@ -322,16 +328,16 @@ function DialerCard({
 
   // ── ONE CARD: idle / on call / wrap ─────────────────────────────────────────
   return (
-    <div className="bg-white border border-[#e5e5e5] rounded-2xl p-8 shadow-sm">
+    <div className={`bg-white border border-[#e5e5e5] rounded-2xl p-8 shadow-sm ${className}`}>
       {/* Header row */}
-      <div className="flex items-start justify-between mb-6">
-        <div className="min-w-0 pr-4">
-          <div className="flex items-baseline gap-2.5 flex-wrap">
+      <div className={`flex items-start justify-between ${compact ? 'mb-3' : 'mb-6'}`}>
+        <div className={`min-w-0 ${compact ? 'pr-2' : 'pr-4'}`}>
+          <div className={`flex items-baseline flex-wrap ${compact ? 'gap-1.5' : 'gap-2.5'}`}>
             <button
               type="button"
               onClick={() => setShowOverlay(true)}
               title="View lead info"
-              className="text-2xl font-semibold text-[#1a1a1a] leading-tight hover:underline text-left"
+              className={`${compact ? 'text-base' : 'text-2xl'} font-semibold text-[#1a1a1a] leading-tight hover:underline text-left`}
             >
               {lead.name}
             </button>
@@ -340,13 +346,13 @@ function DialerCard({
                 type="button"
                 onClick={() => setShowOverlay(true)}
                 title="View lead info"
-                className="text-sm text-[#6b7280] leading-tight hover:underline hover:text-[#1a1a1a] text-left"
+                className={`${compact ? 'text-xs' : 'text-sm'} text-[#6b7280] leading-tight hover:underline hover:text-[#1a1a1a] text-left`}
               >
                 {lead.company}
               </button>
             )}
           </div>
-          <div className="flex items-center gap-1.5 mt-1.5 min-w-0">
+          <div className={`flex items-center gap-1.5 min-w-0 ${compact ? 'mt-0.5' : 'mt-1.5'}`}>
             {editingEmail || !lead.email ? (
               <form onSubmit={saveEmail} className="flex items-center gap-1.5 min-w-0">
                 <input
@@ -356,7 +362,7 @@ function DialerCard({
                   onChange={(e) => { setEmailDraft(e.target.value); setEmailError(''); }}
                   onBlur={() => { void saveEmail(); }}
                   placeholder="Add email"
-                  className="w-56 max-w-full bg-transparent border-0 p-0 text-sm text-[#1a1a1a] placeholder:text-[#c4c4c4] focus:outline-none"
+                  className={`w-56 max-w-full bg-transparent border-0 p-0 ${compact ? 'text-xs' : 'text-sm'} text-[#1a1a1a] placeholder:text-[#c4c4c4] focus:outline-none`}
                 />
               </form>
             ) : (
@@ -364,7 +370,7 @@ function DialerCard({
                 type="button"
                 onClick={() => setEditingEmail(true)}
                 title="Edit email"
-                className="text-sm text-[#6b7280] truncate hover:text-[#1a1a1a] transition-colors"
+                className={`${compact ? 'text-xs' : 'text-sm'} text-[#6b7280] truncate hover:text-[#1a1a1a] transition-colors`}
               >
                 {lead.email}
               </button>
@@ -409,7 +415,8 @@ function DialerCard({
       {showOverlay && <LeadInfoOverlay leadId={lead.id} onClose={() => setShowOverlay(false)} />}
 
       {/* Phone (half width) + city / state / local time */}
-      <div className="flex items-center gap-3 mb-6">
+      <div className={`flex items-center gap-3 ${compact ? 'mb-3' : 'mb-6'}`}>
+        {!compact && (
         <div className="flex items-center gap-2 min-w-0 w-1/2">
           <div className="flex items-center gap-2 bg-[#f4f4f4] rounded-xl px-3 py-2 min-w-0 flex-1">
             <svg className="w-3.5 h-3.5 text-[#6b7280] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -440,9 +447,10 @@ function DialerCard({
             )}
           </button>
         </div>
+        )}
         {(phoneLoc || localT) && (
-          <div className="flex items-center gap-2 text-sm text-[#6b7280] min-w-0 flex-1">
-            <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <div className={`flex items-center gap-2 text-[#6b7280] min-w-0 flex-1 ${compact ? 'text-[11px]' : 'text-sm'}`}>
+            <svg className={`${compact ? 'w-3 h-3' : 'w-3.5 h-3.5'} shrink-0`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                 d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
@@ -479,12 +487,14 @@ function DialerCard({
       {view === 'wrap' ? (
         <div>
           {selected === 'pipeline' && (
-            <div className="flex items-center gap-2 mb-2">
+            <div className={`flex items-center mb-2 ${compact ? 'gap-0' : 'gap-2'}`}>
               {(['Prospect', 'New Lead'] as const).map((choice) => (
                 <button
                   key={choice}
                   onClick={() => setPipelineChoice(choice)}
-                  className={`flex-1 py-2 rounded-xl border text-sm font-medium transition-all ${
+                  className={`flex-1 border font-medium transition-all ${
+                    compact ? 'rounded-none py-1 text-xs -ml-px first:ml-0' : 'rounded-xl py-2 text-sm'
+                  } ${
                     pipelineChoice === choice
                       ? 'border-[#1a1a1a] bg-[#1a1a1a] text-white'
                       : 'border-[#e5e5e5] bg-white text-[#1a1a1a] hover:border-[#1a1a1a] hover:bg-[#f9f9f9]'
@@ -495,23 +505,25 @@ function DialerCard({
               ))}
             </div>
           )}
-          <div className="flex items-stretch gap-2 h-14">
-            <div className="flex flex-1 min-w-0 gap-2">
+          <div className={`flex items-stretch ${compact ? 'gap-0' : 'gap-2 h-14'}`}>
+            <div className={`flex flex-1 min-w-0 ${compact ? 'gap-0' : 'gap-2'}`}>
               {DISPOSITIONS.map((d) => (
                 <button
                   key={d.key}
                   onClick={() => pickTile(d.key)}
                   className={pillClass(selected === d.key)}
                 >
-                  {d.label}
-                  <span className={`ml-1 text-[10px] ${selected === d.key ? 'text-[#aaa]' : 'text-[#ccc]'}`}>[{d.shortcut}]</span>
+                  {compact && d.key === 'no_answer' ? 'No Ans.' : d.label}
+                  <span className={`${compact ? 'ml-0.5 text-[9px]' : 'ml-1 text-[10px]'} ${selected === d.key ? 'text-[#aaa]' : 'text-[#ccc]'}`}>[{d.shortcut}]</span>
                 </button>
               ))}
             </div>
             <button
               onClick={handleSave}
               disabled={!canSave}
-              className="shrink-0 px-5 rounded-xl bg-[#1a1a1a] text-white text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[#333] active:scale-[0.98] transition-all"
+              className={`shrink-0 bg-[#1a1a1a] text-white font-medium flex items-center justify-center whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[#333] transition-all ${
+                compact ? 'rounded-none py-1 px-1.5 text-[10px] -ml-px' : 'rounded-xl px-5 text-sm gap-2 active:scale-[0.98]'
+              }`}
             >
               {saving ? (
                 <>
@@ -534,26 +546,30 @@ function DialerCard({
       ) : view === 'on_call' ? (
         <button
           onClick={onHangup}
-          className="w-full py-4 rounded-xl bg-[#f4f4f4] text-[#1a1a1a] text-base font-medium hover:bg-[#ececec] active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+          className={`w-full bg-[#f4f4f4] text-[#1a1a1a] font-medium hover:bg-[#ececec] transition-all flex items-center justify-center gap-2 ${
+            compact ? 'rounded-none py-1 px-2.5 text-sm' : 'rounded-xl py-4 text-base active:scale-[0.98]'
+          }`}
         >
           <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
           {phoneStatus === 'ringing' && 'Ringing…'}
           {phoneStatus === 'connecting' && 'Connecting…'}
           {phoneStatus === 'in-call' && 'On call'}
           {phoneStatus !== 'ringing' && phoneStatus !== 'connecting' && phoneStatus !== 'in-call' && 'Call in progress'}
-          <span className="text-[#9ca3af] text-sm font-normal">· Hang up</span>
+          <span className={`text-[#9ca3af] font-normal ${compact ? 'text-xs' : 'text-sm'}`}>· Hang up</span>
         </button>
       ) : (
         <button
           onClick={onCall}
-          className="w-full py-4 rounded-xl bg-[#1a1a1a] text-white text-base font-medium hover:bg-[#333] active:scale-[0.98] transition-all flex items-center justify-center gap-2.5"
+          className={`w-full bg-[#1a1a1a] text-white font-medium hover:bg-[#333] transition-all flex items-center justify-center ${
+            compact ? 'rounded-none py-1 px-2.5 text-sm gap-1.5' : 'rounded-xl py-4 text-base gap-2.5 active:scale-[0.98]'
+          }`}
         >
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg className={compact ? 'w-3.5 h-3.5' : 'w-5 h-5'} fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
               d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498A1 1 0 0121 15.72V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 7V5z" />
           </svg>
           Call {lead.name.split(' ')[0]}
-          <span className="text-[#888] text-xs ml-1">[C]</span>
+          <span className={`text-[#888] ${compact ? 'text-[10px] ml-0.5' : 'text-xs ml-1'}`}>[C]</span>
         </button>
       )}
     </div>
@@ -626,7 +642,7 @@ function EmptyState({ onRefresh, queueLen }: { onRefresh: () => void; queueLen: 
 }
 
 // ─── Campaign types ────────────────────────────────────────────────────────────
-interface Campaign {
+export interface Campaign {
   id: string;
   name: string;
   created_at: string;
@@ -636,7 +652,7 @@ interface Campaign {
 }
 
 // ─── Campaign picker modal ─────────────────────────────────────────────────────
-function CampaignPickerModal({
+export function CampaignPickerModal({
   onSelect,
   onClose,
 }: {
@@ -703,263 +719,15 @@ function CampaignPickerModal({
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function DialerClient() {
-  const [state, setState] = useState<DialerState>('loading');
-  const [lead, setLead] = useState<Lead | null>(null);
-  const [callId, setCallId] = useState<string | null>(null);
-  const [queue, setQueue] = useState<QueuePreview[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [activeCampaign, setActiveCampaign] = useState<Campaign | null>(null);
-  const [showPicker, setShowPicker] = useState(false);
-  const [testMode, setTestMode] = useState(false);
-  const [showCallCount, setShowCallCount] = useState(false);
-  const [showEmailModal, setShowEmailModal] = useState(false);
-  const initDone = useRef(false);
-  const webphone = useWebPhone();
-
-  // Keep listId as a ref so async callbacks always see the latest value
-  const listIdRef = useRef<string | null>(null);
-
-  // ── Load initial state ──────────────────────────────────────────────────────
-  const loadCurrent = useCallback(async (listId: string | null = null) => {
-    try {
-      const url = listId ? `/api/dialer/current?listId=${listId}` : '/api/dialer/current';
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-
-      setQueue(data.queue ?? []);
-
-      if (data.current) {
-        setLead(data.current);
-        if (data.activeCall) {
-          setCallId(data.activeCall.id);
-          setState(LIVE_PHONE.has(webphone.status) ? 'on_call' : 'wrap_up');
-        } else {
-          setState('ready');
-        }
-      } else {
-        await claimNext(null, listId);
-      }
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Unknown error');
-      setState('empty');
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (initDone.current) return;
-    initDone.current = true;
-
-    // Restore test mode preference
-    try { setTestMode(localStorage.getItem('dialer_test_mode') === '1'); } catch { /* ignore */ }
-
-    // Restore the last loaded campaign (persisted across refreshes)
-    let saved: Campaign | null = null;
-    try {
-      const raw = localStorage.getItem('dialer_active_campaign');
-      if (raw) saved = JSON.parse(raw) as Campaign;
-    } catch { /* ignore corrupt state */ }
-
-    if (saved?.id) {
-      setActiveCampaign(saved);
-      listIdRef.current = saved.id;
-      loadCurrent(saved.id);
-      // Refresh stats (called/total) since the saved copy may be stale
-      fetch('/api/dialer/campaigns')
-        .then((r) => r.json())
-        .then((d) => {
-          const fresh = (d.campaigns ?? []).find((c: Campaign) => c.id === saved!.id);
-          if (fresh) {
-            setActiveCampaign(fresh);
-            try { localStorage.setItem('dialer_active_campaign', JSON.stringify(fresh)); } catch { /* ignore */ }
-          }
-        })
-        .catch(() => {});
-    } else {
-      loadCurrent(null);
-    }
-  }, [loadCurrent]);
-
-  // ── Claim a specific lead by ID (fallback when claimNextLead returns null) ──
-  const claimSpecific = async (leadId: string, listId: string | null = listIdRef.current) => {
-    setState('loading');
-    setError(null);
-    try {
-      const res = await fetch('/api/dialer/claim-specific', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ leadId, listId }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? 'Failed to load lead');
-      setQueue(data.queue ?? []);
-      if (data.current) {
-        setLead(data.current);
-        setCallId(null);
-        setState('ready');
-      } else {
-        setLead(null);
-        setState('empty');
-      }
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Error');
-      setState('empty');
-    }
-  };
-
-  // ── Claim next lead ─────────────────────────────────────────────────────────
-  const claimNext = async (releasePreviousId: string | null, listId: string | null = listIdRef.current) => {
-    setState('loading');
-    setError(null);
-    try {
-      const res = await fetch('/api/dialer/next', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ releasePreviousId, listId }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? 'Failed to load next lead');
-
-      const freshQueue: QueuePreview[] = data.queue ?? [];
-      setQueue(freshQueue);
-
-      if (data.current) {
-        setLead(data.current);
-        setCallId(null);
-        setState('ready');
-      } else if (freshQueue.length > 0) {
-        // claimNextLead returned null but peekQueue has leads —
-        // directly claim the first queued lead as a fallback.
-        await claimSpecific(freshQueue[0].id, listId);
-      } else {
-        setLead(null);
-        setState('empty');
-      }
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Error');
-      setState('empty');
-    }
-  };
-
-  // ── Load campaign ────────────────────────────────────────────────────────────
-  const handleLoadCampaign = async (campaign: Campaign) => {
-    setShowPicker(false);
-    setActiveCampaign(campaign);
-    listIdRef.current = campaign.id;
-    try { localStorage.setItem('dialer_active_campaign', JSON.stringify(campaign)); } catch { /* ignore */ }
-    // Release current lead and start fresh with new campaign
-    await claimNext(lead?.id ?? null, campaign.id);
-  };
-
-  const handleClearCampaign = async () => {
-    setActiveCampaign(null);
-    listIdRef.current = null;
-    try { localStorage.removeItem('dialer_active_campaign'); } catch { /* ignore */ }
-    await claimNext(lead?.id ?? null, null);
-  };
-
-  // ── Test mode toggle ─────────────────────────────────────────────────────────
-  const toggleTestMode = () => {
-    setTestMode((prev) => {
-      const next = !prev;
-      try { localStorage.setItem('dialer_test_mode', next ? '1' : '0'); } catch { /* ignore */ }
-      return next;
-    });
-  };
-
-  // ── Start call ──────────────────────────────────────────────────────────────
-  const handleCall = async () => {
-    if (!lead) return;
-    // In test mode, skip the real phone dial — just walk through the flow.
-    // Otherwise dial through the in-app WebRTC phone (audio in your headset).
-    if (!testMode) {
-      try {
-        await webphone.connect(lead.phone_e164, { name: lead.name });
-      } catch (e: unknown) {
-        setError(e instanceof Error ? e.message : 'Could not start call');
-        return;
-      }
-    }
-    try {
-      const res = await fetch('/api/dialer/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ leadId: lead.id }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? 'Failed to start call');
-      setCallId(data.callId);
-      setState(testMode ? 'wrap_up' : 'on_call');
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Error starting call');
-    }
-  };
-
-  // Hang up → wrap immediately. Remote hangup also snaps here via status.
-  const handleHangup = () => {
-    webphone.hangup();
-    setState('wrap_up');
-  };
-
-  const wasLiveRef = useRef(false);
-  useEffect(() => {
-    const live = LIVE_PHONE.has(webphone.status);
-    if (live) wasLiveRef.current = true;
-    if (state === 'on_call' && wasLiveRef.current && !live) {
-      wasLiveRef.current = false;
-      setState('wrap_up');
-    }
-    if (state !== 'on_call') wasLiveRef.current = live;
-  }, [webphone.status, state]);
-
-  // ── Save disposition ────────────────────────────────────────────────────────
-  const handleDisposition = async (disposition: DispositionKey, notes: string) => {
-    if (!lead || !callId) return;
-    setState('saving');
-    try {
-      const res = await fetch('/api/dialer/disposition', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          callId,
-          leadId: lead.id,
-          disposition,
-          notes: notes || undefined,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? 'Failed to save');
-
-      // Bump the campaign's called count so the progress bar updates live
-      setActiveCampaign((prev) => {
-        if (!prev) return prev;
-        const updated = { ...prev, called: Math.min(prev.called + 1, prev.total) };
-        try { localStorage.setItem('dialer_active_campaign', JSON.stringify(updated)); } catch { /* ignore */ }
-        return updated;
-      });
-
-      await claimNext(lead.id);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Error saving disposition');
-      setState('wrap_up');
-    }
-  };
-
-  // ── Keyboard shortcut: C = call (in ready state) ────────────────────────────
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement).tagName)) return;
-      if (e.key.toLowerCase() === 'c' && state === 'ready') handleCall();
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [state, lead, testMode]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ─── Render ─────────────────────────────────────────────────────────────────
-
-  const campaignPct = activeCampaign && activeCampaign.total > 0
-    ? Math.round((activeCampaign.called / activeCampaign.total) * 100)
-    : 0;
+  const {
+    state, lead, queue, error, setError,
+    activeCampaign, showPicker, setShowPicker,
+    testMode, toggleTestMode, showCallCount, setShowCallCount,
+    showEmailModal, setShowEmailModal,
+    webphone, campaignPct, claimNext,
+    handleLoadCampaign, handleClearCampaign,
+    handleCall, handleHangup, handleDisposition, setLead,
+  } = useDialerSession();
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
