@@ -1,20 +1,18 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { usePathname } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { DialerCard, CampaignPickerModal } from '@/app/dialer/DialerClient';
 import { useDialerSession } from '@/app/dialer/useDialerSession';
 
 const ScheduleEmailModal = dynamic(() => import('@/components/ScheduleEmailModal'), { ssr: false });
 
-export default function InboxDialer() {
-  const pathname = usePathname();
-  const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    setOpen(false);
-  }, [pathname]);
+export default function InboxDialer({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   const {
     state, lead, error, setError,
     activeCampaign, showPicker, setShowPicker,
@@ -29,7 +27,7 @@ export default function InboxDialer() {
     <div className="flex-shrink-0 bg-white border-b border-[#e5e5e5]">
       <button
         type="button"
-        onClick={() => setOpen(v => !v)}
+        onClick={() => onOpenChange(!open)}
         className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-[#fafafa] transition-colors"
       >
         <span className="text-xs font-medium text-[#6b6b6b]">Dialer</span>

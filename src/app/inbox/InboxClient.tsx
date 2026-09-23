@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { usePathname } from 'next/navigation';
 import { createClient } from '@supabase/supabase-js';
 import { useWebPhone } from '@/components/webphone/WebPhone';
 import InboxDialer from '@/components/InboxDialer';
@@ -156,6 +157,12 @@ export default function InboxClient({
 
   const selectedLead = leads.find(l => l.id === selectedLeadId) ?? null;
   const webphone = useWebPhone();
+  const pathname = usePathname();
+  const [dialerOpen, setDialerOpen] = useState(false);
+
+  useEffect(() => {
+    setDialerOpen(false);
+  }, [pathname]);
 
   // ── Load lead list ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -754,7 +761,7 @@ export default function InboxClient({
 
       {/* ── RIGHT RAIL: Lead info ────────────────────────────────────────────── */}
       <div className="w-80 flex-shrink-0 flex flex-col border-l border-[#e5e5e5] bg-[#fafafa] overflow-hidden">
-        <InboxDialer />
+        <InboxDialer open={dialerOpen} onOpenChange={setDialerOpen} />
         {!selectedLead ? (
           <div className="flex-1 flex items-center justify-center p-6">
             <p className="text-xs text-gray-400 text-center">Select a lead to see their details</p>
