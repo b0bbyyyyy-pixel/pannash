@@ -765,19 +765,25 @@ export default function InboxClient({
       {/* ── RIGHT RAIL: Lead info ────────────────────────────────────────────── */}
       <div className="w-80 flex-shrink-0 flex flex-col border-l border-[#e5e5e5] bg-[#fafafa] overflow-hidden">
         <InboxDialer open={dialerOpen} onOpenChange={setDialerOpen} />
-        {!selectedLead ? (
-          <div className="flex-1 flex items-center justify-center p-6">
-            <p className="text-xs text-gray-400 text-center">Select a lead to see updates</p>
+        <div className="flex-1 relative min-h-0 overflow-hidden">
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <img
+              src="/images/logo/gostwrk-logo-gray.png"
+              alt=""
+              className="w-[200px] h-auto opacity-45"
+            />
           </div>
-        ) : (
-          <>
-            <div className="flex-1 overflow-y-auto p-4">
+          {selectedLead && (
+            <div className="relative z-10 h-full overflow-y-auto p-4 [text-shadow:none]">
               <LeadUpdatesTimeline
                 createdAt={selectedLead.created_at}
                 lastContact={selectedLead.last_contact}
               />
             </div>
-            <div className="flex-shrink-0 px-4 pb-3">
+          )}
+        </div>
+        {selectedLead && (
+          <div className="flex-shrink-0 px-4 pb-3">
               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">
                 Casper AI
               </p>
@@ -813,7 +819,6 @@ export default function InboxClient({
                 </button>
               )}
             </div>
-          </>
         )}
 
         {/* Twilio connection status footer */}
