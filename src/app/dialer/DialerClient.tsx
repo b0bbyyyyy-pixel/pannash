@@ -8,6 +8,7 @@ import ManualDialPanel from './ManualDialPanel';
 import { useDialerSession } from './useDialerSession';
 
 const ScheduleEmailModal = dynamic(() => import('@/components/ScheduleEmailModal'), { ssr: false });
+const QuickTextPopup = dynamic(() => import('@/components/QuickTextPopup'), { ssr: false });
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -25,6 +26,8 @@ export interface Lead {
   stage: string | null;
   lead_status: string | null;
   month_key: string | null;
+  list_id?: string | null;
+  in_pipeline?: boolean | null;
 }
 
 interface QueuePreview {
@@ -187,6 +190,7 @@ export function DialerCard({
   compact?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
+  const [showText, setShowText] = useState(false);
   // Derive city/state/timezone from the phone's area code
   const phoneLoc = getPhoneLocation(lead.phone_e164);
   const effectiveTz = lead.timezone || phoneLoc?.timezone || null;
@@ -414,8 +418,8 @@ export function DialerCard({
       {/* Full lead info overlay */}
       {showOverlay && <LeadInfoOverlay leadId={lead.id} onClose={() => setShowOverlay(false)} />}
 
-      {/* Phone (half width) + city / state / local time */}
-      <div className={`flex items-center gap-3 ${compact ? 'mb-3' : 'mb-6'}`}>
+      {/* Phone (half width) + city / state / local time + Text */}
+      <div className={`flex items-center ${compact ? 'mb-3 gap-2' : 'mb-6 gap-3'}`}>
         {!compact && (
         <div className="flex items-center gap-2 min-w-0 w-1/2">
           <div className="flex items-center gap-2 bg-[#f4f4f4] rounded-xl px-3 py-2 min-w-0 flex-1">
@@ -448,26 +452,49 @@ export function DialerCard({
           </button>
         </div>
         )}
-        {(phoneLoc || localT) && (
-          <div className={`flex items-center gap-2 text-[#6b7280] min-w-0 flex-1 ${compact ? 'text-[11px]' : 'text-sm'}`}>
-            <svg className={`${compact ? 'w-3 h-3' : 'w-3.5 h-3.5'} shrink-0`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            {phoneLoc && (
-              <span className="text-[#1a1a1a] font-medium truncate">
-                {[phoneLoc.city, phoneLoc.state].filter(Boolean).join(', ')}
-              </span>
-            )}
-            {phoneLoc && localT && (
-              <span className="text-[#d4d4d4]">·</span>
-            )}
-            {localT && (
-              <span className="text-[#1a1a1a] font-medium truncate">{localT}</span>
-            )}
-          </div>
-        )}
+        <div className={`flex items-center gap-2 text-[#6b7280] min-w-0 flex-1 ${compact ? 'text-[11px]' : 'text-sm'}`}>
+          {(phoneLoc || localT) && (
+            <>
+              <svg className={`${compact ? 'w-3 h-3' : 'w-3.5 h-3.5'} shrink-0`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              {phoneLoc && (
+                <span className="text-[#1a1a1a] font-medium truncate">
+                  {[phoneLoc.city, phoneLoc.state].filter(Boolean).join(', ')}
+                </span>
+              )}
+              {phoneLoc && localT && (
+                <span className="text-[#d4d4d4]">·</span>
+              )}
+              {localT && (
+                <span className="text-[#1a1a1a] font-medium truncate">{localT}</span>
+              )}
+            </>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowText(true)}
+          className={`shrink-0 font-medium text-[#1a1a1a] hover:underline ${compact ? 'text-[11px]' : 'text-sm'}`}
+        >
+          Text
+        </button>
       </div>
+
+      {showText && (
+        <QuickTextPopup
+          lead={{
+            id: lead.id,
+            name: lead.name,
+            company: lead.company,
+            list_id: lead.list_id,
+            lead_status: lead.lead_status,
+            in_pipeline: lead.in_pipeline,
+          }}
+          onClose={() => setShowText(false)}
+        />
+      )}
 
       {/* Last call notes */}
       {lead.last_call_notes && (

@@ -27,6 +27,8 @@ export interface QueueLead {
   stage: string | null;
   lead_status: string | null;
   month_key: string | null;
+  list_id: string | null;
+  in_pipeline: boolean | null;
   attempts_today: number;
   attempts_today_on: string | null;
   locked_by: string | null;
@@ -37,7 +39,7 @@ const LEAD_SELECT = [
   'id', 'name', 'company', 'email', 'phone_e164', 'timezone',
   'dnc', 'dialer_status', 'next_eligible_at',
   'last_disposition', 'last_called_at', 'last_call_notes',
-  'notes', 'stage', 'lead_status', 'month_key',
+  'notes', 'stage', 'lead_status', 'month_key', 'list_id', 'in_pipeline',
   'attempts_today', 'attempts_today_on',
   'locked_by', 'locked_at',
 ].join(', ');

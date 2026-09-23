@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { getAIClient, GROK_MINI_MODEL } from '@/lib/ai';
 import twilio from 'twilio';
 import { toE164 } from '@/lib/dialer/e164';
+import { promoteCampaignLeadOnReply } from '@/lib/inbox/promoteCampaignReply';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -104,6 +105,7 @@ export async function POST(req: NextRequest) {
     }
 
     const rpcOk = Boolean(ingested && typeof ingested === 'object' && (ingested as { ok?: boolean }).ok);
+    try { await promoteCampaignLeadOnReply(supabase, lead.id); } catch { /* ignore */ }
 
     // Fallback write if the SQL function isn't installed yet
     if (rpcOk) {

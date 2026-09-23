@@ -67,14 +67,30 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: msgErr?.message ?? 'Insert failed' }, { status: 500 });
   }
 
+  const { data: leadRow } = await supabase
+    .from('leads')
+    .select('list_id, in_pipeline, lead_status')
+    .eq('id', leadId)
+    .maybeSingle();
+  const campaignHold =
+    !!leadRow?.list_id &&
+    !leadRow.in_pipeline &&
+    (!leadRow.lead_status || leadRow.lead_status === 'New Lead');
+
+  // Campaign threads stay off Inbox until a reply (drip already skips last_message_at).
   await supabase
     .from('inbox_conversations')
     .update({
-      last_message_at: msg.created_at,
+      ...(campaignHold ? {} : { last_message_at: msg.created_at }),
       last_message_preview: preview,
       last_direction: 'outbound',
     })
     .eq('id', conv.id);
+
+  await supabase
+    .from('leads')
+    .update({ sms_sent_at: msg.created_at, last_contact: msg.created_at })
+    .eq('id', leadId);
 
   const creds = await getTwilioCreds(supabase, user.id);
   if (!creds) {

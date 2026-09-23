@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import RunSmsModal from '@/components/RunSmsModal';
+import QuickTextPopup from '@/components/QuickTextPopup';
 import { zoneForLocation, formatLocal } from '@/lib/smsDrip/timezones';
 
 interface DripJob {
@@ -135,6 +136,7 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
   const [dripSends, setDripSends] = useState<Map<string, DripSend>>(new Map());
   const [savedTemplates, setSavedTemplates] = useState<string[] | null>(null);
   const [showRunSms, setShowRunSms] = useState(false);
+  const [textLead, setTextLead] = useState<CampaignLead | null>(null);
   const [dripBusy, setDripBusy] = useState(false);
   const [, setClockTick] = useState(0); // 1s re-render for the countdown
 
@@ -473,18 +475,27 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
 
                   {/* SMS badge */}
                   <td className="px-4 py-1.5">
-                    <button
-                      disabled={isLoading}
-                      onClick={() => handleOutreach(lead.id, 'sms')}
-                      className={`transition-colors disabled:opacity-50 ${
-                        lead.sms_sent_at
-                          ? 'bg-blue-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full cursor-pointer'
-                          : 'border border-[#e5e5e5] text-[#9b9b9b] text-[10px] px-2 py-0.5 rounded-full cursor-pointer hover:border-blue-300'
-                      }`}
-                      title={lead.sms_sent_at ? 'SMS sent — click to unmark' : 'Mark SMS sent'}
-                    >
-                      SMS
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        disabled={isLoading}
+                        onClick={() => handleOutreach(lead.id, 'sms')}
+                        className={`transition-colors disabled:opacity-50 ${
+                          lead.sms_sent_at
+                            ? 'bg-blue-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full cursor-pointer'
+                            : 'border border-[#e5e5e5] text-[#9b9b9b] text-[10px] px-2 py-0.5 rounded-full cursor-pointer hover:border-blue-300'
+                        }`}
+                        title={lead.sms_sent_at ? 'SMS sent — click to unmark' : 'Mark SMS sent'}
+                      >
+                        SMS
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTextLead(lead)}
+                        className="text-[10px] font-medium text-[#1a1a1a] hover:underline"
+                      >
+                        Text
+                      </button>
+                    </div>
                   </td>
 
                   {/* Call badge */}
@@ -565,6 +576,19 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
             {pipelineMoving === contextMenu.lead.id ? 'Sending…' : 'Send to pipeline as Prospect'}
           </button>
         </div>
+      )}
+
+      {textLead && (
+        <QuickTextPopup
+          lead={{
+            id: textLead.id,
+            name: textLead.name,
+            company: textLead.company,
+            list_id: listId,
+            in_pipeline: false,
+          }}
+          onClose={() => setTextLead(null)}
+        />
       )}
 
       {showRunSms && (
