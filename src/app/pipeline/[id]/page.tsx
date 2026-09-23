@@ -68,6 +68,7 @@ export default async function PipelineLeadPage({
       <div className="min-h-screen bg-[#fafafa]">
         <div className="max-w-[1600px] mx-auto px-6 py-4">
           <LeadWorkspaceClient
+            key={lead.id}
             lead={lead}
             allLeadIds={pipelineIds}
             userId={user.id}
@@ -86,6 +87,7 @@ export default async function PipelineLeadPage({
       <main className="pt-20 min-h-screen bg-[#fafafa]">
         <div className="max-w-[1600px] mx-auto px-6 py-6">
           <LeadWorkspaceClient
+            key={lead.id}
             lead={lead}
             allLeadIds={pipelineIds}
             userId={user.id}

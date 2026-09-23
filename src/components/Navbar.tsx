@@ -61,16 +61,6 @@ export default function Navbar({ userName }: NavbarProps) {
               Pipeline
             </Link>
             <Link
-              href="/dialer"
-              className={`text-sm font-medium transition-colors ${
-                isActive('/dialer')
-                  ? 'text-[#1a1a1a]'
-                  : 'text-[#6b6b6b] hover:text-[#1a1a1a]'
-              }`}
-            >
-              Dialer
-            </Link>
-            <Link
               href="/leads"
               className={`text-sm font-medium transition-colors ${
                 isActive('/leads')
@@ -91,7 +81,7 @@ export default function Navbar({ userName }: NavbarProps) {
               title="Phone"
             >
               <img
-                src="/images/icons/phone-icon.png"
+                src="/images/icons/phone-handset.png"
                 alt="Phone"
                 width={22}
                 height={22}

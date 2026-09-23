@@ -197,8 +197,27 @@ function CheckboxField({ label, checked, onToggle }: { label: string; checked: b
 }
 
 // ── Section header ─────────────────────────────────────────────────────────────
-function Section({ title, children, collapsible = false }: { title: string; children: React.ReactNode; collapsible?: boolean }) {
-  const [open, setOpen] = useState(true);
+function Section({ title, children, collapsible = false, defaultOpen = true, resetKey }: { title: string; children: React.ReactNode; collapsible?: boolean; defaultOpen?: boolean; resetKey?: string }) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  useEffect(() => {
+    setOpen(defaultOpen);
+  }, [resetKey, defaultOpen]);
+
+  useEffect(() => {
+    if (!collapsible) return;
+    const collapse = () => setOpen(defaultOpen);
+    const onShow = (e: PageTransitionEvent) => {
+      if (e.persisted) collapse();
+    };
+    window.addEventListener('pagehide', collapse);
+    window.addEventListener('pageshow', onShow);
+    return () => {
+      window.removeEventListener('pagehide', collapse);
+      window.removeEventListener('pageshow', onShow);
+    };
+  }, [collapsible, defaultOpen]);
+
   return (
     <div className="mb-4">
       <button
@@ -952,6 +971,9 @@ export default function LeadWorkspaceClient({
             <Field label="Full Name"  value={lead.name}    onSave={v => saveField('name', v)} />
             <Field label="Email"      value={lead.email}   onSave={v => saveField('email', v)}  type="email" />
             <Field label="Mobile"     value={lead.phone}   onSave={v => saveField('phone', v)}  type="tel" />
+          </Section>
+
+          <Section title="Details" collapsible defaultOpen={false} resetKey={initialLead.id}>
             <Field label="DOB"        value={str(ud.dob)}        onSave={v => saveField('dob', v)} />
             <Field label="SSN"        value={str(ud.ssn)}        onSave={v => saveField('ssn', v)} masked />
             <Field label="Home Address" value={str(ud.homeAddress)} onSave={v => saveField('homeAddress', v)} />
@@ -961,19 +983,8 @@ export default function LeadWorkspaceClient({
             <Field label="Country"    value={str(ud.country) ?? 'US'} onSave={v => saveField('country', v)} />
           </Section>
 
-          {/* CREDIT */}
-          <Section title="Credit">
-            <Field
-              label="Credit Score"
-              value={creditScore != null ? String(creditScore) : null}
-              onSave={v => saveField('creditScore', v)}
-              type="number"
-              valueStyle={{ color: creditScoreColor, fontWeight: 700 }}
-            />
-          </Section>
-
           {/* COMPANY */}
-          <Section title="Company">
+          <Section title="Company" collapsible defaultOpen={false} resetKey={initialLead.id}>
             <Field label="Legal Name"    value={lead.company}              onSave={v => saveField('company', v)} />
             <Field label="DBA"           value={str(ud.dba)}              onSave={v => saveField('dba', v)} />
             <Field label="Address"       value={str(ud.businessAddress)}  onSave={v => saveField('businessAddress', v)} />
@@ -998,8 +1009,19 @@ export default function LeadWorkspaceClient({
             />
           </Section>
 
+          {/* CREDIT — always visible, sits above Deal */}
+          <Section title="Credit">
+            <Field
+              label="Credit Score"
+              value={creditScore != null ? String(creditScore) : null}
+              onSave={v => saveField('creditScore', v)}
+              type="number"
+              valueStyle={{ color: creditScoreColor, fontWeight: 700 }}
+            />
+          </Section>
+
           {/* DEAL */}
-          <Section title="Deal">
+          <Section title="Deal" collapsible defaultOpen={false} resetKey={initialLead.id}>
             <Field label="Amount Requested"  value={lead.value != null ? String(lead.value) : str(ud.requestedAmount)} onSave={v => saveField('value', v)} />
             <Field
               label="Follow-up"
@@ -1262,7 +1284,7 @@ export default function LeadWorkspaceClient({
                 disabled={callBusy || !webphone.ready}
                 className="w-full px-3 py-2.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] disabled:opacity-50 transition-colors"
               >
-                {callBusy ? 'Calling…' : webphone.ready ? 'Call' : 'Phone offline'}
+                {callBusy ? 'Calling…' : 'Call'}
               </button>
               {callMsg && (
                 <p className="text-[11px] text-[#6b6b6b] mt-1.5">{callMsg}</p>

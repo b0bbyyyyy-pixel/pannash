@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { formatDisplay } from '@/lib/dialer/e164';
 import { getPhoneLocation } from '@/lib/phoneLocation';
@@ -191,6 +192,7 @@ export function DialerCard({
 }) {
   const [copied, setCopied] = useState(false);
   const [showText, setShowText] = useState(false);
+  const [notesExpanded, setNotesExpanded] = useState(false);
   // Derive city/state/timezone from the phone's area code
   const phoneLoc = getPhoneLocation(lead.phone_e164);
   const effectiveTz = lead.timezone || phoneLoc?.timezone || null;
@@ -224,6 +226,7 @@ export function DialerCard({
     setSelected(null);
     setPipelineChoice(null);
     setNotes('');
+    setNotesExpanded(false);
   }, [lead.id]);
 
   const pickTile = (key: TileKey) => {
@@ -393,9 +396,22 @@ export function DialerCard({
             </button>
           </div>
           {lead.phone_e164 && (
-            <p className={`${compact ? 'text-xs mt-0.5' : 'text-sm mt-1.5'} text-[#6b7280] leading-tight`}>
-              {formatDisplay(lead.phone_e164)}
-            </p>
+            <div className={`flex items-center gap-1.5 min-w-0 ${compact ? 'mt-0.5' : 'mt-1.5'}`}>
+              <span className={`${compact ? 'text-xs' : 'text-sm'} text-[#6b7280] leading-tight truncate`}>
+                {formatDisplay(lead.phone_e164)}
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowText(true)}
+                title="Text"
+                className="shrink-0 p-0.5 text-[#9ca3af] hover:text-[#6b7280] transition-colors"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
+                    d="M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8a9.77 9.77 0 01-4.14-.88L3 20l1.06-3.18C3.39 15.64 3 13.87 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                </svg>
+              </button>
+            </div>
           )}
           {emailError && <p className="text-xs text-red-600 mt-1">{emailError}</p>}
           {lead.lead_status === 'Prospect' && (
@@ -423,7 +439,7 @@ export function DialerCard({
       {/* Full lead info overlay */}
       {showOverlay && <LeadInfoOverlay leadId={lead.id} onClose={() => setShowOverlay(false)} />}
 
-      {/* Phone (half width) + city / state / local time + Text */}
+      {/* Phone (half width) + city / state / local time */}
       <div className={`flex items-center ${compact ? 'mb-3 gap-2' : 'mb-6 gap-3'}`}>
         {!compact && (
         <div className="flex items-center gap-2 min-w-0 w-1/2">
@@ -478,13 +494,14 @@ export function DialerCard({
             </>
           )}
         </div>
-        <button
-          type="button"
-          onClick={() => setShowText(true)}
-          className={`shrink-0 font-medium text-[#1a1a1a] hover:underline ${compact ? 'text-[11px]' : 'text-sm'}`}
-        >
-          Text
-        </button>
+        {compact && (
+          <Link
+            href="/dialer"
+            className="shrink-0 text-[11px] font-medium text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors"
+          >
+            Expand
+          </Link>
+        )}
       </div>
 
       {showText && (
@@ -508,11 +525,18 @@ export function DialerCard({
         </div>
       )}
 
-      {/* Lead notes */}
+      {/* Lead notes — one line until clicked, read-only */}
       {lead.notes && (
-        <div className="bg-[#f9f9f9] rounded-xl px-4 py-3 mb-6 text-sm text-[#6b7280]">
+        <button
+          type="button"
+          onClick={() => setNotesExpanded(v => !v)}
+          title={notesExpanded ? 'Collapse notes' : 'Expand notes'}
+          className={`w-full text-left bg-[#f9f9f9] text-[#6b7280] ${
+            compact ? 'rounded-none px-0 py-1 mb-3 text-[11px]' : 'rounded-xl px-4 py-3 mb-6 text-sm'
+          } ${notesExpanded ? 'whitespace-pre-wrap break-words' : 'truncate'}`}
+        >
           {lead.notes}
-        </div>
+        </button>
       )}
 
       {/* Footer: Call → Ringing/Hang up → 3 outcomes + Save & next */}
@@ -571,7 +595,7 @@ export function DialerCard({
             type="text"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            placeholder="Call notes (optional)"
+            placeholder="Call notes"
             className="mt-2 w-full bg-transparent border-0 p-0 text-sm text-[#1a1a1a] placeholder:text-[#c4c4c4] focus:outline-none"
           />
         </div>

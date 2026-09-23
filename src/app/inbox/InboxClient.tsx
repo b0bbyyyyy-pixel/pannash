@@ -618,11 +618,11 @@ export default function InboxClient({
                   title="Call"
                 >
                   <img
-                    src="/images/icons/phone-icon.png"
+                    src="/images/icons/phone-handset.png"
                     alt="Call"
-                    width={22}
-                    height={22}
-                    className="w-[22px] h-[22px]"
+                    width={14}
+                    height={14}
+                    className="w-[14px] h-[14px]"
                   />
                 </button>
               </div>
