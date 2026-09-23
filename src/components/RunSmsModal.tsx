@@ -17,6 +17,12 @@ const WINDOW_PRESETS = [3, 5, 8];
 
 const DEFAULT_TEMPLATES = ['', '', '', '', ''];
 
+type TemplatePack = { id: string; name: string; templates: string[] };
+
+function newPack(name: string, templates: string[] = DEFAULT_TEMPLATES): TemplatePack {
+  return { id: crypto.randomUUID(), name, templates: [...templates] };
+}
+
 interface Props {
   listId: string;
   campaignName: string;
@@ -32,9 +38,12 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
   const [useCustomWindow, setUseCustomWindow] = useState(false);
   const [paceMin, setPaceMin] = useState(60);
   const [paceMax, setPaceMax] = useState(120);
-  const [templates, setTemplates] = useState<string[]>(
-    savedTemplates?.length ? savedTemplates : DEFAULT_TEMPLATES
-  );
+  const [packs, setPacks] = useState<TemplatePack[]>(() => [
+    newPack('Set 1', savedTemplates?.length ? savedTemplates : DEFAULT_TEMPLATES),
+  ]);
+  const [activePackId, setActivePackId] = useState(() => packs[0].id);
+  const [namingNew, setNamingNew] = useState(false);
+  const [newPackName, setNewPackName] = useState('');
   const [quietStart, setQuietStart] = useState('09:00');
   const [quietEnd, setQuietEnd] = useState('20:00');
   const [skipStates, setSkipStates] = useState<string[]>([]);
@@ -43,11 +52,67 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const activePack = packs.find(p => p.id === activePackId) ?? packs[0];
+  const templates = activePack?.templates ?? DEFAULT_TEMPLATES;
+
+  const persistPacks = (next: TemplatePack[]) => {
+    fetch('/api/sms/template-packs', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ packs: next }),
+    }).catch(() => { /* local state still works */ });
+  };
+
   useEffect(() => {
-    if (savedTemplates?.length) setTemplates(savedTemplates);
+    let cancelled = false;
+    fetch('/api/sms/template-packs')
+      .then(r => r.json())
+      .then(data => {
+        if (cancelled) return;
+        const loaded: TemplatePack[] = Array.isArray(data.packs) ? data.packs : [];
+        if (loaded.length) {
+          setPacks(loaded);
+          const match = savedTemplates?.length
+            ? loaded.find(p => JSON.stringify(p.templates.filter(Boolean)) === JSON.stringify(savedTemplates.filter(Boolean)))
+            : null;
+          setActivePackId(match?.id ?? loaded[0].id);
+        } else if (savedTemplates?.length) {
+          setPacks(prev => prev.map((p, i) => (i === 0 ? { ...p, templates: savedTemplates } : p)));
+        }
+      })
+      .catch(() => { /* keep local default */ });
+    return () => { cancelled = true; };
   }, [savedTemplates]);
 
   const effectiveWindow = useCustomWindow ? Number(customWindow) || 0 : windowHours;
+  const setTemplates = (updater: (prev: string[]) => string[]) => {
+    setPacks(prev => prev.map(p => p.id === activePackId ? { ...p, templates: updater(p.templates) } : p));
+  };
+
+  const selectPack = (id: string) => {
+    setActivePackId(id);
+    persistPacks(packs);
+  };
+
+  const addPack = () => {
+    const name = newPackName.trim() || `Set ${packs.length + 1}`;
+    const pack = newPack(name);
+    const next = [...packs, pack];
+    setPacks(next);
+    setActivePackId(pack.id);
+    setNewPackName('');
+    setNamingNew(false);
+    persistPacks(next);
+  };
+
+  const removeActivePack = () => {
+    if (packs.length < 2) return;
+    const next = packs.filter(p => p.id !== activePackId);
+    setPacks(next);
+    setActivePackId(next[0].id);
+    persistPacks(next);
+  };
+
   const filledTemplates = templates.map(t => t.trim()).filter(Boolean);
 
   // Pace-vs-window estimate (spec #6)
@@ -61,6 +126,7 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
     if (paceMin < 30) { setError('Minimum pace is 30 seconds.'); return; }
     if (paceMax < paceMin) { setError('Max pace must be ≥ min pace.'); return; }
     setStarting(true);
+    persistPacks(packs);
     try {
       const res = await fetch('/api/sms/drip', {
         method: 'POST',
@@ -188,10 +254,50 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
                 {'{first_name} {company} {city} {state}'}
               </span>
             </div>
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
+              {packs.map(p => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => selectPack(p.id)}
+                  className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${
+                    p.id === activePackId
+                      ? 'bg-[#1a1a1a] text-white border-[#1a1a1a]'
+                      : 'border-[#e5e5e5] text-[#6b6b6b] hover:bg-[#f5f5f5]'
+                  }`}
+                >
+                  {p.name}
+                </button>
+              ))}
+              {namingNew ? (
+                <form
+                  onSubmit={e => { e.preventDefault(); addPack(); }}
+                  className="flex items-center gap-1.5"
+                >
+                  <input
+                    autoFocus
+                    value={newPackName}
+                    onChange={e => setNewPackName(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Escape') { setNamingNew(false); setNewPackName(''); } }}
+                    placeholder="Set name"
+                    className="w-28 px-2 py-1.5 text-sm border border-[#1a1a1a] rounded-lg focus:outline-none"
+                  />
+                  <button type="submit" className="text-[11px] text-[#1a1a1a] font-medium">Add</button>
+                </form>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setNamingNew(true)}
+                  className="px-3 py-1.5 rounded-lg text-sm border border-dashed border-[#e5e5e5] text-[#6b6b6b] hover:bg-[#f5f5f5] transition-colors"
+                >
+                  + New set
+                </button>
+              )}
+            </div>
             <div className="space-y-2">
               {templates.map((t, i) => (
                 <textarea
-                  key={i}
+                  key={`${activePackId}-${i}`}
                   value={t}
                   onChange={e => setTemplates(prev => prev.map((x, j) => (j === i ? e.target.value : x)))}
                   placeholder={`Template ${i + 1}${i === 0 ? ' — e.g. Hi {first_name}, quick question about {company}…' : ''}`}
@@ -215,6 +321,14 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
                   className="text-[11px] text-[#9b9b9b] hover:text-[#1a1a1a] underline underline-offset-2"
                 >
                   Remove last
+                </button>
+              )}
+              {packs.length > 1 && (
+                <button
+                  onClick={removeActivePack}
+                  className="text-[11px] text-[#9b9b9b] hover:text-[#1a1a1a] underline underline-offset-2"
+                >
+                  Delete set
                 </button>
               )}
               <span className="text-[11px] text-[#9b9b9b] ml-auto">{filledTemplates.length} ready · each lead gets one at random</span>
