@@ -1,7 +1,15 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+
+interface DripJobSummary {
+  id: string;
+  list_id: string;
+  status: 'active' | 'paused';
+  sent_count: number;
+  total_count: number;
+}
 
 export interface Campaign {
   id: string;
@@ -30,6 +38,26 @@ export default function CampaignTable({ campaigns, onRename, onDelete }: Props) 
   const [editingName, setEditingName] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [dripJobs, setDripJobs] = useState<Map<string, DripJobSummary>>(new Map());
+
+  // Live drip counters on campaign rows
+  useEffect(() => {
+    let stop = false;
+    const load = async () => {
+      try {
+        const res = await fetch('/api/sms/drip');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (stop) return;
+        const map = new Map<string, DripJobSummary>();
+        for (const j of (data.jobs ?? []) as DripJobSummary[]) map.set(j.list_id, j);
+        setDripJobs(map);
+      } catch { /* retry next poll */ }
+    };
+    load();
+    const t = setInterval(load, 15000);
+    return () => { stop = true; clearInterval(t); };
+  }, []);
 
   const startEdit = (e: React.MouseEvent, campaign: Campaign) => {
     e.stopPropagation();
@@ -126,6 +154,39 @@ export default function CampaignTable({ campaigns, onRename, onDelete }: Props) 
                   <div className="flex items-center gap-3">
                     <span className="text-xs text-[#1a1a1a] font-medium">SMS {campaign.smsCount}</span>
                     <span className="text-xs text-[#9b9b9b] font-medium">Call {campaign.callCount}</span>
+                    {(() => {
+                      const job = dripJobs.get(campaign.id);
+                      if (job?.status === 'active') {
+                        return (
+                          <span className="flex items-center gap-1.5 text-[11px] text-blue-600 font-medium whitespace-nowrap">
+                            <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                            Sending {job.sent_count}/{job.total_count}
+                          </span>
+                        );
+                      }
+                      if (job?.status === 'paused') {
+                        return (
+                          <span className="text-[11px] text-amber-600 font-medium whitespace-nowrap">
+                            Paused · {job.sent_count}/{job.total_count}
+                          </span>
+                        );
+                      }
+                      return (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            router.push(`/leads?list=${campaign.id}&runsms=1`);
+                          }}
+                          className="flex items-center gap-1 border border-[#e5e5e5] hover:border-[#1a1a1a] hover:bg-[#1a1a1a] hover:text-white text-[#6b6b6b] text-[10px] font-semibold px-2 py-0.5 rounded-full transition-colors"
+                          title="Run SMS drip on this campaign"
+                        >
+                          <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M8 5v14l11-7z" />
+                          </svg>
+                          Run SMS
+                        </button>
+                      );
+                    })()}
                   </div>
                 </td>
 

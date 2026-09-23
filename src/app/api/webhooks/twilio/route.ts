@@ -144,15 +144,40 @@ export async function POST(req: NextRequest) {
           if (insertErr) console.error('[SMS Webhook] inbox_messages insert:', insertErr);
         }
 
-        await supabase
+        const nowIso = new Date().toISOString();
+        const { error: convUpdateErr } = await supabase
           .from('inbox_conversations')
           .update({
-            last_message_at: new Date().toISOString(),
+            last_message_at: nowIso,
+            last_inbound_at: nowIso,
             last_message_preview: preview,
             last_direction: 'inbound',
             unread_count: (conv.unread_count ?? 0) + 1,
           })
           .eq('id', conv.id);
+        if (convUpdateErr) {
+          // last_inbound_at column may not exist yet — retry without it
+          await supabase
+            .from('inbox_conversations')
+            .update({
+              last_message_at: nowIso,
+              last_message_preview: preview,
+              last_direction: 'inbound',
+              unread_count: (conv.unread_count ?? 0) + 1,
+            })
+            .eq('id', conv.id);
+        }
+      }
+
+      // Reply stops the drip for this lead (RPC does this too; fallback mirrors it)
+      try {
+        await supabase
+          .from('sms_drip_sends')
+          .update({ sms_status: 'replied' })
+          .eq('lead_id', lead.id)
+          .in('sms_status', ['queued', 'scheduled', 'sent']);
+      } catch {
+        // Drip tables not created yet — fine
       }
     } catch (inboxErr) {
       console.error('[Inbox] Failed to write inbound to inbox_messages:', inboxErr);

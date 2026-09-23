@@ -24,7 +24,7 @@ export default function Navbar({ userName }: NavbarProps) {
       <div className="max-w-[1600px] mx-auto px-12">
         <div className="flex items-center justify-between h-20">
           {/* Logo - Trylon & Perisphere */}
-          <Link href="/pipeline" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
+          <Link href="/inbox" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
             <img
               src="/images/logo/trylon-perisphere.svg"
               alt="Gostwrk"

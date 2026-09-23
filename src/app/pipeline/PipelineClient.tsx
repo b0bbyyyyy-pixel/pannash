@@ -26,6 +26,8 @@ interface Lead {
   value?: number | string | null;
   follow_up_at?: string | null;
   underwriting_data?: Record<string, unknown> | null;
+  last_text?: string | null;
+  last_text_outbound?: boolean;
 }
 
 interface PipelineClientProps {
@@ -134,7 +136,7 @@ function followUpLabel(lead: Lead): string {
   return target.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-const PIPELINE_COLS = 'grid-cols-[minmax(0,1fr)_160px_100px_100px_130px]';
+const PIPELINE_COLS = 'grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)_160px_100px_100px_130px]';
 
 // ── Filter state shape ────────────────────────────────────────────────────────
 interface Filters {
@@ -406,6 +408,7 @@ export default function PipelineClient({ leads, userId }: PipelineClientProps) {
         {/* Table header */}
         <div className={`grid ${PIPELINE_COLS} gap-x-3 border-b border-[#e5e5e5] bg-[#fafafa] px-3 py-2`}>
           <div className="text-[10px] font-bold text-[#9b9b9b] uppercase tracking-wider">Lead</div>
+          <div className="text-[10px] font-bold text-[#9b9b9b] uppercase tracking-wider">Last text</div>
           <div className="text-[10px] font-bold text-[#9b9b9b] uppercase tracking-wider">Status</div>
           <div className="text-[10px] font-bold text-[#9b9b9b] uppercase tracking-wider text-right px-1">Amount</div>
           <div className="text-[10px] font-bold text-[#9b9b9b] uppercase tracking-wider px-1">Follow-up</div>
@@ -454,6 +457,16 @@ export default function PipelineClient({ leads, userId }: PipelineClientProps) {
                   </span>
                   {lead.company && (
                     <span className="text-[11px] text-[#9b9b9b] truncate leading-tight">{lead.name}</span>
+                  )}
+                </div>
+
+                {/* Last text */}
+                <div className="flex items-center min-w-0 pr-2">
+                  {lead.last_text && (
+                    <span className="text-xs text-gray-400 truncate">
+                      {lead.last_text_outbound ? '↗ ' : ''}
+                      {lead.last_text}
+                    </span>
                   )}
                 </div>
 

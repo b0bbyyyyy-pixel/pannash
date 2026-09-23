@@ -2,7 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 
-const LEAD_COLS = 'id, name, company, phone, stage, month_key, last_contact, notes, in_pipeline';
+const LEAD_COLS = 'id, name, company, phone, stage, month_key, last_contact, notes, in_pipeline, lead_status, list_id';
+const LIMIT = 40;
+
+function escapeIlike(s: string) {
+  return s.replace(/[%_\\]/g, '\\$&');
+}
+
+function isInboxLead(l: { phone?: string | null; in_pipeline?: boolean; month_key?: string | null; list_id?: string | null }) {
+  if (!l.phone) return false;
+  return l.in_pipeline === true || (!!l.month_key && !l.list_id);
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -17,27 +27,90 @@ export async function GET(req: NextRequest) {
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const pinLeadId = req.nextUrl.searchParams.get('leadId');
+    const q = req.nextUrl.searchParams.get('q')?.trim() ?? '';
 
-    // Pipeline leads + legacy CRM (month_key, no campaign list) that have a phone.
-    // New pipeline adds set in_pipeline and leave month_key null.
-    const { data: leads, error } = await supabase
-      .from('leads')
-      .select(LEAD_COLS)
-      .eq('user_id', user.id)
-      .not('phone', 'is', null)
-      .not('phone', 'eq', '')
-      .or('in_pipeline.eq.true,and(month_key.not.is.null,list_id.is.null)')
-      .order('last_contact', { ascending: false, nullsFirst: false });
+    let list: Record<string, unknown>[] = [];
 
-    if (error) {
-      console.error('[inbox/conversations] leads query error:', error.message);
-      return NextResponse.json({ leads: [], phoneConnection: null, dbError: error.message });
+    if (q) {
+      const safe = escapeIlike(q);
+      const { data: hits, error } = await supabase
+        .from('leads')
+        .select(LEAD_COLS)
+        .eq('user_id', user.id)
+        .or(`name.ilike.%${safe}%,company.ilike.%${safe}%,phone.ilike.%${safe}%`)
+        .order('last_contact', { ascending: false, nullsFirst: false })
+        .limit(80);
+
+      if (error) {
+        console.error('[inbox/conversations] search error:', error.message);
+        return NextResponse.json({ leads: [], phoneConnection: null, dbError: error.message });
+      }
+      list = (hits ?? []).filter(isInboxLead).slice(0, LIMIT);
+    } else {
+      let convs: Record<string, unknown>[] = [];
+      try {
+        // Stack by last INBOUND — outbound drip sends never bump a thread
+        const { data, error } = await supabase
+          .from('inbox_conversations')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('last_inbound_at', { ascending: false, nullsFirst: false })
+          .limit(LIMIT);
+        if (error) {
+          // last_inbound_at column not added yet (add-sms-drip.sql) — fall back
+          const { data: fallback } = await supabase
+            .from('inbox_conversations')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('last_message_at', { ascending: false, nullsFirst: false })
+            .limit(LIMIT);
+          convs = fallback ?? [];
+        } else {
+          convs = data ?? [];
+        }
+      } catch {
+        // Table not created yet
+      }
+
+      const convLeadIds = convs.map(c => String(c.lead_id)).filter(Boolean);
+      if (convLeadIds.length) {
+        const { data: convLeads } = await supabase
+          .from('leads')
+          .select(LEAD_COLS)
+          .eq('user_id', user.id)
+          .in('id', convLeadIds);
+        const byId = new Map((convLeads ?? []).map(l => [l.id, l]));
+        list = convLeadIds.map(id => byId.get(id)).filter(Boolean) as Record<string, unknown>[];
+      }
+
+      if (list.length < LIMIT) {
+        const have = new Set(list.map(l => String(l.id)));
+        const { data: extras, error } = await supabase
+          .from('leads')
+          .select(LEAD_COLS)
+          .eq('user_id', user.id)
+          .not('phone', 'is', null)
+          .not('phone', 'eq', '')
+          .or('in_pipeline.eq.true,and(month_key.not.is.null,list_id.is.null)')
+          .order('last_contact', { ascending: false, nullsFirst: false })
+          .limit(LIMIT);
+
+        if (error) {
+          console.error('[inbox/conversations] leads query error:', error.message);
+          if (!list.length) {
+            return NextResponse.json({ leads: [], phoneConnection: null, dbError: error.message });
+          }
+        }
+
+        for (const lead of extras ?? []) {
+          if (have.has(lead.id)) continue;
+          list.push(lead);
+          have.add(lead.id);
+          if (list.length >= LIMIT) break;
+        }
+      }
     }
 
-    const list = [...(leads ?? [])];
-
-    // Send SMS from a lead workspace always passes leadId — include that row even if
-    // it wouldn't match the default filter (no phone, campaign list, etc.).
     if (pinLeadId && !list.some(l => l.id === pinLeadId)) {
       const { data: pinned } = await supabase
         .from('leads')
@@ -46,9 +119,10 @@ export async function GET(req: NextRequest) {
         .eq('user_id', user.id)
         .maybeSingle();
       if (pinned) list.unshift(pinned);
+      if (list.length > LIMIT) list = list.slice(0, LIMIT + 1);
     }
 
-    const ids = list.map(l => l.id);
+    const ids = list.map(l => String(l.id));
 
     let optOutMap: Record<string, boolean> = {};
     if (ids.length) {
@@ -66,21 +140,24 @@ export async function GET(req: NextRequest) {
     }
 
     let convMap: Record<string, Record<string, unknown>> = {};
-    try {
-      const { data: convs } = await supabase
-        .from('inbox_conversations')
-        .select('*')
-        .eq('user_id', user.id);
-      for (const c of convs ?? []) convMap[c.lead_id] = c;
-    } catch {
-      // Table not created yet — ignore
+    if (ids.length) {
+      try {
+        const { data: convs } = await supabase
+          .from('inbox_conversations')
+          .select('*')
+          .eq('user_id', user.id)
+          .in('lead_id', ids);
+        for (const c of convs ?? []) convMap[c.lead_id] = c;
+      } catch {
+        // Table not created yet — ignore
+      }
     }
 
-    const merged = list.map(lead => ({
+    const merged: Record<string, unknown>[] = list.map(lead => ({
       ...lead,
-      phone: lead.phone || '',
-      sms_opt_out: optOutMap[lead.id] ?? false,
-      conversation: convMap[lead.id] ?? null,
+      phone: (lead.phone as string) || '',
+      sms_opt_out: optOutMap[String(lead.id)] ?? false,
+      conversation: convMap[String(lead.id)] ?? null,
     }));
 
     merged.sort((a, b) => {
@@ -88,8 +165,12 @@ export async function GET(req: NextRequest) {
         if (a.id === pinLeadId) return -1;
         if (b.id === pinLeadId) return 1;
       }
-      const aTime = (a.conversation as { last_message_at?: string } | null)?.last_message_at ?? a.last_contact ?? '0';
-      const bTime = (b.conversation as { last_message_at?: string } | null)?.last_message_at ?? b.last_contact ?? '0';
+      // Replies stack to the top; outbound-only threads rank by their last inbound (never bumped by drip)
+      type Conv = { last_inbound_at?: string | null; last_message_at?: string | null } | null;
+      const key = (c: Conv, lastContact: string | null) =>
+        c?.last_inbound_at ?? c?.last_message_at ?? lastContact ?? '0';
+      const aTime = key(a.conversation as Conv, a.last_contact as string | null);
+      const bTime = key(b.conversation as Conv, b.last_contact as string | null);
       return bTime > aTime ? 1 : -1;
     });
 

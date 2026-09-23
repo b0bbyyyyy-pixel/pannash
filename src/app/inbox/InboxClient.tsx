@@ -12,12 +12,15 @@ interface LeadList {
   parent_list_id: string | null;
 }
 
+interface DBStatus { id: string; name: string; color: string; bg_color: string; }
+
 interface InboxLead {
   id: string;
   name: string;
   company: string | null;
   phone: string;
   stage: string | null;
+  lead_status: string | null;
   month_key: string | null;
   last_contact: string | null;
   sms_opt_out: boolean | null;
@@ -100,22 +103,10 @@ function smsSegments(text: string) {
   return { chars: len, segments, encoding: isGsm ? 'GSM-7' : 'Unicode' };
 }
 
-const STAGE_COLORS: Record<string, string> = {
-  'new lead': 'bg-gray-100 text-gray-600',
-  'contacted': 'bg-blue-50 text-blue-700',
-  'active': 'bg-teal-50 text-teal-700',
-  'documents requested': 'bg-yellow-50 text-yellow-700',
-  'under review': 'bg-purple-50 text-purple-700',
-  'offers/follow up': 'bg-orange-50 text-orange-700',
-  'funded': 'bg-green-50 text-green-700',
-  'lost': 'bg-red-50 text-red-700',
-  'declined': 'bg-red-50 text-red-600',
-  'drip': 'bg-gray-100 text-gray-500',
-};
-
-function stageColor(stage: string | null) {
-  if (!stage) return 'bg-gray-100 text-gray-500';
-  return STAGE_COLORS[stage.toLowerCase()] ?? 'bg-gray-100 text-gray-600';
+function getStatusStyleFrom(status: string | null | undefined, list: DBStatus[]) {
+  if (!status) return { bg: '#f5f5f5', text: '#6b6b6b' };
+  const found = list.find(s => s.name === status);
+  return found ? { bg: found.bg_color, text: found.color } : { bg: '#f5f5f5', text: '#6b6b6b' };
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -148,7 +139,9 @@ export default function InboxClient({
   const [loadingMsgs, setLoadingMsgs] = useState(false);
 
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'unread'>('all');
+  const [dbStatuses, setDbStatuses] = useState<DBStatus[]>([]);
   const [composerText, setComposerText] = useState('');
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -164,9 +157,24 @@ export default function InboxClient({
   const selectedLead = leads.find(l => l.id === selectedLeadId) ?? null;
 
   // ── Load lead list ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 250);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  useEffect(() => {
+    fetch('/api/lead-statuses', { credentials: 'include' })
+      .then(r => r.json())
+      .then(j => { if (j.statuses) setDbStatuses(j.statuses); })
+      .catch(() => {});
+  }, []);
+
   const loadLeads = useCallback(async () => {
     try {
-      const qs = initialLeadId ? `?leadId=${encodeURIComponent(initialLeadId)}` : '';
+      const params = new URLSearchParams();
+      if (initialLeadId) params.set('leadId', initialLeadId);
+      if (debouncedSearch.trim()) params.set('q', debouncedSearch.trim());
+      const qs = params.toString() ? `?${params}` : '';
       const res = await fetch(`/api/inbox/conversations${qs}`);
       if (!res.ok) {
         setLoadingLeads(false);
@@ -181,7 +189,7 @@ export default function InboxClient({
     } finally {
       setLoadingLeads(false);
     }
-  }, [initialLeadId]);
+  }, [initialLeadId, debouncedSearch]);
 
   useEffect(() => { loadLeads(); }, [loadLeads]);
 
@@ -315,7 +323,8 @@ export default function InboxClient({
         name: l.name ?? '',
         company: l.company ?? null,
         phone: l.phone ?? '',
-        stage: null,
+        stage: l.stage ?? null,
+        lead_status: l.lead_status ?? null,
         month_key: null,
         last_contact: l.last_contact ?? null,
         sms_opt_out: l.sms_opt_out ?? false,
@@ -409,14 +418,6 @@ export default function InboxClient({
   // ── Filtered lead list ──────────────────────────────────────────────────────
   const filteredLeads = leads.filter(l => {
     if (filter === 'unread' && !l.conversation?.unread_count) return false;
-    if (search) {
-      const q = search.toLowerCase();
-      return (
-        l.name?.toLowerCase().includes(q) ||
-        l.company?.toLowerCase().includes(q) ||
-        l.phone?.includes(q)
-      );
-    }
     return true;
   });
 
@@ -458,21 +459,10 @@ export default function InboxClient({
       {/* ── LEFT RAIL: Lead list ─────────────────────────────────────────────── */}
       <div className="w-72 flex-shrink-0 flex flex-col border-r border-[#e5e5e5] bg-white overflow-hidden">
         {/* Header */}
-        <div className="px-4 pt-4 pb-3 border-b border-[#e5e5e5]">
-          <div className="flex items-center justify-between mb-3">
-            <h1 className="text-base font-semibold text-[#1a1a1a]">
-              Inbox
-              {totalUnread > 0 && (
-                <span className="ml-2 inline-flex items-center justify-center w-5 h-5 bg-blue-500 text-white rounded-full text-[10px] font-bold">
-                  {totalUnread > 99 ? '99+' : totalUnread}
-                </span>
-              )}
-            </h1>
-          </div>
-
+        <div className="px-4 pt-3 pb-3 border-b border-[#e5e5e5]">
           {/* Search */}
           <div className="relative mb-2">
-            <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="absolute left-0 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
             <input
@@ -480,7 +470,7 @@ export default function InboxClient({
               placeholder="Search leads..."
               value={search}
               onChange={e => setSearch(e.target.value)}
-              className="w-full pl-8 pr-3 py-1.5 text-sm bg-[#f5f5f5] border border-[#e5e5e5] rounded-lg focus:outline-none focus:ring-1 focus:ring-gray-300"
+              className="w-full pl-6 pr-2 py-1.5 text-sm bg-transparent text-[#1a1a1a] placeholder:text-[#9b9b9b] focus:outline-none"
             />
           </div>
 
@@ -496,7 +486,7 @@ export default function InboxClient({
                     : 'bg-[#f0f0f0] text-[#6b6b6b] hover:bg-[#e5e5e5]'
                 }`}
               >
-                {f === 'all' ? 'All' : 'Unread'}
+                {f === 'all' ? 'All' : `Unread${totalUnread > 0 ? ` ${totalUnread}` : ''}`}
               </button>
             ))}
 
@@ -575,20 +565,20 @@ export default function InboxClient({
                       <p className="text-xs text-[#6b6b6b] truncate mt-0.5">
                         {lead.company ? lead.name : fmt(lead.phone)}
                       </p>
-                      {lead.conversation?.last_message_preview && (
-                        <p className="text-xs text-gray-400 truncate mt-0.5">
-                          {lead.conversation.last_direction === 'outbound' && '↗ '}
-                          {lead.conversation.last_message_preview}
-                        </p>
-                      )}
                     </div>
                     <div className="flex flex-col items-end gap-1 flex-shrink-0">
                       <span className="text-[10px] text-gray-400">
                         {relativeTime(lead.conversation?.last_message_at ?? lead.last_contact)}
                       </span>
-                      {lead.stage && (
-                        <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded uppercase tracking-wide ${stageColor(lead.stage)}`}>
-                          {lead.stage.length > 8 ? lead.stage.slice(0, 8) + '…' : lead.stage}
+                      {lead.lead_status && (
+                        <span
+                          className="text-[10px] font-medium px-1.5 py-0.5 rounded max-w-[120px] truncate"
+                          style={{
+                            background: getStatusStyleFrom(lead.lead_status, dbStatuses).bg,
+                            color: getStatusStyleFrom(lead.lead_status, dbStatuses).text,
+                          }}
+                        >
+                          {lead.lead_status}
                         </span>
                       )}
                       {lead.sms_opt_out && (
@@ -797,9 +787,15 @@ export default function InboxClient({
                     <p className="text-xs text-[#6b6b6b] mt-0.5">{selectedLead.name}</p>
                   )}
                 </div>
-                {selectedLead.stage && (
-                  <span className={`text-[10px] font-medium px-2 py-0.5 rounded uppercase tracking-wide flex-shrink-0 ${stageColor(selectedLead.stage)}`}>
-                    {selectedLead.stage}
+                {selectedLead.lead_status && (
+                  <span
+                    className="text-[10px] font-medium px-2 py-0.5 rounded flex-shrink-0"
+                    style={{
+                      background: getStatusStyleFrom(selectedLead.lead_status, dbStatuses).bg,
+                      color: getStatusStyleFrom(selectedLead.lead_status, dbStatuses).text,
+                    }}
+                  >
+                    {selectedLead.lead_status}
                   </span>
                 )}
               </div>

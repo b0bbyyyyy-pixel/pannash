@@ -1,7 +1,25 @@
 'use client';
 
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import RunSmsModal from '@/components/RunSmsModal';
+import { zoneForLocation, formatLocal } from '@/lib/smsDrip/timezones';
+
+interface DripJob {
+  id: string;
+  status: 'active' | 'paused' | 'completed' | 'cancelled';
+  sent_count: number;
+  total_count: number;
+  next_send_at: string | null;
+}
+
+interface DripSend {
+  lead_id: string;
+  sms_status: string;
+  scheduled_for: string | null;
+  sent_at: string | null;
+  error: string | null;
+}
 
 export interface CampaignLead {
   id: string;
@@ -111,6 +129,79 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
   const [pipelineMoving, setPipelineMoving] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; lead: CampaignLead } | null>(null);
   const contextRef = useRef<HTMLDivElement>(null);
+
+  // ---- SMS drip state ----
+  const [dripJob, setDripJob] = useState<DripJob | null>(null);
+  const [dripSends, setDripSends] = useState<Map<string, DripSend>>(new Map());
+  const [savedTemplates, setSavedTemplates] = useState<string[] | null>(null);
+  const [showRunSms, setShowRunSms] = useState(false);
+  const [dripBusy, setDripBusy] = useState(false);
+  const [, setClockTick] = useState(0); // 1s re-render for the countdown
+
+  const refreshDrip = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/sms/drip?listId=${listId}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setSavedTemplates(data.savedTemplates ?? null);
+      setDripJob(data.job ?? null);
+      const map = new Map<string, DripSend>();
+      for (const s of (data.sends ?? []) as DripSend[]) map.set(s.lead_id, s);
+      setDripSends(map);
+      // Reflect drip sends in the SMS chip/badge without a full reload
+      if (map.size) {
+        setLeads(prev => prev.map(l => {
+          const s = map.get(l.id);
+          return s?.sent_at && !l.sms_sent_at ? { ...l, sms_sent_at: s.sent_at } : l;
+        }));
+      }
+    } catch { /* poll again next tick */ }
+  }, [listId]);
+
+  // Poll drip status every 10s; countdown re-renders every second while active
+  useEffect(() => {
+    refreshDrip();
+    const poll = setInterval(refreshDrip, 10000);
+    return () => clearInterval(poll);
+  }, [refreshDrip]);
+
+  useEffect(() => {
+    if (dripJob?.status !== 'active') return;
+    const t = setInterval(() => setClockTick(x => x + 1), 1000);
+    return () => clearInterval(t);
+  }, [dripJob?.status]);
+
+  // Open the Run SMS modal when arriving via ?runsms=1 (campaign list row button)
+  useEffect(() => {
+    if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('runsms') === '1') {
+      setShowRunSms(true);
+    }
+  }, []);
+
+  const dripAction = async (action: 'pause' | 'resume' | 'cancel') => {
+    if (!dripJob) return;
+    setDripBusy(true);
+    try {
+      await fetch('/api/sms/drip', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId: dripJob.id, action }),
+      });
+      await refreshDrip();
+    } finally {
+      setDripBusy(false);
+    }
+  };
+
+  const countdown = (() => {
+    if (!dripJob?.next_send_at || dripJob.status !== 'active') return null;
+    const ms = new Date(dripJob.next_send_at).getTime() - Date.now();
+    if (ms <= 0) return 'sending…';
+    const total = Math.floor(ms / 1000);
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return `next in ${m}:${String(s).padStart(2, '0')}`;
+  })();
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -237,27 +328,87 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
             <span className="bg-green-50 text-green-600 text-[10px] font-semibold px-2 py-0.5 rounded-full">
               Calls {callCount}
             </span>
+
+            {/* SMS drip controls */}
+            {(!dripJob || dripJob.status === 'completed' || dripJob.status === 'cancelled') && (
+              <button
+                onClick={() => setShowRunSms(true)}
+                className="flex items-center gap-1 bg-[#1a1a1a] hover:bg-[#333] text-white text-[10px] font-semibold px-2.5 py-0.5 rounded-full transition-colors"
+              >
+                <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+                Run SMS
+              </button>
+            )}
+            {dripJob?.status === 'active' && (
+              <>
+                <button
+                  onClick={() => dripAction('pause')}
+                  disabled={dripBusy}
+                  className="flex items-center gap-1 bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-semibold px-2.5 py-0.5 rounded-full transition-colors disabled:opacity-50"
+                >
+                  <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M6 5h4v14H6zm8 0h4v14h-4z" />
+                  </svg>
+                  Pause
+                </button>
+                <span className="text-[11px] text-[#6b6b6b] font-medium tabular-nums">
+                  Sent {dripJob.sent_count}/{dripJob.total_count}
+                  {countdown ? ` · ${countdown}` : ''}
+                </span>
+              </>
+            )}
+            {dripJob?.status === 'paused' && (
+              <>
+                <button
+                  onClick={() => dripAction('resume')}
+                  disabled={dripBusy}
+                  className="flex items-center gap-1 bg-[#1a1a1a] hover:bg-[#333] text-white text-[10px] font-semibold px-2.5 py-0.5 rounded-full transition-colors disabled:opacity-50"
+                >
+                  <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M8 5v14l11-7z" />
+                  </svg>
+                  Resume
+                </button>
+                <span className="text-[11px] text-[#6b6b6b] font-medium tabular-nums">
+                  Paused · {dripJob.sent_count}/{dripJob.total_count} sent
+                </span>
+                <button
+                  onClick={() => dripAction('cancel')}
+                  disabled={dripBusy}
+                  className="text-[10px] text-[#9b9b9b] hover:text-red-600 transition-colors"
+                  title="Cancel this drip"
+                >
+                  Cancel
+                </button>
+              </>
+            )}
+            {dripJob?.status === 'completed' && (
+              <span className="text-[11px] text-green-700 font-medium">
+                Drip done · {dripJob.sent_count}/{dripJob.total_count} sent
+              </span>
+            )}
+
+            <div className="relative">
+              <svg
+                className="absolute left-0 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#9b9b9b]"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input
+                type="text"
+                placeholder="Search leads…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-36 pl-5 pr-1 py-0.5 text-xs bg-transparent text-[#1a1a1a] placeholder:text-[#9b9b9b] focus:outline-none"
+              />
+            </div>
           </div>
         </div>
-      </div>
-
-      {/* Search */}
-      <div className="relative">
-        <svg
-          className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#9b9b9b]"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-        </svg>
-        <input
-          type="text"
-          placeholder="Search leads…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="w-full pl-9 pr-4 py-2.5 border border-[#e5e5e5] rounded-lg text-sm text-[#1a1a1a] focus:outline-none focus:ring-1 focus:ring-[#1a1a1a] focus:border-[#1a1a1a] bg-white"
-        />
       </div>
 
       {/* Table */}
@@ -354,7 +505,40 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
 
                   {/* Last activity */}
                   <td className="px-4 py-1.5">
-                    <span className="text-xs text-[#9b9b9b]">{relativeTime(lastActivity)}</span>
+                    {(() => {
+                      const send = dripSends.get(lead.id);
+                      // Scheduled for the lead's next legal window
+                      if (send?.sms_status === 'scheduled' && send.scheduled_for) {
+                        const ud = lead.underwriting_data || {};
+                        const tz = zoneForLocation(
+                          String(ud.businessCity ?? ud.city ?? ''),
+                          String(ud.businessState ?? ud.state ?? '')
+                        );
+                        return (
+                          <span className="text-xs text-[#9b9b9b]">
+                            SMS at {formatLocal(send.scheduled_for, tz)}
+                          </span>
+                        );
+                      }
+                      // Waiting in the drip queue
+                      if (send?.sms_status === 'queued' && (dripJob?.status === 'active' || dripJob?.status === 'paused')) {
+                        return (
+                          <span className="text-xs text-[#9b9b9b] flex items-center gap-1.5">
+                            <span className={`w-1.5 h-1.5 rounded-full bg-blue-400 ${dripJob.status === 'active' ? 'animate-pulse' : ''}`} />
+                            SMS queued
+                          </span>
+                        );
+                      }
+                      if (send?.sms_status === 'failed') {
+                        return <span className="text-xs text-red-500" title={send.error ?? undefined}>SMS failed</span>;
+                      }
+                      // Sent (drip or manual) — never show "—" after a successful send
+                      const sentAt = send?.sent_at ?? lead.sms_sent_at;
+                      if (sentAt && (!lastActivity || new Date(sentAt) >= new Date(lastActivity))) {
+                        return <span className="text-xs text-[#9b9b9b]">SMS {relativeTime(sentAt)}</span>;
+                      }
+                      return <span className="text-xs text-[#9b9b9b]">{relativeTime(lastActivity)}</span>;
+                    })()}
                   </td>
                 </tr>
               );
@@ -381,6 +565,17 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
             {pipelineMoving === contextMenu.lead.id ? 'Sending…' : 'Send to pipeline as Prospect'}
           </button>
         </div>
+      )}
+
+      {showRunSms && (
+        <RunSmsModal
+          listId={listId}
+          campaignName={campaignName}
+          leadCount={leads.length}
+          savedTemplates={savedTemplates}
+          onClose={() => setShowRunSms(false)}
+          onStarted={refreshDrip}
+        />
       )}
     </div>
   );

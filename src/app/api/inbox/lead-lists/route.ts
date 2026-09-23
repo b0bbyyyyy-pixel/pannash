@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
       // Fetch all leads in this list that have a phone number
       const { data: leads, error } = await supabase
         .from('leads')
-        .select('id, name, company, phone, notes, last_contact, created_at, sms_opt_out')
+        .select('id, name, company, phone, notes, last_contact, created_at, sms_opt_out, lead_status, stage')
         .eq('user_id', user.id)
         .eq('list_id', listId)
         .not('phone', 'is', null)
@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
         // sms_opt_out may not exist yet — retry without it
         const { data: leadsBasic } = await supabase
           .from('leads')
-          .select('id, name, company, phone, notes, last_contact, created_at')
+          .select('id, name, company, phone, notes, last_contact, created_at, lead_status, stage')
           .eq('user_id', user.id)
           .eq('list_id', listId)
           .not('phone', 'is', null)

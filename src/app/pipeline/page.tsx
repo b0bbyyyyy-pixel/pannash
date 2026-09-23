@@ -39,6 +39,56 @@ export default async function PipelinePage() {
     console.error('Error fetching pipeline leads:', error);
   }
 
+  const lastTextByLead: Record<string, { preview: string; outbound: boolean }> = {};
+
+  const { data: convs, error: convErr } = await supabase
+    .from('inbox_conversations')
+    .select('lead_id, last_message_preview, last_direction')
+    .eq('user_id', user.id);
+
+  if (convErr) {
+    console.error('Error fetching inbox conversations:', convErr);
+  }
+
+  for (const c of convs ?? []) {
+    const preview = (c.last_message_preview || '').trim();
+    if (!preview || !c.lead_id) continue;
+    lastTextByLead[String(c.lead_id)] = {
+      preview,
+      outbound: c.last_direction === 'outbound',
+    };
+  }
+
+  // Fallback: latest inbox_messages when conversation preview is missing
+  const missingIds = (leads ?? [])
+    .map(l => String(l.id))
+    .filter(id => !lastTextByLead[id]);
+  if (missingIds.length) {
+    const { data: msgs } = await supabase
+      .from('inbox_messages')
+      .select('lead_id, body, direction, created_at')
+      .in('lead_id', missingIds.slice(0, 80))
+      .order('created_at', { ascending: false })
+      .limit(200);
+    for (const m of msgs ?? []) {
+      const id = String(m.lead_id);
+      if (lastTextByLead[id] || !m.body) continue;
+      lastTextByLead[id] = {
+        preview: m.body.length > 100 ? m.body.slice(0, 97) + '…' : m.body,
+        outbound: m.direction === 'outbound',
+      };
+    }
+  }
+
+  const leadsWithText = (leads || []).map(l => {
+    const t = lastTextByLead[String(l.id)];
+    return {
+      ...l,
+      last_text: t?.preview ?? null,
+      last_text_outbound: t?.outbound ?? false,
+    };
+  });
+
   const userName = user.email?.split('@')[0] || 'User';
 
   return (
@@ -46,7 +96,7 @@ export default async function PipelinePage() {
       <Navbar userName={userName} />
       <main className="pt-20 min-h-screen bg-[#fafafa]">
         <div className="max-w-[1600px] mx-auto px-6 py-8">
-          <PipelineClient leads={leads || []} userId={user.id} />
+          <PipelineClient leads={leadsWithText} userId={user.id} />
         </div>
       </main>
     </div>
