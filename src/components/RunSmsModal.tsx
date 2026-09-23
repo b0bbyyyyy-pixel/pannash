@@ -50,17 +50,37 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
   const [showSkipPicker, setShowSkipPicker] = useState(false);
   const [includeAlreadyTexted, setIncludeAlreadyTexted] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const activePack = packs.find(p => p.id === activePackId) ?? packs[0];
   const templates = activePack?.templates ?? DEFAULT_TEMPLATES;
 
-  const persistPacks = (next: TemplatePack[]) => {
-    fetch('/api/sms/template-packs', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ packs: next }),
-    }).catch(() => { /* local state still works */ });
+  const persistPacks = async (next: TemplatePack[]): Promise<boolean> => {
+    try {
+      localStorage.setItem('sms_template_packs', JSON.stringify(next));
+    } catch { /* ignore quota */ }
+    try {
+      const res = await fetch('/api/sms/template-packs', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ packs: next }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  };
+
+  const saveSets = async () => {
+    setSaving(true);
+    setSavedMsg(null);
+    setError(null);
+    const ok = await persistPacks(packs);
+    setSaving(false);
+    setSavedMsg(ok ? 'Saved' : 'Saved on this device');
+    setTimeout(() => setSavedMsg(null), 2000);
   };
 
   useEffect(() => {
@@ -69,7 +89,13 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
       .then(r => r.json())
       .then(data => {
         if (cancelled) return;
-        const loaded: TemplatePack[] = Array.isArray(data.packs) ? data.packs : [];
+        let loaded: TemplatePack[] = Array.isArray(data.packs) ? data.packs : [];
+        if (!loaded.length) {
+          try {
+            const raw = localStorage.getItem('sms_template_packs');
+            if (raw) loaded = JSON.parse(raw);
+          } catch { /* ignore */ }
+        }
         if (loaded.length) {
           setPacks(loaded);
           const match = savedTemplates?.length
@@ -406,11 +432,21 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
 
         {/* Footer */}
         <div className="px-6 py-4 border-t border-[#f0f0f0] flex items-center justify-end gap-2 flex-shrink-0">
+          {savedMsg && (
+            <span className="text-xs text-[#6b6b6b] mr-auto">{savedMsg}</span>
+          )}
           <button
             onClick={onClose}
             className="px-4 py-2 text-sm text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors"
           >
             Cancel
+          </button>
+          <button
+            onClick={saveSets}
+            disabled={saving}
+            className="px-4 py-2 text-sm font-medium border border-[#e5e5e5] text-[#1a1a1a] rounded-lg hover:bg-[#f5f5f5] disabled:opacity-50 transition-colors"
+          >
+            {saving ? 'Saving…' : 'Save'}
           </button>
           <button
             onClick={start}
