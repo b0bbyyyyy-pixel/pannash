@@ -33,6 +33,7 @@ interface Lead {
 interface PipelineClientProps {
   leads: Lead[];
   userId: string;
+  compact?: boolean;
 }
 
 // ── Status helpers (dynamic, loaded from DB) ───────────────────────────────────
@@ -209,7 +210,7 @@ function FilterSection({
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function PipelineClient({ leads, userId }: PipelineClientProps) {
+export default function PipelineClient({ leads, userId, compact = false }: PipelineClientProps) {
   const [search, setSearch]                 = useState('');
   const [showAddModal, setShowAddModal]     = useState(false);
   const [showManageStatuses, setShowManageStatuses] = useState(false);
@@ -349,9 +350,11 @@ export default function PipelineClient({ leads, userId }: PipelineClientProps) {
   return (
     <div>
       {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between mb-6">
+      <div className={`flex items-center justify-between ${compact ? 'mb-3' : 'mb-6'}`}>
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold text-[#1a1a1a] tracking-tight">Pipeline</h1>
+          {!compact && (
+            <h1 className="text-2xl font-bold text-[#1a1a1a] tracking-tight">Pipeline</h1>
+          )}
           <span className="text-xs font-semibold bg-[#f5f5f5] text-[#6b6b6b] px-2.5 py-1 rounded-full">
             {filtered.length}
           </span>
@@ -368,7 +371,7 @@ export default function PipelineClient({ leads, userId }: PipelineClientProps) {
               placeholder="Search leads…"
               value={search}
               onChange={e => setSearch(e.target.value)}
-              className="pl-9 pr-2 py-2 text-sm bg-transparent text-[#1a1a1a] placeholder:text-[#9b9b9b] focus:outline-none w-56"
+              className={`pl-9 pr-2 py-2 text-sm bg-transparent text-[#1a1a1a] placeholder:text-[#9b9b9b] focus:outline-none ${compact ? 'w-40' : 'w-56'}`}
             />
           </div>
 

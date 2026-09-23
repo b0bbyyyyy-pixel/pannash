@@ -7,7 +7,11 @@ import PipelineClient from './PipelineClient';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-export default async function PipelinePage() {
+export default async function PipelinePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ modal?: string }>;
+}) {
   const cookieStore = await cookies();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -90,6 +94,18 @@ export default async function PipelinePage() {
   });
 
   const userName = user.email?.split('@')[0] || 'User';
+  const sp = await searchParams;
+  const isModal = sp.modal === '1';
+
+  if (isModal) {
+    return (
+      <div className="min-h-screen bg-[#fafafa]">
+        <div className="px-3 py-3">
+          <PipelineClient leads={leadsWithText} userId={user.id} compact />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#fafafa]">

@@ -153,6 +153,7 @@ export default function InboxClient({
 
   // Lead overlay — shows the pipeline lead workspace in a floating panel
   const [leadOverlayId, setLeadOverlayId] = useState<string | null>(null);
+  const [showPipeline, setShowPipeline] = useState(false);
 
   const threadEndRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -480,18 +481,26 @@ export default function InboxClient({
               />
             </div>
 
+            <button
+              type="button"
+              onClick={() => setShowPipeline(true)}
+              className="flex-shrink-0 text-[11px] font-medium text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors bg-transparent border-0 p-0"
+            >
+              Pipeline
+            </button>
+
             <div className="relative flex-shrink-0" ref={listPickerRef}>
               <button
                 ref={listPickerBtnRef}
                 onClick={openListPicker}
                 title="Load a campaign"
-                className={`flex items-center gap-1 text-xs font-medium bg-transparent border-0 p-0 shadow-none rounded-none transition-colors ${
+                className={`flex items-center gap-1 text-[11px] font-medium bg-transparent border-0 p-0 shadow-none rounded-none transition-colors ${
                   activeListName ? 'text-[#1a1a1a]' : 'text-[#6b6b6b] hover:text-[#1a1a1a]'
                 }`}
               >
                 {activeListName ? (
                   <span className="max-w-[88px] truncate">{activeListName}</span>
-                ) : 'Campaigns'}
+                ) : 'Campaign'}
               </button>
 
               {showListPicker && pickerAnchor && (
@@ -833,6 +842,52 @@ export default function InboxClient({
       </div>
     </div>
     </div>
+
+    {/* ── Pipeline popup ───────────────────────────────────────────────────── */}
+    {showPipeline && (
+      <>
+        <div
+          className="fixed inset-0 bg-black/40 z-[80]"
+          onClick={() => setShowPipeline(false)}
+        />
+        <div
+          className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[81] flex flex-col rounded-xl shadow-2xl overflow-hidden"
+          style={{ width: 'min(88vw, 920px)', height: 'min(78vh, 680px)' }}
+        >
+          <div className="flex items-center justify-between px-4 py-2.5 bg-white border-b border-[#e5e5e5] flex-shrink-0">
+            <span className="text-xs text-[#6b6b6b] font-medium">Pipeline</span>
+            <div className="flex items-center gap-3">
+              <a
+                href="/pipeline"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[#6b6b6b] hover:text-[#1a1a1a] text-xs flex items-center gap-1 transition-colors"
+                title="Open in full page"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+                Full page
+              </a>
+              <button
+                onClick={() => setShowPipeline(false)}
+                className="text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors p-1 rounded hover:bg-[#f5f5f5]"
+                title="Close"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          <iframe
+            src="/pipeline?modal=1"
+            className="flex-1 w-full bg-white border-0"
+            title="Pipeline"
+          />
+        </div>
+      </>
+    )}
 
     {/* ── Lead Overlay ─────────────────────────────────────────────────────── */}
     {leadOverlayId && (

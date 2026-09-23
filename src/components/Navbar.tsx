@@ -51,16 +51,6 @@ export default function Navbar({ userName }: NavbarProps) {
               Inbox
             </Link>
             <Link
-              href="/pipeline"
-              className={`text-sm font-medium transition-colors ${
-                isActive('/pipeline')
-                  ? 'text-[#1a1a1a]'
-                  : 'text-[#6b6b6b] hover:text-[#1a1a1a]'
-              }`}
-            >
-              Pipeline
-            </Link>
-            <Link
               href="/leads"
               className={`text-sm font-medium transition-colors ${
                 isActive('/leads')
