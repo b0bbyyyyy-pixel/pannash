@@ -452,7 +452,7 @@ export default function InboxClient({
     <div className="flex flex-1 overflow-hidden border-t border-[#e5e5e5]">
 
       {/* ── LEFT RAIL: Lead list ─────────────────────────────────────────────── */}
-      <div className="w-72 flex-shrink-0 flex flex-col border-r border-[#e5e5e5] bg-white overflow-hidden">
+      <div className="w-80 flex-shrink-0 flex flex-col border-r border-[#e5e5e5] bg-white overflow-hidden">
         {/* Header */}
         <div className="px-4 pt-3 pb-3 border-b border-[#e5e5e5]">
           <div className="flex items-center gap-2">
@@ -518,7 +518,7 @@ export default function InboxClient({
                 <button
                   key={lead.id}
                   onClick={() => setSelectedLeadId(lead.id)}
-                  className={`w-full text-left px-4 py-3 border-b border-[#f0f0f0] transition-colors ${
+                  className={`w-full text-left px-4 py-2 border-b border-[#f0f0f0] transition-colors ${
                     isSelected ? 'bg-[#f0f0f0]' : 'hover:bg-[#fafafa]'
                   }`}
                 >
@@ -752,7 +752,7 @@ export default function InboxClient({
       </div>
 
       {/* ── RIGHT RAIL: Lead info ────────────────────────────────────────────── */}
-      <div className="w-72 flex-shrink-0 flex flex-col border-l border-[#e5e5e5] bg-[#fafafa] overflow-hidden">
+      <div className="w-80 flex-shrink-0 flex flex-col border-l border-[#e5e5e5] bg-[#fafafa] overflow-hidden">
         {!selectedLead ? (
           <div className="flex-1 flex items-center justify-center p-6">
             <p className="text-xs text-gray-400 text-center">Select a lead to see their details</p>
