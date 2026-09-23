@@ -8,8 +8,7 @@ import { createClient } from '@supabase/supabase-js';
 interface LeadList {
   id: string;
   name: string;
-  folder_name: string | null;
-  parent_list_id: string | null;
+  created_at?: string | null;
 }
 
 interface DBStatus { id: string; name: string; color: string; bg_color: string; }
@@ -140,7 +139,6 @@ export default function InboxClient({
 
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [filter, setFilter] = useState<'all' | 'unread'>('all');
   const [dbStatuses, setDbStatuses] = useState<DBStatus[]>([]);
   const [composerText, setComposerText] = useState('');
   const [sending, setSending] = useState(false);
@@ -170,6 +168,8 @@ export default function InboxClient({
   }, []);
 
   const loadLeads = useCallback(async () => {
+    // A campaign list is open — don't overwrite it with the replies-only inbox
+    if (activeListName && !debouncedSearch.trim()) return;
     try {
       const params = new URLSearchParams();
       if (initialLeadId) params.set('leadId', initialLeadId);
@@ -189,7 +189,7 @@ export default function InboxClient({
     } finally {
       setLoadingLeads(false);
     }
-  }, [initialLeadId, debouncedSearch]);
+  }, [initialLeadId, debouncedSearch, activeListName]);
 
   useEffect(() => { loadLeads(); }, [loadLeads]);
 
@@ -292,9 +292,9 @@ export default function InboxClient({
         const lists: LeadList[] = (data.lists ?? []).map((l: any) => ({
           id: l.id,
           name: l.name,
-          folder_name: l.folder_name ?? null,
-          parent_list_id: l.parent_list_id ?? null,
+          created_at: l.created_at ?? null,
         }));
+        lists.sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')));
         const countMap: Record<string, number> = {};
         for (const l of data.lists ?? []) countMap[l.id] = l.lead_count ?? 0;
         setListPickerData({ lists, countMap });
@@ -415,12 +415,6 @@ export default function InboxClient({
     }
   };
 
-  // ── Filtered lead list ──────────────────────────────────────────────────────
-  const filteredLeads = leads.filter(l => {
-    if (filter === 'unread' && !l.conversation?.unread_count) return false;
-    return true;
-  });
-
   // ── Group messages by date for separators ──────────────────────────────────
   const groupedMessages: Array<{ date: string; msgs: InboxMessage[] }> = [];
   for (const msg of messages) {
@@ -434,7 +428,6 @@ export default function InboxClient({
   }
 
   const { chars, segments, encoding } = smsSegments(composerText);
-  const totalUnread = leads.reduce((s, l) => s + (l.conversation?.unread_count ?? 0), 0);
 
   // ─────────────────────────────────────────────────────────────────────────────
   return (
@@ -460,88 +453,63 @@ export default function InboxClient({
       <div className="w-72 flex-shrink-0 flex flex-col border-r border-[#e5e5e5] bg-white overflow-hidden">
         {/* Header */}
         <div className="px-4 pt-3 pb-3 border-b border-[#e5e5e5]">
-          {/* Search */}
-          <div className="relative mb-2">
-            <svg className="absolute left-0 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            <input
-              type="text"
-              placeholder="Search leads..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="w-full pl-6 pr-2 py-1.5 text-sm bg-transparent text-[#1a1a1a] placeholder:text-[#9b9b9b] focus:outline-none"
-            />
-          </div>
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1 min-w-0">
+              <svg className="absolute left-0 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input
+                type="text"
+                placeholder="Search"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="w-full pl-6 pr-2 py-1.5 text-sm bg-transparent text-[#1a1a1a] placeholder:text-[#9b9b9b] focus:outline-none"
+              />
+            </div>
 
-          {/* Filter chips + list picker */}
-          <div className="flex items-center gap-1.5 flex-wrap">
-            {(['all', 'unread'] as const).map(f => (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                  filter === f
-                    ? 'bg-[#1a1a1a] text-white'
-                    : 'bg-[#f0f0f0] text-[#6b6b6b] hover:bg-[#e5e5e5]'
-                }`}
-              >
-                {f === 'all' ? 'All' : `Unread${totalUnread > 0 ? ` ${totalUnread}` : ''}`}
-              </button>
-            ))}
-
-            {/* Load from list button */}
-            <div className="relative ml-auto" ref={listPickerRef}>
+            <div className="relative flex-shrink-0" ref={listPickerRef}>
               <button
                 ref={listPickerBtnRef}
                 onClick={openListPicker}
-                title="Load leads from a contact list"
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors border ${
-                  activeListName
-                    ? 'bg-blue-50 border-blue-200 text-blue-700'
-                    : 'bg-[#f0f0f0] border-transparent text-[#6b6b6b] hover:bg-[#e5e5e5]'
+                title="Load a campaign"
+                className={`flex items-center gap-1 text-xs font-medium bg-transparent border-0 p-0 shadow-none rounded-none transition-colors ${
+                  activeListName ? 'text-[#1a1a1a]' : 'text-[#6b6b6b] hover:text-[#1a1a1a]'
                 }`}
               >
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                </svg>
                 {activeListName ? (
-                  <span className="max-w-[80px] truncate">{activeListName}</span>
-                ) : 'Lists'}
+                  <span className="max-w-[88px] truncate">{activeListName}</span>
+                ) : 'Campaigns'}
               </button>
+
+              {showListPicker && pickerAnchor && (
+                <ListPickerDropdown
+                  anchor={pickerAnchor}
+                  data={listPickerData}
+                  loading={loadingListPicker}
+                  onSelect={loadListLeads}
+                  onClear={activeListName ? () => { setActiveListName(null); setShowListPicker(false); loadLeads(); } : undefined}
+                  onClose={() => setShowListPicker(false)}
+                />
+              )}
             </div>
-
-            {/* Folder tree dropdown — fixed so it escapes overflow:hidden */}
-            {showListPicker && pickerAnchor && (
-              <ListPickerDropdown
-                anchor={pickerAnchor}
-                data={listPickerData}
-                loading={loadingListPicker}
-                onSelect={loadListLeads}
-                onClear={activeListName ? () => { setActiveListName(null); setShowListPicker(false); loadLeads(); } : undefined}
-                onClose={() => setShowListPicker(false)}
-              />
-            )}
-
-            {/* Loading indicator when fetching list leads */}
-            {loadingListLeads && (
-              <span className="text-[10px] text-gray-400 animate-pulse">Loading…</span>
-            )}
           </div>
+          {loadingListLeads && (
+            <p className="text-[10px] text-gray-400 animate-pulse mt-1.5">Loading…</p>
+          )}
         </div>
 
         {/* Lead list */}
         <div className="flex-1 overflow-y-auto">
           {loadingLeads ? (
             <div className="flex items-center justify-center py-12 text-sm text-gray-400">Loading…</div>
-          ) : filteredLeads.length === 0 ? (
+          ) : leads.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
               <p className="text-sm text-gray-400">
                 {search ? 'No leads match your search' : 'No leads with phone numbers'}
               </p>
             </div>
           ) : (
-            filteredLeads.map(lead => {
+            leads.map(lead => {
               const isSelected = lead.id === selectedLeadId;
               const unread = lead.conversation?.unread_count ?? 0;
               return (
@@ -1003,17 +971,8 @@ function ListPickerDropdown({
   onClear?: () => void;
   onClose: () => void;
 }) {
-  const [openFolders, setOpenFolders] = useState<Set<string>>(new Set());
-  const [openParents, setOpenParents] = useState<Set<string>>(new Set());
   const ref = useRef<HTMLDivElement>(null);
 
-  const toggleFolder = (name: string) =>
-    setOpenFolders(prev => { const s = new Set(prev); s.has(name) ? s.delete(name) : s.add(name); return s; });
-
-  const toggleParent = (id: string) =>
-    setOpenParents(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
-
-  // Close on outside click
   useEffect(() => {
     const handle = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) onClose();
@@ -1025,15 +984,15 @@ function ListPickerDropdown({
   const style: React.CSSProperties = {
     position: 'fixed',
     top: anchor.top,
-    left: anchor.left,
+    left: Math.max(8, anchor.left - 160),
     zIndex: 9999,
-    width: 280,
+    width: 240,
   };
 
   if (loading) {
     return (
       <div ref={ref} style={style} className="bg-white border border-[#e5e5e5] rounded-xl shadow-xl p-4">
-        <p className="text-xs text-gray-400 text-center">Loading lists…</p>
+        <p className="text-xs text-gray-400 text-center">Loading campaigns…</p>
       </div>
     );
   }
@@ -1041,129 +1000,38 @@ function ListPickerDropdown({
   if (!data || data.lists.length === 0) {
     return (
       <div ref={ref} style={style} className="bg-white border border-[#e5e5e5] rounded-xl shadow-xl p-4">
-        <p className="text-xs text-gray-400 text-center">No contact lists found</p>
+        <p className="text-xs text-gray-400 text-center">No campaigns yet</p>
       </div>
     );
   }
-
-  // Build folder → top-level lists → sub-lists hierarchy
-  const topLevel = data.lists.filter(l => !l.parent_list_id);
-  const subsByParent: Record<string, LeadList[]> = {};
-  for (const l of data.lists) {
-    if (l.parent_list_id) {
-      if (!subsByParent[l.parent_list_id]) subsByParent[l.parent_list_id] = [];
-      subsByParent[l.parent_list_id].push(l);
-    }
-  }
-
-  // Group top-level by folder_name
-  const folderMap: Record<string, LeadList[]> = {};
-  const standalone: LeadList[] = [];
-  for (const l of topLevel) {
-    if (l.folder_name) {
-      if (!folderMap[l.folder_name]) folderMap[l.folder_name] = [];
-      folderMap[l.folder_name].push(l);
-    } else {
-      standalone.push(l);
-    }
-  }
-
-  const count = (id: string) => data.countMap[id] ?? 0;
-
-  const ListRow = ({ list, indent = 0 }: { list: LeadList; indent?: number }) => {
-    const subs = subsByParent[list.id] ?? [];
-    const hasSubs = subs.length > 0;
-    const isOpen = openParents.has(list.id);
-    const c = count(list.id);
-
-    return (
-      <div>
-        <div
-          className="flex items-center gap-1.5 w-full text-left hover:bg-[#f5f5f5] rounded-lg transition-colors"
-          style={{ paddingLeft: `${8 + indent * 12}px`, paddingRight: 8, paddingTop: 5, paddingBottom: 5 }}
-        >
-          {hasSubs ? (
-            <button
-              onClick={(e) => { e.stopPropagation(); toggleParent(list.id); }}
-              className="flex-shrink-0 text-gray-400 hover:text-gray-600"
-            >
-              <svg className={`w-3 h-3 transition-transform ${isOpen ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-          ) : (
-            <span className="w-3 flex-shrink-0" />
-          )}
-          <button
-            onClick={() => onSelect(list)}
-            className="flex-1 flex items-center justify-between gap-2 text-left"
-          >
-            <span className="text-xs text-[#1a1a1a] truncate">{list.name}</span>
-            {c > 0 && (
-              <span className="text-[10px] text-gray-400 flex-shrink-0">{c} w/ phone</span>
-            )}
-          </button>
-        </div>
-        {hasSubs && isOpen && (
-          <div>
-            {subs.map(sub => (
-              <ListRow key={sub.id} list={sub} indent={indent + 1} />
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  };
 
   return (
     <div ref={ref} style={style} className="bg-white border border-[#e5e5e5] rounded-xl shadow-xl overflow-hidden">
-      <div className="max-h-80 overflow-y-auto p-2">
-        {/* Clear / back to CRM option */}
+      {/* ~5 rows visible; scroll for older campaigns */}
+      <div className="max-h-[180px] overflow-y-auto py-1">
         {onClear && (
           <button
             onClick={onClear}
-            className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-blue-600 hover:bg-blue-50 rounded-lg transition-colors mb-1"
+            className="w-full text-left px-3 py-2 text-xs font-medium text-[#6b6b6b] hover:bg-[#f5f5f5]"
           >
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-            </svg>
-            Back to CRM leads
+            Back to Inbox
           </button>
         )}
-
-        {/* Folders */}
-        {Object.entries(folderMap).map(([folderName, lists]) => {
-          const isOpen = openFolders.has(folderName);
+        {data.lists.map(list => {
+          const c = data.countMap[list.id] ?? 0;
           return (
-            <div key={folderName} className="mb-0.5">
-              <button
-                onClick={() => toggleFolder(folderName)}
-                className="w-full flex items-center gap-2 px-2 py-2 text-left hover:bg-[#f5f5f5] rounded-lg transition-colors"
-              >
-                <svg className={`w-3 h-3 text-gray-400 flex-shrink-0 transition-transform ${isOpen ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                </svg>
-                <svg className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                  <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
-                </svg>
-                <span className="text-xs font-semibold text-[#1a1a1a] flex-1 truncate">{folderName}</span>
-                <span className="text-[10px] text-gray-400 flex-shrink-0">{lists.length}</span>
-              </button>
-              {isOpen && (
-                <div className="ml-2">
-                  {lists.map(list => <ListRow key={list.id} list={list} indent={0} />)}
-                </div>
+            <button
+              key={list.id}
+              onClick={() => onSelect(list)}
+              className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-[#f5f5f5]"
+            >
+              <span className="text-xs text-[#1a1a1a] truncate">{list.name}</span>
+              {c > 0 && (
+                <span className="text-[10px] text-gray-400 flex-shrink-0">{c}</span>
               )}
-            </div>
+            </button>
           );
         })}
-
-        {/* Standalone (no folder) */}
-        {standalone.map(list => <ListRow key={list.id} list={list} indent={0} />)}
-
-        {Object.keys(folderMap).length === 0 && standalone.length === 0 && (
-          <p className="text-xs text-gray-400 text-center py-3">No lists yet</p>
-        )}
       </div>
     </div>
   );

@@ -47,21 +47,23 @@ export async function GET(req: NextRequest) {
       }
       list = (hits ?? []).filter(isInboxLead).slice(0, LIMIT);
     } else {
+      // Main inbox = people who texted back. Drip outbound never creates a row here.
       let convs: Record<string, unknown>[] = [];
       try {
-        // Stack by last INBOUND — outbound drip sends never bump a thread
         const { data, error } = await supabase
           .from('inbox_conversations')
           .select('*')
           .eq('user_id', user.id)
-          .order('last_inbound_at', { ascending: false, nullsFirst: false })
+          .not('last_inbound_at', 'is', null)
+          .order('last_inbound_at', { ascending: false })
           .limit(LIMIT);
         if (error) {
-          // last_inbound_at column not added yet (add-sms-drip.sql) — fall back
+          // last_inbound_at column not added yet (add-sms-drip.sql) — replies only via last_direction
           const { data: fallback } = await supabase
             .from('inbox_conversations')
             .select('*')
             .eq('user_id', user.id)
+            .eq('last_direction', 'inbound')
             .order('last_message_at', { ascending: false, nullsFirst: false })
             .limit(LIMIT);
           convs = fallback ?? [];
@@ -83,6 +85,7 @@ export async function GET(req: NextRequest) {
         list = convLeadIds.map(id => byId.get(id)).filter(Boolean) as Record<string, unknown>[];
       }
 
+      // Until replies fill the rail, pad with pipeline leads (drip outbound never adds a row)
       if (list.length < LIMIT) {
         const have = new Set(list.map(l => String(l.id)));
         const { data: extras, error } = await supabase
@@ -165,12 +168,15 @@ export async function GET(req: NextRequest) {
         if (a.id === pinLeadId) return -1;
         if (b.id === pinLeadId) return 1;
       }
-      // Replies stack to the top; outbound-only threads rank by their last inbound (never bumped by drip)
-      type Conv = { last_inbound_at?: string | null; last_message_at?: string | null } | null;
-      const key = (c: Conv, lastContact: string | null) =>
-        c?.last_inbound_at ?? c?.last_message_at ?? lastContact ?? '0';
-      const aTime = key(a.conversation as Conv, a.last_contact as string | null);
-      const bTime = key(b.conversation as Conv, b.last_contact as string | null);
+      // Replies always stack above pipeline padding. Drip outbound is ignored.
+      type Conv = { last_inbound_at?: string | null } | null;
+      const aIn = (a.conversation as Conv)?.last_inbound_at ?? null;
+      const bIn = (b.conversation as Conv)?.last_inbound_at ?? null;
+      if (aIn && bIn) return bIn > aIn ? 1 : -1;
+      if (aIn) return -1;
+      if (bIn) return 1;
+      const aTime = (a.last_contact as string | null) ?? '0';
+      const bTime = (b.last_contact as string | null) ?? '0';
       return bTime > aTime ? 1 : -1;
     });
 
