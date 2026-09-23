@@ -83,9 +83,9 @@ export default function Navbar({ userName }: NavbarProps) {
               <img
                 src="/images/icons/phone-handset.png"
                 alt="Phone"
-                width={22}
-                height={22}
-                className="w-[22px] h-[22px]"
+                width={18}
+                height={18}
+                className="w-[18px] h-[18px]"
               />
             </button>
 
