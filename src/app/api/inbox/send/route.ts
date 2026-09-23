@@ -87,11 +87,6 @@ export async function POST(req: NextRequest) {
     })
     .eq('id', conv.id);
 
-  await supabase
-    .from('leads')
-    .update({ sms_sent_at: msg.created_at, last_contact: msg.created_at })
-    .eq('id', leadId);
-
   const creds = await getTwilioCreds(supabase, user.id);
   if (!creds) {
     return NextResponse.json({
@@ -113,6 +108,13 @@ export async function POST(req: NextRequest) {
         error_message: sent.error ?? null,
       })
       .eq('id', msg.id);
+
+    if (sent.status !== 'failed') {
+      await supabase
+        .from('leads')
+        .update({ sms_sent_at: msg.created_at, last_contact: msg.created_at })
+        .eq('id', leadId);
+    }
 
     return NextResponse.json({
       message: { ...msg, status: sent.status, twilio_sid: sent.sid, error_message: sent.error ?? null },

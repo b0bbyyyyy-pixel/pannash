@@ -556,6 +556,16 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
                       if (send?.sms_status === 'failed') {
                         return <span className="text-xs text-red-500" title={send.error ?? undefined}>SMS failed</span>;
                       }
+                      if (send?.sms_status === 'skipped_dup') {
+                        return <span className="text-xs text-amber-600" title={send.error ?? undefined}>Same number — skipped</span>;
+                      }
+                      if (send?.sms_status === 'skipped_dnc') {
+                        return (
+                          <span className="text-xs text-amber-600" title={send.error ?? undefined}>
+                            {send.error === 'Already texted' ? 'Already texted — skipped' : (send.error || 'Skipped')}
+                          </span>
+                        );
+                      }
                       // Sent (drip or manual) — never show "—" after a successful send
                       const sentAt = send?.sent_at ?? lead.sms_sent_at;
                       if (sentAt && (!lastActivity || new Date(sentAt) >= new Date(lastActivity))) {
