@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { usePathname } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { DialerCard, CampaignPickerModal } from '@/app/dialer/DialerClient';
 import { useDialerSession } from '@/app/dialer/useDialerSession';
@@ -8,7 +9,12 @@ import { useDialerSession } from '@/app/dialer/useDialerSession';
 const ScheduleEmailModal = dynamic(() => import('@/components/ScheduleEmailModal'), { ssr: false });
 
 export default function InboxDialer() {
-  const [open, setOpen] = useState(true);
+  const pathname = usePathname();
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    setOpen(false);
+  }, [pathname]);
   const {
     state, lead, error, setError,
     activeCampaign, showPicker, setShowPicker,
