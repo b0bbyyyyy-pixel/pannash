@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 
-const LEAD_COLS = 'id, name, company, phone, stage, month_key, last_contact, notes, in_pipeline, lead_status, list_id';
+const LEAD_COLS = 'id, name, company, phone, stage, month_key, last_contact, created_at, notes, in_pipeline, lead_status, list_id';
 const LIMIT = 40;
 
 function escapeIlike(s: string) {

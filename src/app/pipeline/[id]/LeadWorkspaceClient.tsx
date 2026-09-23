@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { toE164 } from '@/lib/dialer/e164';
 import { useWebPhone } from '@/components/webphone/WebPhone';
+import LeadUpdatesTimeline from '@/components/LeadUpdatesTimeline';
 
 const UnderwritingSuite    = dynamic(() => import('@/components/UnderwritingSuite'), { ssr: false });
 const ScheduleEmailModal   = dynamic(() => import('@/components/ScheduleEmailModal'), { ssr: false });
@@ -1189,30 +1190,10 @@ export default function LeadWorkspaceClient({
 
             {/* UPDATES */}
             {centerTab === 'updates' && (
-              <div className="space-y-3">
-                <div className="text-sm text-[#9b9b9b] text-center py-8">
-                  Activity timeline will appear here as the deal progresses.
-                </div>
-                {/* Static entries from lead data */}
-                {lead.created_at && (
-                  <div className="flex gap-3">
-                    <div className="w-1.5 h-1.5 rounded-full bg-[#d4d4d4] mt-1.5 flex-shrink-0" />
-                    <div>
-                      <p className="text-sm text-[#1a1a1a]">Lead created</p>
-                      <p className="text-xs text-[#9b9b9b]">{fmtDate(lead.created_at)}</p>
-                    </div>
-                  </div>
-                )}
-                {lead.last_contact && (
-                  <div className="flex gap-3">
-                    <div className="w-1.5 h-1.5 rounded-full bg-[#d4d4d4] mt-1.5 flex-shrink-0" />
-                    <div>
-                      <p className="text-sm text-[#1a1a1a]">Last contact logged</p>
-                      <p className="text-xs text-[#9b9b9b]">{fmtDate(lead.last_contact)}</p>
-                    </div>
-                  </div>
-                )}
-              </div>
+              <LeadUpdatesTimeline
+                createdAt={lead.created_at}
+                lastContact={lead.last_contact}
+              />
             )}
           </div>
         </div>

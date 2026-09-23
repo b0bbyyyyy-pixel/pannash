@@ -392,6 +392,11 @@ export function DialerCard({
               </svg>
             </button>
           </div>
+          {lead.phone_e164 && (
+            <p className={`${compact ? 'text-xs mt-0.5' : 'text-sm mt-1.5'} text-[#6b7280] leading-tight`}>
+              {formatDisplay(lead.phone_e164)}
+            </p>
+          )}
           {emailError && <p className="text-xs text-red-600 mt-1">{emailError}</p>}
           {lead.lead_status === 'Prospect' && (
             <span className="inline-block mt-2 text-xs px-2.5 py-1 rounded-full bg-[#f0f0f0] text-[#555]">

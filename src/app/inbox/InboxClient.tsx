@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { createClient } from '@supabase/supabase-js';
 import { useWebPhone } from '@/components/webphone/WebPhone';
 import InboxDialer from '@/components/InboxDialer';
+import LeadUpdatesTimeline from '@/components/LeadUpdatesTimeline';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -25,6 +26,7 @@ interface InboxLead {
   lead_status: string | null;
   month_key: string | null;
   last_contact: string | null;
+  created_at?: string | null;
   sms_opt_out: boolean | null;
   notes: string | null;
   conversation: {
@@ -337,6 +339,7 @@ export default function InboxClient({
         lead_status: l.lead_status ?? null,
         month_key: null,
         last_contact: l.last_contact ?? null,
+        created_at: l.created_at ?? null,
         sms_opt_out: l.sms_opt_out ?? false,
         notes: l.notes ?? null,
         conversation: null,
@@ -764,103 +767,17 @@ export default function InboxClient({
         <InboxDialer open={dialerOpen} onOpenChange={setDialerOpen} />
         {!selectedLead ? (
           <div className="flex-1 flex items-center justify-center p-6">
-            <p className="text-xs text-gray-400 text-center">Select a lead to see their details</p>
+            <p className="text-xs text-gray-400 text-center">Select a lead to see updates</p>
           </div>
         ) : (
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {/* Lead identity */}
-            <div>
-              <div className="flex items-start justify-between gap-2 mb-1">
-                <div>
-                  <h3 className="font-semibold text-[#1a1a1a] text-sm leading-tight">
-                    {selectedLead.company || selectedLead.name}
-                  </h3>
-                  {selectedLead.company && (
-                    <p className="text-xs text-[#6b6b6b] mt-0.5">{selectedLead.name}</p>
-                  )}
-                </div>
-                {selectedLead.lead_status && (
-                  <span
-                    className="text-[10px] font-medium px-2 py-0.5 rounded flex-shrink-0"
-                    style={{
-                      background: getStatusStyleFrom(selectedLead.lead_status, dbStatuses).bg,
-                      color: getStatusStyleFrom(selectedLead.lead_status, dbStatuses).text,
-                    }}
-                  >
-                    {selectedLead.lead_status}
-                  </span>
-                )}
-              </div>
-              <a
-                href={`tel:${selectedLead.phone}`}
-                className="text-xs text-blue-600 hover:underline"
-              >
-                {fmt(selectedLead.phone)}
-              </a>
+          <>
+            <div className="flex-1 overflow-y-auto p-4">
+              <LeadUpdatesTimeline
+                createdAt={selectedLead.created_at}
+                lastContact={selectedLead.last_contact}
+              />
             </div>
-
-            <div className="border-t border-[#e5e5e5]" />
-
-            {/* Notes */}
-            {selectedLead.notes && (
-              <div>
-                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Notes</p>
-                <p className="text-xs text-[#1a1a1a] leading-relaxed bg-white border border-[#e5e5e5] rounded-lg px-3 py-2 whitespace-pre-wrap">
-                  {selectedLead.notes}
-                </p>
-              </div>
-            )}
-
-            {/* Last contact */}
-            <div>
-              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Last Contact</p>
-              <p className="text-xs text-[#1a1a1a]">
-                {selectedLead.last_contact
-                  ? new Date(selectedLead.last_contact).toLocaleDateString('en-US', {
-                      month: 'short', day: 'numeric', year: '2-digit',
-                      hour: 'numeric', minute: '2-digit',
-                    })
-                  : '—'}
-              </p>
-            </div>
-
-            {/* Conversation stats */}
-            {selectedLead.conversation && (
-              <>
-                <div className="border-t border-[#e5e5e5]" />
-                <div>
-                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Thread</p>
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-[#6b6b6b]">Messages</span>
-                      <span className="font-medium text-[#1a1a1a]">{messages.length}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-[#6b6b6b]">Last activity</span>
-                      <span className="font-medium text-[#1a1a1a]">
-                        {relativeTime(selectedLead.conversation.last_message_at)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </>
-            )}
-
-            {/* Opt-out toggle */}
-            <div className="border-t border-[#e5e5e5]" />
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-medium text-[#1a1a1a]">SMS Opt-out</p>
-                <p className="text-[10px] text-gray-400">Stops all outbound texts</p>
-              </div>
-              <OptOutToggle lead={selectedLead} onToggle={(val) => {
-                setLeads(prev => prev.map(l => l.id === selectedLead.id ? { ...l, sms_opt_out: val } : l));
-              }} />
-            </div>
-
-            {/* Casper AI — Suggest reply */}
-            <div className="border-t border-[#e5e5e5]" />
-            <div>
+            <div className="flex-shrink-0 px-4 pb-3">
               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">
                 Casper AI
               </p>
@@ -870,9 +787,8 @@ export default function InboxClient({
                 </div>
               ) : (
                 <button
-                  disabled={suggestingReply || !selectedLead}
+                  disabled={suggestingReply}
                   onClick={async () => {
-                    if (!selectedLead) return;
                     setSuggestingReply(true);
                     try {
                       await fetch('/api/agent/suggest-reply', {
@@ -897,7 +813,7 @@ export default function InboxClient({
                 </button>
               )}
             </div>
-          </div>
+          </>
         )}
 
         {/* Twilio connection status footer */}
@@ -1048,45 +964,3 @@ function ListPickerDropdown({
   );
 }
 
-// ── Opt-out toggle ─────────────────────────────────────────────────────────────
-
-function OptOutToggle({
-  lead,
-  onToggle,
-}: {
-  lead: InboxLead;
-  onToggle: (val: boolean) => void;
-}) {
-  const [loading, setLoading] = useState(false);
-  const current = lead.sms_opt_out ?? false;
-
-  const toggle = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch('/api/leads/update', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ leadId: lead.id, field: 'sms_opt_out', value: !current }),
-      });
-      if (res.ok) onToggle(!current);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <button
-      onClick={toggle}
-      disabled={loading}
-      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
-        current ? 'bg-red-400' : 'bg-gray-200'
-      } disabled:opacity-60`}
-    >
-      <span
-        className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
-          current ? 'translate-x-4' : 'translate-x-1'
-        }`}
-      />
-    </button>
-  );
-}
