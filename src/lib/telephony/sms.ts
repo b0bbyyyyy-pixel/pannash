@@ -19,10 +19,12 @@ const ERROR_COPY: Record<number, string> = {
   21408: 'Permission to send SMS to this region is not enabled on the Twilio account.',
 };
 
-function mapTwilioStatus(status: string | undefined, errorCode?: number | null): SmsSendResult['status'] {
+export function mapTwilioStatus(status: string | undefined, errorCode?: number | null): SmsSendResult['status'] {
   if (errorCode || status === 'failed' || status === 'undelivered') return 'failed';
   if (status === 'delivered') return 'delivered';
-  if (status === 'sent') return 'sent';
+  // Twilio's create() returns queued/accepted/sending — the carrier already has it.
+  // Reserve "queued" for messages we never handed to Twilio.
+  if (status === 'sent' || status === 'queued' || status === 'accepted' || status === 'sending') return 'sent';
   return 'queued';
 }
 
@@ -120,6 +122,32 @@ export async function sendTwilioSms(
     status: mapped,
     error: formatError(errorCode, errorMessage),
   };
+}
+
+/** Re-fetch Twilio for messages still in-flight so Inbox can show delivered/failed without the webhook. */
+export async function refreshSmsStatuses(
+  creds: TwilioCreds,
+  rows: { id: string; twilio_sid: string | null; status: string }[],
+): Promise<{ id: string; status: SmsSendResult['status']; error?: string }[]> {
+  const pending = rows.filter(m =>
+    m.twilio_sid && (m.status === 'queued' || m.status === 'sent' || m.status === 'accepted' || m.status === 'sending')
+  );
+  if (!pending.length) return [];
+
+  const client = twilio(creds.accountSid, creds.authToken);
+  const updates: { id: string; status: SmsSendResult['status']; error?: string }[] = [];
+
+  for (const m of pending.slice(-12)) {
+    try {
+      const fresh = await client.messages(m.twilio_sid!).fetch();
+      const status = mapTwilioStatus(fresh.status, fresh.errorCode);
+      const error = formatError(fresh.errorCode, fresh.errorMessage);
+      if (status !== m.status || error) updates.push({ id: m.id, status, error });
+    } catch {
+      // SID unknown / network — leave as-is
+    }
+  }
+  return updates;
 }
 
 /** Point the Twilio number + Messaging Service at our inbound SMS webhook so replies hit Inbox. */

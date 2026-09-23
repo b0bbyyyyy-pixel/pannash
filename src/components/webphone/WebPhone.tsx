@@ -31,6 +31,10 @@ interface WebPhoneContextValue {
   sendDigits: (digits: string) => void;
   acceptIncoming: () => void;
   rejectIncoming: () => void;
+  dialPadOpen: boolean;
+  dialPadNumber: string;
+  openDialPad: (number?: string) => void;
+  closeDialPad: () => void;
 }
 
 const WebPhoneContext = createContext<WebPhoneContextValue | null>(null);
@@ -60,6 +64,8 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   const [muted, setMuted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showKeypad, setShowKeypad] = useState(false);
+  const [dialPadOpen, setDialPadOpen] = useState(false);
+  const [dialPadNumber, setDialPadNumber] = useState('');
   const [callStartedAt, setCallStartedAt] = useState<number | null>(null);
   const [, setTick] = useState(0);
 
@@ -209,6 +215,16 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     setIncomingFrom(null);
   }, []);
 
+  const openDialPad = useCallback((number?: string) => {
+    setDialPadNumber(number ? number.replace(/[^\d+*#]/g, '') : '');
+    setDialPadOpen(true);
+  }, []);
+
+  const closeDialPad = useCallback(() => {
+    setDialPadOpen(false);
+    setDialPadNumber('');
+  }, []);
+
   const elapsed = callStartedAt
     ? (() => {
         const s = Math.floor((Date.now() - callStartedAt) / 1000);
@@ -221,6 +237,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     ready: status !== 'offline',
     activeNumber, activeName, incomingFrom, muted, error,
     connect, hangup, toggleMute, sendDigits, acceptIncoming, rejectIncoming,
+    dialPadOpen, dialPadNumber, openDialPad, closeDialPad,
   };
 
   const inCall = status === 'connecting' || status === 'ringing' || status === 'in-call';

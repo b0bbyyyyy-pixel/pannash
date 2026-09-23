@@ -6,7 +6,7 @@
  * audio runs through your computer headset. The floating call bar
  * (mute / keypad / hangup) appears once the call starts.
  */
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { toE164, formatDisplay } from '@/lib/dialer/e164';
 import { useWebPhone } from '@/components/webphone/WebPhone';
 
@@ -17,8 +17,20 @@ const KEYPAD: { d: string; letters: string }[] = [
   { d: '*', letters: '' },     { d: '0', letters: '+' },   { d: '#', letters: '' },
 ];
 
-export default function ManualDialPanel({ onClose, className = '' }: { onClose?: () => void; className?: string }) {
-  const [number, setNumber] = useState('');
+export default function ManualDialPanel({
+  onClose,
+  className = '',
+  initialNumber = '',
+}: {
+  onClose?: () => void;
+  className?: string;
+  initialNumber?: string;
+}) {
+  const [number, setNumber] = useState(initialNumber);
+
+  useEffect(() => {
+    if (initialNumber) setNumber(initialNumber);
+  }, [initialNumber]);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const webphone = useWebPhone();

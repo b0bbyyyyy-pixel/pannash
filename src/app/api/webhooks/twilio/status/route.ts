@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
     let inboxStatus: 'queued' | 'sent' | 'delivered' | 'failed' = 'sent';
     if (messageStatus === 'failed' || messageStatus === 'undelivered') inboxStatus = 'failed';
     else if (messageStatus === 'delivered') inboxStatus = 'delivered';
-    else if (messageStatus === 'queued' || messageStatus === 'accepted' || messageStatus === 'sending') inboxStatus = 'queued';
+    else inboxStatus = 'sent'; // queued / accepted / sending / sent — Twilio has the message
 
     const inboxError = errorCode
       ? `${errorCode}${errorMessage ? `: ${errorMessage}` : ''}`

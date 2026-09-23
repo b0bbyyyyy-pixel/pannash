@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { createClient } from '@supabase/supabase-js';
+import { useWebPhone } from '@/components/webphone/WebPhone';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -153,6 +154,7 @@ export default function InboxClient({
   const composerRef = useRef<HTMLTextAreaElement>(null);
 
   const selectedLead = leads.find(l => l.id === selectedLeadId) ?? null;
+  const webphone = useWebPhone();
 
   // ── Load lead list ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -591,17 +593,27 @@ export default function InboxClient({
                   {fmt(selectedLead.phone)}
                 </p>
               </div>
-              <div className="flex items-center gap-2">
-                {/* Call button */}
-                <a
-                  href={`tel:${selectedLead.phone}`}
-                  className="p-2 rounded-lg border border-[#e5e5e5] hover:bg-[#f5f5f5] transition-colors text-[#1a1a1a]"
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setLeadOverlayId(selectedLead.id)}
+                  className="text-xs font-medium text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors"
+                >
+                  View Lead
+                </button>
+                <button
+                  type="button"
+                  onClick={() => webphone.openDialPad(selectedLead.phone)}
+                  className="focus:outline-none hover:opacity-70 transition-opacity"
                   title="Call"
                 >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-                  </svg>
-                </a>
+                  <img
+                    src="/images/icons/phone-icon.png"
+                    alt="Call"
+                    width={22}
+                    height={22}
+                    className="w-[22px] h-[22px]"
+                  />
+                </button>
               </div>
             </div>
 
@@ -641,7 +653,9 @@ export default function InboxClient({
 
                     {/* Messages in group */}
                     <div className="space-y-1.5">
-                      {group.msgs.map(msg => (
+                      {group.msgs.map(msg => {
+                        const receipt = msg.status === 'queued' && msg.twilio_sid ? 'sent' : msg.status;
+                        return (
                         <div
                           key={msg.id}
                           className={`flex ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}
@@ -652,7 +666,7 @@ export default function InboxClient({
                                 msg.direction === 'outbound'
                                   ? 'bg-blue-500 text-white rounded-br-sm'
                                   : 'bg-[#f0f0f0] text-[#1a1a1a] rounded-bl-sm'
-                              } ${msg.status === 'failed' ? 'opacity-60' : ''}`}
+                              } ${receipt === 'failed' ? 'opacity-60' : ''}`}
                             >
                               {msg.body}
                             </div>
@@ -660,10 +674,10 @@ export default function InboxClient({
                               <span className="text-[10px] text-gray-400">{msgTime(msg.created_at)}</span>
                               {msg.direction === 'outbound' && (
                                 <>
-                                  {msg.status === 'queued' && <span className="text-[10px] text-gray-300">◷ queued</span>}
-                                  {msg.status === 'sent' && <span className="text-[10px] text-gray-400">✓ sent</span>}
-                                  {msg.status === 'delivered' && <span className="text-[10px] text-blue-400">✓✓ delivered</span>}
-                                  {msg.status === 'failed' && (
+                                  {receipt === 'queued' && <span className="text-[10px] text-gray-300">sending…</span>}
+                                  {receipt === 'sent' && <span className="text-[10px] text-gray-400">✓ sent</span>}
+                                  {receipt === 'delivered' && <span className="text-[10px] text-blue-400">✓✓ delivered</span>}
+                                  {receipt === 'failed' && (
                                     <span className="text-[10px] text-red-500">
                                       ✕ failed
                                       {msg.error_message && ` · ${msg.error_message}`}
@@ -674,7 +688,8 @@ export default function InboxClient({
                             </div>
                           </div>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 ))
@@ -773,19 +788,6 @@ export default function InboxClient({
               >
                 {fmt(selectedLead.phone)}
               </a>
-            </div>
-
-            {/* Quick actions */}
-            <div>
-              <button
-                onClick={() => setLeadOverlayId(selectedLead.id)}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#e5e5e5] bg-white hover:bg-[#f5f5f5] transition-colors text-xs text-[#1a1a1a] font-medium"
-              >
-                <svg className="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                </svg>
-                View Lead
-              </button>
             </div>
 
             <div className="border-t border-[#e5e5e5]" />
