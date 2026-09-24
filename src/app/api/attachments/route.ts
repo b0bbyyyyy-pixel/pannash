@@ -138,6 +138,20 @@ export async function POST(request: Request) {
       .eq('user_id', user.id);
   }
 
+  try {
+    const { onCasperDocsReceived } = await import('@/lib/casper/docs');
+    await onCasperDocsReceived(supabase, {
+      userId: user.id,
+      leadId,
+      fileName: file.name,
+      columnField,
+      filePath,
+      attachmentId: attachment.id,
+    });
+  } catch (casperErr) {
+    console.error('[attachments] casper docs hook', casperErr);
+  }
+
   return NextResponse.json({ attachment });
 }
 

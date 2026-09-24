@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
+import { ActivityPanel, BrainPanel, CapabilitiesPanel } from '@/app/agent/CasperPanels';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -12,7 +13,10 @@ type CardType =
   | 'stage_move'
   | 'campaign_reply'
   | 'schedule_followup'
-  | 'stalled';
+  | 'stalled'
+  | 'casper_docs_received'
+  | 'casper_hand_off'
+  | 'casper_needs_human';
 
 type CardStatus = 'pending' | 'approved' | 'snoozed' | 'dismissed' | 'sent' | 'paused';
 
@@ -52,6 +56,8 @@ function cardIcon(type: CardType, priority: string) {
   if (type === 'follow_up' || type === 'schedule_followup') return '📅';
   if (type === 'stalled') return '🤫';
   if (type === 'stage_move') return '↗';
+  if (type === 'casper_docs_received') return '📄';
+  if (type === 'casper_hand_off' || type === 'casper_needs_human') return '🙋';
   return '·';
 }
 
@@ -76,6 +82,9 @@ function cardLabel(type: CardType) {
   if (type === 'schedule_followup') return 'SCHEDULE FOLLOW-UP';
   if (type === 'stalled') return 'GONE QUIET';
   if (type === 'stage_move') return 'STAGE MOVE';
+  if (type === 'casper_docs_received') return 'DOCS RECEIVED';
+  if (type === 'casper_hand_off') return 'HANDED OFF';
+  if (type === 'casper_needs_human') return 'NEEDS YOU';
   return 'ACTION';
 }
 
@@ -85,6 +94,9 @@ function cardBadgeColor(type: CardType, priority: string) {
   if (type === 'suggest_reply' || type === 'campaign_reply') return 'bg-blue-100 text-blue-700';
   if (type === 'follow_up' || type === 'schedule_followup') return 'bg-purple-100 text-purple-700';
   if (type === 'stalled') return 'bg-gray-100 text-gray-600';
+  if (type === 'casper_docs_received' || type === 'casper_needs_human' || type === 'casper_hand_off') {
+    return 'bg-emerald-100 text-emerald-700';
+  }
   return 'bg-gray-100 text-gray-600';
 }
 
@@ -340,7 +352,17 @@ const FILTER_LABELS: Record<string, string> = {
   stalled: 'Quiet',
 };
 
+type Panel = 'activity' | 'brain' | 'capabilities' | 'queue';
+
+const PANEL_LABELS: { id: Panel; label: string }[] = [
+  { id: 'activity', label: 'Activity' },
+  { id: 'brain', label: 'Brain' },
+  { id: 'capabilities', label: 'Capabilities' },
+  { id: 'queue', label: 'Queue' },
+];
+
 export default function AgentClient() {
+  const [panel, setPanel] = useState<Panel>('queue');
   const [decisions, setDecisions] = useState<AgentDecision[]>([]);
   const [loading, setLoading] = useState(true);
   const [seeding, setSeeding] = useState(false);
@@ -348,6 +370,8 @@ export default function AgentClient() {
   const [askText, setAskText] = useState('');
   const [askLoading, setAskLoading] = useState(false);
   const [briefing, setBriefing] = useState<string | null>(null);
+  const [globalOn, setGlobalOn] = useState(false);
+  const [pausedLeads, setPausedLeads] = useState(0);
   const askRef = useRef<HTMLTextAreaElement>(null);
 
   // ── Load decisions ─────────────────────────────────────────────────────────
@@ -363,6 +387,16 @@ export default function AgentClient() {
   }, []);
 
   useEffect(() => { loadDecisions(); }, [loadDecisions]);
+
+  useEffect(() => {
+    fetch('/api/settings/casper')
+      .then(r => r.json())
+      .then(d => {
+        setGlobalOn(!!d.enabled);
+        setPausedLeads(Number(d.paused_leads || 0));
+      })
+      .catch(() => {});
+  }, []);
 
   // ── Seed CRM → cards ───────────────────────────────────────────────────────
   const seedDecisions = async () => {
@@ -456,12 +490,27 @@ export default function AgentClient() {
             <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Casper</span>
           </div>
           <p className="text-xs text-gray-400">
-            {pending.length === 0 ? 'Queue clear' : `${pending.length} decision${pending.length !== 1 ? 's' : ''} waiting`}
+            Global {globalOn ? 'on' : 'off'}
+            {pausedLeads > 0 ? ` · ${pausedLeads} lead${pausedLeads === 1 ? '' : 's'} off` : ''}
           </p>
         </div>
 
+        <div className="px-3 py-3 space-y-0.5 border-b border-[#f0f0f0]">
+          {PANEL_LABELS.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setPanel(t.id)}
+              className={`w-full text-left px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                panel === t.id ? 'bg-[#1a1a1a] text-white font-medium' : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
         {/* Filters */}
-        <div className="px-3 py-3 space-y-0.5">
+        {panel === 'queue' && <div className="px-3 py-3 space-y-0.5">
           {(Object.keys(FILTER_LABELS) as string[]).map((key) => (
             <button
               key={key}
@@ -482,7 +531,7 @@ export default function AgentClient() {
               )}
             </button>
           ))}
-        </div>
+        </div>}
 
         {/* Lead list */}
         {railLeads.length > 0 && (
@@ -538,7 +587,9 @@ export default function AgentClient() {
             </div>
             <div>
                       <p className="text-white font-bold text-base leading-none">Casper</p>
-              <p className="text-gray-400 text-xs mt-0.5">Gostwrk co-pilot · SMS-first</p>
+              <p className="text-gray-400 text-xs mt-0.5">
+                {panel === 'queue' ? 'Gostwrk co-pilot · SMS-first' : PANEL_LABELS.find(p => p.id === panel)?.label}
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-4">
@@ -562,10 +613,13 @@ export default function AgentClient() {
         {/* Scrollable feed */}
         <div className="flex-1 overflow-y-auto px-8 py-6 space-y-4">
 
-          {/* Briefing from "Ask" */}
-          {briefing && <BriefingPanel text={briefing} onClose={() => setBriefing(null)} />}
+          {panel === 'activity' && <ActivityPanel />}
+          {panel === 'brain' && <BrainPanel />}
+          {panel === 'capabilities' && <CapabilitiesPanel />}
 
-          {loading ? (
+          {panel === 'queue' && briefing && <BriefingPanel text={briefing} onClose={() => setBriefing(null)} />}
+
+          {panel === 'queue' && (loading ? (
             <div className="flex flex-col items-center justify-center h-64 gap-3">
               <div className="w-6 h-6 border-2 border-gray-300 border-t-gray-700 rounded-full animate-spin" />
               <p className="text-sm text-gray-400">Loading queue…</p>
@@ -589,11 +643,11 @@ export default function AgentClient() {
                 <ActionCard key={d.id} decision={d} onAction={handleAction} />
               ))}
             </>
-          )}
+          ))}
         </div>
 
         {/* ── ASK COMPOSER (sticky bottom) ─────────────────────────────── */}
-        <div className="flex-shrink-0 border-t border-[#e5e5e5] bg-white px-8 py-4">
+        {panel === 'queue' && <div className="flex-shrink-0 border-t border-[#e5e5e5] bg-white px-8 py-4">
           <div className="flex items-end gap-3">
             <div className="flex-1 relative">
               <textarea
@@ -629,7 +683,7 @@ export default function AgentClient() {
           <p className="text-[10px] text-gray-400 mt-2 text-center">
             Enter to send · Shift+Enter for new line · Casper reviews and proposes — you approve
           </p>
-        </div>
+        </div>}
       </div>
     </div>
   );

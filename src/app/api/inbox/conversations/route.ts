@@ -128,17 +128,29 @@ export async function GET(req: NextRequest) {
     const ids = list.map(l => String(l.id));
 
     let optOutMap: Record<string, boolean> = {};
+    let casperMap: Record<string, boolean | null> = {};
     if (ids.length) {
       try {
         const { data: optOuts } = await supabase
           .from('leads')
-          .select('id, sms_opt_out')
+          .select('id, sms_opt_out, casper_enabled')
           .in('id', ids);
         for (const r of optOuts ?? []) {
           optOutMap[r.id] = r.sms_opt_out ?? false;
+          casperMap[r.id] = r.casper_enabled ?? null;
         }
       } catch {
-        // Column not created yet — ignore
+        try {
+          const { data: optOuts } = await supabase
+            .from('leads')
+            .select('id, sms_opt_out')
+            .in('id', ids);
+          for (const r of optOuts ?? []) {
+            optOutMap[r.id] = r.sms_opt_out ?? false;
+          }
+        } catch {
+          // Column not created yet — ignore
+        }
       }
     }
 
@@ -160,6 +172,7 @@ export async function GET(req: NextRequest) {
       ...lead,
       phone: (lead.phone as string) || '',
       sms_opt_out: optOutMap[String(lead.id)] ?? false,
+      casper_enabled: casperMap[String(lead.id)] ?? null,
       conversation: convMap[String(lead.id)] ?? null,
     }));
 

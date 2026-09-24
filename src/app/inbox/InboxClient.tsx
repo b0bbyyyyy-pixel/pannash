@@ -28,6 +28,7 @@ interface InboxLead {
   last_contact: string | null;
   created_at?: string | null;
   sms_opt_out: boolean | null;
+  casper_enabled?: boolean | null;
   notes: string | null;
   conversation: {
     id: string;
@@ -348,6 +349,7 @@ export default function InboxClient({
         last_contact: l.last_contact ?? null,
         created_at: l.created_at ?? null,
         sms_opt_out: l.sms_opt_out ?? false,
+        casper_enabled: l.casper_enabled ?? null,
         notes: l.notes ?? null,
         conversation: null,
       }));
@@ -620,12 +622,54 @@ export default function InboxClient({
                 </p>
               </div>
               <div className="flex items-center gap-3">
-                <button
-                  onClick={() => setLeadOverlayId(selectedLead.id)}
-                  className="text-xs font-medium text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors"
-                >
-                  View Lead
-                </button>
+                <div className="flex flex-col items-end gap-0.5">
+                  <button
+                    onClick={() => setLeadOverlayId(selectedLead.id)}
+                    className="text-xs font-medium text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors"
+                  >
+                    View Lead
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const next = selectedLead.casper_enabled === false;
+                      setLeads(prev => prev.map(l =>
+                        l.id === selectedLead.id ? { ...l, casper_enabled: next } : l
+                      ));
+                      try {
+                        await fetch(`/api/leads/${selectedLead.id}/casper`, {
+                          method: 'PATCH',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ enabled: next }),
+                        });
+                      } catch {
+                        setLeads(prev => prev.map(l =>
+                          l.id === selectedLead.id ? { ...l, casper_enabled: !next } : l
+                        ));
+                      }
+                    }}
+                    title={
+                      !casperOn
+                        ? 'Global Casper AI is off — this lead setting is saved but replies will not fire'
+                        : selectedLead.casper_enabled === false
+                          ? 'Casper is off for this lead — click to allow'
+                          : 'Casper is on for this lead — click to pause'
+                    }
+                    className={`text-[10px] font-medium transition-colors ${
+                      !casperOn
+                        ? 'text-gray-400 line-through'
+                        : selectedLead.casper_enabled === false
+                          ? 'text-red-500'
+                          : 'text-[#1a1a1a]'
+                    }`}
+                  >
+                    {!casperOn
+                      ? 'Paused — global off'
+                      : selectedLead.casper_enabled === false
+                        ? 'Casper off'
+                        : 'Casper'}
+                  </button>
+                </div>
                 <button
                   type="button"
                   onClick={() => webphone.openDialPad(selectedLead.phone)}
@@ -790,6 +834,20 @@ export default function InboxClient({
           </div>
           {selectedLead && (
             <div className="relative z-10 h-full overflow-y-auto p-4 [text-shadow:none]">
+              <p className={`text-[10px] font-medium mb-3 ${
+                !casperOn
+                  ? 'text-gray-400'
+                  : selectedLead.casper_enabled === false
+                    ? 'text-red-500'
+                    : 'text-[#1a1a1a]'
+              }`}>
+                Casper for this lead:{' '}
+                {!casperOn
+                  ? 'paused (global off)'
+                  : selectedLead.casper_enabled === false
+                    ? 'off'
+                    : 'on'}
+              </p>
               <LeadUpdatesTimeline
                 createdAt={selectedLead.created_at}
                 lastContact={selectedLead.last_contact}

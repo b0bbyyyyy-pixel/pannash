@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { getAIClient, GROK_MINI_MODEL } from '@/lib/ai';
-import twilio from 'twilio';
 import { toE164 } from '@/lib/dialer/e164';
 import { promoteCampaignLeadOnReply } from '@/lib/inbox/promoteCampaignReply';
+import { runCasperInboundSms } from '@/lib/casper/reply';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -37,7 +36,10 @@ async function findLeadByPhone(from: string, userId: string | null) {
   const from10 = last10(from);
 
   const tryMatch = async (uid: string | null) => {
-    let q = supabase.from('leads').select('id, user_id, phone').in('phone', variants);
+    let q = supabase
+      .from('leads')
+      .select('id, user_id, phone, name, company, email, notes, casper_enabled, sms_opt_out')
+      .in('phone', variants);
     if (uid) q = q.eq('user_id', uid);
     const { data } = await q.limit(5);
     if (data?.[0]) return data[0];
@@ -45,7 +47,7 @@ async function findLeadByPhone(from: string, userId: string | null) {
     if (uid && from10.length === 10) {
       const { data: all } = await supabase
         .from('leads')
-        .select('id, user_id, phone')
+        .select('id, user_id, phone, name, company, email, notes, casper_enabled, sms_opt_out')
         .eq('user_id', uid)
         .not('phone', 'is', null);
       return (all ?? []).find(l => last10(l.phone) === from10) ?? null;
@@ -185,131 +187,58 @@ export async function POST(req: NextRequest) {
       console.error('[Inbox] Failed to write inbound to inbox_messages:', inboxErr);
     }
 
-    const { data: casperRow } = await supabase
-      .from('user_settings')
-      .select('casper_enabled')
-      .eq('user_id', ownerId)
-      .maybeSingle();
-    if (!casperRow?.casper_enabled) {
+    if (body.match(/^(STOP|UNSUBSCRIBE|CANCEL|QUIT|END)\s*$/i)) {
       return emptyTwiml();
     }
 
-    // Optional: campaign AI auto-reply (only if this lead is on an active SMS campaign)
     const { data: campaignLead } = await supabase
       .from('campaign_leads')
-      .select('id, campaign_id, campaigns(ai_directive, type, ai_replies_enabled, user_id)')
+      .select('id')
       .eq('lead_id', lead.id)
       .not('sent_at', 'is', null)
       .order('sent_at', { ascending: false })
       .limit(1)
       .maybeSingle();
 
-    const campaign = campaignLead?.campaigns as {
-      type?: string;
-      ai_replies_enabled?: boolean;
-      ai_directive?: string;
-      user_id?: string;
-    } | null;
+    if (campaignLead) {
+      await supabase.from('sms_messages').insert({
+        campaign_lead_id: campaignLead.id,
+        direction: 'inbound',
+        body,
+        from_number: from,
+        to_number: to,
+        twilio_sid: messageSid,
+        ai_generated: false,
+      });
+      await supabase
+        .from('campaign_leads')
+        .update({ status: 'replied', replied_at: new Date().toISOString() })
+        .eq('id', campaignLead.id);
+    }
 
-    if (!campaignLead || campaign?.type !== 'sms' || !campaign.ai_replies_enabled) {
+    const { data: fullLead } = await supabase
+      .from('leads')
+      .select('id, user_id, phone, name, company, email, notes, casper_enabled, sms_opt_out')
+      .eq('id', lead.id)
+      .maybeSingle();
+
+    const target = fullLead || lead;
+    if (target.sms_opt_out) {
       return emptyTwiml();
     }
 
-    await supabase.from('sms_messages').insert({
-      campaign_lead_id: campaignLead.id,
-      direction: 'inbound',
-      body,
-      from_number: from,
-      to_number: to,
-      twilio_sid: messageSid,
-      ai_generated: false,
-    });
-
-    await supabase
-      .from('campaign_leads')
-      .update({ status: 'replied', replied_at: new Date().toISOString() })
-      .eq('id', campaignLead.id);
-
-    const campaignUserId = campaign.user_id || ownerId;
-    const { data: settings } = await supabase
-      .from('automation_settings')
-      .select('ai_response_delay_min, ai_response_delay_max')
-      .eq('user_id', campaignUserId)
-      .maybeSingle();
-
-    const delayMin = settings?.ai_response_delay_min || 2;
-    const delayMax = settings?.ai_response_delay_max || 8;
-    const delayMinutes = Math.floor(Math.random() * (delayMax - delayMin + 1)) + delayMin;
-    const delayMs = delayMinutes * 60 * 1000;
-
-    const { data: history } = await supabase
-      .from('sms_messages')
-      .select('direction, body, created_at')
-      .eq('campaign_lead_id', campaignLead.id)
-      .order('created_at', { ascending: true })
-      .limit(10);
-
-    const conversationContext = history?.map(msg =>
-      `${msg.direction === 'outbound' ? 'You' : 'Lead'}: ${msg.body}`
-    ).join('\n') || '';
-
-    const openai = getAIClient();
-    const completion = await openai.chat.completions.create({
-      model: GROK_MINI_MODEL,
-      messages: [
-        {
-          role: 'system',
-          content: `You are a sales assistant having a text message conversation with a lead.
-Your directive: ${campaign.ai_directive || 'Be helpful and professional'}
-
-Conversation so far:
-${conversationContext}
-
-Lead just replied: "${body}"
-
-Generate a brief, natural text message response (keep it under 160 characters if possible, max 320). Be conversational and follow the directive. Do not use emojis unless specifically instructed.`,
-        },
-        { role: 'user', content: body },
-      ],
-      temperature: 0.7,
-      max_tokens: 150,
-    });
-
-    const aiReply = completion.choices[0].message.content || 'Thanks for your message!';
-
-    setTimeout(async () => {
-      try {
-        const { data: connection } = await supabase
-          .from('phone_connections')
-          .select('*')
-          .eq('user_id', campaignUserId)
-          .limit(1)
-          .maybeSingle();
-
-        if (!connection) return;
-        const client = twilio(connection.account_sid, connection.auth_token);
-        const replyMessage = await client.messages.create({
-          body: aiReply,
-          from: to,
-          to: from,
-          ...(connection.messaging_service_sid
-            ? { messagingServiceSid: connection.messaging_service_sid }
-            : {}),
-        });
-
-        await supabase.from('sms_messages').insert({
-          campaign_lead_id: campaignLead.id,
-          direction: 'outbound',
-          body: aiReply,
-          from_number: to,
-          to_number: from,
-          twilio_sid: replyMessage.sid,
-          ai_generated: true,
-        });
-      } catch (error) {
-        console.error('Error sending delayed AI reply:', error);
-      }
-    }, delayMs);
+    try {
+      const result = await runCasperInboundSms(supabase, {
+        userId: ownerId,
+        lead: target,
+        body,
+        from,
+        to,
+      });
+      console.log('[SMS Webhook] Casper', result);
+    } catch (casperErr) {
+      console.error('[SMS Webhook] Casper error', casperErr);
+    }
 
     return emptyTwiml();
   } catch (error) {
