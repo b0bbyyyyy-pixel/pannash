@@ -785,7 +785,7 @@ export default function InboxClient({
             <img
               src="/images/logo/elektro.png"
               alt=""
-              className="w-[108%] max-w-none h-auto object-contain object-bottom opacity-20 block"
+              className="w-[128%] max-w-none h-auto object-contain object-bottom opacity-20 block"
             />
           </div>
           {selectedLead && (
