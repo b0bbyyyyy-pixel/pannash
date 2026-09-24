@@ -6,6 +6,7 @@ import { createClient } from '@supabase/supabase-js';
 import { useWebPhone } from '@/components/webphone/WebPhone';
 import InboxDialer from '@/components/InboxDialer';
 import LeadUpdatesTimeline from '@/components/LeadUpdatesTimeline';
+import { casperEffectiveForLead } from '@/lib/casper/allow';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -159,6 +160,9 @@ export default function InboxClient({
   const composerRef = useRef<HTMLTextAreaElement>(null);
 
   const selectedLead = leads.find(l => l.id === selectedLeadId) ?? null;
+  const leadCasperOn = selectedLead
+    ? casperEffectiveForLead(casperOn, selectedLead.casper_enabled)
+    : false;
   const webphone = useWebPhone();
   const pathname = usePathname();
   const [dialerOpen, setDialerOpen] = useState(false);
@@ -632,7 +636,7 @@ export default function InboxClient({
                   <button
                     type="button"
                     onClick={async () => {
-                      const next = selectedLead.casper_enabled === false;
+                      const next = !leadCasperOn;
                       setLeads(prev => prev.map(l =>
                         l.id === selectedLead.id ? { ...l, casper_enabled: next } : l
                       ));
@@ -649,25 +653,17 @@ export default function InboxClient({
                       }
                     }}
                     title={
-                      !casperOn
-                        ? 'Global Casper AI is off — this lead setting is saved but replies will not fire'
-                        : selectedLead.casper_enabled === false
+                      leadCasperOn
+                        ? 'Casper is on for this lead — click to turn off'
+                        : casperOn
                           ? 'Casper is off for this lead — click to allow'
-                          : 'Casper is on for this lead — click to pause'
+                          : 'Global Casper is off — click to turn Casper on for this lead only'
                     }
                     className={`text-[10px] font-medium transition-colors ${
-                      !casperOn
-                        ? 'text-gray-400 line-through'
-                        : selectedLead.casper_enabled === false
-                          ? 'text-red-500'
-                          : 'text-[#1a1a1a]'
+                      leadCasperOn ? 'text-[#1a1a1a]' : 'text-red-500'
                     }`}
                   >
-                    {!casperOn
-                      ? 'Paused — global off'
-                      : selectedLead.casper_enabled === false
-                        ? 'Casper off'
-                        : 'Casper'}
+                    Casper
                   </button>
                 </div>
                 <button
@@ -834,19 +830,8 @@ export default function InboxClient({
           </div>
           {selectedLead && (
             <div className="relative z-10 h-full overflow-y-auto p-4 [text-shadow:none]">
-              <p className={`text-[10px] font-medium mb-3 ${
-                !casperOn
-                  ? 'text-gray-400'
-                  : selectedLead.casper_enabled === false
-                    ? 'text-red-500'
-                    : 'text-[#1a1a1a]'
-              }`}>
-                Casper for this lead:{' '}
-                {!casperOn
-                  ? 'paused (global off)'
-                  : selectedLead.casper_enabled === false
-                    ? 'off'
-                    : 'on'}
+              <p className="text-[10px] font-medium mb-3 text-[#c4c4c4]">
+                Casper for this lead: {leadCasperOn ? 'on' : 'off'}
               </p>
               <LeadUpdatesTimeline
                 createdAt={selectedLead.created_at}

@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
+import { casperEffectiveForLead } from '@/lib/casper/allow';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,6 +33,12 @@ export async function GET(
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   if (!lead) return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
 
+  const { data: settings } = await supabase
+    .from('user_settings')
+    .select('casper_enabled')
+    .eq('user_id', user.id)
+    .maybeSingle();
+
   const { data: state } = await supabase
     .from('casper_lead_state')
     .select('phase, paused_reason, updated_at')
@@ -39,7 +46,7 @@ export async function GET(
     .maybeSingle();
 
   return NextResponse.json({
-    enabled: lead.casper_enabled !== false,
+    enabled: casperEffectiveForLead(!!settings?.casper_enabled, lead.casper_enabled),
     casper_enabled: lead.casper_enabled ?? null,
     phase: state?.phase ?? 'chatting',
     paused_reason: state?.paused_reason ?? null,
@@ -73,8 +80,14 @@ export async function PATCH(
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   if (!lead) return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
 
+  const { data: settings } = await supabase
+    .from('user_settings')
+    .select('casper_enabled')
+    .eq('user_id', user.id)
+    .maybeSingle();
+
   return NextResponse.json({
-    enabled: lead.casper_enabled !== false,
+    enabled: casperEffectiveForLead(!!settings?.casper_enabled, lead.casper_enabled),
     casper_enabled: lead.casper_enabled ?? null,
   });
 }

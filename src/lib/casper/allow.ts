@@ -9,14 +9,21 @@ export type CasperGateInput = {
   pausedReason?: string | null;
 };
 
-export function leadCasperAllowed(leadCasperEnabled: boolean | null | undefined): boolean {
-  return leadCasperEnabled !== false;
+/** true = force on (even if global off). false = force off. null = inherit global. */
+export function casperEffectiveForLead(
+  globalEnabled: boolean,
+  leadCasperEnabled: boolean | null | undefined,
+): boolean {
+  if (leadCasperEnabled === true) return true;
+  if (leadCasperEnabled === false) return false;
+  return !!globalEnabled;
 }
 
 export function canCasperAutoReply(input: CasperGateInput): { ok: boolean; reason?: string } {
-  if (!input.globalEnabled) return { ok: false, reason: 'global_off' };
+  if (!casperEffectiveForLead(input.globalEnabled, input.leadCasperEnabled)) {
+    return { ok: false, reason: input.leadCasperEnabled === false ? 'lead_off' : 'global_off' };
+  }
   if (input.smsOptOut) return { ok: false, reason: 'opt_out' };
-  if (!leadCasperAllowed(input.leadCasperEnabled)) return { ok: false, reason: 'lead_off' };
   if (input.pausedReason) return { ok: false, reason: 'paused' };
   const phase = (input.phase || 'chatting') as CasperPhase;
   if (STOPPED_PHASES.includes(phase)) return { ok: false, reason: `phase_${phase}` };
