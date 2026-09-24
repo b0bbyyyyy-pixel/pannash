@@ -4,6 +4,7 @@ import { cookies } from 'next/headers';
 import { replaceTemplateVariables } from '@/lib/queue';
 import { getTwilioCreds } from '@/lib/telephony/twilio';
 import { sendTwilioSms } from '@/lib/telephony/sms';
+import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
 
 export async function POST(req: NextRequest) {
   try {
@@ -77,10 +78,10 @@ export async function POST(req: NextRequest) {
 
     // Process each SMS
     for (const item of enrichedQueueItems) {
+      const lead = item.leads;
+      let inboxRecorded = false;
+      let sentSid: string | null = null;
       try {
-        const lead = item.leads;
-        const campaign = item.campaigns;
-
         if (!lead?.phone) {
           console.log(`Skipping lead without phone: ${lead?.email || 'unknown'}`);
           await supabase
@@ -105,6 +106,32 @@ export async function POST(req: NextRequest) {
         const personalizedBody = replaceTemplateVariables(item.sms_body, lead);
 
         const message = await sendTwilioSms(creds, lead.phone, personalizedBody);
+        sentSid = message.sid;
+        await recordOutboundInboxSms(supabase, {
+          userId: user.id,
+          leadId: lead.id,
+          toPhone: lead.phone,
+          body: personalizedBody,
+          twilioSid: message.sid,
+          status: message.status,
+          errorMessage: message.error ?? null,
+          sentBy: 'system',
+          bumpLastMessageAt: false,
+        });
+        inboxRecorded = true;
+
+        await supabase
+          .from('sms_messages')
+          .insert({
+            campaign_lead_id: item.campaign_lead_id,
+            direction: 'outbound',
+            body: personalizedBody,
+            from_number: creds.fromNumber,
+            to_number: lead.phone,
+            twilio_sid: message.sid,
+            ai_generated: false,
+          });
+
         if (message.status === 'failed') {
           throw new Error(message.error || 'Twilio delivery failed');
         }
@@ -130,30 +157,32 @@ export async function POST(req: NextRequest) {
           })
           .eq('id', item.campaign_lead_id);
 
-        // Log to sms_messages
-        await supabase
-          .from('sms_messages')
-          .insert({
-            campaign_lead_id: item.campaign_lead_id,
-            direction: 'outbound',
-            body: personalizedBody,
-            from_number: creds.fromNumber,
-            to_number: lead.phone,
-            twilio_sid: message.sid,
-            ai_generated: false,
-          });
-
         successCount++;
       } catch (err: any) {
         console.error('Error sending SMS:', err);
-        
+
+        if (!inboxRecorded && lead?.id) {
+          await recordOutboundInboxSms(supabase, {
+            userId: user.id,
+            leadId: lead.id,
+            toPhone: lead.phone,
+            body: replaceTemplateVariables(item.sms_body, lead),
+            twilioSid: sentSid,
+            status: 'failed',
+            errorMessage: err.message,
+            sentBy: 'system',
+            bumpLastMessageAt: false,
+          });
+        }
+
         await supabase
           .from('sms_queue')
           .update({ 
             status: 'failed', 
             last_error: err.message,
             attempts: item.attempts + 1,
-            updated_at: new Date().toISOString() 
+            updated_at: new Date().toISOString(),
+            ...(sentSid ? { twilio_sid: sentSid } : {}),
           })
           .eq('id', item.id);
 

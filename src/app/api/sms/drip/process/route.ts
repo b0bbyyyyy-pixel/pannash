@@ -3,6 +3,7 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { getTwilioCreds } from '@/lib/telephony/twilio';
 import { sendTwilioSms } from '@/lib/telephony/sms';
+import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
 import { zoneForLocation, isInSendWindow, nextWindowStart } from '@/lib/smsDrip/timezones';
 
 export const dynamic = 'force-dynamic';
@@ -165,22 +166,6 @@ export async function POST() {
           continue;
         }
 
-        // Send through the existing inbox thread so a later manual SMS shares the conversation
-        let { data: conv } = await supabase
-          .from('inbox_conversations')
-          .select('id')
-          .eq('user_id', user.id)
-          .eq('lead_id', lead.id)
-          .maybeSingle();
-        if (!conv) {
-          const { data: newConv } = await supabase
-            .from('inbox_conversations')
-            .insert({ user_id: user.id, lead_id: lead.id })
-            .select('id')
-            .single();
-          conv = newConv;
-        }
-
         const creds = await getTwilioCreds(supabase, user.id);
         if (!creds) {
           await supabase.from('sms_drip_jobs').update({ status: 'paused' }).eq('id', job.id);
@@ -204,23 +189,17 @@ export async function POST() {
         const sentAt = new Date().toISOString();
 
         // Thread message. Outbound drip does NOT bump last_message_at (Inbox stacks on replies only).
-        if (conv) {
-          await supabase.from('inbox_messages').insert({
-            conversation_id: conv.id,
-            lead_id: lead.id,
-            direction: 'outbound',
-            body,
-            status: sendStatus === 'failed' ? 'failed' : 'sent',
-            sent_by: 'system',
-            twilio_sid: sid,
-            error_message: sendError,
-          });
-          const preview = body.length > 100 ? body.slice(0, 97) + '…' : body;
-          await supabase
-            .from('inbox_conversations')
-            .update({ last_message_preview: preview, last_direction: 'outbound' })
-            .eq('id', conv.id);
-        }
+        await recordOutboundInboxSms(supabase, {
+          userId: user.id,
+          leadId: lead.id,
+          toPhone: send.phone ?? lead.phone,
+          body,
+          twilioSid: sid,
+          status: sendStatus === 'failed' ? 'failed' : 'sent',
+          errorMessage: sendError,
+          sentBy: 'system',
+          bumpLastMessageAt: false,
+        });
 
         await supabase.from('sms_drip_sends').update({
           sms_status: sendStatus,

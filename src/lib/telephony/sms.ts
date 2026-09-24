@@ -9,11 +9,12 @@ export type SmsSendResult = {
 };
 
 const ERROR_COPY: Record<number, string> = {
-  21704: 'Messaging Service has no number in its Sender Pool. Add your Twilio number in Console → Messaging → Services → Sender Pool.',
+  21704: 'Messaging Service has no numbers. Add your Twilio number in Console → Messaging → Services → Sender Pool.',
   21705: 'Messaging Service SID is invalid. It must start with MG.',
   21211: 'Invalid destination number.',
-  21610: 'Recipient has opted out (STOP).',
+  21610: 'Recipient opted out (STOP).',
   21614: 'Not a valid mobile number.',
+  30007: 'Carrier blocked this message (content / spam filter). Try Customer Care wording with One Funding: and STOP/HELP.',
   30034: 'A2P 10DLC not registered for this number. Send through the approved Messaging Service.',
   30032: 'Toll-free / A2P not verified.',
   21408: 'Permission to send SMS to this region is not enabled on the Twilio account.',
@@ -28,13 +29,19 @@ export function mapTwilioStatus(status: string | undefined, errorCode?: number |
   return 'queued';
 }
 
+export function formatTwilioSmsError(errorCode?: number | string | null, errorMessage?: string | null): string | undefined {
+  if (errorCode == null || errorCode === '') {
+    return errorMessage?.trim() || undefined;
+  }
+  const code = Number(errorCode);
+  const known = Number.isFinite(code) ? ERROR_COPY[code] : undefined;
+  if (known) return `${code}: ${known}`;
+  if (errorMessage) return `${errorCode}: ${errorMessage}`;
+  return String(errorCode);
+}
+
 function formatError(errorCode?: number | null, errorMessage?: string | null): string | undefined {
-  if (!errorCode && !errorMessage) return undefined;
-  const known = errorCode != null ? ERROR_COPY[errorCode] : undefined;
-  if (known) return `${errorCode}: ${known}`;
-  if (errorCode && errorMessage) return `${errorCode}: ${errorMessage}`;
-  if (errorCode) return String(errorCode);
-  return errorMessage ?? undefined;
+  return formatTwilioSmsError(errorCode, errorMessage);
 }
 
 function twilioErrorCode(err: unknown): number | null {

@@ -3,6 +3,7 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { getTwilioCreds } from '@/lib/telephony/twilio';
 import { sendTwilioSms } from '@/lib/telephony/sms';
+import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
 
 export async function POST(req: NextRequest) {
   const cookieStore = await cookies();
@@ -100,14 +101,17 @@ export async function POST(req: NextRequest) {
   try {
     const sent = await sendTwilioSms(creds, lead.phone, body.trim());
 
-    await supabase
-      .from('inbox_messages')
-      .update({
-        status: sent.status,
-        twilio_sid: sent.sid,
-        error_message: sent.error ?? null,
-      })
-      .eq('id', msg.id);
+    await recordOutboundInboxSms(supabase, {
+      existingMessageId: msg.id,
+      userId: user.id,
+      leadId: leadId,
+      toPhone: lead.phone,
+      body: body.trim(),
+      twilioSid: sent.sid,
+      status: sent.status,
+      errorMessage: sent.error ?? null,
+      sentBy: 'user',
+    });
 
     if (sent.status !== 'failed') {
       await supabase
