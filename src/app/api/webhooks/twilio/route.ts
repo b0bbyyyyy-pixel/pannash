@@ -185,6 +185,15 @@ export async function POST(req: NextRequest) {
       console.error('[Inbox] Failed to write inbound to inbox_messages:', inboxErr);
     }
 
+    const { data: casperRow } = await supabase
+      .from('user_settings')
+      .select('casper_enabled')
+      .eq('user_id', ownerId)
+      .maybeSingle();
+    if (!casperRow?.casper_enabled) {
+      return emptyTwiml();
+    }
+
     // Optional: campaign AI auto-reply (only if this lead is on an active SMS campaign)
     const { data: campaignLead } = await supabase
       .from('campaign_leads')

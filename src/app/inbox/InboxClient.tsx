@@ -148,8 +148,7 @@ export default function InboxClient({
   const [composerText, setComposerText] = useState('');
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
-  const [suggestingReply, setSuggestingReply] = useState(false);
-  const [suggestSent, setSuggestSent] = useState(false);
+  const [casperOn, setCasperOn] = useState(false);
 
   // Lead overlay — shows the pipeline lead workspace in a floating panel
   const [leadOverlayId, setLeadOverlayId] = useState<string | null>(null);
@@ -166,6 +165,13 @@ export default function InboxClient({
   useEffect(() => {
     setDialerOpen(false);
   }, [pathname]);
+
+  useEffect(() => {
+    fetch('/api/settings/casper')
+      .then(r => r.json())
+      .then(d => setCasperOn(!!d.enabled))
+      .catch(() => {});
+  }, []);
 
   // ── Load lead list ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -790,45 +796,31 @@ export default function InboxClient({
               />
             </div>
           )}
+          {selectedLead && (
+            <button
+              type="button"
+              onClick={async () => {
+                const next = !casperOn;
+                setCasperOn(next);
+                try {
+                  await fetch('/api/settings/casper', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: next }),
+                  });
+                } catch {
+                  setCasperOn(!next);
+                }
+              }}
+              title={casperOn ? 'Casper is on — click to turn off' : 'Casper is off — click to turn on'}
+              className={`absolute left-4 bottom-3 z-20 text-[10px] font-semibold uppercase tracking-wide transition-colors ${
+                casperOn ? 'text-[#1a1a1a]' : 'text-red-500'
+              }`}
+            >
+              Casper AI
+            </button>
+          )}
         </div>
-        {selectedLead && (
-          <div className="flex-shrink-0 px-4 pb-3">
-              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">
-                Casper AI
-              </p>
-              {suggestSent ? (
-                <div className="w-full px-3 py-2 text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg text-center">
-                  ✓ Card added to Agent tab
-                </div>
-              ) : (
-                <button
-                  disabled={suggestingReply}
-                  onClick={async () => {
-                    setSuggestingReply(true);
-                    try {
-                      await fetch('/api/agent/suggest-reply', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          lead_id: selectedLead.id,
-                          conversation_id: selectedLead.conversation?.id ?? null,
-                          lead_name: selectedLead.name,
-                          company: selectedLead.company ?? null,
-                        }),
-                      });
-                      setSuggestSent(true);
-                      setTimeout(() => setSuggestSent(false), 4000);
-                    } finally {
-                      setSuggestingReply(false);
-                    }
-                  }}
-                  className="w-full px-3 py-2 text-xs text-gray-600 border border-dashed border-gray-300 rounded-lg hover:bg-gray-50 hover:border-gray-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {suggestingReply ? 'Drafting…' : '✨ Suggest reply → Agent'}
-                </button>
-              )}
-            </div>
-        )}
 
         {/* Twilio connection status footer */}
         <div className={`px-4 py-2.5 border-t border-[#e5e5e5] flex items-center gap-2 ${phoneConn ? 'bg-green-50' : 'bg-amber-50'}`}>
