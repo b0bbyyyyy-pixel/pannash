@@ -775,11 +775,11 @@ export default function InboxClient({
       <div className="w-80 flex-shrink-0 flex flex-col border-l border-[#e5e5e5] bg-[#fafafa] overflow-hidden">
         <InboxDialer open={dialerOpen} onOpenChange={setDialerOpen} />
         <div className="flex-1 relative min-h-0 overflow-hidden">
-          <div className="absolute inset-x-0 bottom-0 h-[60%] overflow-hidden pointer-events-none">
+          <div className="absolute inset-x-0 bottom-0 h-[68%] overflow-hidden pointer-events-none">
             <img
               src="/images/logo/starburst-gray.svg"
               alt=""
-              className="absolute inset-x-0 top-0 w-full h-[166.67%] object-cover object-top opacity-45"
+              className="absolute inset-x-0 top-0 w-full h-[147%] object-cover object-top opacity-45"
             />
           </div>
           {selectedLead && (
