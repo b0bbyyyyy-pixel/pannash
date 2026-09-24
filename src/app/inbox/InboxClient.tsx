@@ -163,6 +163,13 @@ export default function InboxClient({
   const leadCasperOn = selectedLead
     ? casperEffectiveForLead(casperOn, selectedLead.casper_enabled)
     : false;
+  const lastThreadMsg = messages[messages.length - 1] ?? null;
+  const casperWaiting = !!(
+    selectedLead &&
+    leadCasperOn &&
+    lastThreadMsg?.direction === 'inbound' &&
+    Date.now() - new Date(lastThreadMsg.created_at).getTime() < 10 * 60_000
+  );
   const webphone = useWebPhone();
   const pathname = usePathname();
   const [dialerOpen, setDialerOpen] = useState(false);
@@ -249,9 +256,24 @@ export default function InboxClient({
   // Replies arrive via Twilio webhook — poll so they show without a refresh.
   useEffect(() => {
     if (!selectedLeadId) return;
-    const id = window.setInterval(() => { loadMessages(selectedLeadId, { quiet: true }); }, 4000);
+    const id = window.setInterval(() => { loadMessages(selectedLeadId, { quiet: true }); }, casperWaiting ? 2000 : 4000);
     return () => window.clearInterval(id);
-  }, [selectedLeadId, loadMessages]);
+  }, [selectedLeadId, loadMessages, casperWaiting]);
+
+  // If the inbound webhook timed out, kick Casper from the open thread.
+  useEffect(() => {
+    if (!selectedLeadId || !casperWaiting || !lastThreadMsg) return;
+    const t = window.setTimeout(() => {
+      fetch('/api/casper/reply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadId: selectedLeadId, delay: true }),
+      })
+        .then(() => loadMessages(selectedLeadId, { quiet: true }))
+        .catch(() => {});
+    }, 2800);
+    return () => window.clearTimeout(t);
+  }, [selectedLeadId, casperWaiting, lastThreadMsg?.id, loadMessages]);
 
   // ── Scroll to bottom on new messages ───────────────────────────────────────
   useEffect(() => {
@@ -759,6 +781,23 @@ export default function InboxClient({
                     </div>
                   </div>
                 ))
+              )}
+              {casperWaiting && (
+                <div className="flex justify-end mt-2">
+                  <div className="max-w-[72%] flex flex-col items-end gap-0.5">
+                    <div className="px-4 py-2.5 rounded-2xl rounded-br-sm bg-blue-500/80 text-white text-sm">
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="flex gap-0.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-white/90 animate-bounce [animation-delay:-0.3s]" />
+                          <span className="w-1.5 h-1.5 rounded-full bg-white/90 animate-bounce [animation-delay:-0.15s]" />
+                          <span className="w-1.5 h-1.5 rounded-full bg-white/90 animate-bounce" />
+                        </span>
+                        <span className="text-[11px] text-white/80">Casper is thinking…</span>
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-gray-400 px-1">getting ready to reply</span>
+                  </div>
+                </div>
               )}
               <div ref={threadEndRef} />
             </div>

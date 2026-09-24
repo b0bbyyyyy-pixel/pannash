@@ -20,6 +20,14 @@ type MissionJson = {
   human_reason?: string;
 };
 
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+export function humanDelayMs(text: string) {
+  return Math.min(12_000, Math.max(4_000, 2_800 + text.length * 42));
+}
+
 function parseMission(raw: string | null | undefined): MissionJson {
   const text = (raw ?? '').trim();
   if (!text) return {};
@@ -54,6 +62,7 @@ export async function runCasperInboundSms(
     body: string;
     from: string;
     to: string;
+    delay?: boolean;
   },
 ): Promise<{ replied: boolean; reason?: string }> {
   let { data: settings } = await supabase
@@ -72,9 +81,14 @@ export async function runCasperInboundSms(
 
   const { data: state } = await supabase
     .from('casper_lead_state')
-    .select('phase, paused_reason')
+    .select('phase, paused_reason, updated_at')
     .eq('lead_id', args.lead.id)
     .maybeSingle();
+
+  if ((state?.paused_reason === 'replying' || state?.paused_reason === 'thinking') && state.updated_at) {
+    const age = Date.now() - new Date(state.updated_at).getTime();
+    if (age < 45_000) return { replied: false, reason: 'already_running' };
+  }
 
   const gate = canCasperAutoReply({
     globalEnabled: !!settings?.casper_enabled,
@@ -93,10 +107,23 @@ export async function runCasperInboundSms(
 
   const { data: thread } = await supabase
     .from('inbox_messages')
-    .select('direction, body, created_at')
+    .select('direction, body, created_at, sent_by')
     .eq('lead_id', args.lead.id)
     .order('created_at', { ascending: false })
     .limit(12);
+
+  const lastIn = (thread ?? []).find((m: { direction: string }) => m.direction === 'inbound');
+  const lastOut = (thread ?? []).find((m: { direction: string }) => m.direction === 'outbound');
+  if (lastIn && lastOut && new Date(lastOut.created_at).getTime() >= new Date(lastIn.created_at).getTime()) {
+    return { replied: false, reason: 'already_replied' };
+  }
+
+  await upsertCasperLeadState(supabase, {
+    leadId: args.lead.id,
+    userId: args.userId,
+    phase: state?.phase || 'chatting',
+    pausedReason: 'thinking',
+  });
 
   const history = (thread ?? []).slice().reverse()
     .map((m: { direction: string; body: string }) => `${m.direction === 'outbound' ? 'You' : 'Lead'}: ${m.body}`)
@@ -134,6 +161,12 @@ Lead just texted: "${args.body}"`,
       status: 'error',
       error: err instanceof Error ? err.message : 'AI error',
       inputSummary: args.body.slice(0, 200),
+    });
+    await upsertCasperLeadState(supabase, {
+      leadId: args.lead.id,
+      userId: args.userId,
+      phase: state?.phase || 'chatting',
+      pausedReason: null,
     });
     return { replied: false, reason: 'ai_error' };
   }
@@ -175,6 +208,16 @@ Lead just texted: "${args.body}"`,
       proposal: parsed.human_reason || `${args.lead.name || 'Lead'} asked Casper for a human.`,
       metadata: { phase: parsed.phase || 'handed_off' },
     });
+  }
+
+  if (args.delay !== false) {
+    await upsertCasperLeadState(supabase, {
+      leadId: args.lead.id,
+      userId: args.userId,
+      phase: state?.phase || 'chatting',
+      pausedReason: 'replying',
+    });
+    await sleep(humanDelayMs(sms));
   }
 
   const creds = await getTwilioCreds(supabase, args.userId);

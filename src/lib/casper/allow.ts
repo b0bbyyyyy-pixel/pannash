@@ -24,7 +24,8 @@ export function canCasperAutoReply(input: CasperGateInput): { ok: boolean; reaso
     return { ok: false, reason: input.leadCasperEnabled === false ? 'lead_off' : 'global_off' };
   }
   if (input.smsOptOut) return { ok: false, reason: 'opt_out' };
-  if (input.pausedReason) return { ok: false, reason: 'paused' };
+  const transient = input.pausedReason === 'thinking' || input.pausedReason === 'replying';
+  if (input.pausedReason && !transient) return { ok: false, reason: 'paused' };
   const phase = (input.phase || 'chatting') as CasperPhase;
   if (STOPPED_PHASES.includes(phase)) return { ok: false, reason: `phase_${phase}` };
   const caps: CasperCapabilities = mergeCapabilities(input.capabilities);

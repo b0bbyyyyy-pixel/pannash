@@ -1,8 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { toE164 } from '@/lib/dialer/e164';
 import { promoteCampaignLeadOnReply } from '@/lib/inbox/promoteCampaignReply';
 import { runCasperInboundSms } from '@/lib/casper/reply';
+
+export const maxDuration = 60;
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -227,18 +229,21 @@ export async function POST(req: NextRequest) {
       return emptyTwiml();
     }
 
-    try {
-      const result = await runCasperInboundSms(supabase, {
-        userId: ownerId,
-        lead: target,
-        body,
-        from,
-        to,
-      });
-      console.log('[SMS Webhook] Casper', result);
-    } catch (casperErr) {
-      console.error('[SMS Webhook] Casper error', casperErr);
-    }
+    after(async () => {
+      try {
+        const result = await runCasperInboundSms(supabase, {
+          userId: ownerId,
+          lead: target,
+          body,
+          from,
+          to,
+          delay: true,
+        });
+        console.log('[SMS Webhook] Casper', result);
+      } catch (casperErr) {
+        console.error('[SMS Webhook] Casper error', casperErr);
+      }
+    });
 
     return emptyTwiml();
   } catch (error) {
