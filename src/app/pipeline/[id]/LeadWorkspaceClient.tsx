@@ -4,6 +4,7 @@ import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { toE164 } from '@/lib/dialer/e164';
+import { buildFundingApplication } from '@/lib/fundingApplication';
 import { useWebPhone } from '@/components/webphone/WebPhone';
 import LeadUpdatesTimeline from '@/components/LeadUpdatesTimeline';
 
@@ -240,6 +241,7 @@ import FinancialsModal, { type BankSnap } from '@/components/FinancialsModal';
 import {
   mapAnalyzerMetricsToUnderwritingFields,
   mapParsedBankFieldsToUd,
+  requestedAmountFromMonthlyRevenue,
   parseMcaPositions,
   parseStatementMonths,
   seedBankAnalysisFromParsed,
@@ -276,6 +278,9 @@ export default function LeadWorkspaceClient({
   const [callBusy, setCallBusy]   = useState(false);
   const [callMsg, setCallMsg]     = useState<string | null>(null);
   const [callSeq, setCallSeq]     = useState(0); // remounts CallHistoryPanel to refresh
+  const [appBusy, setAppBusy]     = useState(false);
+  const [appMissing, setAppMissing] = useState<string[]>([]);
+  const [appMsg, setAppMsg]       = useState<string | null>(null);
 
   const startCall = useCallback(async () => {
     const e164 = toE164(lead.phone);
@@ -293,6 +298,51 @@ export default function LeadWorkspaceClient({
       setCallBusy(false);
     }
   }, [lead.phone, lead.name, webphone]);
+
+  const createApplication = useCallback(async () => {
+    const { missing } = buildFundingApplication({
+      name: lead.name,
+      email: lead.email,
+      phone: lead.phone,
+      company: lead.company,
+      value: lead.value,
+      underwriting_data: lead.underwriting_data,
+    });
+    if (missing.length) {
+      setAppMissing(missing);
+      setAppMsg(null);
+      return;
+    }
+    setAppBusy(true);
+    setAppMissing([]);
+    setAppMsg(null);
+    try {
+      const res = await fetch(`/api/leads/${lead.id}/application`, { method: 'POST' });
+      const json = await res.json().catch(() => ({}));
+      if (res.status === 422 && Array.isArray(json.missing)) {
+        setAppMissing(json.missing);
+        return;
+      }
+      if (!res.ok) {
+        setAppMsg(json.error || 'Could not create application');
+        return;
+      }
+      if (typeof json.requestedAmount === 'number') {
+        const currentUd = (lead.underwriting_data || {}) as Record<string, unknown>;
+        setLead(prev => ({
+          ...prev,
+          value: json.requestedAmount,
+          underwriting_data: { ...currentUd, requestedAmount: json.requestedAmount },
+        }));
+      }
+      setAppMsg(`Saved ${json.fileName || 'application'} to Documents`);
+      setShowDocsModal(true);
+    } catch {
+      setAppMsg('Could not create application');
+    } finally {
+      setAppBusy(false);
+    }
+  }, [lead]);
 
   // Load dynamic statuses
   useEffect(() => {
@@ -441,6 +491,8 @@ export default function LeadWorkspaceClient({
     for (const [k, v] of Object.entries(mapped)) {
       if (typeof v === 'number' && v !== 0) filled[k] = v;
     }
+    const requested = requestedAmountFromMonthlyRevenue(mapped.monthlyRevenue);
+    if (requested != null) filled.requestedAmount = requested;
     const updatedUd = { ...currentUd, ...filled, bankStatementAnalysis: snapshot };
     const res = await fetch('/api/leads/underwriting', {
       method: 'PUT',
@@ -448,7 +500,18 @@ export default function LeadWorkspaceClient({
       body: JSON.stringify({ leadId: lead.id, underwritingData: updatedUd }),
     });
     if (res.ok) {
-      setLead(prev => ({ ...prev, underwriting_data: updatedUd }));
+      if (requested != null) {
+        await fetch('/api/leads/update-crm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ leadId: lead.id, field: 'value', value: requested }),
+        });
+      }
+      setLead(prev => ({
+        ...prev,
+        underwriting_data: updatedUd,
+        ...(requested != null ? { value: requested } : {}),
+      }));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lead.id, lead.underwriting_data]);
@@ -542,6 +605,8 @@ export default function LeadWorkspaceClient({
         mappedBank.otherMCAMonthlyPayment = combined.reduce((s, p) => s + (p.monthlyPayment || 0), 0);
       }
       const hasBank = Object.keys(mappedBank).length > 0;
+      const requested = requestedAmountFromMonthlyRevenue(mappedBank.monthlyRevenue);
+      if (requested != null) mappedBank.requestedAmount = requested;
       const mergedUd: Record<string, unknown> = { ...currentUd, ...leftover, ...mappedBank };
       if (hasBank) {
         mergedUd.bankStatementAnalysis = seedBankAnalysisFromParsed(
@@ -555,7 +620,19 @@ export default function LeadWorkspaceClient({
         body: JSON.stringify({ leadId: lead.id, underwritingData: mergedUd }),
         credentials: 'include',
       });
-      setLead(prev => ({ ...prev, underwriting_data: mergedUd }));
+      if (requested != null) {
+        await fetch('/api/leads/update-crm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ leadId: lead.id, field: 'value', value: requested }),
+          credentials: 'include',
+        });
+      }
+      setLead(prev => ({
+        ...prev,
+        underwriting_data: mergedUd,
+        ...(requested != null ? { value: requested } : {}),
+      }));
     }
   };
 
@@ -1260,14 +1337,15 @@ export default function LeadWorkspaceClient({
               </button>
             </div>
 
-            {/* Application (disabled) + Financials */}
+            {/* Application + Financials */}
             <div className="grid grid-cols-2 gap-2">
               <button
-                disabled
-                title="Coming soon — will link to your funding site application"
-                className="px-3 py-2.5 border border-[#e5e5e5] text-[#9b9b9b] text-xs font-medium rounded-md cursor-not-allowed text-center"
+                onClick={createApplication}
+                disabled={appBusy}
+                title="Create a signed application from this lead’s details"
+                className="px-3 py-2.5 border border-[#e5e5e5] text-[#1a1a1a] text-xs font-medium rounded-md hover:bg-[#f5f5f5] disabled:opacity-50 transition-colors text-center"
               >
-                Application
+                {appBusy ? 'Creating…' : 'Application'}
               </button>
               <button
                 onClick={() => setShowFinancials(true)}
@@ -1276,6 +1354,19 @@ export default function LeadWorkspaceClient({
                 Financials
               </button>
             </div>
+            {appMissing.length > 0 && (
+              <div className="mt-1.5 rounded-md border border-red-200 bg-red-50 px-2.5 py-2">
+                <p className="text-[11px] font-medium text-red-700">Fill these fields first:</p>
+                <ul className="mt-1 space-y-0.5">
+                  {appMissing.map(label => (
+                    <li key={label} className="text-[11px] text-red-600">· {label}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {appMsg && appMissing.length === 0 && (
+              <p className="text-[11px] text-[#6b6b6b] mt-1.5">{appMsg}</p>
+            )}
 
             {/* Call — in-app WebRTC (headset) */}
             <div className="mt-2">

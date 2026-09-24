@@ -44,6 +44,16 @@ function resolveAvgMonthlyDepositCount(metrics: Record<string, unknown>): number
   return 0;
 }
 
+/** Nearest $1,000 from average monthly revenue (14922.55 → 15000, 45222.15 → 45000). */
+export function requestedAmountFromMonthlyRevenue(monthlyRevenue: unknown): number | null {
+  const n = typeof monthlyRevenue === 'number'
+    ? monthlyRevenue
+    : Number(String(monthlyRevenue ?? '').replace(/[^0-9.-]/g, ''));
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const rounded = Math.round(n / 1000) * 1000;
+  return rounded > 0 ? rounded : null;
+}
+
 /** Map last four calendar months of true-deposit revenue (oldest → month1 … newest → month4). */
 export function mapAnalyzerMetricsToUnderwritingFields(metrics: Record<string, unknown>): {
   month1Revenue: number;
@@ -52,6 +62,7 @@ export function mapAnalyzerMetricsToUnderwritingFields(metrics: Record<string, u
   month4Revenue: number;
   /** Single average — use this as the canonical revenue figure going forward */
   monthlyRevenue: number;
+  requestedAmount: number;
   avgDailyBalance: number;
   endingBalance: number;
   nsfCount: number;
@@ -70,6 +81,7 @@ export function mapAnalyzerMetricsToUnderwritingFields(metrics: Record<string, u
   const monthlyRevenue = nonZero.length > 0
     ? nonZero.reduce((a, b) => a + b, 0) / nonZero.length
     : 0;
+  const requestedAmount = requestedAmountFromMonthlyRevenue(monthlyRevenue) ?? 0;
 
   return {
     month1Revenue: m1,
@@ -77,6 +89,7 @@ export function mapAnalyzerMetricsToUnderwritingFields(metrics: Record<string, u
     month3Revenue: m3,
     month4Revenue: m4,
     monthlyRevenue,
+    requestedAmount,
     avgDailyBalance: Number(metrics.avg_daily_balance) || 0,
     endingBalance: Number(metrics.ending_balance) || 0,
     nsfCount: Number(metrics.nsf_count) || 0,
@@ -288,6 +301,8 @@ export function mapParsedBankFieldsToUd(fields: Record<string, unknown>): Record
   if (months.length) {
     Object.assign(ud, averagesFromMonths(months));
     ud.statementMonths = months;
+    const requested = requestedAmountFromMonthlyRevenue(ud.monthlyRevenue);
+    if (requested != null) ud.requestedAmount = requested;
   } else {
     const ending = coerceNumber(fields.endingBalance);
     const opening = coerceNumber(fields.openingBalance);
@@ -298,7 +313,11 @@ export function mapParsedBankFieldsToUd(fields: Record<string, unknown>): Record
     const depCount = coerceNumber(fields.depositCount ?? fields.depositsCount);
     const neg = coerceNumber(fields.negativeDays);
 
-    if (deposits != null) ud.monthlyRevenue = deposits;
+    if (deposits != null) {
+      ud.monthlyRevenue = deposits;
+      const requested = requestedAmountFromMonthlyRevenue(deposits);
+      if (requested != null) ud.requestedAmount = requested;
+    }
     if (adb != null) ud.avgDailyBalance = adb;
     if (ending != null) ud.endingBalance = ending;
     if (nsf != null) ud.nsfCount = nsf;
