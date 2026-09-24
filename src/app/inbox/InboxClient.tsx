@@ -554,7 +554,7 @@ export default function InboxClient({
                         {unread > 0 && (
                           <span className="flex-shrink-0 w-2 h-2 rounded-full bg-blue-500" />
                         )}
-                        <p className={`text-sm truncate ${unread > 0 ? 'font-semibold text-[#1a1a1a]' : 'font-medium text-[#1a1a1a]'}`}>
+                        <p className={`text-sm truncate ${unread > 0 ? 'font-semibold text-red-600' : 'font-medium text-[#1a1a1a]'}`}>
                           {lead.company || lead.name}
                         </p>
                       </div>

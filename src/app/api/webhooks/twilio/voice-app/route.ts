@@ -19,6 +19,7 @@ import {
   formDataToParams,
   publicAppUrl,
 } from '@/lib/telephony/twilio';
+import { pickDialerCallerId } from '@/lib/dialerCallerId';
 
 function twimlResponse(xml: string, status = 200) {
   return new NextResponse(xml, { status, headers: { 'Content-Type': 'text/xml' } });
@@ -161,8 +162,10 @@ export async function POST(req: NextRequest) {
         console.error('[twilio/voice-app] No caller ID (phone_connections.phone_number or TWILIO_FROM_NUMBER)');
         return twimlResponse(hangupTwiml('Caller I D is not set.'), 500);
       }
+      const callerId = pickDialerCallerId(outboundTo, fromNumber);
+      console.log('[twilio/voice-app] callerId', callerId);
       const dial = vr.dial({
-        callerId: fromNumber,
+        callerId,
         answerOnBridge: true,
         timeout: 30,
       });
