@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { name, email, phone, company, notes, list_id, underwriting_data } = await req.json();
+    const { name, email, phone, company, notes, list_id, underwriting_data, in_pipeline } = await req.json();
 
     if (!name) {
       return NextResponse.json({ error: 'Name is required' }, { status: 400 });
@@ -43,6 +43,11 @@ export async function POST(req: NextRequest) {
         list_id: list_id || null,
         last_contact: new Date().toISOString(),
         lead_status: 'New Lead',
+        ...(in_pipeline ? {
+          in_pipeline: true,
+          timer_type: 'Display Date',
+          timer_end_date: new Date().toISOString(),
+        } : {}),
         ...(underwriting_data && Object.keys(underwriting_data).length > 0
           ? { underwriting_data }
           : {}),

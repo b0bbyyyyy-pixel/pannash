@@ -41,9 +41,12 @@ export async function PATCH(req: NextRequest) {
         return NextResponse.json({ error: 'Invalid field' }, { status: 400 });
       }
 
+      const patch: Record<string, unknown> = { [field]: value };
+      if (field === 'lead_status') patch.last_contact = new Date().toISOString();
+
       const { error } = await supabase
         .from('leads')
-        .update({ [field]: value })
+        .update(patch)
         .eq('id', leadId)
         .eq('user_id', user.id);
 
@@ -58,7 +61,7 @@ export async function PATCH(req: NextRequest) {
     // Default: move to pipeline — also set status to "New Lead" if not already set
     const { data: existing } = await supabase
       .from('leads')
-      .select('lead_status')
+      .select('lead_status, timer_type, timer_end_date, created_at')
       .eq('id', leadId)
       .eq('user_id', user.id)
       .single();
@@ -68,6 +71,10 @@ export async function PATCH(req: NextRequest) {
       updatePayload.lead_status = status.trim();
     } else if (!existing?.lead_status) {
       updatePayload.lead_status = 'New Lead';
+    }
+    if (!existing?.timer_end_date) {
+      updatePayload.timer_type = 'Display Date';
+      updatePayload.timer_end_date = existing?.created_at || new Date().toISOString();
     }
 
     const { error } = await supabase

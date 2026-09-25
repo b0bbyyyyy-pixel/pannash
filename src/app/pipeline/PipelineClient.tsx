@@ -28,6 +28,8 @@ interface Lead {
   underwriting_data?: Record<string, unknown> | null;
   last_text?: string | null;
   last_text_outbound?: boolean;
+  timer_type?: string | null;
+  timer_end_date?: string | null;
 }
 
 interface PipelineClientProps {
@@ -64,7 +66,12 @@ function relativeTime(dateStr: string | null | undefined): string {
 }
 
 function activityAt(lead: Lead): string | null {
-  return lead.last_contact || lead.last_called_at || lead.updated_at || lead.created_at || null;
+  const times = [lead.last_contact, lead.last_called_at, lead.updated_at, lead.created_at]
+    .filter((d): d is string => !!d)
+    .map(d => new Date(d).getTime())
+    .filter(t => Number.isFinite(t));
+  if (!times.length) return null;
+  return new Date(Math.max(...times)).toISOString();
 }
 
 function absDate(dateStr: string | null | undefined): string {
@@ -137,7 +144,23 @@ function followUpLabel(lead: Lead): string {
   return target.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-const PIPELINE_COLS = 'grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)_160px_100px_100px_130px]';
+function pipelineAddedDate(lead: Lead): string {
+  const raw = (lead.timer_type === 'Display Date' && lead.timer_end_date)
+    ? lead.timer_end_date
+    : lead.created_at;
+  if (!raw) return '';
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw.slice(0, 10));
+  const d = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(raw);
+  if (Number.isNaN(d.getTime())) return '';
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    ...(sameYear ? {} : { year: 'numeric' }),
+  });
+}
+
+const PIPELINE_COLS = 'grid-cols-[72px_minmax(0,1fr)_minmax(0,1.1fr)_160px_100px_100px_130px]';
 
 // ── Filter state shape ────────────────────────────────────────────────────────
 interface Filters {
@@ -410,6 +433,7 @@ export default function PipelineClient({ leads, userId, compact = false }: Pipel
       <div className="bg-white border border-[#e5e5e5] rounded-lg overflow-hidden">
         {/* Table header */}
         <div className={`grid ${PIPELINE_COLS} gap-x-3 border-b border-[#e5e5e5] bg-[#fafafa] px-3 py-2`}>
+          <div className="text-[10px] font-bold text-[#9b9b9b] uppercase tracking-wider">Added</div>
           <div className="text-[10px] font-bold text-[#9b9b9b] uppercase tracking-wider">Lead</div>
           <div className="text-[10px] font-bold text-[#9b9b9b] uppercase tracking-wider">Last text</div>
           <div className="text-[10px] font-bold text-[#9b9b9b] uppercase tracking-wider">Status</div>
@@ -453,6 +477,13 @@ export default function PipelineClient({ leads, userId, compact = false }: Pipel
                   idx === filtered.length - 1 ? 'border-b-0' : ''
                 }`}
               >
+                {/* Added / created date */}
+                <div className="flex items-center">
+                  <span className="text-[11px] text-[#6b6b6b] tabular-nums whitespace-nowrap">
+                    {pipelineAddedDate(lead)}
+                  </span>
+                </div>
+
                 {/* Lead info — company bold + name inline */}
                 <div className="flex flex-col justify-center min-w-0 pr-3">
                   <span className="text-xs font-semibold text-[#1a1a1a] truncate leading-tight">

@@ -198,19 +198,24 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
           phone:   fields.phone.trim() || null,
           company: fields.company.trim() || null,
           notes:   fields.notes.trim() || null,
+          in_pipeline: true,
           ...(Object.keys(pasteUW).length > 0 ? { underwriting_data: pasteUW } : {}),
         }),
       });
       if (!res.ok) throw new Error((await res.json()).error || 'Create failed');
       const { lead } = await res.json();
 
-      // 2. Move to pipeline
-      await fetch('/api/leads/pipeline', {
+      // 2. Ensure pipeline flag (create already sets it; keep this if the column was added later)
+      const moved = await fetch('/api/leads/pipeline', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ leadId: lead.id }),
       });
+      if (!moved.ok) {
+        const err = await moved.json().catch(() => ({}));
+        throw new Error(err.error || 'Created but failed to add to pipeline');
+      }
 
       // 3. Navigate to lead workspace
       router.push(`/pipeline/${lead.id}`);

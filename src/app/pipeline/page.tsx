@@ -43,6 +43,28 @@ export default async function PipelinePage({
     console.error('Error fetching pipeline leads:', error);
   }
 
+  // Recover pipeline-created leads if the in_pipeline flag never stuck.
+  const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+  const { data: recentOrphans } = await supabase
+    .from('leads')
+    .select('*')
+    .eq('user_id', user.id)
+    .is('list_id', null)
+    .gte('created_at', weekAgo)
+    .order('created_at', { ascending: false })
+    .limit(40);
+
+  const leadMap = new Map((leads ?? []).map(l => [l.id, l]));
+  const orphanIds: string[] = [];
+  for (const l of recentOrphans ?? []) {
+    if (!leadMap.has(l.id)) leadMap.set(l.id, { ...l, in_pipeline: true });
+    if (l.in_pipeline !== true) orphanIds.push(l.id);
+  }
+  if (orphanIds.length) {
+    await supabase.from('leads').update({ in_pipeline: true }).in('id', orphanIds).eq('user_id', user.id);
+  }
+  const mergedLeads = [...leadMap.values()];
+
   const lastTextByLead: Record<string, { preview: string; outbound: boolean }> = {};
 
   const { data: convs, error: convErr } = await supabase
@@ -64,7 +86,7 @@ export default async function PipelinePage({
   }
 
   // Fallback: latest inbox_messages when conversation preview is missing
-  const missingIds = (leads ?? [])
+  const missingIds = mergedLeads
     .map(l => String(l.id))
     .filter(id => !lastTextByLead[id]);
   if (missingIds.length) {
@@ -84,7 +106,7 @@ export default async function PipelinePage({
     }
   }
 
-  const leadsWithText = (leads || []).map(l => {
+  const leadsWithText = mergedLeads.map(l => {
     const t = lastTextByLead[String(l.id)];
     return {
       ...l,
