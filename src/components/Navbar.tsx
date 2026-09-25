@@ -2,9 +2,10 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import ManualDialPanel from '@/app/dialer/ManualDialPanel';
 import { useWebPhone } from '@/components/webphone/WebPhone';
+import BillingClient from '@/app/settings/billing/BillingClient';
 
 interface NavbarProps {
   userName: string;
@@ -16,9 +17,19 @@ export default function Navbar({ userName }: NavbarProps) {
   const [showDropdown, setShowDropdown] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
   const [showAgent, setShowAgent] = useState(false);
+  const [showBilling, setShowBilling] = useState(false);
   const webphone = useWebPhone();
 
   const isActive = (path: string) => pathname === path || pathname?.startsWith(path + '/');
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('billing') !== '1') return;
+    setShowBilling(true);
+    params.delete('billing');
+    const q = params.toString();
+    router.replace(`${pathname || '/'}${q ? `?${q}` : ''}`, { scroll: false });
+  }, [pathname, router]);
 
   return (
     <nav className="fixed top-0 left-0 right-0 bg-[#fafafa] border-b border-[#e5e5e5] z-50">
@@ -66,7 +77,7 @@ export default function Navbar({ userName }: NavbarProps) {
           <div className="relative flex items-center gap-4">
             {/* Phone icon → live keypad popup */}
             <button
-              onClick={() => { webphone.dialPadOpen ? webphone.closeDialPad() : webphone.openDialPad(); setShowAgent(false); setShowCalendar(false); setShowDropdown(false); }}
+              onClick={() => { webphone.dialPadOpen ? webphone.closeDialPad() : webphone.openDialPad(); setShowAgent(false); setShowCalendar(false); setShowBilling(false); setShowDropdown(false); }}
               className="focus:outline-none hover:opacity-70 transition-opacity"
               title="Phone"
             >
@@ -81,7 +92,7 @@ export default function Navbar({ userName }: NavbarProps) {
 
             {/* Agent icon → popup */}
             <button
-              onClick={() => { setShowAgent(true); webphone.closeDialPad(); setShowCalendar(false); setShowDropdown(false); }}
+              onClick={() => { setShowAgent(true); webphone.closeDialPad(); setShowCalendar(false); setShowBilling(false); setShowDropdown(false); }}
               className="focus:outline-none hover:opacity-70 transition-opacity"
               title="Agent"
             >
@@ -96,7 +107,7 @@ export default function Navbar({ userName }: NavbarProps) {
 
             {/* Calendar icon → popup */}
             <button
-              onClick={() => { setShowCalendar(true); setShowAgent(false); webphone.closeDialPad(); setShowDropdown(false); }}
+              onClick={() => { setShowCalendar(true); setShowAgent(false); setShowBilling(false); webphone.closeDialPad(); setShowDropdown(false); }}
               className="focus:outline-none hover:opacity-70 transition-opacity"
               title="Calendar"
             >
@@ -141,13 +152,19 @@ export default function Navbar({ userName }: NavbarProps) {
                 >
                   Email & Phone Connectors
                 </Link>
-                <Link
-                  href="/settings/billing"
-                  className="block px-4 py-2.5 text-sm text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors"
-                  onClick={() => setShowDropdown(false)}
+                <button
+                  type="button"
+                  className="block w-full text-left px-4 py-2.5 text-sm text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors"
+                  onClick={() => {
+                    setShowBilling(true);
+                    setShowDropdown(false);
+                    setShowAgent(false);
+                    setShowCalendar(false);
+                    webphone.closeDialPad();
+                  }}
                 >
                   Billing
-                </Link>
+                </button>
                 <Link
                   href="/settings/vault"
                   className="block px-4 py-2.5 text-sm text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors"
@@ -266,6 +283,40 @@ export default function Navbar({ userName }: NavbarProps) {
               className="flex-1 w-full bg-white border-0"
               title="Agent"
             />
+          </div>
+        </>
+      )}
+
+      {/* Billing popup — stays on the current page */}
+      {showBilling && (
+        <>
+          <div
+            className="fixed inset-0 bg-black/40 z-[80]"
+            onClick={() => setShowBilling(false)}
+          />
+          <div
+            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[81] bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between px-6 py-4 border-b border-[#f0f0f0] shrink-0">
+              <div>
+                <h3 className="font-bold text-[#1a1a1a]">Billing</h3>
+                <p className="text-xs text-[#6b6b6b] mt-0.5">Remaining Twilio and xAI credits</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowBilling(false)}
+                className="text-[#9b9b9b] hover:text-[#1a1a1a] transition-colors p-1 rounded hover:bg-[#f5f5f5]"
+                title="Close"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="px-6 py-5 overflow-y-auto">
+              <BillingClient />
+            </div>
           </div>
         </>
       )}

@@ -181,7 +181,7 @@ export async function POST(req: NextRequest) {
           .from('sms_drip_sends')
           .update({ sms_status: 'replied' })
           .eq('lead_id', lead.id)
-          .in('sms_status', ['queued', 'scheduled', 'sent']);
+          .in('sms_status', ['queued', 'scheduled', 'sending', 'sent']);
       } catch {
         // Drip tables not created yet — fine
       }

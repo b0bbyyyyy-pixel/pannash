@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS sms_drip_sends (
   position       INT NOT NULL DEFAULT 0,
   phone          TEXT,
   sms_status     TEXT NOT NULL DEFAULT 'queued'
-                   CHECK (sms_status IN ('queued','scheduled','sent','failed','replied',
+                   CHECK (sms_status IN ('queued','scheduled','sending','sent','failed','replied',
                                          'skipped_tz','skipped_state','skipped_dnc','skipped_dup')),
   template_index INT,
   scheduled_for  TIMESTAMPTZ,
@@ -141,7 +141,7 @@ BEGIN
   -- Reply kills any pending drip sends to this lead, and flags sent ones as replied
   UPDATE sms_drip_sends
   SET sms_status = 'replied'
-  WHERE lead_id = v_lead AND sms_status IN ('queued', 'scheduled', 'sent');
+  WHERE lead_id = v_lead AND sms_status IN ('queued', 'scheduled', 'sending', 'sent');
 
   SELECT id, unread_count INTO v_conv, v_unread
   FROM inbox_conversations

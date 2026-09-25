@@ -69,7 +69,7 @@ BEGIN
 
   UPDATE sms_drip_sends
   SET sms_status = 'replied'
-  WHERE lead_id = v_lead AND sms_status IN ('queued', 'scheduled', 'sent');
+  WHERE lead_id = v_lead AND sms_status IN ('queued', 'scheduled', 'sending', 'sent');
 
   SELECT id, unread_count INTO v_conv, v_unread
   FROM inbox_conversations

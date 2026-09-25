@@ -1,44 +1,26 @@
-import { createServerClient } from '@supabase/ssr';
-import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
-import Navbar from '@/components/Navbar';
-import BillingClient from './BillingClient';
+'use client';
 
-export default async function BillingPage() {
-  const cookieStore = await cookies();
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
-        },
-        set() {},
-        remove() {},
-      },
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+
+/** Billing is a navbar popup. This URL just sends you back and opens it. */
+export default function BillingPage() {
+  const router = useRouter();
+
+  useEffect(() => {
+    let target = '/inbox?billing=1';
+    try {
+      const ref = document.referrer ? new URL(document.referrer) : null;
+      if (ref && ref.origin === window.location.origin && !ref.pathname.startsWith('/settings/billing')) {
+        const params = new URLSearchParams(ref.search);
+        params.set('billing', '1');
+        target = `${ref.pathname}?${params.toString()}`;
+      }
+    } catch {
+      /* stay on inbox */
     }
-  );
+    router.replace(target);
+  }, [router]);
 
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect('/auth');
-
-  return (
-    <div className="min-h-screen bg-[#fdfdfd]">
-      <Navbar userName={user.email?.split('@')[0] || 'User'} />
-
-      <main className="max-w-[900px] mx-auto px-8 pt-24 pb-12">
-        <div className="mb-8">
-          <h1 className="text-4xl font-bold text-gray-900 mb-2">
-            Billing
-          </h1>
-          <p className="text-gray-600">
-            Remaining Twilio and xAI credits
-          </p>
-        </div>
-
-        <BillingClient />
-      </main>
-    </div>
-  );
+  return null;
 }

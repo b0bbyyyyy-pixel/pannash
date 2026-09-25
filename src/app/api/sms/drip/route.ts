@@ -119,8 +119,19 @@ export async function POST(req: NextRequest) {
     const seenPhones = new Set<string>();
     const now = new Date().toISOString();
 
+    const { data: priorSends } = await supabase
+      .from('sms_drip_sends')
+      .select('lead_id, phone')
+      .eq('user_id', user.id)
+      .in('sms_status', ['sent', 'sending']);
+    const alreadyLead = new Set((priorSends ?? []).map(s => s.lead_id));
+    const alreadyPhone = new Set(
+      (priorSends ?? []).map(s => (s.phone || '').replace(/\D/g, '').slice(-10)).filter(d => d.length === 10)
+    );
+
     const rows = (leads ?? []).map((l, i) => {
       const e164 = toE164(l.phone ?? '');
+      const digits = (e164 || l.phone || '').replace(/\D/g, '').slice(-10);
       const ud = (l.underwriting_data ?? {}) as Record<string, unknown>;
       const state = normalizeState(String(ud.businessState ?? ud.state ?? ''));
 
@@ -129,6 +140,8 @@ export async function POST(req: NextRequest) {
       if (!e164) { status = 'skipped_dnc'; error = 'No valid phone'; }
       else if (l.sms_opt_out) { status = 'skipped_dnc'; error = 'Opted out'; }
       else if (!includeAlreadyTexted && l.sms_sent_at) { status = 'skipped_dnc'; error = 'Already texted'; }
+      else if (!includeAlreadyTexted && alreadyLead.has(l.id)) { status = 'skipped_dup'; error = 'Already sent in a prior drip'; }
+      else if (!includeAlreadyTexted && digits.length === 10 && alreadyPhone.has(digits)) { status = 'skipped_dup'; error = 'Number already texted'; }
       else if (state && skip.has(state)) { status = 'skipped_state'; }
       else if (e164 && seenPhones.has(e164)) { status = 'skipped_dup'; error = 'Duplicate phone in campaign'; }
       if (e164) seenPhones.add(e164);
