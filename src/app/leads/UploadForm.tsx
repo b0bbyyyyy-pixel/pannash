@@ -1336,6 +1336,24 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
     return all.slice(f - 1, t);
   }, []);
 
+  const selectedRange = (total: number) => {
+    const f = Math.max(1, parseInt(rangeFrom) || 1);
+    const t = rangeTo.trim() ? Math.min(total, parseInt(rangeTo) || total) : total;
+    return { from: f, to: Math.max(f, t) };
+  };
+
+  const sliceCsvToRange = (csv: string, from: number, to: number) => {
+    const result = Papa.parse<string[]>(csv, { skipEmptyLines: true, header: false });
+    const rows = (result.data ?? []).filter(r => Array.isArray(r) && r.some(c => String(c ?? '').trim()));
+    if (rows.length < 2) return { csv, count: 0 };
+    const header = rows[0];
+    const data = rows.slice(1);
+    const start = Math.max(0, from - 1);
+    const end = Math.min(data.length, to);
+    const slice = data.slice(start, end);
+    return { csv: Papa.unparse([header, ...slice]), count: slice.length };
+  };
+
   const handleRangeChange = (from: string, to: string) => {
     setRangeFrom(from);
     setRangeTo(to);
@@ -1359,13 +1377,19 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
   // ── AI-powered re-parse ─────────────────────────────────────────────────
   const handleAiParse = async () => {
     if (!rawSheetsCsv) return;
+    const { from, to } = selectedRange(sheetsAllRows.length || 1);
+    const { csv: rangedCsv, count } = sliceCsvToRange(rawSheetsCsv, from, to);
+    if (count === 0) {
+      setAiParseError('No rows in the selected range to parse.');
+      return;
+    }
     setAiParsing(true);
     setAiParseError('');
     try {
       const res = await fetch('/api/import/ai-parse-leads', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ csv: rawSheetsCsv }),
+        body: JSON.stringify({ csv: rangedCsv }),
       });
       const json = await res.json();
       if (!res.ok) {
@@ -1392,11 +1416,12 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
           zip:       l.zip        || null,
           startDate: l.start_date || null,
         }));
-      setSheetsAllRows(aiLeads);
-      const defaultTo = String(aiLeads.length);
-      setRangeFrom('1');
-      setRangeTo(defaultTo);
-      setSheetsPreview(applyRange(aiLeads, '1', defaultTo));
+      const next = [...sheetsAllRows];
+      for (let i = 0; i < aiLeads.length && from - 1 + i < next.length; i++) {
+        next[from - 1 + i] = aiLeads[i];
+      }
+      setSheetsAllRows(next);
+      setSheetsPreview(applyRange(next, rangeFrom, rangeTo));
     } catch (e: any) {
       setAiParseError(e.message || 'Unexpected error during AI parse.');
     } finally {
@@ -2000,7 +2025,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
-              Names look wrong? Re-parse with AI
+              {`Names look wrong? Re-parse rows ${selectedRange(sheetsAllRows.length).from}–${selectedRange(sheetsAllRows.length).to} with AI`}
             </button>
           )}
 
@@ -2011,7 +2036,9 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
               </svg>
-              <span className="text-xs text-gray-600">AI is reading your sheet… this may take 10–30 seconds for large files.</span>
+              <span className="text-xs text-gray-600">
+                AI is reading rows {selectedRange(sheetsAllRows.length).from}–{selectedRange(sheetsAllRows.length).to}…
+              </span>
             </div>
           )}
 
@@ -2040,7 +2067,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
                   <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                   </svg>
-                  Parse with AI
+                  Parse selected with AI
                 </button>
               </div>
               <div className="max-h-52 overflow-y-auto">
