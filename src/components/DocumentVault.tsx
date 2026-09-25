@@ -23,6 +23,16 @@ export async function vaultToFile(doc: VaultFile): Promise<File> {
   return new File([blob], doc.file_name, { type: doc.file_type || blob.type });
 }
 
+function isNoteFile(f: { file_name: string; file_type?: string }) {
+  const type = (f.file_type || '').toLowerCase();
+  const name = f.file_name.toLowerCase();
+  return type.startsWith('text/') || name.endsWith('.txt') || name.endsWith('.md');
+}
+
+function noteTitle(name: string) {
+  return name.replace(/\.(txt|md)$/i, '');
+}
+
 function matchesAccept(name: string, accept?: string) {
   if (!accept) return true;
   const exts = accept.split(',').map(s => s.trim().replace('.', '').toLowerCase()).filter(Boolean);
@@ -52,6 +62,11 @@ export default function DocumentVault({
   const [error, setError] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [noteId, setNoteId] = useState<string | null>(null);
+  const [noteTitleVal, setNoteTitleVal] = useState('');
+  const [noteBody, setNoteBody] = useState('');
+  const [savingNote, setSavingNote] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -95,8 +110,66 @@ export default function DocumentVault({
     }
   }
 
+  function startNewNote() {
+    setNoteId(null);
+    setNoteTitleVal('');
+    setNoteBody('');
+    setNoteOpen(true);
+    setError('');
+  }
+
+  async function openNote(f: VaultFile) {
+    setError('');
+    try {
+      const res = await fetch(`/api/vault/file?id=${f.id}`, { credentials: 'include' });
+      if (!res.ok) throw new Error('Could not open note');
+      const text = await res.text();
+      setNoteId(f.id);
+      setNoteTitleVal(noteTitle(f.file_name));
+      setNoteBody(text);
+      setNoteOpen(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not open note');
+    }
+  }
+
+  async function saveNote() {
+    const title = noteTitleVal.trim();
+    if (!title) {
+      setError('Give the note a title.');
+      return;
+    }
+    setSavingNote(true);
+    setError('');
+    try {
+      if (noteId) {
+        const res = await fetch('/api/vault', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ id: noteId, title, body: noteBody }),
+        });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(d.error || 'Could not save note');
+      } else {
+        const file = new File([noteBody], `${title}.txt`, { type: 'text/plain' });
+        const fd = new FormData();
+        fd.append('file', file);
+        const res = await fetch('/api/vault', { method: 'POST', body: fd, credentials: 'include' });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(d.error || 'Could not save note');
+      }
+      setNoteOpen(false);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save note');
+    } finally {
+      setSavingNote(false);
+    }
+  }
+
   async function remove(id: string) {
-    if (!confirm('Remove this file from the vault?')) return;
+    if (!confirm('Remove this from the vault?')) return;
     setDeleting(id);
     try {
       const res = await fetch(`/api/vault?id=${id}`, { method: 'DELETE', credentials: 'include' });
@@ -189,6 +262,15 @@ export default function DocumentVault({
             >
               {uploading ? 'Storing…' : 'Add files'}
             </button>
+            {!pick && (
+              <button
+                type="button"
+                onClick={startNewNote}
+                className="text-xs font-medium uppercase tracking-wide text-[#1a1a1a] border border-[#e5e5e5] px-3 py-1.5 rounded-md hover:border-[#1a1a1a]"
+              >
+                New note
+              </button>
+            )}
             <p className="text-[11px] text-[#9b9b9b]">
               {dragOver ? 'Drop to upload' : 'or drop files here'}
             </p>
@@ -212,11 +294,47 @@ export default function DocumentVault({
             if (e.dataTransfer.files?.length) upload(e.dataTransfer.files);
           }}
         >
+          {noteOpen && (
+            <div className="mb-4 border border-[#e5e5e5] rounded-lg p-3 space-y-2.5">
+              <input
+                type="text"
+                value={noteTitleVal}
+                onChange={e => setNoteTitleVal(e.target.value)}
+                placeholder="Note title"
+                className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm text-[#1a1a1a] placeholder:text-[#b0b0b0] focus:outline-none focus:border-[#1a1a1a]"
+              />
+              <textarea
+                value={noteBody}
+                onChange={e => setNoteBody(e.target.value)}
+                placeholder="Write the note…"
+                rows={8}
+                className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm text-[#1a1a1a] placeholder:text-[#b0b0b0] focus:outline-none focus:border-[#1a1a1a] resize-y min-h-[140px]"
+              />
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setNoteOpen(false)}
+                  className="text-xs text-[#9b9b9b] hover:text-[#1a1a1a] px-3 py-1.5"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={saveNote}
+                  disabled={savingNote}
+                  className="text-xs font-medium uppercase tracking-wide text-white bg-[#1a1a1a] px-3 py-1.5 rounded-md hover:bg-[#333] disabled:opacity-40"
+                >
+                  {savingNote ? 'Saving…' : 'Save note'}
+                </button>
+              </div>
+            </div>
+          )}
+
           {loading ? (
             <p className="text-xs text-[#9b9b9b] py-8 text-center">Loading…</p>
-          ) : visible.length === 0 ? (
+          ) : visible.length === 0 && !noteOpen ? (
             <p className="text-xs text-[#9b9b9b] py-8 text-center">Vault is empty.</p>
-          ) : (
+          ) : visible.length > 0 ? (
             <div className="space-y-1.5">
               {visible.map(f => (
                 <div key={f.id} className="flex items-center gap-2 py-1.5 border-b border-[#f5f5f5] last:border-0">
@@ -230,11 +348,16 @@ export default function DocumentVault({
                   )}
                   <button
                     type="button"
-                    onClick={() => view(f.id)}
+                    onClick={() => isNoteFile(f) ? openNote(f) : view(f.id)}
                     className="flex-1 min-w-0 text-left"
                   >
-                    <p className="text-xs font-medium text-[#1a1a1a] truncate">{f.file_name}</p>
-                    <p className="text-[10px] text-[#9b9b9b]">{fmtSize(f.file_size)}</p>
+                    <p className="text-xs font-medium text-[#1a1a1a] truncate">
+                      {isNoteFile(f) ? noteTitle(f.file_name) : f.file_name}
+                      {isNoteFile(f) && (
+                        <span className="ml-2 align-middle text-[9px] font-semibold uppercase tracking-wider text-[#6b6b6b] bg-[#f0f0f0] px-1.5 py-0.5 rounded">Note</span>
+                      )}
+                    </p>
+                    <p className="text-[10px] text-[#9b9b9b]">{isNoteFile(f) ? 'Note' : fmtSize(f.file_size)}</p>
                   </button>
                   <div className="flex items-center gap-3 shrink-0">
                     <button
@@ -259,7 +382,7 @@ export default function DocumentVault({
                 </div>
               ))}
             </div>
-          )}
+          ) : null}
           {error ? <p className="text-xs text-red-600 mt-2">{error}</p> : null}
         </div>
 

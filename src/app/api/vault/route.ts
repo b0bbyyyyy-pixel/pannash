@@ -69,6 +69,55 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ file: row });
 }
 
+export async function PUT(req: NextRequest) {
+  const supabase = await getSupabase();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const { id, title, body } = await req.json();
+  if (!id || typeof body !== 'string') {
+    return NextResponse.json({ error: 'Missing id or body' }, { status: 400 });
+  }
+
+  const { data: row, error: fetchError } = await supabase
+    .from('document_vault')
+    .select('id, file_path, file_name')
+    .eq('id', id)
+    .eq('user_id', user.id)
+    .single();
+
+  if (fetchError || !row) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+  const name = (typeof title === 'string' && title.trim()
+    ? title.trim().replace(/\.txt$/i, '')
+    : row.file_name.replace(/\.txt$/i, '')) + '.txt';
+  const bytes = new TextEncoder().encode(body);
+
+  const { error: uploadError } = await supabase.storage
+    .from('lead-attachments')
+    .upload(row.file_path, bytes, { contentType: 'text/plain', upsert: true });
+
+  if (uploadError) {
+    console.error('[vault PUT storage]', uploadError);
+    return NextResponse.json({ error: 'Failed to save note' }, { status: 500 });
+  }
+
+  const { data: updated, error: dbError } = await supabase
+    .from('document_vault')
+    .update({
+      file_name: name,
+      file_size: bytes.byteLength,
+      file_type: 'text/plain',
+    })
+    .eq('id', id)
+    .eq('user_id', user.id)
+    .select()
+    .single();
+
+  if (dbError) return NextResponse.json({ error: dbError.message }, { status: 500 });
+  return NextResponse.json({ file: updated });
+}
+
 export async function DELETE(req: NextRequest) {
   const supabase = await getSupabase();
   const { data: { user } } = await supabase.auth.getUser();

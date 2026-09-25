@@ -33,7 +33,7 @@ export default async function VaultSettingsPage() {
             Document Vault
           </h1>
           <p className="text-gray-600">
-            Store files here and pull them onto any lead
+            Store files and titled notes here, then pull them onto any lead
           </p>
         </div>
 
