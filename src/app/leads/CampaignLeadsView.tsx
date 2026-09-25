@@ -152,7 +152,10 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
       const res = await fetch(`/api/sms/drip?listId=${listId}`);
       if (!res.ok) return;
       const data = await res.json();
-      setSavedTemplates(data.savedTemplates ?? null);
+      const nextTemplates = (data.savedTemplates ?? null) as string[] | null;
+      setSavedTemplates(prev => (
+        JSON.stringify(prev) === JSON.stringify(nextTemplates) ? prev : nextTemplates
+      ));
       setDripJob(data.job ?? null);
       const map = new Map<string, DripSend>();
       for (const s of (data.sends ?? []) as DripSend[]) map.set(s.lead_id, s);

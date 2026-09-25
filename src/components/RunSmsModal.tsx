@@ -4,7 +4,7 @@
  * Run SMS — {campaign name}
  * Drip setup modal. Matches existing Gostwrk dialogs (NewCampaignModal styling).
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { ALL_STATES } from '@/lib/smsDrip/timezones';
 
 const PACE_PRESETS = [
@@ -64,9 +64,18 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
   const [paceMin, setPaceMin] = useState(existingJob?.pace_min_seconds || 60);
   const [paceMax, setPaceMax] = useState(existingJob?.pace_max_seconds || 120);
   const [packs, setPacks] = useState<TemplatePack[]>(() => [
-    newPack('Set 1', savedTemplates?.length ? savedTemplates : DEFAULT_TEMPLATES),
+    newPack(
+      'Set 1',
+      existingJob?.templates?.length
+        ? existingJob.templates
+        : savedTemplates?.length
+          ? savedTemplates
+          : DEFAULT_TEMPLATES
+    ),
   ]);
   const [activePackId, setActivePackId] = useState(() => packs[0].id);
+  const userEdited = useRef(false);
+  const hydrated = useRef(false);
   const [namingNew, setNamingNew] = useState(false);
   const [newPackName, setNewPackName] = useState('');
   const [quietStart, setQuietStart] = useState(existingJob?.quiet_start || '09:00');
@@ -136,7 +145,7 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
     fetch('/api/sms/template-packs')
       .then(r => r.json())
       .then(data => {
-        if (cancelled) return;
+        if (cancelled || userEdited.current || hydrated.current) return;
         let loaded: TemplatePack[] = Array.isArray(data.packs) ? data.packs : [];
         if (!loaded.length) {
           try {
@@ -144,6 +153,7 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
             if (raw) loaded = JSON.parse(raw);
           } catch { /* ignore */ }
         }
+        hydrated.current = true;
         if (loaded.length) {
           setPacks(loaded);
           const seed = existingJob?.templates?.length ? existingJob.templates : savedTemplates;
@@ -151,20 +161,19 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
             ? loaded.find(p => JSON.stringify(p.templates.filter(Boolean)) === JSON.stringify(seed.filter(Boolean)))
             : null;
           setActivePackId(match?.id ?? loaded[0].id);
-        } else if (existingJob?.templates?.length) {
-          setPacks(prev => prev.map((p, i) => (i === 0 ? { ...p, templates: existingJob.templates as string[] } : p)));
-        } else if (savedTemplates?.length) {
-          setPacks(prev => prev.map((p, i) => (i === 0 ? { ...p, templates: savedTemplates } : p)));
         }
       })
-      .catch(() => { /* keep local default */ });
+      .catch(() => { hydrated.current = true; });
     return () => { cancelled = true; };
-  }, [savedTemplates, existingJob?.templates]);
+    // Load saved sets once. Campaign drip polling must not rewrite in-progress edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const effectiveWindow = useCustomWindow
     ? (Number(customHours) || 0) + (Number(customMins) || 0) / 60
     : windowHours;
   const setTemplates = (updater: (prev: string[]) => string[]) => {
+    userEdited.current = true;
     setPacks(prev => prev.map(p => p.id === activePackId ? { ...p, templates: updater(p.templates) } : p));
   };
 
