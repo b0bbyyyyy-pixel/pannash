@@ -55,6 +55,8 @@ export default function QuickTextPopup({
   const [tpls, setTpls] = useState<SavedTpl[]>([]);
   const [draftName, setDraftName] = useState('');
   const [draftBody, setDraftBody] = useState('');
+  const [addingTpl, setAddingTpl] = useState(false);
+  const [editingTplId, setEditingTplId] = useState<string | null>(null);
   const [savingTpl, setSavingTpl] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -108,6 +110,20 @@ export default function QuickTextPopup({
     inputRef.current?.focus();
   };
 
+  const startEditTpl = (t: SavedTpl) => {
+    setAddingTpl(false);
+    setEditingTplId(t.id);
+    setDraftName(t.name);
+    setDraftBody(t.body);
+  };
+
+  const cancelTplForm = () => {
+    setAddingTpl(false);
+    setEditingTplId(null);
+    setDraftName('');
+    setDraftBody('');
+  };
+
   const saveTpl = async () => {
     const name = draftName.trim() || `Template ${tpls.length + 1}`;
     const body = draftBody.trim();
@@ -115,15 +131,16 @@ export default function QuickTextPopup({
     setSavingTpl(true);
     try {
       const res = await fetch('/api/text-templates', {
-        method: 'POST',
+        method: editingTplId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, body }),
+        body: JSON.stringify(editingTplId ? { id: editingTplId, name, body } : { name, body }),
       });
       const data = await res.json();
       if (data.template) {
-        setTpls(prev => [{ id: data.template.id, name: data.template.name, body: data.template.body }, ...prev]);
-        setDraftName('');
-        setDraftBody('');
+        setTpls(prev => editingTplId
+          ? prev.map(t => t.id === editingTplId ? { id: data.template.id, name: data.template.name, body: data.template.body } : t)
+          : [{ id: data.template.id, name: data.template.name, body: data.template.body }, ...prev]);
+        cancelTplForm();
       }
     } finally {
       setSavingTpl(false);
@@ -252,46 +269,110 @@ export default function QuickTextPopup({
                 <p className="text-[11px] text-[#c4c4c4] py-1">No templates yet</p>
               )}
               {tpls.map(t => (
-                <div key={t.id} className="flex items-start gap-1.5 group">
-                  <button
-                    type="button"
-                    onClick={() => useTpl(t.body)}
-                    className="flex-1 min-w-0 text-left px-2 py-1.5 bg-[#f5f5f5] hover:bg-[#ececec] rounded text-[11px] text-[#1a1a1a]"
-                  >
-                    <span className="block font-medium truncate">{t.name}</span>
-                    <span className="block text-[#6b6b6b] truncate">{t.body}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void deleteTpl(t.id)}
-                    className="shrink-0 text-[#c4c4c4] hover:text-red-500 text-[11px] pt-1"
-                    title="Delete"
-                  >
-                    ×
-                  </button>
-                </div>
+                editingTplId === t.id ? (
+                  <div key={t.id} className="space-y-1.5">
+                    <input
+                      value={draftName}
+                      onChange={e => setDraftName(e.target.value)}
+                      placeholder="Name"
+                      className="w-full px-2 py-1 text-[11px] border border-[#e5e5e5] rounded focus:outline-none focus:border-[#1a1a1a]"
+                    />
+                    <textarea
+                      value={draftBody}
+                      onChange={e => setDraftBody(e.target.value)}
+                      placeholder="Template text…"
+                      rows={3}
+                      className="w-full px-2 py-1 text-[11px] border border-[#e5e5e5] rounded focus:outline-none focus:border-[#1a1a1a] resize-none"
+                    />
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => void saveTpl()}
+                        disabled={!draftBody.trim() || savingTpl}
+                        className="text-[11px] font-medium text-[#1a1a1a] disabled:opacity-40"
+                      >
+                        {savingTpl ? 'Saving…' : 'Save'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={cancelTplForm}
+                        className="text-[11px] text-[#9b9b9b] hover:text-[#1a1a1a]"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div key={t.id} className="flex items-start gap-1.5 group">
+                    <button
+                      type="button"
+                      onClick={() => useTpl(t.body)}
+                      className="flex-1 min-w-0 text-left px-2 py-1.5 bg-[#f5f5f5] hover:bg-[#ececec] rounded text-[11px] text-[#1a1a1a]"
+                    >
+                      <span className="block font-medium truncate">{t.name}</span>
+                      <span className="block text-[#6b6b6b] truncate">{t.body}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => startEditTpl(t)}
+                      className="shrink-0 text-[10px] text-[#9b9b9b] hover:text-[#1a1a1a] pt-1.5"
+                      title="Edit"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void deleteTpl(t.id)}
+                      className="shrink-0 text-[#c4c4c4] hover:text-red-500 text-[11px] pt-1"
+                      title="Delete"
+                    >
+                      ×
+                    </button>
+                  </div>
+                )
               ))}
-              <input
-                value={draftName}
-                onChange={e => setDraftName(e.target.value)}
-                placeholder="Name"
-                className="w-full px-2 py-1 text-[11px] border border-[#e5e5e5] rounded focus:outline-none focus:border-[#1a1a1a]"
-              />
-              <textarea
-                value={draftBody}
-                onChange={e => setDraftBody(e.target.value)}
-                placeholder="Template text…"
-                rows={2}
-                className="w-full px-2 py-1 text-[11px] border border-[#e5e5e5] rounded focus:outline-none focus:border-[#1a1a1a] resize-none"
-              />
-              <button
-                type="button"
-                onClick={() => void saveTpl()}
-                disabled={!draftBody.trim() || savingTpl}
-                className="text-[11px] font-medium text-[#1a1a1a] disabled:opacity-40"
-              >
-                {savingTpl ? 'Saving…' : 'Save template'}
-              </button>
+              {addingTpl ? (
+                <div className="space-y-1.5 pt-1">
+                  <input
+                    value={draftName}
+                    onChange={e => setDraftName(e.target.value)}
+                    placeholder="Name"
+                    className="w-full px-2 py-1 text-[11px] border border-[#e5e5e5] rounded focus:outline-none focus:border-[#1a1a1a]"
+                  />
+                  <textarea
+                    value={draftBody}
+                    onChange={e => setDraftBody(e.target.value)}
+                    placeholder="Template text…"
+                    rows={2}
+                    className="w-full px-2 py-1 text-[11px] border border-[#e5e5e5] rounded focus:outline-none focus:border-[#1a1a1a] resize-none"
+                  />
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => void saveTpl()}
+                      disabled={!draftBody.trim() || savingTpl}
+                      className="text-[11px] font-medium text-[#1a1a1a] disabled:opacity-40"
+                    >
+                      {savingTpl ? 'Saving…' : 'Save template'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelTplForm}
+                      className="text-[11px] text-[#9b9b9b] hover:text-[#1a1a1a]"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : !editingTplId ? (
+                <button
+                  type="button"
+                  onClick={() => { setEditingTplId(null); setAddingTpl(true); }}
+                  className="text-[11px] font-medium text-[#6b6b6b] hover:text-[#1a1a1a]"
+                >
+                  + Add
+                </button>
+              ) : null}
             </div>
           )}
           <div className="flex items-end gap-1.5">

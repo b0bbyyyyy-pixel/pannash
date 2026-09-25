@@ -33,6 +33,7 @@ interface WebPhoneContextValue {
   rejectIncoming: () => void;
   dialPadOpen: boolean;
   dialPadNumber: string;
+  fromNumber: string | null;
   openDialPad: (number?: string) => void;
   closeDialPad: () => void;
 }
@@ -66,6 +67,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   const [showKeypad, setShowKeypad] = useState(false);
   const [dialPadOpen, setDialPadOpen] = useState(false);
   const [dialPadNumber, setDialPadNumber] = useState('');
+  const [fromNumber, setFromNumber] = useState<string | null>(null);
   const [callStartedAt, setCallStartedAt] = useState<number | null>(null);
   const [, setTick] = useState(0);
 
@@ -115,7 +117,8 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
       try {
         const res = await fetch('/api/telephony/token');
         if (!res.ok) return; // not logged in / not configured — stay offline quietly
-        const { token } = await res.json();
+        const { token, fromNumber: from } = await res.json();
+        if (from) setFromNumber(from);
         if (cancelled) return;
 
         const { Device } = await import('@twilio/voice-sdk');
@@ -237,7 +240,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     ready: status !== 'offline',
     activeNumber, activeName, incomingFrom, muted, error,
     connect, hangup, toggleMute, sendDigits, acceptIncoming, rejectIncoming,
-    dialPadOpen, dialPadNumber, openDialPad, closeDialPad,
+    dialPadOpen, dialPadNumber, fromNumber, openDialPad, closeDialPad,
   };
 
   const inCall = status === 'connecting' || status === 'ringing' || status === 'in-call';

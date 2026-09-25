@@ -64,7 +64,11 @@ export async function GET() {
       incomingAllow: true,
     }));
 
-    return NextResponse.json({ token: token.toJwt(), identity: 'agent' });
+    return NextResponse.json({
+      token: token.toJwt(),
+      identity: 'agent',
+      fromNumber: creds.fromNumber || null,
+    });
   } catch (err) {
     console.error('[telephony/token GET]', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

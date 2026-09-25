@@ -8,6 +8,7 @@ import { useState, useEffect, useRef } from 'react';
 import { ALL_STATES } from '@/lib/smsDrip/timezones';
 
 const PACE_PRESETS = [
+  { label: '0 sec', min: 0, max: 0 },
   { label: '1–2 min', min: 60, max: 120 },
   { label: '2–4 min', min: 120, max: 240 },
   { label: '3–6 min', min: 180, max: 360 },
@@ -61,8 +62,8 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
   const [customHours, setCustomHours] = useState(initialWindow.custom ? String(initialWindow.hours || '') : '');
   const [customMins, setCustomMins] = useState(initialWindow.custom ? String(initialWindow.mins || '') : '');
   const [useCustomWindow, setUseCustomWindow] = useState(initialWindow.custom);
-  const [paceMin, setPaceMin] = useState(existingJob?.pace_min_seconds || 60);
-  const [paceMax, setPaceMax] = useState(existingJob?.pace_max_seconds || 120);
+  const [paceMin, setPaceMin] = useState(existingJob?.pace_min_seconds ?? 60);
+  const [paceMax, setPaceMax] = useState(existingJob?.pace_max_seconds ?? 120);
   const [packs, setPacks] = useState<TemplatePack[]>(() => [
     newPack(
       'Set 1',
@@ -211,7 +212,7 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
   const start = async () => {
     setError(null);
     if (filledTemplates.length < 1) { setError('Add at least one template.'); return; }
-    if (paceMin < 30) { setError('Minimum pace is 30 seconds.'); return; }
+    if (paceMin < 0 || paceMax < 0) { setError('Pace cannot be negative.'); return; }
     if (paceMax < paceMin) { setError('Max pace must be ≥ min pace.'); return; }
     if (useCustomWindow && effectiveWindow <= 0) { setError('Set custom hours or minutes.'); return; }
     setStarting(true);
@@ -326,25 +327,32 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
                 </button>
               ))}
             </div>
-            <div className="flex items-center gap-2 text-sm text-[#6b6b6b]">
+            <div className="flex items-center gap-2 text-sm text-[#6b6b6b] flex-wrap">
               <input
-                type="number" min={0.5} step={0.5}
-                value={paceMin / 60}
-                onChange={e => setPaceMin(Math.round((Number(e.target.value) || 1) * 60))}
+                type="number" min={0} step={1}
+                value={paceMin}
+                onChange={e => {
+                  const v = Math.max(0, Math.round(Number(e.target.value) || 0));
+                  setPaceMin(v);
+                  if (v > paceMax) setPaceMax(v);
+                }}
                 className="w-16 px-2 py-1 border border-[#e5e5e5] rounded-lg focus:outline-none focus:border-[#1a1a1a]"
               />
               <span>to</span>
               <input
-                type="number" min={0.5} step={0.5}
-                value={paceMax / 60}
-                onChange={e => setPaceMax(Math.round((Number(e.target.value) || 2) * 60))}
+                type="number" min={0} step={1}
+                value={paceMax}
+                onChange={e => setPaceMax(Math.max(0, Math.round(Number(e.target.value) || 0)))}
                 className="w-16 px-2 py-1 border border-[#e5e5e5] rounded-lg focus:outline-none focus:border-[#1a1a1a]"
               />
-              <span>minutes between texts (randomized + jitter)</span>
+              <span>seconds between texts</span>
             </div>
+            <p className="text-[11px] text-[#9b9b9b] mt-1.5">
+              0 sends the next text as soon as it can. Minute presets still work as shortcuts.
+            </p>
             {paceTooSlow && (
               <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
-                At {Math.round(paceMin / 60)}–{Math.round(paceMax / 60)} min this list needs ~{neededHours.toFixed(1)} hours.
+                At {paceMin}–{paceMax}s this list needs ~{neededHours.toFixed(1)} hours.
                 Stretch will be {neededHours.toFixed(1)} hours unless you raise pace.
               </p>
             )}

@@ -168,8 +168,11 @@ export async function POST(req: NextRequest) {
         list_id: listId,
         status: 'active',
         templates: tpl,
-        pace_min_seconds: Math.max(30, Number(paceMinSeconds) || 60),
-        pace_max_seconds: Math.max(Number(paceMinSeconds) || 60, Number(paceMaxSeconds) || 120),
+        pace_min_seconds: Math.max(0, Math.round(Number(paceMinSeconds) || 0)),
+        pace_max_seconds: Math.max(
+          Math.max(0, Math.round(Number(paceMinSeconds) || 0)),
+          Math.max(0, Math.round(Number(paceMaxSeconds) || 0)),
+        ),
         window_hours: Number.isFinite(Number(windowHours)) && Number(windowHours) > 0 ? Number(windowHours) : 5,
         quiet_start: quietStart,
         quiet_end: quietEnd,
@@ -243,10 +246,10 @@ export async function PATCH(req: NextRequest) {
         const wh = Number(body.windowHours);
         if (Number.isFinite(wh) && wh > 0) patch.window_hours = wh;
       }
-      if (body.paceMinSeconds != null) patch.pace_min_seconds = Math.max(30, Number(body.paceMinSeconds) || 60);
+      if (body.paceMinSeconds != null) patch.pace_min_seconds = Math.max(0, Math.round(Number(body.paceMinSeconds) || 0));
       if (body.paceMaxSeconds != null) {
-        const minS = Number(patch.pace_min_seconds ?? body.paceMinSeconds) || 60;
-        patch.pace_max_seconds = Math.max(minS, Number(body.paceMaxSeconds) || 120);
+        const minS = Math.max(0, Number(patch.pace_min_seconds ?? body.paceMinSeconds) || 0);
+        patch.pace_max_seconds = Math.max(minS, Math.max(0, Math.round(Number(body.paceMaxSeconds) || 0)));
       }
       if (body.quietStart) patch.quiet_start = body.quietStart;
       if (body.quietEnd) patch.quiet_end = body.quietEnd;

@@ -272,7 +272,11 @@ export default function ManualDialPanel({
           </div>
 
           <p className="text-[10px] text-[#b0b0b0] mt-3 text-center shrink-0">
-            Calls run in the browser — audio through your headset.
+            {webphone.fromNumber
+              ? `Calling from ${formatDisplay(toE164(webphone.fromNumber) || webphone.fromNumber)}`
+              : busy
+                ? ''
+                : 'Calls run in the browser — audio through your headset.'}
           </p>
         </>
       )}
