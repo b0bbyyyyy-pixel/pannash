@@ -35,11 +35,13 @@ export default function DocumentVault({
   pick,
   onPick,
   accept,
+  inline,
 }: {
-  onClose: () => void;
+  onClose?: () => void;
   pick?: boolean;
   onPick?: (files: File[]) => void;
   accept?: string;
+  inline?: boolean;
 }) {
   const [files, setFiles] = useState<VaultFile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -118,7 +120,7 @@ export default function DocumentVault({
       const out: File[] = [];
       for (const doc of chosen) out.push(await vaultToFile(doc));
       onPick(out);
-      onClose();
+      onClose?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not pull files');
     } finally {
@@ -134,16 +136,16 @@ export default function DocumentVault({
     });
   }
 
-  return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[80] p-4" onClick={onClose}>
-      <div
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[84vh] flex flex-col overflow-hidden"
-        onClick={e => e.stopPropagation()}
-      >
+  const panel = (
+    <>
+        {!inline && (
         <div className="flex items-center justify-between px-5 py-4 border-b border-[#f0f0f0] shrink-0">
           <p className="text-sm font-bold text-[#1a1a1a]">{pick ? 'Pull from vault' : 'Document vault'}</p>
-          <button type="button" onClick={onClose} className="text-[#9b9b9b] hover:text-[#1a1a1a] text-lg leading-none">×</button>
+          {onClose && (
+            <button type="button" onClick={onClose} className="text-[#9b9b9b] hover:text-[#1a1a1a] text-lg leading-none">×</button>
+          )}
         </div>
+        )}
 
         <div className="px-5 py-3 border-b border-[#f0f0f0] shrink-0">
           <button
@@ -217,6 +219,24 @@ export default function DocumentVault({
             </button>
           </div>
         )}
+    </>
+  );
+
+  if (inline) {
+    return (
+      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden flex flex-col min-h-[420px]">
+        {panel}
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[80] p-4" onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[84vh] flex flex-col overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        {panel}
       </div>
     </div>
   );

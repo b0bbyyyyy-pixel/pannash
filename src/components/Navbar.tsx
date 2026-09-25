@@ -149,6 +149,13 @@ export default function Navbar({ userName }: NavbarProps) {
                   Billing
                 </Link>
                 <Link
+                  href="/settings/vault"
+                  className="block px-4 py-2.5 text-sm text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors"
+                  onClick={() => setShowDropdown(false)}
+                >
+                  Document Vault
+                </Link>
+                <Link
                   href="/settings/profile"
                   className="block px-4 py-2.5 text-sm text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors"
                   onClick={() => setShowDropdown(false)}
