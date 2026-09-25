@@ -22,7 +22,7 @@ export default function Navbar({ userName }: NavbarProps) {
 
   return (
     <nav className="fixed top-0 left-0 right-0 bg-[#fafafa] border-b border-[#e5e5e5] z-50">
-      <div className="max-w-[1600px] mx-auto px-12">
+      <div className="w-full px-4">
         <div className="flex items-center justify-between h-20">
           {/* Logo - Trylon & Perisphere */}
           <Link href="/inbox" className="flex items-center gap-3 hover:opacity-80 transition-opacity">

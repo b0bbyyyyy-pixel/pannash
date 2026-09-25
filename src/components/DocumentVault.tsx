@@ -50,6 +50,8 @@ export default function DocumentVault({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [pulling, setPulling] = useState(false);
   const [error, setError] = useState('');
+  const [dragOver, setDragOver] = useState(false);
+  const [downloading, setDownloading] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -111,6 +113,27 @@ export default function DocumentVault({
     window.open(url, '_blank', 'noopener,noreferrer');
   }
 
+  async function download(f: VaultFile) {
+    setDownloading(f.id);
+    try {
+      const res = await fetch(`/api/vault/file?id=${f.id}`, { credentials: 'include' });
+      if (!res.ok) throw new Error('Download failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = f.file_name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Download failed');
+    } finally {
+      setDownloading(null);
+    }
+  }
+
   async function useSelected() {
     const chosen = visible.filter(f => selected.has(f.id));
     if (!chosen.length || !onPick) return;
@@ -147,15 +170,29 @@ export default function DocumentVault({
         </div>
         )}
 
-        <div className="px-5 py-3 border-b border-[#f0f0f0] shrink-0">
-          <button
-            type="button"
-            onClick={() => inputRef.current?.click()}
-            disabled={uploading}
-            className="text-xs font-medium uppercase tracking-wide text-[#1a1a1a] border border-[#e5e5e5] px-3 py-1.5 rounded-md hover:border-[#1a1a1a] disabled:opacity-40"
-          >
-            {uploading ? 'Storing…' : 'Add files'}
-          </button>
+        <div
+          className={`px-5 py-3 border-b shrink-0 transition-colors ${dragOver ? 'border-indigo-300 bg-indigo-50/60' : 'border-[#f0f0f0]'}`}
+          onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={e => {
+            e.preventDefault();
+            setDragOver(false);
+            if (e.dataTransfer.files?.length) upload(e.dataTransfer.files);
+          }}
+        >
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => inputRef.current?.click()}
+              disabled={uploading}
+              className="text-xs font-medium uppercase tracking-wide text-[#1a1a1a] border border-[#e5e5e5] px-3 py-1.5 rounded-md hover:border-[#1a1a1a] disabled:opacity-40"
+            >
+              {uploading ? 'Storing…' : 'Add files'}
+            </button>
+            <p className="text-[11px] text-[#9b9b9b]">
+              {dragOver ? 'Drop to upload' : 'or drop files here'}
+            </p>
+          </div>
           <input
             ref={inputRef}
             type="file"
@@ -165,7 +202,16 @@ export default function DocumentVault({
           />
         </div>
 
-        <div className="flex-1 overflow-y-auto px-5 py-3 min-h-[180px]">
+        <div
+          className={`flex-1 overflow-y-auto px-5 py-3 min-h-[180px] transition-colors ${dragOver ? 'bg-indigo-50/40' : ''}`}
+          onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={e => {
+            e.preventDefault();
+            setDragOver(false);
+            if (e.dataTransfer.files?.length) upload(e.dataTransfer.files);
+          }}
+        >
           {loading ? (
             <p className="text-xs text-[#9b9b9b] py-8 text-center">Loading…</p>
           ) : visible.length === 0 ? (
@@ -190,16 +236,26 @@ export default function DocumentVault({
                     <p className="text-xs font-medium text-[#1a1a1a] truncate">{f.file_name}</p>
                     <p className="text-[10px] text-[#9b9b9b]">{fmtSize(f.file_size)}</p>
                   </button>
-                  {!pick && (
+                  <div className="flex items-center gap-3 shrink-0">
                     <button
                       type="button"
-                      onClick={() => remove(f.id)}
-                      disabled={deleting === f.id}
-                      className="text-[10px] uppercase tracking-wide text-[#9b9b9b] hover:text-[#1a1a1a]"
+                      onClick={() => download(f)}
+                      disabled={downloading === f.id}
+                      className="text-[10px] uppercase tracking-wide text-[#9b9b9b] hover:text-[#1a1a1a] disabled:opacity-40"
                     >
-                      {deleting === f.id ? '…' : 'Remove'}
+                      {downloading === f.id ? '…' : 'Download'}
                     </button>
-                  )}
+                    {!pick && (
+                      <button
+                        type="button"
+                        onClick={() => remove(f.id)}
+                        disabled={deleting === f.id}
+                        className="text-[10px] uppercase tracking-wide text-[#9b9b9b] hover:text-[#1a1a1a]"
+                      >
+                        {deleting === f.id ? '…' : 'Remove'}
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
