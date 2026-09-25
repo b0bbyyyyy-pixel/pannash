@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import ManualDialPanel from '@/app/dialer/ManualDialPanel';
 import { useWebPhone } from '@/components/webphone/WebPhone';
 import BillingClient from '@/app/settings/billing/BillingClient';
+import DocumentVault from '@/components/DocumentVault';
 
 interface NavbarProps {
   userName: string;
@@ -18,15 +19,20 @@ export default function Navbar({ userName }: NavbarProps) {
   const [showCalendar, setShowCalendar] = useState(false);
   const [showAgent, setShowAgent] = useState(false);
   const [showBilling, setShowBilling] = useState(false);
+  const [showVault, setShowVault] = useState(false);
   const webphone = useWebPhone();
 
   const isActive = (path: string) => pathname === path || pathname?.startsWith(path + '/');
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('billing') !== '1') return;
-    setShowBilling(true);
+    const openBilling = params.get('billing') === '1';
+    const openVault = params.get('vault') === '1';
+    if (!openBilling && !openVault) return;
+    if (openBilling) setShowBilling(true);
+    if (openVault) setShowVault(true);
     params.delete('billing');
+    params.delete('vault');
     const q = params.toString();
     router.replace(`${pathname || '/'}${q ? `?${q}` : ''}`, { scroll: false });
   }, [pathname, router]);
@@ -77,7 +83,7 @@ export default function Navbar({ userName }: NavbarProps) {
           <div className="relative flex items-center gap-4">
             {/* Phone icon → live keypad popup */}
             <button
-              onClick={() => { webphone.dialPadOpen ? webphone.closeDialPad() : webphone.openDialPad(); setShowAgent(false); setShowCalendar(false); setShowBilling(false); setShowDropdown(false); }}
+              onClick={() => { webphone.dialPadOpen ? webphone.closeDialPad() : webphone.openDialPad(); setShowAgent(false); setShowCalendar(false); setShowBilling(false); setShowVault(false); setShowDropdown(false); }}
               className="focus:outline-none hover:opacity-70 transition-opacity"
               title="Phone"
             >
@@ -92,7 +98,7 @@ export default function Navbar({ userName }: NavbarProps) {
 
             {/* Agent icon → popup */}
             <button
-              onClick={() => { setShowAgent(true); webphone.closeDialPad(); setShowCalendar(false); setShowBilling(false); setShowDropdown(false); }}
+              onClick={() => { setShowAgent(true); webphone.closeDialPad(); setShowCalendar(false); setShowBilling(false); setShowVault(false); setShowDropdown(false); }}
               className="focus:outline-none hover:opacity-70 transition-opacity"
               title="Agent"
             >
@@ -107,7 +113,7 @@ export default function Navbar({ userName }: NavbarProps) {
 
             {/* Calendar icon → popup */}
             <button
-              onClick={() => { setShowCalendar(true); setShowAgent(false); setShowBilling(false); webphone.closeDialPad(); setShowDropdown(false); }}
+              onClick={() => { setShowCalendar(true); setShowAgent(false); setShowBilling(false); setShowVault(false); webphone.closeDialPad(); setShowDropdown(false); }}
               className="focus:outline-none hover:opacity-70 transition-opacity"
               title="Calendar"
             >
@@ -157,6 +163,7 @@ export default function Navbar({ userName }: NavbarProps) {
                   className="block w-full text-left px-4 py-2.5 text-sm text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors"
                   onClick={() => {
                     setShowBilling(true);
+                    setShowVault(false);
                     setShowDropdown(false);
                     setShowAgent(false);
                     setShowCalendar(false);
@@ -165,13 +172,20 @@ export default function Navbar({ userName }: NavbarProps) {
                 >
                   Billing
                 </button>
-                <Link
-                  href="/settings/vault"
-                  className="block px-4 py-2.5 text-sm text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors"
-                  onClick={() => setShowDropdown(false)}
+                <button
+                  type="button"
+                  className="block w-full text-left px-4 py-2.5 text-sm text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors"
+                  onClick={() => {
+                    setShowVault(true);
+                    setShowBilling(false);
+                    setShowDropdown(false);
+                    setShowAgent(false);
+                    setShowCalendar(false);
+                    webphone.closeDialPad();
+                  }}
                 >
                   Document Vault
-                </Link>
+                </button>
                 <Link
                   href="/settings/profile"
                   className="block px-4 py-2.5 text-sm text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors"
@@ -285,6 +299,10 @@ export default function Navbar({ userName }: NavbarProps) {
             />
           </div>
         </>
+      )}
+
+      {showVault && (
+        <DocumentVault onClose={() => setShowVault(false)} />
       )}
 
       {/* Billing popup — stays on the current page */}

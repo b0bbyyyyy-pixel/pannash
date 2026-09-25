@@ -203,6 +203,7 @@ export function DialerCard({
   const [editingEmail, setEditingEmail] = useState(!lead.email);
   const [savingEmail, setSavingEmail] = useState(false);
   const [emailError, setEmailError] = useState('');
+  const [callerFrom, setCallerFrom] = useState<string | null>(null);
 
   // Wrap-up state lives here so a disposition punched during the call
   // survives the swap into the wrap view (same card, content swaps in place)
@@ -214,6 +215,21 @@ export function DialerCard({
     const t = setInterval(() => setLocalT(localTime(effectiveTz)), 30_000);
     return () => clearInterval(t);
   }, [effectiveTz]);
+
+  useEffect(() => {
+    if (!lead.phone_e164) {
+      setCallerFrom(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/telephony/caller-id?to=${encodeURIComponent(lead.phone_e164)}`)
+      .then(r => r.json())
+      .then(d => {
+        if (!cancelled && d.from) setCallerFrom(d.from);
+      })
+      .catch(() => { /* keep prior */ });
+    return () => { cancelled = true; };
+  }, [lead.phone_e164]);
 
   useEffect(() => {
     setEmailDraft(lead.email || '');
@@ -600,19 +616,30 @@ export function DialerCard({
           />
         </div>
       ) : view === 'on_call' ? (
-        <button
-          onClick={onHangup}
-          className={`w-full bg-[#f4f4f4] text-[#1a1a1a] font-medium hover:bg-[#ececec] transition-all flex items-center justify-center gap-2 ${
-            compact ? 'rounded-none py-1 px-2.5 text-sm' : 'rounded-xl py-4 text-base active:scale-[0.98]'
-          }`}
-        >
-          <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-          {phoneStatus === 'ringing' && 'Ringing…'}
-          {phoneStatus === 'connecting' && 'Connecting…'}
-          {phoneStatus === 'in-call' && 'On call'}
-          {phoneStatus !== 'ringing' && phoneStatus !== 'connecting' && phoneStatus !== 'in-call' && 'Call in progress'}
-          <span className={`text-[#9ca3af] font-normal ${compact ? 'text-xs' : 'text-sm'}`}>· Hang up</span>
-        </button>
+        <div>
+          <button
+            onClick={onHangup}
+            className={`w-full bg-[#f4f4f4] text-[#1a1a1a] font-medium hover:bg-[#ececec] transition-all flex items-center justify-center gap-2 ${
+              compact ? 'rounded-none py-1 px-2.5 text-sm' : 'rounded-xl py-4 text-base active:scale-[0.98]'
+            }`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+            {phoneStatus === 'ringing' && 'Ringing…'}
+            {phoneStatus === 'connecting' && 'Connecting…'}
+            {phoneStatus === 'in-call' && 'On call'}
+            {phoneStatus !== 'ringing' && phoneStatus !== 'connecting' && phoneStatus !== 'in-call' && 'Call in progress'}
+            <span className={`text-[#9ca3af] font-normal ${compact ? 'text-xs' : 'text-sm'}`}>· Hang up</span>
+          </button>
+          {callerFrom && (
+            <p
+              className={`text-center leading-tight ${
+                compact ? 'text-[9px] mt-0.5' : 'text-[10px] mt-1'
+              } ${phoneStatus === 'in-call' ? 'text-green-400' : 'text-[#9ca3af]'}`}
+            >
+              From {formatDisplay(callerFrom)}
+            </p>
+          )}
+        </div>
       ) : (
         <button
           onClick={onCall}
