@@ -267,8 +267,14 @@ export async function POST(request: Request) {
     textContent = buffer.toString('utf-8').replace(/[^\x20-\x7E\n\r\t]/g, ' ');
   }
 
-  // ── Step 2: Detect document type ──────────────────────────────────────────
-  const isBank = isBankStatement(filename, textContent);
+  // ── Step 2: Detect document type (caller can force app vs statement) ──────
+  const forcedType = String(formData.get('documentType') ?? '').toLowerCase().trim();
+  const isBank =
+    forcedType === 'bank_statement' || forcedType === 'bank' || forcedType === 'statement'
+      ? true
+      : forcedType === 'application' || forcedType === 'app'
+        ? false
+        : isBankStatement(filename, textContent);
   const prompt = isBank ? BANK_PROMPT : APP_PROMPT;
 
   // ── Step 3: Extract fields ─────────────────────────────────────────────────

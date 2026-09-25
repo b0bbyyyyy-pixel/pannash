@@ -3,8 +3,18 @@
 import { useState, useRef, DragEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { parseLeadPasteText } from '@/lib/parse-lead-paste';
+import {
+  compactMetricsForStorage,
+  mapAnalyzerMetricsToUnderwritingFields,
+  mapParsedBankFieldsToUd,
+  requestedAmountFromMonthlyRevenue,
+  seedBankAnalysisFromParsed,
+  statementMonthFromFields,
+  type StatementMonth,
+} from '@/lib/bankAnalyzer';
 
-type Method = 'choose' | 'manual' | 'paste' | 'upload';
+type Method = 'choose' | 'manual' | 'paste' | 'upload' | 'fullpack';
+type DocKind = 'application' | 'bank_statement';
 
 interface Fields {
   name: string;
@@ -56,6 +66,31 @@ function splitExtracted(raw: Record<string, unknown>): { leadFields: Partial<Fie
   return { leadFields, uw };
 }
 
+function displayUwValue(k: string, v: unknown): string | null {
+  if (v == null || v === '') return null;
+  if (k === 'bankStatementAnalysis') return 'Saved';
+  if (k === 'statementMonths') {
+    const n = Array.isArray(v) ? v.length : 0;
+    return n ? `${n} month${n === 1 ? '' : 's'}` : null;
+  }
+  if (k === 'mcaPositions') {
+    const n = Array.isArray(v) ? v.length : 0;
+    return n ? `${n} position${n === 1 ? '' : 's'}` : null;
+  }
+  if (typeof v === 'object') return null;
+  return String(v);
+}
+
+async function parseDoc(file: File, documentType: DocKind) {
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('documentType', documentType);
+  const res = await fetch('/api/leads/parse-application', { method: 'POST', body: fd, credentials: 'include' });
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error || `Failed to parse ${file.name}`);
+  return json as { fields?: Record<string, string>; documentType?: string; warning?: string };
+}
+
 interface Props {
   onClose: () => void;
 }
@@ -75,11 +110,18 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
 
   // Upload state
   const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [appFile, setAppFile] = useState<File | null>(null);
+  const [bankFiles, setBankFiles] = useState<File[]>([]);
   const [dragOver, setDragOver] = useState(false);
+  const [dragOverApp, setDragOverApp] = useState(false);
+  const [dragOverBank, setDragOverBank] = useState(false);
   const [parsing, setParsing] = useState(false);
+  const [parseStatus, setParseStatus] = useState('');
   const [parsed, setParsed] = useState<Record<string, unknown> | null>(null);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const fileRef = useRef<HTMLInputElement>(null);
+  const appRef = useRef<HTMLInputElement>(null);
+  const bankRef = useRef<HTMLInputElement>(null);
 
   // Create state
   const [saving, setSaving] = useState(false);
@@ -89,8 +131,8 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
   const set = (k: keyof Fields) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setFields(f => ({ ...f, [k]: e.target.value }));
 
-  // Extra underwriting fields extracted from paste
-  const [pasteUW, setPasteUW] = useState<Record<string, string>>({});
+  // Extra underwriting fields extracted from paste / parse
+  const [pasteUW, setPasteUW] = useState<Record<string, unknown>>({});
 
   const applyPaste = () => {
     const p = parseLeadPasteText(quickPaste);
@@ -178,6 +220,137 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
     }
   };
 
+  const addBankFiles = (incoming: File[]) => {
+    const valid = incoming.filter(f => {
+      if (f.size > 20 * 1024 * 1024) {
+        setError(`${f.name} exceeds 20 MB limit.`);
+        return false;
+      }
+      return true;
+    });
+    setBankFiles(prev => {
+      const next = [...prev];
+      for (const f of valid) {
+        if (!next.some(x => x.name === f.name && x.size === f.size)) next.push(f);
+      }
+      return next.slice(0, 10);
+    });
+  };
+
+  const parseFullPack = async () => {
+    if (!appFile || bankFiles.length === 0) {
+      setError('Add both the application and at least one bank statement.');
+      return;
+    }
+    setParsing(true);
+    setError('');
+    setParseStatus('Parsing application…');
+
+    const mergedRaw: Record<string, string> = {};
+    const months: StatementMonth[] = [];
+    let appLead: Partial<Fields> = {};
+    let appUw: Record<string, string> = {};
+    let bankLead: Partial<Fields> = {};
+
+    try {
+      const appJson = await parseDoc(appFile, 'application');
+      const appFields = (appJson.fields ?? {}) as Record<string, string>;
+      Object.assign(mergedRaw, appFields);
+      const splitApp = splitExtracted(appFields);
+      appLead = splitApp.leadFields;
+      appUw = splitApp.uw;
+
+      for (let i = 0; i < bankFiles.length; i++) {
+        const file = bankFiles[i];
+        setParseStatus(`Parsing statement ${i + 1} of ${bankFiles.length}…`);
+        try {
+          const bankJson = await parseDoc(file, 'bank_statement');
+          const incoming = (bankJson.fields ?? {}) as Record<string, string>;
+          const row = statementMonthFromFields(incoming);
+          if (row) months.push(row);
+          for (const [k, v] of Object.entries(incoming)) {
+            if (!v) continue;
+            if (!mergedRaw[k]) mergedRaw[k] = v;
+          }
+          const splitBank = splitExtracted(incoming);
+          bankLead = { ...splitBank.leadFields, ...bankLead };
+        } catch (e) {
+          console.warn('Bank parse failed for', file.name, e);
+        }
+      }
+
+      const bankUd = mapParsedBankFieldsToUd({
+        ...mergedRaw,
+        ...(months.length ? { statementMonths: months } : {}),
+      });
+
+      setParseStatus('Analyzing bank statements…');
+      try {
+        const fd = new FormData();
+        if (bankFiles.length === 1) {
+          fd.append('file', bankFiles[0], bankFiles[0].name);
+        } else {
+          bankFiles.forEach(f => fd.append('files', f, f.name));
+        }
+        const resp = await fetch('/api/bank-analyze', { method: 'POST', body: fd, credentials: 'include' });
+        if (resp.ok) {
+          const data = await resp.json() as {
+            metrics?: Record<string, unknown>;
+            per_file?: Array<{ filename: string; metrics: Record<string, unknown> }>;
+            transactions?: unknown[];
+            ai_assisted?: boolean;
+            ai_assisted_message?: string | null;
+          };
+          if (data.metrics && typeof data.metrics === 'object') {
+            const mapped = mapAnalyzerMetricsToUnderwritingFields(data.metrics);
+            for (const [k, v] of Object.entries(mapped)) {
+              if (typeof v === 'number' && v !== 0) bankUd[k] = v;
+            }
+            bankUd.bankStatementAnalysis = {
+              analyzedAt: new Date().toISOString(),
+              ai_assisted: !!data.ai_assisted,
+              ai_assisted_message: data.ai_assisted_message ?? null,
+              displayMetrics: compactMetricsForStorage(data.metrics),
+              per_file: data.per_file,
+              transactions: data.transactions ?? [],
+            };
+          }
+        }
+      } catch {
+        // Analyzer is optional — parse-application already filled statement fields
+      }
+
+      if (!bankUd.bankStatementAnalysis && Object.keys(bankUd).length > 0) {
+        bankUd.bankStatementAnalysis = seedBankAnalysisFromParsed(
+          { ...mergedRaw, ...(months.length ? { statementMonths: months } : {}) },
+          null,
+        );
+      }
+
+      const mergedUw: Record<string, unknown> = { ...appUw, ...bankUd };
+      setPasteUW(mergedUw);
+      setParsed(mergedRaw);
+      setFields(prev => ({
+        ...prev,
+        name:    appLead.name    || bankLead.name    || prev.name,
+        email:   appLead.email   || bankLead.email   || prev.email,
+        phone:   appLead.phone   || bankLead.phone   || prev.phone,
+        company: appLead.company || bankLead.company || prev.company,
+        notes:   appLead.notes   || bankLead.notes   || prev.notes,
+      }));
+
+      const total = Object.keys(appLead).length + Object.keys(mergedUw).length;
+      if (total === 0) {
+        setError('Limited data extracted — please review and fill in any missing fields.');
+      }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Parse failed');
+    } finally {
+      setParseStatus('');
+      setParsing(false);
+    }
+  };
+
   // ── Create lead in Pipeline ────────────────────────────────────────────────
   const createLead = async () => {
     if (!fields.name.trim()) {
@@ -215,6 +388,31 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
       if (!moved.ok) {
         const err = await moved.json().catch(() => ({}));
         throw new Error(err.error || 'Created but failed to add to pipeline');
+      }
+
+      const requested = requestedAmountFromMonthlyRevenue(pasteUW.requestedAmount);
+      if (requested != null) {
+        await fetch('/api/leads/update-crm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ leadId: lead.id, field: 'value', value: requested }),
+        });
+      }
+
+      // Full pack: persist statements only — the uploaded application is discarded
+      if (method === 'fullpack' && bankFiles.length > 0) {
+        for (const file of bankFiles) {
+          const fd = new FormData();
+          fd.append('file', file);
+          fd.append('leadId', lead.id);
+          fd.append('columnField', 'bank_statements');
+          try {
+            await fetch('/api/attachments', { method: 'POST', body: fd, credentials: 'include' });
+          } catch (e) {
+            console.warn('Failed to save statement', file.name, e);
+          }
+        }
       }
 
       // 3. Navigate to lead workspace
@@ -276,7 +474,15 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
         <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#f0f0f0] flex-shrink-0">
           <div className="flex items-center gap-2.5">
             {method !== 'choose' && (
-              <button onClick={() => { setMethod('choose'); setError(''); setParsed(null); setUploadFile(null); }}
+              <button onClick={() => {
+                setMethod('choose');
+                setError('');
+                setParsed(null);
+                setUploadFile(null);
+                setAppFile(null);
+                setBankFiles([]);
+                setParseStatus('');
+              }}
                 className="text-[#9b9b9b] hover:text-[#1a1a1a] mr-1">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -352,11 +558,27 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
               </button>
+
+              {/* Full pack */}
+              <button onClick={() => setMethod('fullpack')}
+                className="w-full flex items-center gap-4 p-4 rounded-xl border border-[#e5e5e5] hover:border-[#1a1a1a] hover:bg-[#fafafa] transition-all text-left group">
+                <div className="w-10 h-10 rounded-xl bg-[#f5f5f5] group-hover:bg-[#ebebeb] flex items-center justify-center flex-shrink-0 transition-colors">
+                  <svg className="w-5 h-5 text-[#6b6b6b]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                  </svg>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-[#1a1a1a]">Add full pack</p>
+                </div>
+                <svg className="w-4 h-4 text-[#d4d4d4] group-hover:text-[#6b6b6b] ml-auto flex-shrink-0 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
             </div>
           )}
 
           {/* ── MANUAL / POST-PARSE FORM ───────────────────────────────── */}
-          {(method === 'manual' || (method === 'paste' && parseNote) || (method === 'upload' && parsed)) && (
+          {(method === 'manual' || (method === 'paste' && parseNote) || ((method === 'upload' || method === 'fullpack') && parsed)) && (
             <div className="space-y-5">
               {parseNote && (
                 <div className="space-y-2">
@@ -370,11 +592,15 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
                     <div className="bg-[#fafafa] border border-[#e5e5e5] rounded-lg px-3 py-2">
                       <p className="text-[10px] font-semibold text-[#9b9b9b] uppercase tracking-wider mb-1.5">Also saved to Lead Info</p>
                       <div className="flex flex-wrap gap-x-4 gap-y-1">
-                        {Object.entries(pasteUW).map(([k, v]) => (
-                          <span key={k} className="text-xs text-[#6b6b6b]">
-                            <span className="font-medium text-[#1a1a1a]">{k.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase())}:</span>{' '}{v}
-                          </span>
-                        ))}
+                        {Object.entries(pasteUW).map(([k, v]) => {
+                          const shown = displayUwValue(k, v);
+                          if (!shown) return null;
+                          return (
+                            <span key={k} className="text-xs text-[#6b6b6b]">
+                              <span className="font-medium text-[#1a1a1a]">{k.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase())}:</span>{' '}{shown}
+                            </span>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -386,17 +612,23 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
                     <svg className="w-3.5 h-3.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                       <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                     </svg>
-                    Application parsed — {Object.keys(parsed).length} field{Object.keys(parsed).length !== 1 ? 's' : ''} extracted. Review below.
+                    {method === 'fullpack'
+                      ? `Full pack parsed — ${Object.keys(parsed).length} field${Object.keys(parsed).length !== 1 ? 's' : ''} extracted. ${bankFiles.length} statement${bankFiles.length === 1 ? '' : 's'} will be saved; the application file will not.`
+                      : `Application parsed — ${Object.keys(parsed).length} field${Object.keys(parsed).length !== 1 ? 's' : ''} extracted. Review below.`}
                   </div>
                   {Object.keys(pasteUW).length > 0 && (
                     <div className="bg-[#fafafa] border border-[#e5e5e5] rounded-lg px-3 py-2">
                       <p className="text-[10px] font-semibold text-[#9b9b9b] uppercase tracking-wider mb-1.5">Also saved to Lead Info</p>
                       <div className="flex flex-wrap gap-x-4 gap-y-1">
-                        {Object.entries(pasteUW).map(([k, v]) => (
-                          <span key={k} className="text-xs text-[#6b6b6b]">
-                            <span className="font-medium text-[#1a1a1a]">{k.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase())}:</span>{' '}{v}
-                          </span>
-                        ))}
+                        {Object.entries(pasteUW).map(([k, v]) => {
+                          const shown = displayUwValue(k, v);
+                          if (!shown) return null;
+                          return (
+                            <span key={k} className="text-xs text-[#6b6b6b]">
+                              <span className="font-medium text-[#1a1a1a]">{k.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase())}:</span>{' '}{shown}
+                            </span>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -463,6 +695,90 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
             </div>
           )}
 
+          {/* ── FULL PACK ──────────────────────────────────────────────── */}
+          {method === 'fullpack' && !parsed && (
+            <div className="space-y-4">
+              <p className="text-xs text-[#9b9b9b]">
+                Upload the funding application and bank statements. Each file is marked and parsed as its type.
+                Statement files are saved to the lead. The application is used for data only and is not kept.
+              </p>
+
+              <div>
+                <p className="text-[10px] font-semibold text-[#9b9b9b] uppercase tracking-wider mb-1.5">Application</p>
+                {!appFile ? (
+                  <div
+                    onDragOver={e => { e.preventDefault(); setDragOverApp(true); }}
+                    onDragLeave={() => setDragOverApp(false)}
+                    onDrop={e => {
+                      e.preventDefault(); setDragOverApp(false);
+                      if (e.dataTransfer.files[0]) setAppFile(e.dataTransfer.files[0]);
+                    }}
+                    onClick={() => appRef.current?.click()}
+                    className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors ${dragOverApp ? 'border-indigo-400 bg-indigo-50' : 'border-[#d4d4d4] hover:border-[#9b9b9b] bg-[#fafafa]'}`}
+                  >
+                    <p className="text-sm font-semibold text-[#6b6b6b]">Drop application here</p>
+                    <p className="text-xs text-[#9b9b9b] mt-1">or click to browse · PDF, DOC, DOCX · Max 20 MB</p>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-3 px-4 py-3 bg-[#fafafa] border border-[#e5e5e5] rounded-xl">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-[#6b6b6b] bg-[#ebebeb] px-1.5 py-0.5 rounded">App</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-[#1a1a1a] truncate">{appFile.name}</p>
+                      <p className="text-xs text-[#9b9b9b]">{fmtSize(appFile.size)}</p>
+                    </div>
+                    <button onClick={() => setAppFile(null)} className="text-[#9b9b9b] hover:text-red-500 transition-colors">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                )}
+                <input ref={appRef} type="file" accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png" className="hidden"
+                  onChange={e => { if (e.target.files?.[0]) setAppFile(e.target.files[0]); e.target.value = ''; }} />
+              </div>
+
+              <div>
+                <p className="text-[10px] font-semibold text-[#9b9b9b] uppercase tracking-wider mb-1.5">Bank statements</p>
+                <div
+                  onDragOver={e => { e.preventDefault(); setDragOverBank(true); }}
+                  onDragLeave={() => setDragOverBank(false)}
+                  onDrop={e => {
+                    e.preventDefault(); setDragOverBank(false);
+                    addBankFiles(Array.from(e.dataTransfer.files));
+                  }}
+                  onClick={() => bankRef.current?.click()}
+                  className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors ${dragOverBank ? 'border-indigo-400 bg-indigo-50' : 'border-[#d4d4d4] hover:border-[#9b9b9b] bg-[#fafafa]'}`}
+                >
+                  <p className="text-sm font-semibold text-[#6b6b6b]">Drop statements here</p>
+                  <p className="text-xs text-[#9b9b9b] mt-1">or click to browse · PDF, CSV · up to 10 files</p>
+                </div>
+                {bankFiles.length > 0 && (
+                  <div className="mt-2 space-y-1.5">
+                    {bankFiles.map((file, idx) => (
+                      <div key={`${file.name}-${file.size}-${idx}`} className="flex items-center gap-3 px-4 py-2.5 bg-[#fafafa] border border-[#e5e5e5] rounded-xl">
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-[#6b6b6b] bg-[#ebebeb] px-1.5 py-0.5 rounded">Statement</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-[#1a1a1a] truncate">{file.name}</p>
+                          <p className="text-xs text-[#9b9b9b]">{fmtSize(file.size)}</p>
+                        </div>
+                        <button
+                          onClick={e => { e.stopPropagation(); setBankFiles(prev => prev.filter((_, i) => i !== idx)); }}
+                          className="text-[#9b9b9b] hover:text-red-500 transition-colors"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <input ref={bankRef} type="file" multiple accept=".pdf,.csv,.jpg,.jpeg,.png" className="hidden"
+                  onChange={e => { if (e.target.files?.length) addBankFiles(Array.from(e.target.files)); e.target.value = ''; }} />
+              </div>
+            </div>
+          )}
+
           {/* Error */}
           {error && (
             <p className="mt-3 text-xs text-red-500 bg-red-50 px-3 py-2 rounded-lg">{error}</p>
@@ -509,8 +825,24 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
             </>
           )}
 
+          {/* FULL PACK — Parse button */}
+          {method === 'fullpack' && !parsed && (
+            <>
+              <button onClick={onClose}
+                className="px-4 py-2.5 border border-[#e5e5e5] rounded-xl text-sm text-[#6b6b6b] hover:bg-[#f5f5f5] transition-colors">
+                Cancel
+              </button>
+              <button onClick={parseFullPack} disabled={!appFile || bankFiles.length === 0 || parsing}
+                className="flex-1 py-2.5 bg-[#1a1a1a] text-white rounded-xl text-sm font-semibold hover:bg-[#333] disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2">
+                {parsing
+                  ? <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>{parseStatus || 'Parsing…'}</>
+                  : 'Parse Full Pack →'}
+              </button>
+            </>
+          )}
+
           {/* FORM READY — Create lead */}
-          {(method === 'manual' || (method === 'paste' && parseNote) || (method === 'upload' && parsed)) && (
+          {(method === 'manual' || (method === 'paste' && parseNote) || ((method === 'upload' || method === 'fullpack') && parsed)) && (
             <>
               <button onClick={onClose}
                 className="px-4 py-2.5 border border-[#e5e5e5] rounded-xl text-sm text-[#6b6b6b] hover:bg-[#f5f5f5] transition-colors">

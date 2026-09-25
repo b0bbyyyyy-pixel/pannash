@@ -478,7 +478,10 @@ export default function DocumentsModal({
   };
 
   const isBankStatement = (a: Attachment) =>
-    a.file_type.includes('pdf') || a.file_name.toLowerCase().includes('bank') || a.file_name.toLowerCase().includes('statement');
+    a.column_field === 'bank_statements' ||
+    a.file_type.includes('pdf') ||
+    a.file_name.toLowerCase().includes('bank') ||
+    a.file_name.toLowerCase().includes('statement');
 
   const displayName = leadCompany || leadName;
   const parsedCount = Object.keys(parsedFields).length;
@@ -620,7 +623,15 @@ export default function DocumentsModal({
                             <button onClick={() => setRenamingId(null)} className="text-xs text-[#9b9b9b] hover:text-[#1a1a1a]">Cancel</button>
                           </div>
                         ) : (
-                          <p className="text-sm font-semibold text-[#1a1a1a] truncate leading-tight">{a.file_name}</p>
+                          <p className="text-sm font-semibold text-[#1a1a1a] truncate leading-tight">
+                            {a.file_name}
+                            {a.column_field === 'bank_statements' && (
+                              <span className="ml-2 align-middle text-[10px] font-semibold uppercase tracking-wider text-[#6b6b6b] bg-[#f0f0f0] px-1.5 py-0.5 rounded">Statement</span>
+                            )}
+                            {a.column_field === 'documents' && /app/i.test(a.file_name) && (
+                              <span className="ml-2 align-middle text-[10px] font-semibold uppercase tracking-wider text-[#6b6b6b] bg-[#f0f0f0] px-1.5 py-0.5 rounded">App</span>
+                            )}
+                          </p>
                         )}
                         <p className="text-[11px] text-[#9b9b9b] mt-0.5 truncate">
                           {a.file_path.split('/').pop()} · {fmtSize(a.file_size)} · {fmtDate(a.created_at)}
