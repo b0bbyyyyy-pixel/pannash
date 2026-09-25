@@ -13,6 +13,13 @@ interface UploadFormProps {
   onSuccess?: () => void;
 }
 
+type GoogleStatus = {
+  connected: boolean;
+  email?: string;
+  expired?: boolean;
+  needsReconnect?: boolean;
+};
+
 interface ParsedLead {
   name: string;
   email: string;
@@ -76,7 +83,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
   const [rangeFrom, setRangeFrom] = useState<string>('1');
   const [rangeTo, setRangeTo] = useState<string>('');
   // Google OAuth state
-  const [googleStatus, setGoogleStatus] = useState<{ connected: boolean; email?: string } | null>(null);
+  const [googleStatus, setGoogleStatus] = useState<GoogleStatus | null>(null);
   const [googleStatusLoading, setGoogleStatusLoading] = useState(false);
   const [driveSheets, setDriveSheets] = useState<{ id: string; name: string; modifiedTime: string }[]>([]);
   const [driveSheetsLoading, setDriveSheetsLoading] = useState(false);
@@ -1245,9 +1252,13 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       const res = await fetch('/api/auth/google/sheets');
       const json = await res.json();
       if (!res.ok) {
-        // 401 usually means token expired / revoked
         if (res.status === 401) {
-          setGoogleStatus({ connected: false });
+          setGoogleStatus(prev => ({
+            connected: prev?.connected ?? true,
+            email: prev?.email,
+            expired: true,
+            needsReconnect: true,
+          }));
           setDriveSheetsError('Google session expired. Please reconnect below.');
         } else {
           setDriveSheetsError(json.error || 'Failed to load spreadsheets from Drive.');
@@ -1276,13 +1287,10 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       const res = await fetch('/api/auth/google/status');
       const json = await res.json();
       setGoogleStatus(json);
-      if (json.connected) {
-        if (json.expired) {
-          // Token is expired — show reconnect prompt instead of a silent empty list
-          setDriveSheetsError('Google session expired. Please reconnect.');
-        } else {
-          await fetchDriveSheets();
-        }
+      if (json.connected && !json.needsReconnect) {
+        await fetchDriveSheets();
+      } else if (json.needsReconnect) {
+        setDriveSheetsError('Google session expired. Please reconnect.');
       }
     } catch {
       setGoogleStatus({ connected: false });
@@ -1804,9 +1812,9 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
           {googleStatusLoading ? (
             <div className="text-xs text-gray-400 text-center py-2 animate-pulse">Checking Google connection…</div>
           ) : googleStatus?.connected ? (
-            <div className={`flex items-center justify-between rounded-lg px-3 py-2 border ${(googleStatus as {connected: boolean; expired?: boolean}).expired ? 'bg-amber-50 border-amber-200' : 'bg-green-50 border-green-200'}`}>
+            <div className={`flex items-center justify-between rounded-lg px-3 py-2 border ${googleStatus.needsReconnect ? 'bg-amber-50 border-amber-200' : 'bg-green-50 border-green-200'}`}>
               <div className="flex items-center gap-2">
-                {(googleStatus as {connected: boolean; expired?: boolean}).expired ? (
+                {googleStatus.needsReconnect ? (
                   <>
                     <svg className="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                     <span className="text-xs text-amber-800 font-medium">Session expired for <strong>{googleStatus.email}</strong></span>
@@ -1819,7 +1827,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
                 )}
               </div>
               <div className="flex items-center gap-3">
-                {(googleStatus as {connected: boolean; expired?: boolean}).expired && (
+                {googleStatus.needsReconnect && (
                   <a href="/api/auth/google/connect?redirect=/leads" className="text-[11px] text-blue-600 hover:underline font-medium">Reconnect</a>
                 )}
                 <button onClick={handleGoogleDisconnect} className="text-[11px] text-red-500 hover:text-red-700 underline">Disconnect</button>

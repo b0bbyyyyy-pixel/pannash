@@ -37,7 +37,11 @@ export async function getGoogleAccessToken(
   });
 
   const tokens = await res.json();
-  if (!res.ok || !tokens.access_token) return null;
+  if (!res.ok || !tokens.access_token) {
+    const errCode = typeof tokens?.error === 'string' ? tokens.error : undefined;
+    console.warn('[google] token refresh failed', { status: res.status, error: errCode });
+    return null;
+  }
 
   const expiresAt = new Date(Date.now() + (tokens.expires_in ?? 3600) * 1000).toISOString();
 

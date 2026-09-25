@@ -9,6 +9,12 @@ function safeRedirect(raw: unknown, fallback: string) {
   return raw;
 }
 
+function incomingRefreshToken(tokens: { refresh_token?: unknown }): string | null {
+  return typeof tokens.refresh_token === 'string' && tokens.refresh_token.trim()
+    ? tokens.refresh_token.trim()
+    : null;
+}
+
 /**
  * GET /api/auth/google/callback?code=...&state=...
  * Sheets connect (google_connections) and Gmail send (email_connections)
@@ -94,13 +100,21 @@ export async function GET(request: NextRequest) {
     if (!googleEmail) {
       return NextResponse.redirect(`${origin}${redirectAfter}?gmail_error=no_email`);
     }
+    const { data: existingGmail } = await supabase
+      .from('email_connections')
+      .select('refresh_token')
+      .eq('user_id', userId)
+      .eq('provider', 'gmail')
+      .maybeSingle();
+    const gmailRefresh = incomingRefreshToken(tokens) ?? existingGmail?.refresh_token ?? null;
+
     const gmailRow = {
       user_id: userId,
       provider: 'gmail',
       email: googleEmail,
       from_email: googleEmail,
       access_token: tokens.access_token,
-      refresh_token: tokens.refresh_token ?? null,
+      refresh_token: gmailRefresh,
       expiry_date: expiresAt,
       updated_at: new Date().toISOString(),
     };
@@ -115,7 +129,7 @@ export async function GET(request: NextRequest) {
           provider: 'gmail',
           email_address: googleEmail,
           access_token: tokens.access_token,
-          refresh_token: tokens.refresh_token ?? null,
+          refresh_token: gmailRefresh,
           expires_at: expiresAt,
           updated_at: new Date().toISOString(),
         },
@@ -132,6 +146,13 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${origin}${redirectAfter}?gmail_connected=1`);
   }
 
+  const { data: existingSheets } = await supabase
+    .from('google_connections')
+    .select('refresh_token')
+    .eq('user_id', userId)
+    .maybeSingle();
+  const sheetsRefresh = incomingRefreshToken(tokens) ?? existingSheets?.refresh_token ?? null;
+
   const { error: upsertErr } = await supabase
     .from('google_connections')
     .upsert(
@@ -139,7 +160,7 @@ export async function GET(request: NextRequest) {
         user_id:       userId,
         google_email:  googleEmail,
         access_token:  tokens.access_token,
-        refresh_token: tokens.refresh_token ?? null,
+        refresh_token: sheetsRefresh,
         expires_at:    expiresAt,
         updated_at:    new Date().toISOString(),
       },
