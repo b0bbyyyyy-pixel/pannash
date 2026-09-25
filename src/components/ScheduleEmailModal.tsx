@@ -620,13 +620,40 @@ export default function ScheduleEmailModal({ lead, onClose }: ScheduleEmailModal
             <button
               onClick={sendNow}
               disabled={!selectedId || sending || scheduling || !lead.email}
-              className="w-full py-3 bg-[#22c55e] text-white rounded-lg text-sm font-semibold hover:bg-[#16a34a] disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 mb-4"
+              className={`w-full py-3 text-white rounded-lg text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 mb-2 ${
+                successMsg.startsWith('Sent') ? 'bg-[#15803d] hover:bg-[#166534]' : 'bg-[#22c55e] hover:bg-[#16a34a]'
+              }`}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                {successMsg.startsWith('Sent') ? (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                ) : (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                )}
               </svg>
-              {sending ? 'Sending…' : 'Send Now'}
+              {sending ? 'Sending…' : successMsg.startsWith('Sent') ? 'Sent' : 'Send Now'}
             </button>
+            {sending && (
+              <p className="text-xs text-[#6b6b6b] text-center mb-3">Sending email…</p>
+            )}
+            {!sending && successMsg && (
+              <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2 mb-3 text-center">
+                {successMsg}
+              </p>
+            )}
+            {!sending && sendError && (
+              <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3 text-center space-y-2">
+                <p>{sendError}</p>
+                {needsGmail && (
+                  <a
+                    href="/api/auth/google?redirect=/settings/connections"
+                    className="inline-flex items-center px-3 py-1.5 bg-[#1a1a1a] text-white rounded-md text-xs font-medium hover:bg-[#2a2a2a]"
+                  >
+                    Connect Gmail
+                  </a>
+                )}
+              </div>
+            )}
 
             <div className="flex items-center gap-3 mb-4">
               <div className="flex-1 h-px bg-[#e5e5e5]" />

@@ -3688,10 +3688,25 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                 <button
                   onClick={() => showScheduleEmailModal && handleSendEmailNow(showScheduleEmailModal)}
                   disabled={!selectedEmailTemplate || sendingEmail}
-                  className="w-full px-4 py-3 bg-[#00cc00] text-white rounded-md text-sm font-medium hover:bg-[#00b300] transition-colors mb-3 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className={`w-full px-4 py-3 text-white rounded-md text-sm font-medium transition-colors mb-2 disabled:opacity-50 disabled:cursor-not-allowed ${
+                    emailSendMsg.startsWith('Sent') ? 'bg-[#15803d] hover:bg-[#166534]' : 'bg-[#00cc00] hover:bg-[#00b300]'
+                  }`}
                 >
-                  {sendingEmail ? 'Sending…' : '📨 Send Now'}
+                  {sendingEmail ? 'Sending…' : emailSendMsg.startsWith('Sent') ? 'Sent' : '📨 Send Now'}
                 </button>
+                {sendingEmail && (
+                  <p className="text-xs text-[#6b6b6b] text-center mb-3">Sending email…</p>
+                )}
+                {!sendingEmail && emailSendMsg && (
+                  <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-md px-3 py-2 mb-3 text-center">
+                    {emailSendMsg}
+                  </p>
+                )}
+                {!sendingEmail && emailSendError && (
+                  <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2 mb-3 text-center">
+                    {emailSendError}
+                  </p>
+                )}
 
                 <div className="text-center text-xs text-[#6b6b6b] mb-3">— OR —</div>
 
