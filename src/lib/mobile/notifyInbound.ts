@@ -53,6 +53,7 @@ export async function notifyUserOfInboundSms(supabase: any, args: NotifyArgs) {
           title: who,
           body: preview,
           url,
+          tag: args.threadId,
         }),
       );
     } catch (err) {

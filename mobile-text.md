@@ -1,6 +1,6 @@
 # Mobile Text
 
-Phone login opens a Messages-style texting app at `/m/text`. Desktop stays the full CRM. Open it from Settings → Mobile Text, or from Inbox → Mobile.
+Phone login opens a Messages-style texting app at `/m/text`. Desktop stays the full CRM. Open it from Settings → Mobile Text.
 
 Thread ids are the lead id.
 

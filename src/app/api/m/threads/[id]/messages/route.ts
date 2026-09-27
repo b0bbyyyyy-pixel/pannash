@@ -3,6 +3,7 @@ import { mobileClient, unauthorized } from '@/lib/mobile/session';
 import { getTwilioCreds } from '@/lib/telephony/twilio';
 import { sendTwilioSms, refreshSmsStatuses } from '@/lib/telephony/sms';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
+import { backfillInboundPhotos } from '@/lib/inbox/saveInboundMms';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,15 +48,25 @@ export async function GET(
   if (!conv) return NextResponse.json({ messages: [], nextCursor: null });
 
   const cursor = req.nextUrl.searchParams.get('cursor');
-  let query = supabase
-    .from('inbox_messages')
-    .select('id, direction, body, status, error_message, created_at, twilio_sid')
-    .eq('conversation_id', conv.id)
-    .order('created_at', { ascending: false })
-    .limit(PAGE);
-  if (cursor) query = query.lt('created_at', cursor);
+  const runQuery = (cols: string) => {
+    let query = supabase
+      .from('inbox_messages')
+      .select(cols)
+      .eq('conversation_id', conv.id)
+      .order('created_at', { ascending: false })
+      .limit(PAGE);
+    if (cursor) query = query.lt('created_at', cursor);
+    return query;
+  };
 
-  const { data, error } = await query;
+  let { data, error } = await runQuery(
+    'id, direction, body, status, error_message, created_at, twilio_sid, media_items',
+  );
+  if (error && /media_items/i.test(error.message)) {
+    const retry = await runQuery('id, direction, body, status, error_message, created_at, twilio_sid');
+    data = retry.data;
+    error = retry.error;
+  }
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   let messages = data ?? [];
@@ -82,6 +93,7 @@ export async function GET(
   }
 
   messages = [...messages].reverse();
+  messages = await backfillInboundPhotos(supabase, user.id, messages);
   const nextCursor = (data?.length ?? 0) === PAGE ? data![data!.length - 1].created_at : null;
 
   return NextResponse.json({

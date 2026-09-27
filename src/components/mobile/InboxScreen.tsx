@@ -26,13 +26,31 @@ export default function InboxScreen() {
   const [compose, setCompose] = useState(false);
   const [campaign, setCampaign] = useState(false);
   const [banner, setBanner] = useState(false);
+  const [alertState, setAlertState] = useState<'checking' | 'on' | 'ask' | 'denied' | 'error'>('checking');
+  const [alertError, setAlertError] = useState('');
 
   useEffect(() => {
     const standalone = window.matchMedia('(display-mode: standalone)').matches
       || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
-    if (standalone) return;
-    if (localStorage.getItem('m-text-a2hs') === '1') return;
-    setBanner(true);
+    if (!standalone && localStorage.getItem('m-text-a2hs') !== '1') setBanner(true);
+
+    if (typeof Notification === 'undefined') {
+      setAlertState('error');
+      setAlertError('This phone cannot show text alerts yet.');
+      return;
+    }
+    if (Notification.permission === 'denied') {
+      setAlertState('denied');
+      return;
+    }
+    if (Notification.permission === 'granted') {
+      enableAlerts(false).then(result => {
+        setAlertState(result.ok ? 'on' : 'error');
+        if (!result.ok) setAlertError('Alerts are allowed, but this server is not sending them yet. Restart the app server, then open this screen again.');
+      }).catch(() => setAlertState('error'));
+      return;
+    }
+    setAlertState('ask');
   }, []);
 
   useEffect(() => {
@@ -71,19 +89,44 @@ export default function InboxScreen() {
           Add to Home Screen to get reply alerts.
           <button
             type="button"
-            className="ml-2 text-[#007AFF]"
-            onClick={() => { void enableAlerts(); }}
-          >
-            Allow
-          </button>
-          <button
-            type="button"
             className="ml-2 text-[#8E8E93]"
             onClick={() => { localStorage.setItem('m-text-a2hs', '1'); setBanner(false); }}
           >
             OK
           </button>
         </div>
+      )}
+
+      {alertState === 'ask' && (
+        <div className="mx-4 mb-2 rounded-xl bg-[#F2F2F7] px-3 py-2 text-[13px] leading-snug text-black">
+          Turn on notifications for new texts.
+          <button
+            type="button"
+            className="ml-2 font-semibold text-[#007AFF]"
+            onClick={() => {
+              void enableAlerts(true).then(result => {
+                if (result.ok) setAlertState('on');
+                else if (result.reason === 'denied') setAlertState('denied');
+                else {
+                  setAlertState('error');
+                  setAlertError(result.reason === 'save'
+                    ? 'Run add-mobile-text.sql in Supabase, then tap Turn on again.'
+                    : 'Could not turn on alerts. Open this from the home screen icon and try again.');
+                }
+              });
+            }}
+          >
+            Turn on
+          </button>
+        </div>
+      )}
+      {alertState === 'denied' && (
+        <p className="mx-4 mb-2 text-[12px] leading-snug text-[#8E8E93]">
+          Notifications are blocked. On iPhone: Settings → Notifications → Gostwrk Text → Allow.
+        </p>
+      )}
+      {alertState === 'error' && alertError && (
+        <p className="mx-4 mb-2 text-[12px] leading-snug text-[#8E8E93]">{alertError}</p>
       )}
 
       <div className="m-scroll min-h-0 flex-1 overflow-y-auto">

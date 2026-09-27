@@ -14,7 +14,9 @@ self.addEventListener('push', (event) => {
     // keep defaults
   }
   event.waitUntil(self.registration.showNotification(data.title || 'Gostwrk Text', {
-    body: data.body || '',
+    body: data.body || 'New text',
+    tag: data.tag || 'gostwrk-text',
+    renotify: true,
     data: { url: data.url || '/m/text' },
   }));
 });

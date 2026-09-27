@@ -3,6 +3,7 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { getTwilioCreds } from '@/lib/telephony/twilio';
 import { refreshSmsStatuses } from '@/lib/telephony/sms';
+import { backfillInboundPhotos } from '@/lib/inbox/saveInboundMms';
 
 // GET /api/inbox/messages?leadId=xxx  — fetch thread + mark read
 export async function GET(req: NextRequest) {
@@ -59,6 +60,8 @@ export async function GET(req: NextRequest) {
     } catch {
       // Table not yet created
     }
+
+    messages = await backfillInboundPhotos(supabase, user.id, messages);
 
     // Mark as read
     if (conv.unread_count > 0) {

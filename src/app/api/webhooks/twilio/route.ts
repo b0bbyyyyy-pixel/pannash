@@ -4,6 +4,7 @@ import { toE164 } from '@/lib/dialer/e164';
 import { promoteCampaignLeadOnReply } from '@/lib/inbox/promoteCampaignReply';
 import { runCasperInboundSms } from '@/lib/casper/reply';
 import { notifyUserOfInboundSms } from '@/lib/mobile/notifyInbound';
+import { saveInboundMms } from '@/lib/inbox/saveInboundMms';
 
 export const maxDuration = 60;
 
@@ -190,6 +191,20 @@ export async function POST(req: NextRequest) {
       }
     } catch (inboxErr) {
       console.error('[Inbox] Failed to write inbound to inbox_messages:', inboxErr);
+    }
+
+    if (numMedia > 0 && messageSid) {
+      try {
+        await saveInboundMms(supabase, {
+          formData,
+          userId: ownerId,
+          leadId: lead.id,
+          messageSid,
+          numMedia,
+        });
+      } catch (mmsErr) {
+        console.error('[SMS Webhook] MMS save', mmsErr);
+      }
     }
 
     after(async () => {

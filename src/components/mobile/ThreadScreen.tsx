@@ -3,7 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import FullCrmLink from '@/components/mobile/FullCrmLink';
+import InboundPhoto from '@/components/mobile/InboundPhoto';
 import { dayStamp, initial } from '@/components/mobile/format';
+
+type MediaItem = { sid?: string; path?: string; type: string; savedAt?: string | null };
 
 type Msg = {
   id: string;
@@ -13,6 +16,7 @@ type Msg = {
   error_message?: string | null;
   created_at: string;
   pending?: boolean;
+  media_items?: MediaItem[] | null;
 };
 
 export default function ThreadScreen() {
@@ -153,6 +157,8 @@ export default function ThreadScreen() {
           const out = msg.direction === 'outbound';
           const failed = msg.status === 'failed';
           const receipt = msg.id === lastOutboundId && (msg.status === 'delivered' || msg.status === 'read');
+          const photos = (msg.media_items ?? []).filter(item => item?.sid || item?.path);
+          const caption = msg.body === 'Attachment: 1 Photo' && photos.length ? '' : msg.body;
           return (
             <div key={msg.id}>
               {showDay && (
@@ -160,15 +166,32 @@ export default function ThreadScreen() {
               )}
               <div className={`mb-1 flex ${out ? 'justify-end' : 'justify-start'}`}>
                 <div className={`max-w-[78%] ${out ? 'items-end' : 'items-start'} flex flex-col`}>
+                  {photos.map((photo, photoIndex) => (
+                    <InboundPhoto
+                      key={`${msg.id}-${photoIndex}`}
+                      messageId={msg.id}
+                      index={photoIndex}
+                      savedAt={photo.savedAt}
+                      onSaved={(savedAt) => {
+                        setMessages(prev => prev.map(m => {
+                          if (m.id !== msg.id || !m.media_items) return m;
+                          const next = m.media_items.map((item, n) => n === photoIndex ? { ...item, savedAt } : item);
+                          return { ...m, media_items: next };
+                        }));
+                      }}
+                    />
+                  ))}
+                  {caption ? (
                   <div
                     className={`px-3 py-2 text-[17px] leading-snug ${
                       out
                         ? 'rounded-[18px] bg-[#34C759] text-white'
                         : 'rounded-[18px] bg-[#E9E9EB] text-black'
-                    } ${failed ? 'opacity-70' : ''}`}
+                    } ${failed ? 'opacity-70' : ''} ${photos.length ? 'mt-1' : ''}`}
                   >
-                    {msg.body}
+                    {caption}
                   </div>
+                  ) : null}
                   {out && (
                     <p className="mt-0.5 px-1 text-[11px] text-[#8E8E93]">Sent as Text Message</p>
                   )}

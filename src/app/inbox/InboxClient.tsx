@@ -7,6 +7,7 @@ import { useWebPhone } from '@/components/webphone/WebPhone';
 import InboxDialer from '@/components/InboxDialer';
 import LeadUpdatesTimeline from '@/components/LeadUpdatesTimeline';
 import { casperEffectiveForLead } from '@/lib/casper/allow';
+import InboundPhoto from '@/components/mobile/InboundPhoto';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -51,6 +52,7 @@ interface InboxMessage {
   twilio_sid: string | null;
   error_message: string | null;
   created_at: string;
+  media_items?: { sid?: string; path?: string; type: string; savedAt?: string | null }[] | null;
 }
 
 interface PhoneConnection {
@@ -327,6 +329,19 @@ export default function InboxClient({
           });
         }
       )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'inbox_messages',
+          filter: `conversation_id=eq.${conversationId}`,
+        },
+        (payload) => {
+          const updated = payload.new as InboxMessage;
+          setMessages(prev => prev.map(m => m.id === updated.id ? { ...m, ...updated } : m));
+        }
+      )
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
@@ -599,15 +614,6 @@ export default function InboxClient({
               />
             </div>
 
-            <a
-              href="/m/text"
-              target="_blank"
-              rel="noreferrer"
-              className="flex-shrink-0 text-[11px] font-medium text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors"
-            >
-              Mobile
-            </a>
-
             <button
               type="button"
               onClick={() => setShowPipeline(true)}
@@ -836,12 +842,32 @@ export default function InboxClient({
                     <div className="space-y-1.5">
                       {group.msgs.map(msg => {
                         const receipt = msg.status === 'queued' && msg.twilio_sid ? 'sent' : msg.status;
+                        const photos = (msg.media_items ?? []).filter(item => item?.sid || item?.path);
+                        const caption = msg.body === 'Attachment: 1 Photo' && photos.length ? '' : msg.body;
                         return (
                         <div
                           key={msg.id}
                           className={`flex ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}
                         >
                           <div className={`max-w-[72%] ${msg.direction === 'outbound' ? 'items-end' : 'items-start'} flex flex-col gap-0.5`}>
+                            {photos.map((photo, photoIndex) => (
+                              <InboundPhoto
+                                key={`${msg.id}-${photoIndex}`}
+                                messageId={msg.id}
+                                index={photoIndex}
+                                savedAt={photo.savedAt}
+                                onSaved={(savedAt) => {
+                                  setMessages(prev => prev.map(m => {
+                                    if (m.id !== msg.id || !m.media_items) return m;
+                                    return {
+                                      ...m,
+                                      media_items: m.media_items.map((item, n) => n === photoIndex ? { ...item, savedAt } : item),
+                                    };
+                                  }));
+                                }}
+                              />
+                            ))}
+                            {caption ? (
                             <div
                               className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
                                 msg.direction === 'outbound'
@@ -849,8 +875,9 @@ export default function InboxClient({
                                   : 'bg-[#f0f0f0] text-[#1a1a1a] rounded-bl-sm'
                               } ${receipt === 'failed' ? 'opacity-60' : ''}`}
                             >
-                              {msg.body}
+                              {caption}
                             </div>
+                            ) : null}
                             <div className={`flex items-center gap-1.5 px-1 ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}>
                               <span className="text-[10px] text-gray-400">{msgTime(msg.created_at)}</span>
                               {msg.direction === 'outbound' && (
