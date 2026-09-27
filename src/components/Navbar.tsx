@@ -200,6 +200,13 @@ export default function Navbar({ userName }: NavbarProps) {
                 >
                   Timezone
                 </Link>
+                <Link
+                  href="/settings/mobile-text"
+                  className="block px-4 py-2.5 text-sm text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors"
+                  onClick={() => setShowDropdown(false)}
+                >
+                  Mobile Text
+                </Link>
                 <hr className="my-2 border-[#e5e5e5]" />
                 <button
                   onClick={async () => {

@@ -599,6 +599,15 @@ export default function InboxClient({
               />
             </div>
 
+            <a
+              href="/m/text"
+              target="_blank"
+              rel="noreferrer"
+              className="flex-shrink-0 text-[11px] font-medium text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors"
+            >
+              Mobile
+            </a>
+
             <button
               type="button"
               onClick={() => setShowPipeline(true)}

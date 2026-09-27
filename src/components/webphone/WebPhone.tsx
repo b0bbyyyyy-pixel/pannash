@@ -14,6 +14,7 @@ import {
   createContext, useContext, useCallback, useEffect, useRef, useState,
 } from 'react';
 import type { Call, Device } from '@twilio/voice-sdk';
+import { usePathname } from 'next/navigation';
 
 type PhoneStatus = 'offline' | 'ready' | 'connecting' | 'ringing' | 'in-call';
 
@@ -58,6 +59,8 @@ function fmtNumber(n: string | null): string {
 }
 
 export default function WebPhoneProvider({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname() ?? '';
+  const onMobileText = pathname.startsWith('/m');
   const [status, setStatus] = useState<PhoneStatus>('offline');
   const [activeNumber, setActiveNumber] = useState<string | null>(null);
   const [activeName, setActiveName] = useState<string | null>(null);
@@ -103,11 +106,19 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
 
   // ── Device init (runs once after login) ─────────────────────────────────────
   useEffect(() => {
+    if (onMobileText) {
+      deviceRef.current?.destroy();
+      deviceRef.current = null;
+      initStarted.current = false;
+      setStatus('offline');
+      return;
+    }
     if (initStarted.current) return;
     initStarted.current = true;
 
-    // Iframes (lead overlay) must not steal the "agent" registration from the parent tab.
+    // Iframes (lead overlay, settings preview) must not steal the "agent" registration.
     if (typeof window !== 'undefined' && window.top && window.top !== window.self) {
+      initStarted.current = false;
       return;
     }
 
@@ -157,7 +168,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     })();
 
     return () => { cancelled = true; };
-  }, [resetCallState]);
+  }, [resetCallState, onMobileText]);
 
   // ── Actions ─────────────────────────────────────────────────────────────────
   const connect = useCallback(async (e164: string, meta?: { name?: string }) => {
@@ -250,7 +261,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
       {children}
 
       {/* ── Incoming call toast ── */}
-      {incomingFrom && (
+      {incomingFrom && !onMobileText && (
         <div className="fixed top-5 right-5 z-[100] bg-white border border-[#e5e5e5] rounded-2xl shadow-xl p-4 w-72 animate-pulse-slow">
           <p className="text-xs text-[#9ca3af] mb-0.5">Incoming call</p>
           <p className="text-base font-semibold text-[#1a1a1a] mb-3">{fmtNumber(incomingFrom)}</p>
@@ -272,7 +283,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
       )}
 
       {/* ── Call bar ── */}
-      {inCall && (
+      {inCall && !onMobileText && (
         <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-[100]">
           <div className="bg-[#1a1a1a] text-white rounded-2xl shadow-2xl px-5 py-3 flex items-center gap-4">
             <div className="min-w-0">
@@ -349,7 +360,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
       )}
 
       {/* ── Error toast ── */}
-      {error && (
+      {error && !onMobileText && (
         <div className="fixed bottom-5 right-5 z-[100] bg-red-50 border border-red-200 rounded-xl px-4 py-3 max-w-xs shadow-lg">
           <div className="flex items-start gap-2">
             <p className="text-xs text-red-700 flex-1">{error}</p>

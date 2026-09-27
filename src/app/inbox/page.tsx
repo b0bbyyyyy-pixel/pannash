@@ -2,6 +2,7 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import Navbar from '@/components/Navbar';
+import PhoneLanding from '@/components/PhoneLanding';
 import InboxClient from './InboxClient';
 
 export default async function InboxPage({
@@ -31,6 +32,7 @@ export default async function InboxPage({
 
   return (
     <div className="min-h-screen bg-[#fafafa]">
+      <PhoneLanding />
       <Navbar userName={userName} />
       <div className="pt-20 h-screen flex flex-col">
         <InboxClient

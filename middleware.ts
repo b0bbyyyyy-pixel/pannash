@@ -16,7 +16,10 @@ export async function middleware(request: NextRequest) {
           return request.cookies.get(name)?.value;
         },
         set(name: string, value: string, options: object) {
-          response.cookies.set({ name, value, ...options as object });
+          const extra = request.nextUrl.pathname.startsWith('/m')
+            ? { maxAge: 60 * 60 * 24 * 60 }
+            : {};
+          response.cookies.set({ name, value, ...options as object, ...extra });
         },
         remove(name: string, options: object) {
           response.cookies.set({ name, value: '', ...options as object });
@@ -28,17 +31,30 @@ export async function middleware(request: NextRequest) {
   const { data: { session } } = await supabase.auth.getSession();
 
   const pathname = request.nextUrl.pathname;
+  const iphone = /iPhone|iPod/i.test(request.headers.get('user-agent') ?? '');
+  const landingOff = request.cookies.get('gostwrk_m_landing')?.value === '0';
+  const stayOnCrm = request.cookies.get('gostwrk_full_crm')?.value === '1';
+  const phoneLanding = iphone && !landingOff && !stayOnCrm;
 
   // Redirect logged-in users away from /auth
   if (pathname.startsWith('/auth') && session) {
-    return NextResponse.redirect(new URL('/dashboard', request.url));
+    const dest = phoneLanding ? '/m/text' : '/dashboard';
+    return NextResponse.redirect(new URL(dest, request.url));
+  }
+
+  if (
+    session &&
+    phoneLanding &&
+    (pathname === '/' || pathname === '/dashboard' || pathname === '/inbox')
+  ) {
+    return NextResponse.redirect(new URL('/m/text', request.url));
   }
 
   // Protected routes — redirect to /auth if not logged in
   const protectedPrefixes = [
     '/dashboard', '/campaigns', '/leads', '/settings',
     '/onboarding', '/agent', '/inbox', '/dialer', '/calendar',
-    '/followups', '/hot-leads',
+    '/followups', '/hot-leads', '/m',
   ];
   const isProtected = protectedPrefixes.some((p) => pathname.startsWith(p));
   if (isProtected && !session) {

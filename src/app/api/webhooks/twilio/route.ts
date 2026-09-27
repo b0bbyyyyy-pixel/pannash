@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { toE164 } from '@/lib/dialer/e164';
 import { promoteCampaignLeadOnReply } from '@/lib/inbox/promoteCampaignReply';
 import { runCasperInboundSms } from '@/lib/casper/reply';
+import { notifyUserOfInboundSms } from '@/lib/mobile/notifyInbound';
 
 export const maxDuration = 60;
 
@@ -72,16 +73,18 @@ export async function POST(req: NextRequest) {
     const to = String(formData.get('To') ?? '');
     const body = String(formData.get('Body') ?? '');
     const messageSid = String(formData.get('MessageSid') ?? '');
+    const numMedia = Number(formData.get('NumMedia') || 0);
+    const storedBody = body.trim() || (numMedia > 0 ? 'Attachment: 1 Photo' : '');
 
-    console.log(`[SMS Webhook] Incoming SMS from ${from}: ${body}`);
+    console.log(`[SMS Webhook] Incoming SMS from ${from}: ${storedBody}`);
 
-    if (!from || !body) return emptyTwiml();
+    if (!from || !storedBody) return emptyTwiml();
 
     // SECURITY DEFINER RPC — works even when the webhook has no login / RLS blocks reads.
     const { data: ingested, error: ingestErr } = await supabase.rpc('ingest_inbound_sms', {
       p_from: from,
       p_to: to,
-      p_body: body,
+      p_body: storedBody,
       p_sid: messageSid,
     });
     if (ingestErr) console.error('[SMS Webhook] ingest_inbound_sms:', ingestErr);
@@ -132,7 +135,7 @@ export async function POST(req: NextRequest) {
       }
 
       if (conv) {
-        const preview = body.length > 100 ? body.slice(0, 97) + '…' : body;
+        const preview = storedBody.length > 100 ? storedBody.slice(0, 97) + '…' : storedBody;
         const { data: existing } = messageSid
           ? await supabase.from('inbox_messages').select('id').eq('twilio_sid', messageSid).maybeSingle()
           : { data: null };
@@ -142,7 +145,7 @@ export async function POST(req: NextRequest) {
             conversation_id: conv.id,
             lead_id: lead.id,
             direction: 'inbound',
-            body,
+            body: storedBody,
             status: 'received',
             sent_by: 'user',
             twilio_sid: messageSid || null,
@@ -189,6 +192,19 @@ export async function POST(req: NextRequest) {
       console.error('[Inbox] Failed to write inbound to inbox_messages:', inboxErr);
     }
 
+    after(async () => {
+      try {
+        await notifyUserOfInboundSms(supabase, {
+          userId: ownerId,
+          threadId: lead.id,
+          name: lead.name,
+          body: storedBody,
+        });
+      } catch (notifyErr) {
+        console.error('[SMS Webhook] notify', notifyErr);
+      }
+    });
+
     if (body.match(/^(STOP|UNSUBSCRIBE|CANCEL|QUIT|END)\s*$/i)) {
       return emptyTwiml();
     }
@@ -206,7 +222,7 @@ export async function POST(req: NextRequest) {
       await supabase.from('sms_messages').insert({
         campaign_lead_id: campaignLead.id,
         direction: 'inbound',
-        body,
+        body: storedBody,
         from_number: from,
         to_number: to,
         twilio_sid: messageSid,
