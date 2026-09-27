@@ -60,7 +60,7 @@ export default function InboxScreen() {
   }, [q, compose]);
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col bg-white">
+    <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-white">
       <header className="px-4 pt-[max(12px,env(safe-area-inset-top))] pb-2">
         <p className="text-[10px] tracking-wide text-[#8E8E93]">Gostwrk</p>
         <h1 className="text-[34px] font-bold leading-none text-black">Messages</h1>
@@ -86,7 +86,7 @@ export default function InboxScreen() {
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="m-scroll min-h-0 flex-1 overflow-y-auto">
         {loading && <p className="px-4 py-6 text-[13px] text-[#8E8E93]">Loading…</p>}
         {!loading && threads.length === 0 && (
           <p className="px-4 py-8 text-center text-[15px] text-[#8E8E93]">No Messages</p>

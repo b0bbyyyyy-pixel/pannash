@@ -112,7 +112,7 @@ export default function ThreadScreen() {
   const lastOutboundId = [...messages].reverse().find(m => m.direction === 'outbound')?.id;
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-white">
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-white">
       <header className="flex items-center gap-2 border-b border-[#C6C6C8]/70 px-2 pt-[max(8px,env(safe-area-inset-top))] pb-2">
         <button type="button" onClick={() => router.push('/m/text')} className="px-1 text-[28px] leading-none text-[#007AFF]" aria-label="Back">
           ‹
@@ -132,7 +132,7 @@ export default function ThreadScreen() {
 
       <div
         ref={scroller}
-        className="min-h-0 flex-1 overflow-y-auto px-3 py-3"
+        className="m-scroll min-h-0 flex-1 overflow-y-auto px-3 py-3"
         onScroll={e => {
           const el = e.currentTarget;
           stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;

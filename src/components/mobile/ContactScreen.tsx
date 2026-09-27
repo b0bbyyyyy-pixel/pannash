@@ -34,7 +34,7 @@ export default function ContactScreen() {
   }, [threadId]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#F2F2F7]">
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[#F2F2F7]">
       <header className="flex items-center px-2 pt-[max(8px,env(safe-area-inset-top))] pb-2">
         <button type="button" onClick={() => router.push(`/m/text/${threadId}`)} className="px-1 text-[17px] text-[#007AFF]">
           ‹ Messages
