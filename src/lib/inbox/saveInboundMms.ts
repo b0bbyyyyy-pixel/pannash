@@ -96,7 +96,7 @@ function hasStoredCopy(m: ThreadMessage) {
 export async function backfillInboundPhotos<T extends ThreadMessage>(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase: any,
-  _userId: string,
+  userId: string,
   messages: T[],
 ): Promise<T[]> {
   const targets = messages.filter(m => needsSid(m) || hasStoredCopy(m));

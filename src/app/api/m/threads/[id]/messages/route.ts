@@ -69,7 +69,17 @@ export async function GET(
   }
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  let messages = data ?? [];
+  type ThreadRow = {
+    id: string;
+    direction: string;
+    body: string;
+    status: string;
+    error_message: string | null;
+    created_at: string;
+    twilio_sid: string | null;
+    media_items?: { sid?: string; path?: string; type: string; savedAt?: string | null }[] | null;
+  };
+  let messages: ThreadRow[] = Array.isArray(data) ? data as unknown as ThreadRow[] : [];
   if (!cursor && (conv.unread_count ?? 0) > 0) {
     await supabase.from('inbox_conversations').update({ unread_count: 0 }).eq('id', conv.id);
   }
@@ -92,9 +102,9 @@ export async function GET(
     }
   }
 
+  const nextCursor = messages.length === PAGE ? messages[messages.length - 1].created_at : null;
   messages = [...messages].reverse();
   messages = await backfillInboundPhotos(supabase, user.id, messages);
-  const nextCursor = (data?.length ?? 0) === PAGE ? data![data!.length - 1].created_at : null;
 
   return NextResponse.json({
     messages,
