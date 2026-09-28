@@ -19,14 +19,27 @@ type Msg = {
   media_items?: MediaItem[] | null;
 };
 
+type Tpl = { id: string; name: string; body: string };
+
+function fillTpl(body: string, lead: { name?: string | null; company?: string | null }) {
+  const first = (lead.name || '').trim().split(/\s+/)[0] || '';
+  return body
+    .replace(/\{first_name\}/gi, first)
+    .replace(/\{company\}/gi, (lead.company || '').trim());
+}
+
 export default function ThreadScreen() {
   const { threadId } = useParams<{ threadId: string }>();
   const router = useRouter();
   const [name, setName] = useState('');
+  const [company, setCompany] = useState('');
   const [messages, setMessages] = useState<Msg[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
+  const [showTpls, setShowTpls] = useState(false);
+  const [tpls, setTpls] = useState<Tpl[]>([]);
+  const inputRef = useRef<HTMLInputElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const loadingOlder = useRef(false);
@@ -37,6 +50,7 @@ export default function ThreadScreen() {
     if (!res.ok) return;
     const data = await res.json();
     if (data.lead?.name) setName(data.lead.name);
+    if (data.lead?.company != null) setCompany(data.lead.company || '');
     const page: Msg[] = data.messages ?? [];
     setCursor(data.nextCursor ?? null);
     setMessages(prev => {
@@ -55,7 +69,13 @@ export default function ThreadScreen() {
   }, [threadId]);
 
   useEffect(() => {
-    stick.current = true;
+    fetch('/api/m/templates')
+      .then(r => r.json())
+      .then(d => setTpls(d.templates ?? []))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
     setMessages([]);
     load().then(() => {
       requestAnimationFrame(() => {
@@ -88,6 +108,7 @@ export default function ThreadScreen() {
       pending: true,
     };
     setDraft('');
+    setShowTpls(false);
     setSending(true);
     stick.current = true;
     setMessages(prev => [...prev, temp]);
@@ -212,11 +233,45 @@ export default function ThreadScreen() {
 
       <div className="bg-[#F9F9F9] px-2 pt-1 pb-[max(8px,env(safe-area-inset-bottom))]">
         <FullCrmLink />
+        {showTpls && (
+          <div className="mb-2 max-h-[240px] overflow-y-auto rounded-2xl bg-[#E9E9EB]">
+            {tpls.length === 0 ? (
+              <p className="px-4 py-3 text-[15px] text-[#8E8E93]">No templates yet. Add them in Inbox on desktop.</p>
+            ) : (
+              tpls.map((t, i) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => {
+                    setDraft(fillTpl(t.body, { name, company }));
+                    setShowTpls(false);
+                    requestAnimationFrame(() => inputRef.current?.focus());
+                  }}
+                  className={`block w-full px-4 py-2.5 text-left ${i ? 'border-t border-[#C6C6C8]/70' : ''}`}
+                >
+                  <span className="block truncate text-[17px] text-black">{t.name || 'Template'}</span>
+                  <span className="mt-0.5 block truncate text-[13px] text-[#8E8E93]">
+                    {fillTpl(t.body, { name, company })}
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        )}
         <div className="flex items-end gap-2">
-          <button type="button" aria-label="Add" className="mb-1 flex h-8 w-8 items-center justify-center text-[28px] leading-none text-[#8E8E93]">
+          <button
+            type="button"
+            aria-label="Text templates"
+            aria-expanded={showTpls}
+            onClick={() => setShowTpls(v => !v)}
+            className={`mb-1 flex h-8 w-8 items-center justify-center rounded-full text-[28px] leading-none ${
+              showTpls ? 'bg-[#E9E9EB] text-[#007AFF]' : 'text-[#8E8E93]'
+            }`}
+          >
             +
           </button>
           <input
+            ref={inputRef}
             value={draft}
             onChange={e => setDraft(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); send(); } }}
