@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { formatTwilioSmsError, mapTwilioStatus } from '@/lib/telephony/sms';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
+import { onDripDeliveryFailed } from '@/lib/smsDrip/failsafe';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -55,7 +56,7 @@ export async function POST(req: NextRequest) {
         ...(inboxError ? { error_message: inboxError } : {}),
       })
       .eq('twilio_sid', messageSid)
-      .select('id');
+      .select('id, lead_id');
 
     if (updateErr) {
       console.error('[SMS Status] inbox_messages update failed', messageSid, updateErr);
@@ -148,6 +149,15 @@ export async function POST(req: NextRequest) {
         .eq('id', queueItem.campaign_lead_id);
 
       console.log(`[SMS Status] Updated queue ${queueItem.id} and campaign_lead ${queueItem.campaign_lead_id} to ${campaignLeadStatus}`);
+    }
+
+    if (inboxStatus === 'failed') {
+      const leadId = updated?.[0]?.lead_id ?? queueItem?.lead_id ?? null;
+      await onDripDeliveryFailed(supabase, {
+        twilioSid: messageSid,
+        leadId,
+        error: inboxError,
+      });
     }
 
     return emptyTwiml();

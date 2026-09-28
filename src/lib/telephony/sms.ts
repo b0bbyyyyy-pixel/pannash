@@ -14,6 +14,7 @@ const ERROR_COPY: Record<number, string> = {
   21211: 'Invalid destination number.',
   21610: 'Recipient opted out (STOP).',
   21614: 'Not a valid mobile number.',
+  30005: 'Unknown destination handset — the number is inactive or unreachable.',
   30007: 'Carrier blocked this message (content / spam filter). Try Customer Care wording with One Funding: and STOP/HELP.',
   30034: 'A2P 10DLC not registered for this number. Send through the approved Messaging Service.',
   30032: 'Toll-free / A2P not verified.',

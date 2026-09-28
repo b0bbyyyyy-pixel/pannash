@@ -299,7 +299,7 @@ function CampaignPane({ onDone }: { onDone: () => void }) {
       });
       const data = await res.json();
       if (!res.ok) setError(data.error || 'Send failed');
-      else setResult(`Sent ${data.sent}${data.failed ? ` · ${data.failed} failed` : ''}`);
+      else setResult(`Sent ${data.sent}${data.failed ? ` · ${data.failed} failed` : ''}${data.stopped ? ' · stopped after 3 errors' : ''}`);
     } catch {
       setError('Send failed');
     } finally {

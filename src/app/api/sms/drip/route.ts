@@ -26,11 +26,20 @@ export async function GET(req: NextRequest) {
     const listId = req.nextUrl.searchParams.get('listId');
 
     if (!listId) {
-      const { data: jobs, error } = await supabase
+      let { data: jobs, error } = await supabase
         .from('sms_drip_jobs')
-        .select('id, list_id, status, sent_count, total_count, next_send_at')
+        .select('id, list_id, status, sent_count, total_count, next_send_at, pause_reason')
         .eq('user_id', user.id)
         .in('status', ['active', 'paused']);
+      if (error) {
+        const retry = await supabase
+          .from('sms_drip_jobs')
+          .select('id, list_id, status, sent_count, total_count, next_send_at')
+          .eq('user_id', user.id)
+          .in('status', ['active', 'paused']);
+        jobs = retry.data as typeof jobs;
+        error = retry.error;
+      }
       if (error) return NextResponse.json({ jobs: [], setupRequired: true });
       return NextResponse.json({ jobs: jobs ?? [] });
     }
@@ -225,6 +234,8 @@ export async function PATCH(req: NextRequest) {
     if (action === 'resume') {
       patch.status = 'active';
       patch.next_send_at = new Date().toISOString();
+      patch.pause_reason = null;
+      patch.consecutive_failures = 0;
     }
     if (action === 'cancel') patch.status = 'cancelled';
 
@@ -256,13 +267,27 @@ export async function PATCH(req: NextRequest) {
       if (Array.isArray(body.skipStates)) patch.skip_states = body.skipStates;
     }
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('sms_drip_jobs')
       .update(patch)
       .eq('id', jobId)
       .eq('user_id', user.id)
       .select('id, status')
       .single();
+
+    if (error && (String(error.message).includes('pause_reason') || String(error.message).includes('consecutive_failures'))) {
+      delete patch.pause_reason;
+      delete patch.consecutive_failures;
+      const retry = await supabase
+        .from('sms_drip_jobs')
+        .update(patch)
+        .eq('id', jobId)
+        .eq('user_id', user.id)
+        .select('id, status')
+        .single();
+      data = retry.data;
+      error = retry.error;
+    }
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ job: data });

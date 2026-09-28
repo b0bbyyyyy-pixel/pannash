@@ -9,6 +9,7 @@ interface DripJobSummary {
   status: 'active' | 'paused';
   sent_count: number;
   total_count: number;
+  pause_reason?: string | null;
 }
 
 export interface Campaign {
@@ -167,7 +168,7 @@ export default function CampaignTable({ campaigns, onRename, onDelete }: Props) 
                       if (job?.status === 'paused') {
                         return (
                           <span className="text-[11px] text-amber-600 font-medium whitespace-nowrap">
-                            Paused · {job.sent_count}/{job.total_count}
+                            {job.pause_reason ? 'Paused after 3 failures' : 'Paused'} · {job.sent_count}/{job.total_count}
                           </span>
                         );
                       }

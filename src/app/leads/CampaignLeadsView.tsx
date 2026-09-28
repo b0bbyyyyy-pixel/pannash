@@ -12,6 +12,7 @@ interface DripJob {
   sent_count: number;
   total_count: number;
   next_send_at: string | null;
+  pause_reason?: string | null;
   templates?: string[] | null;
   window_hours?: number | null;
   pace_min_seconds?: number | null;
@@ -243,6 +244,15 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
 
   const smsCount = leads.filter((l) => l.sms_sent_at).length;
   const callCount = leads.filter((l) => l.call_made_at).length;
+  const failsafePause = useMemo(() => {
+    if (dripJob?.status !== 'paused') return false;
+    if (dripJob.pause_reason) return true;
+    const attempted = [...dripSends.values()]
+      .filter(s => s.sms_status === 'sent' || s.sms_status === 'failed')
+      .sort((a, b) => String(b.sent_at ?? '').localeCompare(String(a.sent_at ?? '')))
+      .slice(0, 3);
+    return attempted.length >= 3 && attempted.every(s => s.sms_status === 'failed');
+  }, [dripJob, dripSends]);
 
   const handleOutreach = async (leadId: string, type: 'sms' | 'call') => {
     setLoadingId(leadId);
@@ -383,8 +393,8 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
                   </svg>
                   Resume
                 </button>
-                <span className="text-[11px] text-[#6b6b6b] font-medium tabular-nums">
-                  Paused · {dripJob.sent_count}/{dripJob.total_count} sent
+                <span className="text-[11px] text-amber-700 font-medium tabular-nums">
+                  {failsafePause ? 'Paused after 3 failed texts' : 'Paused'} · {dripJob.sent_count}/{dripJob.total_count} sent
                 </span>
                 <button
                   onClick={() => setShowRunSms(true)}
@@ -428,6 +438,15 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
           </div>
         </div>
       </div>
+
+      {dripJob?.status === 'paused' && failsafePause && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Sending stopped after 3 failed texts in a row. Fix the message or list, then Resume.
+          {dripJob.pause_reason?.includes('(') ? (
+            <span className="mt-1 block text-xs text-amber-800/80">{dripJob.pause_reason}</span>
+          ) : null}
+        </div>
+      )}
 
       {/* Table */}
       <div className="bg-white border border-[#ebebeb] rounded-xl overflow-hidden">

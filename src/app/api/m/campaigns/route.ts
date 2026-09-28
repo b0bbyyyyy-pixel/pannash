@@ -3,6 +3,7 @@ import { mobileClient, unauthorized } from '@/lib/mobile/session';
 import { getTwilioCreds } from '@/lib/telephony/twilio';
 import { sendTwilioSms } from '@/lib/telephony/sms';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
+import { notifyUserAlert } from '@/lib/notify/userAlert';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest) {
 
   const { data: list } = await supabase
     .from('lead_lists')
-    .select('id')
+    .select('id, name')
     .eq('id', listId)
     .eq('user_id', user.id)
     .maybeSingle();
@@ -87,6 +88,8 @@ export async function POST(req: NextRequest) {
 
   let sent = 0;
   let failed = 0;
+  let streak = 0;
+  let stopped = false;
   for (const lead of targets) {
     const body = renderTemplate(text, lead);
     try {
@@ -102,10 +105,16 @@ export async function POST(req: NextRequest) {
         sentBy: 'user',
         bumpLastMessageAt: false,
       });
-      if (result.status === 'failed') failed += 1;
-      else sent += 1;
+      if (result.status === 'failed') {
+        failed += 1;
+        streak += 1;
+      } else {
+        sent += 1;
+        streak = 0;
+      }
     } catch (err) {
       failed += 1;
+      streak += 1;
       await recordOutboundInboxSms(supabase, {
         userId: user.id,
         leadId: lead.id,
@@ -117,7 +126,20 @@ export async function POST(req: NextRequest) {
         bumpLastMessageAt: false,
       });
     }
+    if (streak >= 3) {
+      stopped = true;
+      const remaining = targets.length - sent - failed;
+      await notifyUserAlert(supabase, {
+        userId: user.id,
+        email: user.email,
+        title: 'Campaign paused',
+        body: `${list.name || 'SMS campaign'} stopped after 3 failed texts in a row.${remaining > 0 ? ` ${remaining} not sent.` : ''}`,
+        url: `/leads?list=${listId}`,
+        tag: `m-campaign-pause-${listId}`,
+      });
+      break;
+    }
   }
 
-  return NextResponse.json({ sent, failed, total: targets.length });
+  return NextResponse.json({ sent, failed, total: targets.length, stopped });
 }

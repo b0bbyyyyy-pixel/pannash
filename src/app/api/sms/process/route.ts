@@ -5,6 +5,7 @@ import { replaceTemplateVariables } from '@/lib/queue';
 import { getTwilioCreds } from '@/lib/telephony/twilio';
 import { sendTwilioSms } from '@/lib/telephony/sms';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
+import { notifyUserAlert } from '@/lib/notify/userAlert';
 
 export async function POST(req: NextRequest) {
   try {
@@ -197,6 +198,40 @@ export async function POST(req: NextRequest) {
         failureCount++;
         if (!errors.includes(err.message)) {
           errors.push(err.message);
+        }
+
+        const campaignId = item.campaign_id;
+        if (campaignId) {
+          const { data: recent } = await supabase
+            .from('sms_queue')
+            .select('status')
+            .eq('campaign_id', campaignId)
+            .in('status', ['sent', 'failed'])
+            .order('updated_at', { ascending: false })
+            .limit(3);
+          const streak = (recent ?? []).findIndex((r: { status: string }) => r.status !== 'failed');
+          const failStreak = streak === -1 ? (recent ?? []).length : streak;
+          if (failStreak >= 3) {
+            const { data: paused } = await supabase
+              .from('campaigns')
+              .update({ status: 'paused' })
+              .eq('id', campaignId)
+              .eq('status', 'active')
+              .select('id, name')
+              .maybeSingle();
+            if (paused) {
+              await notifyUserAlert(supabase, {
+                userId: user.id,
+                email: user.email,
+                title: 'Campaign paused',
+                body: `${paused.name || 'SMS campaign'} stopped after 3 failed texts in a row. Last error: ${err.message}`,
+                url: `/campaigns/${campaignId}`,
+                tag: `sms-queue-pause-${campaignId}`,
+              });
+              errors.push('Paused after 3 failed texts in a row');
+              break;
+            }
+          }
         }
       }
     }
