@@ -20,6 +20,7 @@ import {
   publicAppUrl,
 } from '@/lib/telephony/twilio';
 import { pickDialerCallerId } from '@/lib/dialerCallerId';
+import { findLeadByPhone } from '@/lib/leads/findByPhone';
 
 function twimlResponse(xml: string, status = 200) {
   return new NextResponse(xml, { status, headers: { 'Content-Type': 'text/xml' } });
@@ -122,15 +123,11 @@ export async function POST(req: NextRequest) {
     console.log('[twilio/voice-app]', { isOutgoing, from, caller, To: params.To, phone: params.phone, outboundTo, fromNumber });
 
     let dbId: string | null = null;
+    let inboundLead: { id: string; name: string | null; company: string | null } | null = null;
     if (userId) {
       const otherParty = isOutgoing ? (outboundTo ?? params.To ?? '') : caller;
-      const { data: lead } = await supabase
-        .from('leads')
-        .select('id, name')
-        .eq('user_id', userId)
-        .eq('phone_e164', otherParty)
-        .limit(1)
-        .maybeSingle();
+      const lead = otherParty ? await findLeadByPhone(supabase, otherParty, userId) : null;
+      if (!isOutgoing && lead) inboundLead = { id: lead.id, name: lead.name, company: lead.company };
 
       const { data: row } = await supabase
         .from('dialer_calls')
@@ -180,14 +177,15 @@ export async function POST(req: NextRequest) {
       );
     } else {
       const dial = vr.dial({ timeout: 25, action: statusCb, method: 'POST' });
-      dial.client(
-        {
-          statusCallback: statusCb,
-          statusCallbackMethod: 'POST',
-          statusCallbackEvent: ['answered', 'completed'],
-        },
-        'agent'
-      );
+      const client = dial.client({
+        statusCallback: statusCb,
+        statusCallbackMethod: 'POST',
+        statusCallbackEvent: ['answered', 'completed'],
+      });
+      client.identity('agent');
+      if (inboundLead?.id) client.parameter({ name: 'leadId', value: inboundLead.id });
+      if (inboundLead?.name) client.parameter({ name: 'leadName', value: inboundLead.name.slice(0, 80) });
+      if (inboundLead?.company) client.parameter({ name: 'leadCompany', value: inboundLead.company.slice(0, 80) });
     }
 
     return twimlResponse(vr.toString());

@@ -166,7 +166,7 @@ export function useDialerSession() {
     if (!lead) return;
     if (!testMode) {
       try {
-        await webphone.connect(lead.phone_e164, { name: lead.name });
+        await webphone.connect(lead.phone_e164, { name: lead.name, leadId: lead.id, company: lead.company ?? undefined });
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : 'Could not start call');
         return;

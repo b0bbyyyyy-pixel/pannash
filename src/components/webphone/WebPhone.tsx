@@ -26,7 +26,7 @@ interface WebPhoneContextValue {
   incomingFrom: string | null;
   muted: boolean;
   error: string | null;
-  connect: (e164: string, meta?: { name?: string }) => Promise<void>;
+  connect: (e164: string, meta?: { name?: string; leadId?: string; company?: string }) => Promise<void>;
   hangup: () => void;
   toggleMute: () => void;
   sendDigits: (digits: string) => void;
@@ -58,6 +58,75 @@ function fmtNumber(n: string | null): string {
   return n;
 }
 
+type MatchedLead = { id: string; name: string; company?: string | null };
+
+function customParam(call: Call, key: string): string | null {
+  const cp = call.customParameters as Map<string, string> | Record<string, string> | undefined;
+  if (!cp) return null;
+  if (typeof (cp as Map<string, string>).get === 'function') {
+    const v = (cp as Map<string, string>).get(key);
+    return v?.trim() ? v : null;
+  }
+  const v = (cp as Record<string, string>)[key];
+  return typeof v === 'string' && v.trim() ? v : null;
+}
+
+function LeadCardOverlay({
+  leadId,
+  inCall,
+  onClose,
+}: {
+  leadId: string;
+  inCall: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/40 z-[90]" onClick={onClose} />
+      <div
+        className="fixed left-1/2 -translate-x-1/2 z-[91] flex flex-col overflow-hidden rounded-xl shadow-2xl"
+        style={{
+          width: 'min(92vw, 1200px)',
+          top: '1rem',
+          bottom: inCall ? '5.75rem' : '1rem',
+        }}
+      >
+        <div className="flex flex-shrink-0 items-center justify-between border-b border-[#e5e5e5] bg-white px-4 py-2.5">
+          <span className="text-xs font-medium text-[#6b6b6b]">Lead Info</span>
+          <div className="flex items-center gap-3">
+            <a
+              href={`/pipeline/${leadId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 text-xs text-[#6b6b6b] transition-colors hover:text-[#1a1a1a]"
+              title="Open in full page"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+              Full page
+            </a>
+            <button
+              onClick={onClose}
+              className="rounded p-1 text-[#6b6b6b] transition-colors hover:bg-[#f5f5f5] hover:text-[#1a1a1a]"
+              title="Close"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <iframe
+          src={`/pipeline/${leadId}?modal=1`}
+          className="w-full flex-1 border-0 bg-white"
+          title="Lead workspace"
+        />
+      </div>
+    </>
+  );
+}
+
 export default function WebPhoneProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() ?? '';
   const onMobileText = pathname.startsWith('/m');
@@ -65,6 +134,8 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   const [activeNumber, setActiveNumber] = useState<string | null>(null);
   const [activeName, setActiveName] = useState<string | null>(null);
   const [incomingFrom, setIncomingFrom] = useState<string | null>(null);
+  const [matchedLead, setMatchedLead] = useState<MatchedLead | null>(null);
+  const [showLeadCard, setShowLeadCard] = useState(false);
   const [muted, setMuted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showKeypad, setShowKeypad] = useState(false);
@@ -78,6 +149,8 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   const callRef = useRef<Call | null>(null);
   const incomingRef = useRef<Call | null>(null);
   const initStarted = useRef(false);
+  const showLeadCardRef = useRef(false);
+  showLeadCardRef.current = showLeadCard;
 
   // Re-render every second while a call is live (for the timer)
   useEffect(() => {
@@ -156,8 +229,43 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
 
         device.on('incoming', (call: Call) => {
           incomingRef.current = call;
-          setIncomingFrom(call.parameters.From ?? 'Unknown');
-          call.on('cancel', () => { incomingRef.current = null; setIncomingFrom(null); });
+          const from = call.parameters.From ?? 'Unknown';
+          setIncomingFrom(from);
+          const paramId = customParam(call, 'leadId');
+          const paramName = customParam(call, 'leadName');
+          const paramCompany = customParam(call, 'leadCompany');
+          if (paramId) {
+            setMatchedLead({
+              id: paramId,
+              name: paramName || from,
+              company: paramCompany,
+            });
+            setActiveName(paramName);
+          } else {
+            setMatchedLead(null);
+            setActiveName(null);
+            void (async () => {
+              try {
+                const res = await fetch(`/api/telephony/lookup?phone=${encodeURIComponent(from)}`);
+                if (!res.ok) return;
+                const data = await res.json();
+                if (!incomingRef.current && !callRef.current) return;
+                if (data.lead?.id) {
+                  setMatchedLead({
+                    id: data.lead.id,
+                    name: data.lead.name || from,
+                    company: data.lead.company,
+                  });
+                  setActiveName(data.lead.name || null);
+                }
+              } catch { /* unknown caller */ }
+            })();
+          }
+          call.on('cancel', () => {
+            incomingRef.current = null;
+            setIncomingFrom(null);
+            if (!showLeadCardRef.current) setMatchedLead(null);
+          });
           call.on('disconnect', () => { incomingRef.current = null; setIncomingFrom(null); resetCallState(); });
         });
 
@@ -171,7 +279,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   }, [resetCallState, onMobileText]);
 
   // ── Actions ─────────────────────────────────────────────────────────────────
-  const connect = useCallback(async (e164: string, meta?: { name?: string }) => {
+  const connect = useCallback(async (e164: string, meta?: { name?: string; leadId?: string; company?: string }) => {
     const device = deviceRef.current;
     if (!device) {
       const msg = 'Phone not ready — check Twilio setup in Settings.';
@@ -186,6 +294,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     setError(null);
     setActiveNumber(e164);
     setActiveName(meta?.name ?? null);
+    setMatchedLead(meta?.leadId ? { id: meta.leadId, name: meta.name || e164, company: meta.company } : null);
     setStatus('connecting');
     // Use `phone` not `To` — Twilio's own `To` on Client calls is client:agent, not the PSTN number.
     const call = await device.connect({ params: { phone: e164 } });
@@ -214,8 +323,9 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     const call = incomingRef.current;
     if (!call) return;
     incomingRef.current = null;
-    setActiveNumber(call.parameters.From ?? null);
-    setActiveName(null);
+    const from = call.parameters.From ?? null;
+    setActiveNumber(from);
+    setActiveName(prev => prev || customParam(call, 'leadName'));
     setIncomingFrom(null);
     wireCall(call);
     call.accept();
@@ -227,6 +337,10 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     incomingRef.current?.reject();
     incomingRef.current = null;
     setIncomingFrom(null);
+    if (!showLeadCardRef.current) {
+      setMatchedLead(null);
+      setActiveName(null);
+    }
   }, []);
 
   const openDialPad = useCallback((number?: string) => {
@@ -262,24 +376,52 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
 
       {/* ── Incoming call toast ── */}
       {incomingFrom && !onMobileText && (
-        <div className="fixed top-5 right-5 z-[100] bg-white border border-[#e5e5e5] rounded-2xl shadow-xl p-4 w-72 animate-pulse-slow">
-          <p className="text-xs text-[#9ca3af] mb-0.5">Incoming call</p>
-          <p className="text-base font-semibold text-[#1a1a1a] mb-3">{fmtNumber(incomingFrom)}</p>
-          <div className="flex gap-2">
+        <div className="fixed top-5 right-5 z-[110] w-80 rounded-2xl border border-[#e5e5e5] bg-white p-4 shadow-xl">
+          <p className="mb-0.5 text-xs text-[#9ca3af]">Incoming call</p>
+          <p className="text-base font-semibold text-[#1a1a1a]">
+            {matchedLead?.name || activeName || fmtNumber(incomingFrom)}
+          </p>
+          {matchedLead?.company && (
+            <p className="truncate text-[13px] text-[#6b6b6b]">{matchedLead.company}</p>
+          )}
+          {(matchedLead || activeName) && (
+            <p className="mt-0.5 text-xs text-[#9ca3af]">{fmtNumber(incomingFrom)}</p>
+          )}
+          {!matchedLead && !activeName && (
+            <p className="mt-0.5 text-xs text-[#9ca3af]">Not in your leads</p>
+          )}
+          <div className="mt-3 flex gap-2">
             <button
               onClick={acceptIncoming}
-              className="flex-1 py-2 rounded-xl bg-green-600 text-white text-sm font-medium hover:bg-green-700 transition-colors"
+              className="flex-1 rounded-xl bg-green-600 py-2 text-sm font-medium text-white transition-colors hover:bg-green-700"
             >
               Answer
             </button>
             <button
               onClick={rejectIncoming}
-              className="flex-1 py-2 rounded-xl bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors"
+              className="flex-1 rounded-xl bg-red-600 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700"
             >
               Reject
             </button>
           </div>
+          {matchedLead && (
+            <button
+              type="button"
+              onClick={() => setShowLeadCard(true)}
+              className="mt-2 w-full rounded-xl border border-[#e5e5e5] py-2 text-sm font-medium text-[#1a1a1a] transition-colors hover:bg-[#f5f5f5]"
+            >
+              Open lead card
+            </button>
+          )}
         </div>
+      )}
+
+      {showLeadCard && matchedLead && !onMobileText && (
+        <LeadCardOverlay
+          leadId={matchedLead.id}
+          inCall={inCall}
+          onClose={() => setShowLeadCard(false)}
+        />
       )}
 
       {/* ── Call bar ── */}
@@ -287,15 +429,29 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
         <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-[100]">
           <div className="bg-[#1a1a1a] text-white rounded-2xl shadow-2xl px-5 py-3 flex items-center gap-4">
             <div className="min-w-0">
-              <p className="text-sm font-semibold truncate max-w-[180px]">
-                {activeName || fmtNumber(activeNumber)}
+              <p className="max-w-[180px] truncate text-sm font-semibold">
+                {matchedLead?.name || activeName || fmtNumber(activeNumber)}
               </p>
               <p className="text-xs text-white/60">
                 {status === 'connecting' && 'Connecting…'}
                 {status === 'ringing' && 'Ringing…'}
                 {status === 'in-call' && (elapsed ?? 'Connected')}
+                {matchedLead?.company ? ` · ${matchedLead.company}` : ''}
               </p>
             </div>
+
+            {matchedLead && (
+              <button
+                onClick={() => setShowLeadCard(true)}
+                title="Open lead card"
+                className={`rounded-full p-2.5 transition-colors ${showLeadCard ? 'bg-white/25' : 'bg-white/10 hover:bg-white/20'}`}
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+              </button>
+            )}
 
             {/* Mute */}
             <button

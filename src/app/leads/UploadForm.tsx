@@ -26,7 +26,7 @@ interface ParsedLead {
   phone: string | null;
   company: string | null;
   notes: string | null;
-  // Business profile fields → stored in underwriting_data for the lead info card
+  // Business profile → underwriting_data (lead info card)
   industry?: string | null;
   address?: string | null;
   city?: string | null;
@@ -34,24 +34,102 @@ interface ParsedLead {
   zip?: string | null;
   startDate?: string | null;
   listedRevenue?: string | null;
+  dba?: string | null;
+  ein?: string | null;
+  entityType?: string | null;
+  businessPhone?: string | null;
+  // Person details → underwriting_data
+  homeAddress?: string | null;
+  homeCity?: string | null;
+  homeState?: string | null;
+  homeZip?: string | null;
+  ssn?: string | null;
+  dob?: string | null;
+  creditScore?: string | null;
+  // Deal
+  requestedAmount?: string | null;
+  purposeOfFunds?: string | null;
+  leadStatus?: string | null;
+  leadSource?: string | null;
 }
 
-/** Build the underwriting_data JSONB payload from parsed business-profile fields.
- * Spreadsheet revenue is NEVER stored here — it belongs in notes only. */
+function isEmptyish(v: string | null | undefined): boolean {
+  if (!v) return true;
+  return /^(none|null|n\/?a|undefined|nil|-|--|\.)$/i.test(v.trim());
+}
+
+function headerEq(key: string, alias: string): boolean {
+  const nk = key.toLowerCase().trim();
+  const na = alias.toLowerCase().trim();
+  if (nk === na) return true;
+  return nk.replace(/[^a-z0-9]/g, '') === na.replace(/[^a-z0-9]/g, '');
+}
+
+function parseMoneyAmount(raw: string | null | undefined): number | null {
+  if (!raw) return null;
+  const n = parseFloat(String(raw).replace(/[$,\s]/g, ''));
+  return Number.isFinite(n) ? n : null;
+}
+
+function isNumericMoney(v: string): boolean {
+  return parseMoneyAmount(v) != null && /[\d]/.test(v) && !/[a-z]/i.test(v.replace(/[$,\s]/g, ''));
+}
+
+/** Build the underwriting_data JSONB payload from parsed lead-detail fields.
+ * Spreadsheet "revenue" columns stay in notes — never UW monthly revenue. */
 function buildUnderwriting(l: Partial<ParsedLead>): Record<string, string> | null {
   const ud: Record<string, string> = {};
-  if (l.industry)  ud.industry          = l.industry;
-  if (l.address)   ud.businessAddress   = l.address;
-  if (l.city)      ud.businessCity      = l.city;
-  if (l.state)     ud.businessState     = l.state;
-  if (l.zip)       ud.businessZip       = l.zip;
-  if (l.startDate) ud.businessStartDate = l.startDate;
+  if (l.industry)        ud.industry          = l.industry;
+  if (l.address)         ud.businessAddress   = l.address;
+  if (l.city)            ud.businessCity      = l.city;
+  if (l.state)           ud.businessState     = l.state;
+  if (l.zip)             ud.businessZip       = l.zip;
+  if (l.startDate)       ud.businessStartDate = l.startDate;
+  if (l.dba)             ud.dba               = l.dba;
+  if (l.ein)             ud.ein               = l.ein;
+  if (l.entityType)      ud.entityType        = l.entityType;
+  if (l.businessPhone)   ud.businessPhone     = l.businessPhone;
+  if (l.homeAddress)     ud.homeAddress       = l.homeAddress;
+  if (l.homeCity)        ud.city              = l.homeCity;
+  if (l.homeState)       ud.state             = l.homeState;
+  if (l.homeZip)         ud.zip               = l.homeZip;
+  if (l.ssn)             ud.ssn               = l.ssn;
+  if (l.dob)             ud.dob               = l.dob;
+  if (l.creditScore)     ud.creditScore       = l.creditScore;
+  if (l.requestedAmount) ud.requestedAmount   = l.requestedAmount;
+  if (l.purposeOfFunds)  ud.purposeOfFunds    = l.purposeOfFunds;
   delete ud.monthlyRevenue;
   delete ud.month1Revenue;
   delete ud.month2Revenue;
   delete ud.month3Revenue;
   delete ud.month4Revenue;
   return Object.keys(ud).length ? ud : null;
+}
+
+function leadInsertPayload(
+  l: ParsedLead,
+  userId: string,
+  listId: string | undefined,
+  extra?: Record<string, unknown>,
+) {
+  const amount = parseMoneyAmount(l.requestedAmount ?? null);
+  return {
+    user_id: userId,
+    name: l.name || l.company || (l.email ? l.email.split('@')[0] : 'Unknown'),
+    email: l.email || '',
+    phone: l.phone || null,
+    phone_e164: toE164(l.phone),
+    company: l.company || null,
+    notes: l.notes || null,
+    underwriting_data: buildUnderwriting(l),
+    list_id: listId && listId !== 'unlisted' ? listId : null,
+    month_key: null,
+    in_pipeline: false,
+    lead_status: l.leadStatus || 'New Lead',
+    ...(l.leadSource ? { lead_source: l.leadSource } : {}),
+    ...(amount != null ? { value: amount } : {}),
+    ...extra,
+  };
 }
 
 function isRevenueHeader(key: string): boolean {
@@ -388,7 +466,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
     // Get a cell value, treating "-" and blank as empty
     const cellVal = (key: string): string | null => {
       const v = String(row[key] || '').trim();
-      return v && v !== '-' && v !== '--' ? v : null;
+      return isEmptyish(v) ? null : v;
     };
 
     const findColumn = (possibleNames: string[]): string | null => {
@@ -401,11 +479,9 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       return null;
     };
 
-    // Combine "First name" + "Last Name" into a full name when available
     const findExact = (possibleNames: string[]): string | null => {
       for (const key of rowKeys) {
-        const lowerKey = key.toLowerCase().trim();
-        if (possibleNames.some(n => lowerKey === n.toLowerCase())) {
+        if (possibleNames.some(n => headerEq(key, n))) {
           return cellVal(key);
         }
       }
@@ -525,8 +601,11 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
     // ── Business profile fields (shown in the lead info card) ──────────────────
     // All wrapped in noMoney() so dollar amounts can never land in the info card.
     const industry = noMoney(
-      findExact(['industry', 'business type', 'business category', 'category', 'sector', 'naics', 'sic', 'sic code'])
-      || findColumn(['industry', 'business type', 'business category'])
+      findExact([
+        'industry', 'business type', 'bus type', 'biz type', 'business category',
+        'category', 'sector', 'naics', 'sic', 'sic code',
+      ])
+      || findColumn(['industry', 'business type', 'bus type'])
     );
 
     const address = noMoney(
@@ -534,9 +613,9 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       || findColumn(['business address', 'street address'])
     );
 
-    const bizCity  = noMoney(findExact(['city', 'business city']));
-    const bizState = noMoney(findExact(['state', 'business state', 'st']));
-    const bizZip   = noMoney(findExact(['zip', 'zip code', 'zipcode', 'postal code', 'business zip']));
+    const bizCity  = noMoney(findExact(['city', 'business city', 'biz city']));
+    const bizState = noMoney(findExact(['state', 'business state', 'biz state', 'st']));
+    const bizZip   = noMoney(findExact(['zip', 'zip code', 'zipcode', 'postal code', 'business zip', 'biz zip']));
 
     const startDate = noMoney(
       findExact([
@@ -545,6 +624,48 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
         'sos date', 'open date', 'founded', 'year established',
       ]) || findColumn(['start date', 'established', 'incorporation'])
     );
+
+    const homeAddress = noMoney(findExact([
+      'home address', 'home street', 'residential address', 'owner address', 'contact address',
+    ]));
+    const homeCity = noMoney(findExact([
+      'home city', 'owner city', 'contact city', 'residential city',
+    ]));
+    const homeState = noMoney(findExact([
+      'home state', 'owner state', 'contact state', 'residential state',
+    ]));
+    const homeZip = noMoney(findExact([
+      'home zip', 'home zip code', 'home zipcode', 'owner zip', 'contact zip', 'residential zip',
+    ]));
+
+    const ssn = findExact(['ssn', 'contact ssn', 'owner ssn', 'social', 'social security', 'social security number']);
+    const dob = noMoney(findExact([
+      'dob', 'contact dob', 'owner dob', 'date of birth', 'birth date', 'birthdate', 'birthday',
+    ]));
+    const ein = findExact(['ein', 'taxid', 'tax id', 'tax_id', 'fein', 'federal tax id', 'federal ein', 'employer id']);
+    const entityType = noMoney(findExact(['entity type', 'entity', 'legal entity', 'business entity']));
+    const creditScore = findExact(['credit score', 'fico', 'fico score', 'credit']);
+    const dba = isValidCompany(findExact(['dba', 'dba name', 'doing business as']));
+    const businessPhone = findExact(['business phone', 'biz phone', 'work phone', 'office phone', 'company phone']);
+
+    const useOfFundsRaw = findExact(['use of funds', 'use_of_funds', 'useoffunds']);
+    const explicitAmount = findExact([
+      'amount requested', 'requested amount', 'funding amount', 'loan amount', 'deal amount',
+    ]);
+    let requestedAmount: string | null = explicitAmount;
+    let purposeOfFunds: string | null = findExact(['purpose of funds', 'purpose', 'fund purpose']);
+    if (useOfFundsRaw) {
+      if (isNumericMoney(useOfFundsRaw) || isMoney(useOfFundsRaw)) {
+        if (!requestedAmount) requestedAmount = useOfFundsRaw.replace(/[$,]/g, '').trim();
+      } else if (!purposeOfFunds) {
+        purposeOfFunds = useOfFundsRaw;
+      }
+    }
+
+    const leadStatus = noMoney(findExact([
+      'contact status', 'lead status', 'status', 'pipeline status', 'stage',
+    ]));
+    const leadSource = noMoney(findExact(['broker', 'broker name', 'source', 'lead source', 'iso']));
 
     // Spreadsheet revenue → notes only. Never underwriting / lead-card revenue.
     let listedRevenue: string | null = null;
@@ -582,32 +703,44 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       'last name','lastname','last_name','lname','surname','family name',
       'email','e-mail','email address','emailaddress','mail',
       'business name','business_name','company name','company_name','companyname',
-      'organization','org','employer','account','dba','dba name',
+      'organization','org','employer','account','dba','dba name','doing business as',
       'notes','note','comments','comment','description','details','memo','remarks',
-      // phone-type labels that leak as company / notes
       'mobile','cell','home','work','office','direct','landline','voip','personal',
-      // business profile fields — mapped to underwriting_data, not notes
-      'industry','business type','business category','category','sector','naics','sic','sic code',
+      'industry','business type','bus type','biz type','business category','category','sector','naics','sic','sic code',
       'address','business address','street address','address 1','address1','street','addr','mailing address',
-      'city','business city','state','business state','st','zip','zip code','zipcode','postal code','business zip',
+      'city','business city','biz city','state','business state','biz state','st','zip','zip code','zipcode','postal code','business zip','biz zip',
       'start date','business start date','date established','established','incorporation date',
       'date incorporated','registration date','sos date','open date','founded','year established',
+      'home address','home street','residential address','owner address','contact address',
+      'home city','owner city','contact city','residential city',
+      'home state','owner state','contact state','residential state',
+      'home zip','home zip code','home zipcode','owner zip','contact zip','residential zip',
+      'ssn','contact ssn','owner ssn','social','social security','social security number',
+      'dob','contact dob','owner dob','date of birth','birth date','birthdate','birthday',
+      'ein','taxid','tax id','tax_id','fein','federal tax id','federal ein','employer id',
+      'entity type','entity','legal entity','business entity',
+      'credit score','fico','fico score','credit',
+      'business phone','biz phone','work phone','office phone','company phone',
+      'use of funds','use_of_funds','useoffunds','purpose of funds','purpose','fund purpose',
+      'amount requested','requested amount','funding amount','loan amount','deal amount',
+      'contact status','lead status','status','pipeline status','stage',
+      'broker','broker name','source','lead source','iso',
+      'created at','created_at','created','timestamp','id','uuid','lead id',
     ]);
+    const SKIP_COMPACT = new Set([...SKIP_LABELS].map(s => s.replace(/[^a-z0-9]/g, '')));
     const isPhoneKey = (k: string) =>
       ['phone','telephone','tel','mobile','cell','contact number','direct','fax','number'].some(p => k.includes(p));
 
-    // Collect all remaining non-empty columns as extra notes
-    // If the value-scan fallback found the phone, exclude those values from notes too
     const usedPhoneValues = new Set(allPhoneValues);
     const extraCols: string[] = [];
     for (const key of rowKeys) {
       const lowerKey = key.toLowerCase().trim();
-      if (SKIP_LABELS.has(lowerKey)) continue;
-      if (isPhoneKey(lowerKey)) continue; // phones already handled
-      if (isRevenueHeader(lowerKey)) continue; // listed in notes as Listed revenue, never UW
+      const compact = lowerKey.replace(/[^a-z0-9]/g, '');
+      if (SKIP_LABELS.has(lowerKey) || SKIP_COMPACT.has(compact)) continue;
+      if (isPhoneKey(lowerKey)) continue;
+      if (isRevenueHeader(lowerKey)) continue;
       const v = cellVal(key);
       if (!v) continue;
-      // If this value was picked up by the phone value-scan fallback, skip it from notes
       if (usedPhoneValues.has(v)) continue;
       extraCols.push(`${key}: ${v}`);
     }
@@ -628,6 +761,21 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       zip: bizZip || null,
       startDate: startDate || null,
       listedRevenue: listedRevenue || null,
+      dba: (dba && dba !== company) ? dba : null,
+      ein: ein || null,
+      entityType: entityType || null,
+      businessPhone: businessPhone || null,
+      homeAddress: homeAddress || null,
+      homeCity: homeCity || null,
+      homeState: homeState || null,
+      homeZip: homeZip || null,
+      ssn: ssn || null,
+      dob: dob || null,
+      creditScore: creditScore || null,
+      requestedAmount: requestedAmount || null,
+      purposeOfFunds: purposeOfFunds || null,
+      leadStatus: leadStatus || null,
+      leadSource: leadSource || null,
     };
   };
 
@@ -706,21 +854,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { setMessage('Not authenticated'); setLoading(false); return; }
 
-    const now = new Date().toISOString();
-    const leads = parsedPreview.map(l => ({
-      user_id: user.id,
-      name: l.name || l.company || (l.email ? l.email.split('@')[0] : 'Unknown'),
-      email: l.email || '',
-      phone: l.phone || null,
-      phone_e164: toE164(l.phone),
-      company: l.company || null,
-      notes: l.notes || null,
-      underwriting_data: buildUnderwriting(l),
-      list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
-      month_key: null,      // keep campaign uploads OUT of the pipeline
-      in_pipeline: false,
-      lead_status: 'New Lead',
-    }));
+    const leads = parsedPreview.map(l => leadInsertPayload(l, user.id, selectedListId));
 
     const { error } = await supabase.from('leads').insert(leads);
     if (error) {
@@ -776,20 +910,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
                     return null;
                   }
 
-                  return {
-                    user_id: user.id,
-                    name: mapped.name || mapped.company || mapped.email.split('@')[0],
-                    email: mapped.email,
-                    phone: mapped.phone,
-                    phone_e164: toE164(mapped.phone),
-                    company: mapped.company,
-                    notes: mapped.notes,
-                    underwriting_data: buildUnderwriting(mapped),
-                    list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
-                    month_key: null,      // keep campaign uploads OUT of the pipeline
-                    in_pipeline: false,
-                    lead_status: 'New Lead',
-                  };
+                  return leadInsertPayload(mapped, user.id, selectedListId);
                 })
                 .filter((lead: any) => lead !== null);
             } else {
@@ -808,20 +929,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
                     return null;
                   }
 
-                  return {
-                    user_id: user.id,
-                    name: mapped.name || mapped.company || mapped.email.split('@')[0],
-                    email: mapped.email,
-                    phone: mapped.phone,
-                    phone_e164: toE164(mapped.phone),
-                    company: mapped.company,
-                    notes: mapped.notes,
-                    underwriting_data: buildUnderwriting(mapped),
-                    list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
-                    month_key: null,      // keep campaign uploads OUT of the pipeline
-                    in_pipeline: false,
-                    lead_status: 'New Lead',
-                  };
+                  return leadInsertPayload(mapped, user.id, selectedListId);
                 })
                 .filter((lead: any) => lead !== null);
             }
@@ -889,6 +997,17 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
         phone: parsed.phone || null,
         company: parsed.company || null,
         notes: notesParts.join(' | ') || null,
+        ssn: parsed.ssn || null,
+        dob: parsed.dob || null,
+        ein: parsed.ein || null,
+        homeAddress: parsed.homeAddress || null,
+        homeCity: parsed.city || null,
+        homeState: parsed.state || null,
+        homeZip: parsed.zip || null,
+        industry: parsed.industry || null,
+        startDate: parsed.businessStartDate || null,
+        creditScore: parsed.creditScore || null,
+        requestedAmount: parsed.requestedAmount || null,
       };
     }).filter(l => l.name || l.email || l.phone || l.company);
   };
@@ -905,21 +1024,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { setMessage('Not authenticated'); setLoading(false); return; }
 
-    const now = new Date().toISOString();
-    const leads = quickPreview.map(l => ({
-      user_id: user.id,
-      name: l.name || l.company || (l.email ? l.email.split('@')[0] : ''),
-      email: l.email || '',
-      phone: l.phone || null,
-      phone_e164: toE164(l.phone),
-      company: l.company || null,
-      notes: l.notes || null,
-      underwriting_data: buildUnderwriting(l),
-      list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
-      month_key: null,      // keep campaign uploads OUT of the pipeline
-      in_pipeline: false,
-      lead_status: 'New Lead',
-    }));
+    const leads = quickPreview.map(l => leadInsertPayload(l, user.id, selectedListId));
 
     const { error } = await supabase.from('leads').insert(leads);
     if (error) {
@@ -1201,21 +1306,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { setMessage('Not authenticated'); setLoading(false); return; }
 
-    const now = new Date().toISOString();
-    const leads = zipPreview.map(l => ({
-      user_id: user.id,
-      name: l.name || l.company || (l.email ? l.email.split('@')[0] : ''),
-      email: l.email || '',
-      phone: l.phone || null,
-      phone_e164: toE164(l.phone),
-      company: l.company || null,
-      notes: l.notes || null,
-      underwriting_data: buildUnderwriting(l),
-      list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
-      month_key: null,      // keep campaign uploads OUT of the pipeline
-      in_pipeline: false,
-      lead_status: 'New Lead',
-    }));
+    const leads = zipPreview.map(l => leadInsertPayload(l, user.id, selectedListId));
 
     const { error } = await supabase.from('leads').insert(leads);
     if (error) {
@@ -1504,22 +1595,12 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { setMessage('Not authenticated'); setLoading(false); return; }
 
-    const rows = sheetsPreview.map(l => ({
-      user_id: user.id,
-      name: l.name || l.company || (l.email ? l.email.split('@')[0] : ''),
-      email: l.email || '',
-      phone: l.phone || null,
-      phone_e164: toE164(l.phone),
-      company: l.company || null,
-      notes: l.notes || null,
-      underwriting_data: buildUnderwriting(l),
-      list_id: selectedListId && selectedListId !== 'unlisted' ? selectedListId : null,
-      month_key: null,      // keep campaign uploads OUT of the pipeline
-      in_pipeline: false,
-      lead_status: 'New Lead',
-      // Add to dialer queue if toggled
-      ...(sheetsAddToDialer ? { dialer_status: 'queued' } : {}),
-    }));
+    const rows = sheetsPreview.map(l => leadInsertPayload(
+      l,
+      user.id,
+      selectedListId,
+      sheetsAddToDialer ? { dialer_status: 'queued' } : undefined,
+    ));
 
     const { error } = await supabase.from('leads').insert(rows);
     if (error) {

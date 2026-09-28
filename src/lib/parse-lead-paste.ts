@@ -29,7 +29,7 @@ export type ParsedLeadPaste = {
   remainder: string;
 };
 
-const KEY_MAP: Record<string, keyof Pick<ParsedLeadPaste, 'name' | 'email' | 'phone' | 'company'>> = {
+const KEY_MAP: Record<string, Exclude<keyof ParsedLeadPaste, 'remainder'>> = {
   name: 'name',
   'full name': 'name',
   contact: 'name',
@@ -57,6 +57,40 @@ const KEY_MAP: Record<string, keyof Pick<ParsedLeadPaste, 'name' | 'email' | 'ph
   org: 'company',
   'company name': 'company',
   'business name': 'company',
+  ssn: 'ssn',
+  'contact ssn': 'ssn',
+  'owner ssn': 'ssn',
+  'social security': 'ssn',
+  'social security number': 'ssn',
+  dob: 'dob',
+  'contact dob': 'dob',
+  'date of birth': 'dob',
+  'birth date': 'dob',
+  birthdate: 'dob',
+  'home address': 'homeAddress',
+  'home street': 'homeAddress',
+  'residential address': 'homeAddress',
+  'home city': 'city',
+  'home state': 'state',
+  'home zip': 'zip',
+  'home zip code': 'zip',
+  ein: 'ein',
+  taxid: 'ein',
+  'tax id': 'ein',
+  fein: 'ein',
+  'federal tax id': 'ein',
+  industry: 'industry',
+  'business type': 'industry',
+  'bus type': 'industry',
+  'biz type': 'industry',
+  'credit score': 'creditScore',
+  fico: 'creditScore',
+  'use of funds': 'requestedAmount',
+  'amount requested': 'requestedAmount',
+  'requested amount': 'requestedAmount',
+  'business start date': 'businessStartDate',
+  'start date': 'businessStartDate',
+  'business phone': 'businessPhone',
 };
 
 /** Section headers — not real company names (avoid winning the "first company-like line" heuristic). */
@@ -446,7 +480,8 @@ export function parseLeadPasteText(raw: string): ParsedLeadPaste {
     result.name, result.email, result.phone, result.company,
     result.ssn, result.ein, result.dob, result.businessStartDate,
     result.zip, result.state, result.city, result.homeAddress,
-    result.monthlyRevenue, result.industry,
+    result.monthlyRevenue, result.industry, result.creditScore, result.requestedAmount,
+    result.businessPhone,
   ].filter(Boolean));
 
   const remainderTokens: string[] = [];

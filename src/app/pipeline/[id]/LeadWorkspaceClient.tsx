@@ -15,6 +15,7 @@ const DocumentVault        = dynamic(() => import('@/components/DocumentVault'),
 const SendToLenderModal    = dynamic(() => import('@/components/SendToLenderModal'), { ssr: false });
 const CallHistoryPanel     = dynamic(() => import('@/components/CallHistoryPanel'), { ssr: false });
 const ManageStatusesModal  = dynamic(() => import('@/components/ManageStatusesModal'), { ssr: false });
+const QuickTextPopup       = dynamic(() => import('@/components/QuickTextPopup'), { ssr: false });
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface Lead {
@@ -37,6 +38,7 @@ interface Lead {
   lead_source?: string | null;
   follow_up_at?: string | null;
   underwriting_data?: Record<string, unknown> | null;
+  list_id?: string | null;
 }
 
 interface LeadWorkspaceClientProps {
@@ -266,6 +268,7 @@ export default function LeadWorkspaceClient({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [showEmailModal, setShowEmailModal]     = useState(false);
+  const [showTextPopup, setShowTextPopup]       = useState(false);
   const [showDocsModal, setShowDocsModal]       = useState(false);
   const [showVault, setShowVault]               = useState(false);
   const [showSendModal, setShowSendModal]       = useState(false);
@@ -289,7 +292,7 @@ export default function LeadWorkspaceClient({
     setCallBusy(true);
     setCallMsg(null);
     try {
-      await webphone.connect(e164, { name: lead.name });
+      await webphone.connect(e164, { name: lead.name, leadId: lead.id, company: lead.company ?? undefined });
       setCallMsg('Calling…');
       setCallSeq((s) => s + 1);
     } catch (e) {
@@ -1316,15 +1319,7 @@ export default function LeadWorkspaceClient({
                 Send Email
               </button>
               <button
-                onClick={() => {
-                  const url = `/inbox?leadId=${lead.id}`;
-                  // If loaded inside an iframe (modal overlay), navigate the parent window
-                  if (typeof window !== 'undefined' && window.top && window.top !== window.self) {
-                    window.top.location.href = url;
-                  } else {
-                    router.push(url);
-                  }
-                }}
+                onClick={() => setShowTextPopup(true)}
                 className="px-3 py-2.5 border border-[#e5e5e5] text-[#1a1a1a] text-xs font-medium rounded-md hover:bg-[#f5f5f5] transition-colors text-center"
               >
                 Send SMS
@@ -1556,6 +1551,20 @@ export default function LeadWorkspaceClient({
             underwriting_data: lead.underwriting_data,
           }}
           onClose={() => setShowEmailModal(false)}
+        />
+      )}
+
+      {showTextPopup && (
+        <QuickTextPopup
+          lead={{
+            id: lead.id,
+            name: lead.name,
+            company: lead.company,
+            list_id: lead.list_id,
+            lead_status: lead.lead_status,
+            in_pipeline: lead.in_pipeline,
+          }}
+          onClose={() => setShowTextPopup(false)}
         />
       )}
 
