@@ -76,6 +76,16 @@ function nextDelayMs(job: DripJob): number {
   return Math.round(delay);
 }
 
+function paceCapMs(job: DripJob) {
+  return (Math.max(Number(job.pace_max_seconds) || 0, 30) + 20) * 1000;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function releaseJobNow(supabase: any, jobId: string) {
+  const ts = new Date().toISOString();
+  await supabase.from('sms_drip_jobs').update({ next_send_at: ts, updated_at: ts }).eq('id', jobId);
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function alreadyTexted(supabase: any, userId: string, leadId: string, phone: string | null, exceptSendId: string, includeAlreadyTexted?: boolean) {
   const { data: byLead } = await supabase
@@ -221,122 +231,172 @@ export async function POST() {
     if (jobsErr) return NextResponse.json({ processed: 0, setupRequired: true });
     if (!jobs?.length) return NextResponse.json({ processed: 0 });
 
-    const now = new Date();
-    const nowIso = now.toISOString();
     const results: Record<string, unknown>[] = [];
 
     for (const job of jobs as DripJob[]) {
-      let claimedSend: DripSend | null = null;
-      let jobClaimed = false;
+      let send: DripSend | null = null;
+      let lead: {
+        id: string; name?: string | null; company?: string | null;
+        phone?: string | null; sms_opt_out?: boolean | null;
+        underwriting_data?: Record<string, unknown> | null;
+      } | null = null;
 
-      const { data: rpc, error: rpcErr } = await supabase.rpc('claim_drip_job_send', { p_job_id: job.id });
-      if (!rpcErr && rpc && typeof rpc === 'object') {
-        const payload = rpc as { job_claimed?: boolean; send?: { id: string; lead_id: string; position: number; phone: string | null } | null };
-        if (!payload.job_claimed) {
-          results.push({ jobId: job.id, waited: true });
-          continue;
-        }
-        jobClaimed = true;
-        if (payload.send?.id) {
-          claimedSend = {
-            id: payload.send.id,
-            lead_id: payload.send.lead_id,
-            position: payload.send.position,
-            phone: payload.send.phone,
-            sms_status: 'sending',
-            scheduled_for: null,
-          };
-        }
-      } else {
-        jobClaimed = await leaseJob(supabase, job, user.id, now);
-        if (!jobClaimed) {
-          results.push({ jobId: job.id, waited: true });
-          continue;
-        }
-        const leaseUntil = new Date(now.getTime() + 90_000).toISOString();
-        for (const send of await loadCandidates(supabase, job.id, nowIso)) {
-          if (await claimSendRow(supabase, send, job.id, leaseUntil)) {
-            claimedSend = send;
+      // Skip out-of-window / dead leads in this tick instead of parking the whole drip.
+      for (let attempt = 0; attempt < 20; attempt++) {
+        let claimedSend: DripSend | null = null;
+        const tickNow = new Date();
+        const tickIso = tickNow.toISOString();
+
+        const { data: rpc, error: rpcErr } = await supabase.rpc('claim_drip_job_send', { p_job_id: job.id });
+        if (!rpcErr && rpc && typeof rpc === 'object') {
+          const payload = rpc as { job_claimed?: boolean; send?: { id: string; lead_id: string; position: number; phone: string | null } | null };
+          if (!payload.job_claimed) {
+            const { data: live } = await supabase
+              .from('sms_drip_jobs')
+              .select('next_send_at')
+              .eq('id', job.id)
+              .maybeSingle();
+            const waitMs = live?.next_send_at ? new Date(live.next_send_at).getTime() - Date.now() : 0;
+            if (waitMs > paceCapMs(job)) {
+              const { data: queued } = await supabase
+                .from('sms_drip_sends')
+                .select('id')
+                .eq('job_id', job.id)
+                .eq('sms_status', 'queued')
+                .limit(1);
+              if (queued?.length) {
+                await releaseJobNow(supabase, job.id);
+                continue;
+              }
+            }
+            if (attempt === 0) results.push({ jobId: job.id, waited: true });
             break;
           }
-        }
-      }
-
-      if (!claimedSend) {
-        const { data: remaining } = await supabase
-          .from('sms_drip_sends')
-          .select('sms_status, scheduled_for')
-          .eq('job_id', job.id)
-          .in('sms_status', ['queued', 'scheduled', 'sending']);
-
-        if (!remaining?.length) {
-          await supabase.from('sms_drip_jobs')
-            .update({ status: 'completed', updated_at: new Date().toISOString() })
-            .eq('id', job.id);
-          results.push({ jobId: job.id, completed: true });
-        } else {
-          const nextDue = remaining
-            .map(r => r.scheduled_for)
-            .filter(Boolean)
-            .sort()[0];
-          if (nextDue) {
-            await supabase.from('sms_drip_jobs')
-              .update({ next_send_at: nextDue })
-              .eq('id', job.id);
+          if (payload.send?.id) {
+            claimedSend = {
+              id: payload.send.id,
+              lead_id: payload.send.lead_id,
+              position: payload.send.position,
+              phone: payload.send.phone,
+              sms_status: 'sending',
+              scheduled_for: null,
+            };
           }
-          results.push({ jobId: job.id, waitingForWindow: true, nextDue: nextDue ?? null });
+        } else {
+          const jobClaimed = await leaseJob(supabase, job, user.id, tickNow);
+          if (!jobClaimed) {
+            const waitMs = job.next_send_at ? new Date(job.next_send_at).getTime() - Date.now() : 0;
+            if (waitMs > paceCapMs(job)) {
+              const { data: queued } = await supabase
+                .from('sms_drip_sends')
+                .select('id')
+                .eq('job_id', job.id)
+                .eq('sms_status', 'queued')
+                .limit(1);
+              if (queued?.length) {
+                await releaseJobNow(supabase, job.id);
+                continue;
+              }
+            }
+            if (attempt === 0) results.push({ jobId: job.id, waited: true });
+            break;
+          }
+          const leaseUntil = new Date(tickNow.getTime() + 90_000).toISOString();
+          for (const row of await loadCandidates(supabase, job.id, tickIso)) {
+            if (await claimSendRow(supabase, row, job.id, leaseUntil)) {
+              claimedSend = row;
+              break;
+            }
+          }
         }
-        continue;
+
+        if (!claimedSend) {
+          const { data: remaining } = await supabase
+            .from('sms_drip_sends')
+            .select('sms_status, scheduled_for')
+            .eq('job_id', job.id)
+            .in('sms_status', ['queued', 'scheduled', 'sending']);
+
+          if (!remaining?.length) {
+            await supabase.from('sms_drip_jobs')
+              .update({ status: 'completed', updated_at: new Date().toISOString() })
+              .eq('id', job.id);
+            results.push({ jobId: job.id, completed: true });
+          } else {
+            const queuedLeft = remaining.some(r => r.sms_status === 'queued' || r.sms_status === 'sending');
+            if (queuedLeft) {
+              await releaseJobNow(supabase, job.id);
+            } else {
+              const nextDue = remaining
+                .map(r => r.scheduled_for)
+                .filter(Boolean)
+                .sort()[0];
+              if (nextDue) {
+                await supabase.from('sms_drip_jobs')
+                  .update({ next_send_at: nextDue })
+                  .eq('id', job.id);
+              }
+              results.push({ jobId: job.id, waitingForWindow: true, nextDue: nextDue ?? null });
+            }
+          }
+          break;
+        }
+
+        const { data: nextLead } = await supabase
+          .from('leads')
+          .select('id, name, company, phone, sms_opt_out, underwriting_data')
+          .eq('id', claimedSend.lead_id)
+          .single();
+
+        const failSend = async (status: string, error: string) => {
+          await supabase.from('sms_drip_sends')
+            .update({ sms_status: status, error, scheduled_for: null })
+            .eq('id', claimedSend!.id);
+        };
+
+        if (!nextLead) {
+          await failSend('skipped_dnc', 'Lead deleted');
+          results.push({ jobId: job.id, leadId: claimedSend.lead_id, status: 'skipped_dnc' });
+          await releaseJobNow(supabase, job.id);
+          continue;
+        }
+        if (nextLead.sms_opt_out) {
+          await failSend('skipped_dnc', 'Opted out');
+          results.push({ jobId: job.id, leadId: nextLead.id, status: 'skipped_dnc' });
+          await releaseJobNow(supabase, job.id);
+          continue;
+        }
+
+        const dup = await alreadyTexted(supabase, user.id, nextLead.id, claimedSend.phone ?? nextLead.phone, claimedSend.id, job.include_already_texted);
+        if (dup) {
+          await failSend('skipped_dup', dup);
+          results.push({ jobId: job.id, leadId: nextLead.id, status: 'skipped_dup', reason: dup });
+          await releaseJobNow(supabase, job.id);
+          continue;
+        }
+
+        const ud = (nextLead.underwriting_data ?? {}) as Record<string, unknown>;
+        const state = String(ud.businessState ?? ud.state ?? '').trim();
+        const city = String(ud.businessCity ?? ud.city ?? '').trim();
+        const tz = zoneForLocation(city, state) ?? 'America/New_York';
+        const days = job.send_days?.length ? job.send_days : [1, 2, 3, 4, 5, 6];
+
+        if (!isInSendWindow(tz, job.quiet_start, job.quiet_end, days, tickNow)) {
+          const opensAt = nextWindowStart(tz, job.quiet_start, days, tickNow);
+          await supabase.from('sms_drip_sends')
+            .update({ sms_status: 'scheduled', scheduled_for: opensAt.toISOString(), error: null })
+            .eq('id', claimedSend.id);
+          await releaseJobNow(supabase, job.id);
+          results.push({ jobId: job.id, deferredForWindow: true, nextDue: opensAt.toISOString() });
+          continue;
+        }
+
+        send = claimedSend;
+        lead = nextLead;
+        break;
       }
 
-      const send = claimedSend;
-      const { data: lead } = await supabase
-        .from('leads')
-        .select('id, name, company, phone, sms_opt_out, underwriting_data')
-        .eq('id', send.lead_id)
-        .single();
-
-      const failSend = async (status: string, error: string) => {
-        await supabase.from('sms_drip_sends')
-          .update({ sms_status: status, error, scheduled_for: null })
-          .eq('id', send.id);
-      };
-
-      if (!lead) {
-        await failSend('skipped_dnc', 'Lead deleted');
-        results.push({ jobId: job.id, leadId: send.lead_id, status: 'skipped_dnc' });
-        continue;
-      }
-      if (lead.sms_opt_out) {
-        await failSend('skipped_dnc', 'Opted out');
-        results.push({ jobId: job.id, leadId: lead.id, status: 'skipped_dnc' });
-        continue;
-      }
-
-      const dup = await alreadyTexted(supabase, user.id, lead.id, send.phone ?? lead.phone, send.id, job.include_already_texted);
-      if (dup) {
-        await failSend('skipped_dup', dup);
-        results.push({ jobId: job.id, leadId: lead.id, status: 'skipped_dup', reason: dup });
-        continue;
-      }
-
-      const ud = (lead.underwriting_data ?? {}) as Record<string, unknown>;
-      const state = String(ud.businessState ?? ud.state ?? '').trim();
-      const city = String(ud.businessCity ?? ud.city ?? '').trim();
-      const tz = zoneForLocation(city, state) ?? 'America/New_York';
-      const days = job.send_days?.length ? job.send_days : [1, 2, 3, 4, 5, 6];
-
-      if (!isInSendWindow(tz, job.quiet_start, job.quiet_end, days, now)) {
-        const opensAt = nextWindowStart(tz, job.quiet_start, days, now);
-        await supabase.from('sms_drip_sends')
-          .update({ sms_status: 'scheduled', scheduled_for: opensAt.toISOString(), error: null })
-          .eq('id', send.id);
-        await supabase.from('sms_drip_jobs')
-          .update({ next_send_at: opensAt.toISOString() })
-          .eq('id', job.id);
-        results.push({ jobId: job.id, waitingForWindow: true, nextDue: opensAt.toISOString() });
-        continue;
-      }
+      if (!send || !lead) continue;
 
       const tplIndex = Math.floor(Math.random() * Math.max(1, job.templates.length));
       const body = renderTemplate(job.templates[tplIndex] ?? '', lead);
@@ -346,6 +406,7 @@ export async function POST() {
           error: 'Template rendered empty', templateIndex: tplIndex, email: user.email,
         });
         results.push({ jobId: job.id, leadId: lead.id, status: 'failed', paused });
+        if (!paused) await releaseJobNow(supabase, job.id);
         continue;
       }
 
@@ -360,9 +421,12 @@ export async function POST() {
       }
 
       // Last look before Twilio — another tab may have just recorded a send
-      const dupAgain = await alreadyTexted(supabase, user.id, lead.id, send.phone ?? lead.phone, send.id, job.include_already_texted);
+      const dupAgain = await alreadyTexted(supabase, user.id, lead.id, send.phone ?? lead.phone ?? null, send.id, job.include_already_texted);
       if (dupAgain) {
-        await failSend('skipped_dup', dupAgain);
+        await supabase.from('sms_drip_sends')
+          .update({ sms_status: 'skipped_dup', error: dupAgain, scheduled_for: null })
+          .eq('id', send.id);
+        await releaseJobNow(supabase, job.id);
         results.push({ jobId: job.id, leadId: lead.id, status: 'skipped_dup', reason: dupAgain });
         continue;
       }
@@ -450,6 +514,19 @@ export async function POST() {
           if (again) {
             await supabase.from('sms_drip_sends')
               .update({ sms_status: 'skipped_dup', error: again, scheduled_for: null })
+              .eq('id', next.id);
+            continue;
+          }
+          const extraUd = (nextLead.underwriting_data ?? {}) as Record<string, unknown>;
+          const extraTz = zoneForLocation(
+            String(extraUd.businessCity ?? extraUd.city ?? '').trim(),
+            String(extraUd.businessState ?? extraUd.state ?? '').trim(),
+          ) ?? 'America/New_York';
+          const extraDays = job.send_days?.length ? job.send_days : [1, 2, 3, 4, 5, 6];
+          if (!isInSendWindow(extraTz, job.quiet_start, job.quiet_end, extraDays, new Date())) {
+            const opensAt = nextWindowStart(extraTz, job.quiet_start, extraDays, new Date());
+            await supabase.from('sms_drip_sends')
+              .update({ sms_status: 'scheduled', scheduled_for: opensAt.toISOString(), error: null })
               .eq('id', next.id);
             continue;
           }
