@@ -5,6 +5,7 @@ import { promoteCampaignLeadOnReply } from '@/lib/inbox/promoteCampaignReply';
 import { runCasperInboundSms } from '@/lib/casper/reply';
 import { notifyUserOfInboundSms } from '@/lib/mobile/notifyInbound';
 import { saveInboundMms } from '@/lib/inbox/saveInboundMms';
+import { isSmsStopBody, markLeadDnc } from '@/lib/leads/dnc';
 
 export const maxDuration = 60;
 
@@ -107,13 +108,16 @@ export async function POST(req: NextRequest) {
     }
 
     const ownerId = userId || lead.user_id;
+    const stopped = isSmsStopBody(body);
 
-    if (body.match(/^(STOP|UNSUBSCRIBE|CANCEL|QUIT|END)\s*$/i)) {
-      await supabase.from('leads').update({ sms_opt_out: true }).eq('id', lead.id);
+    if (stopped) {
+      await markLeadDnc(supabase, lead.id, ownerId);
     }
 
     const rpcOk = Boolean(ingested && typeof ingested === 'object' && (ingested as { ok?: boolean }).ok);
-    try { await promoteCampaignLeadOnReply(supabase, lead.id); } catch { /* ignore */ }
+    if (!stopped) {
+      try { await promoteCampaignLeadOnReply(supabase, lead.id); } catch { /* ignore */ }
+    }
 
     // Fallback write if the SQL function isn't installed yet
     if (rpcOk) {
@@ -220,7 +224,7 @@ export async function POST(req: NextRequest) {
       }
     });
 
-    if (body.match(/^(STOP|UNSUBSCRIBE|CANCEL|QUIT|END)\s*$/i)) {
+    if (stopped) {
       return emptyTwiml();
     }
 

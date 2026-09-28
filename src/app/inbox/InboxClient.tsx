@@ -123,7 +123,9 @@ function fillTpl(body: string, lead: { name?: string | null; company?: string | 
 function getStatusStyleFrom(status: string | null | undefined, list: DBStatus[]) {
   if (!status) return { bg: '#f5f5f5', text: '#6b6b6b' };
   const found = list.find(s => s.name === status);
-  return found ? { bg: found.bg_color, text: found.color } : { bg: '#f5f5f5', text: '#6b6b6b' };
+  if (found) return { bg: found.bg_color, text: found.color };
+  if (status === 'DNC') return { bg: '#fee2e2', text: '#7f1d1d' };
+  return { bg: '#f5f5f5', text: '#6b6b6b' };
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -404,7 +406,7 @@ export default function InboxClient({
         company: l.company ?? null,
         phone: l.phone ?? '',
         stage: l.stage ?? null,
-        lead_status: l.lead_status ?? null,
+        lead_status: (l.sms_opt_out ? 'DNC' : l.lead_status) ?? null,
         month_key: null,
         last_contact: l.last_contact ?? null,
         created_at: l.created_at ?? null,
@@ -704,9 +706,6 @@ export default function InboxClient({
                           {lead.lead_status}
                         </span>
                       )}
-                      {lead.sms_opt_out && (
-                        <span className="text-[9px] text-red-500">OPT-OUT</span>
-                      )}
                     </div>
                   </div>
                 </button>
@@ -736,8 +735,14 @@ export default function InboxClient({
                     {selectedLead.name}
                   </h2>
                   {selectedLead.sms_opt_out && (
-                    <span className="text-[10px] font-medium bg-red-100 text-red-600 px-2 py-0.5 rounded-full">
-                      SMS OPT-OUT
+                    <span
+                      className="text-[10px] font-medium px-2 py-0.5 rounded-full"
+                      style={{
+                        background: getStatusStyleFrom('DNC', dbStatuses).bg,
+                        color: getStatusStyleFrom('DNC', dbStatuses).text,
+                      }}
+                    >
+                      DNC
                     </span>
                   )}
                 </div>

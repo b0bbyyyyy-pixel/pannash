@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import PipelineClient from './PipelineClient';
+import { isSmsStopBody } from '@/lib/leads/dnc';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -66,19 +67,28 @@ export default async function PipelinePage({
   const mergedLeads = [...leadMap.values()];
 
   const lastTextByLead: Record<string, { preview: string; outbound: boolean }> = {};
+  const inboundLeadIds = new Set<string>();
 
-  const { data: convs, error: convErr } = await supabase
+  let convQuery = await supabase
     .from('inbox_conversations')
-    .select('lead_id, last_message_preview, last_direction')
+    .select('lead_id, last_message_preview, last_direction, last_inbound_at')
     .eq('user_id', user.id);
-
-  if (convErr) {
-    console.error('Error fetching inbox conversations:', convErr);
+  if (convQuery.error) {
+    convQuery = await supabase
+      .from('inbox_conversations')
+      .select('lead_id, last_message_preview, last_direction')
+      .eq('user_id', user.id);
+  }
+  if (convQuery.error) {
+    console.error('Error fetching inbox conversations:', convQuery.error);
   }
 
-  for (const c of convs ?? []) {
+  for (const c of convQuery.data ?? []) {
+    if (!c.lead_id) continue;
+    const row = c as { last_inbound_at?: string | null; last_direction?: string | null; last_message_preview?: string | null; lead_id: string };
+    if (row.last_inbound_at || row.last_direction === 'inbound') inboundLeadIds.add(String(c.lead_id));
     const preview = (c.last_message_preview || '').trim();
-    if (!preview || !c.lead_id) continue;
+    if (!preview) continue;
     lastTextByLead[String(c.lead_id)] = {
       preview,
       outbound: c.last_direction === 'outbound',
@@ -106,7 +116,29 @@ export default async function PipelinePage({
     }
   }
 
-  const leadsWithText = mergedLeads.map(l => {
+  const prospectIds = mergedLeads.filter(l => {
+    if (l.sms_opt_out) return false;
+    const status = String(l.lead_status ?? '').trim();
+    if (status && status !== 'New Lead') return false;
+    if (!inboundLeadIds.has(String(l.id))) return false;
+    const t = lastTextByLead[String(l.id)];
+    if (t && !t.outbound && isSmsStopBody(t.preview)) return false;
+    return true;
+  }).map(l => l.id);
+
+  if (prospectIds.length) {
+    await supabase
+      .from('leads')
+      .update({ lead_status: 'Prospect', in_pipeline: true })
+      .in('id', prospectIds)
+      .eq('user_id', user.id);
+    for (const id of prospectIds) {
+      const row = leadMap.get(id);
+      if (row) leadMap.set(id, { ...row, lead_status: 'Prospect', in_pipeline: true });
+    }
+  }
+
+  const leadsWithText = [...leadMap.values()].map(l => {
     const t = lastTextByLead[String(l.id)];
     return {
       ...l,

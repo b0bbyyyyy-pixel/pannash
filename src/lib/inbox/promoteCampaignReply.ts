@@ -1,17 +1,20 @@
-/** Campaign lead with no pipeline status → Prospect + pipeline on first reply. */
+/** Inbound reply → Prospect (and into pipeline) unless they already have a real status or opted out. */
+
+const STARTER_STATUSES = new Set(['', 'New Lead']);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function promoteCampaignLeadOnReply(supabase: any, leadId: string) {
   const { data: lead } = await supabase
     .from('leads')
-    .select('list_id, in_pipeline, lead_status')
+    .select('lead_status, sms_opt_out')
     .eq('id', leadId)
     .maybeSingle();
 
-  if (!lead?.list_id) return;
-  if (lead.in_pipeline) return;
+  if (!lead) return;
+  if (lead.sms_opt_out) return;
   const status = String(lead.lead_status ?? '').trim();
-  if (status && status !== 'New Lead') return;
+  if (status === 'DNC') return;
+  if (status && !STARTER_STATUSES.has(status)) return;
 
   await supabase
     .from('leads')

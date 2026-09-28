@@ -44,7 +44,9 @@ interface DBStatus { id: string; name: string; color: string; bg_color: string; 
 function getStatusStyleFrom(status: string | null | undefined, list: DBStatus[]) {
   if (!status) return { bg: '#f5f5f5', text: '#6b6b6b' };
   const found = list.find(s => s.name === status);
-  return found ? { bg: found.bg_color, text: found.color } : { bg: '#f5f5f5', text: '#6b6b6b' };
+  if (found) return { bg: found.bg_color, text: found.color };
+  if (status === 'DNC') return { bg: '#fee2e2', text: '#7f1d1d' };
+  return { bg: '#f5f5f5', text: '#6b6b6b' };
 }
 
 
@@ -183,10 +185,14 @@ const EMPTY_FILTERS: Filters = {
   dateFrom: '', dateTo: '', phone: '', email: '', company: '', industry: '',
 };
 
-/** Smart default — last 30 days, all statuses except Prospect */
+/** Smart default — last 30 days, hide Prospect and DNC */
+function defaultExcludedStatuses() {
+  return ['Prospect', 'DNC'];
+}
+
 function buildDefaultFilters(): Filters {
   return {
-    leadId: '', excludedStatuses: ['Prospect'], assignedTo: '', temperature: '',
+    leadId: '', excludedStatuses: defaultExcludedStatuses(), assignedTo: '', temperature: '',
     dateFrom: isoDaysAgo(30), dateTo: isoToday(), phone: '', email: '', company: '', industry: '',
   };
 }
@@ -269,14 +275,12 @@ export default function PipelineClient({ leads, userId, compact = false }: Pipel
     setShowDrawer(false);
   }, [pending]);
 
-  // Reset → back to smart default (last 30d, all except Prospect)
+  // Reset → back to smart default (last 30d, hide Prospect and DNC)
   const resetFilters = useCallback(() => {
     const def = buildDefaultFilters();
-    // If statuses are loaded, restore "all except Prospect"
-    const allExceptProspect = dbStatuses.map(s => s.name).includes('Prospect')
-      ? ['Prospect']
-      : def.excludedStatuses;
-    setPending({ ...def, excludedStatuses: allExceptProspect });
+    const names = dbStatuses.map(s => s.name);
+    const excluded = defaultExcludedStatuses().filter(n => names.includes(n) || n === 'Prospect' || n === 'DNC');
+    setPending({ ...def, excludedStatuses: excluded });
   }, [dbStatuses]);
 
   const clearAll = useCallback(() => {
@@ -316,7 +320,8 @@ export default function PipelineClient({ leads, userId, compact = false }: Pipel
       if (f.leadId && !lead.id.toLowerCase().includes(f.leadId.toLowerCase())) return false;
       // Status (multi-exclude)
       if (f.excludedStatuses.length > 0) {
-        const s = lead.lead_status || '';
+        const s = (lead.lead_status || '').trim();
+        if (!s) return false;
         if (f.excludedStatuses.includes(s)) return false;
       }
       // Assigned to
@@ -358,8 +363,8 @@ export default function PipelineClient({ leads, userId, compact = false }: Pipel
     if (applied.industry !== defaultFilters.industry) n++;
     // Date range: only flag if different from the default 30-day window
     if (applied.dateFrom !== defaultFilters.dateFrom || applied.dateTo !== defaultFilters.dateTo) n++;
-    // Statuses: flag if the excluded set differs from default (['Prospect'])
-    const defExcl = ['Prospect'];
+    // Statuses: flag if the excluded set differs from default (Prospect + DNC)
+    const defExcl = defaultExcludedStatuses();
     const appliedExcl = [...applied.excludedStatuses].sort();
     const defaultExcl = [...defExcl].sort();
     if (JSON.stringify(appliedExcl) !== JSON.stringify(defaultExcl)) n++;

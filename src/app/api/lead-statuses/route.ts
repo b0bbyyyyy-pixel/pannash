@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import { ensureDncStatus } from '@/lib/leads/dnc';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,6 +41,7 @@ const DEFAULT_STATUSES: { name: string; color: string; bg_color: string }[] = [
   { name: 'Merchant Declined Offer',     color: '#b91c1c', bg_color: '#fee2e2' },
   { name: 'Not Interested',              color: '#6b7280', bg_color: '#f3f4f6' },
   { name: 'Dead',                        color: '#4b5563', bg_color: '#e5e7eb' },
+  { name: 'DNC',                         color: '#7f1d1d', bg_color: '#fee2e2' },
   { name: 'In Default',                  color: '#991b1b', bg_color: '#ffe4e6' },
   { name: 'Wood',                        color: '#92400e', bg_color: '#fef3c7' },
   { name: 'SPANISH SPEAKING ONLY',       color: '#374151', bg_color: '#f3f4f6' },
@@ -68,7 +70,6 @@ export async function GET() {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  // Seed defaults on first visit
   if (!data || data.length === 0) {
     const rows = DEFAULT_STATUSES.map((s, i) => ({
       user_id:    user.id,
@@ -85,7 +86,20 @@ export async function GET() {
     return NextResponse.json({ statuses: seeded ?? [] });
   }
 
-  return NextResponse.json({ statuses: data });
+  await ensureDncStatus(supabase, user.id);
+  await supabase
+    .from('leads')
+    .update({ lead_status: 'DNC' })
+    .eq('user_id', user.id)
+    .eq('sms_opt_out', true)
+    .neq('lead_status', 'DNC');
+  const { data: withDnc } = await supabase
+    .from('lead_statuses')
+    .select('*')
+    .eq('user_id', user.id)
+    .order('sort_order', { ascending: true });
+
+  return NextResponse.json({ statuses: withDnc ?? data });
 }
 
 // POST — add a new status

@@ -3,6 +3,7 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { unlockLead } from '@/lib/dialer/queue';
 import { nextEligibleAt } from '@/lib/dialer/canDial';
+import { ensureDncStatus, DNC_STATUS } from '@/lib/leads/dnc';
 
 async function getSupabase() {
   const cookieStore = await cookies();
@@ -84,6 +85,9 @@ export async function POST(req: NextRequest) {
     if (disposition === 'dnc') {
       leadUpdate.dnc = true;
       leadUpdate.next_eligible_at = null;
+      leadUpdate.sms_opt_out = true;
+      leadUpdate.lead_status = DNC_STATUS.name;
+      await ensureDncStatus(supabase, user.id);
     }
 
     if (disposition === 'bad_number') {

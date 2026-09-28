@@ -174,6 +174,7 @@ export async function GET(req: NextRequest) {
       sms_opt_out: optOutMap[String(lead.id)] ?? false,
       casper_enabled: casperMap[String(lead.id)] ?? null,
       conversation: convMap[String(lead.id)] ?? null,
+      lead_status: (optOutMap[String(lead.id)] ? 'DNC' : lead.lead_status) ?? null,
     }));
 
     merged.sort((a, b) => {
