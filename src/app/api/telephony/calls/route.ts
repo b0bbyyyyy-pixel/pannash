@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
 
     let query = supabase
       .from('dialer_calls')
-      .select('id, lead_id, lead_name, to_number, from_number, status, disposition, notes, started_at, answered_at, ended_at, duration_seconds, recording_url')
+      .select('id, lead_id, lead_name, to_number, from_number, direction, status, disposition, notes, started_at, answered_at, ended_at, duration_seconds, recording_url')
       .eq('agent_id', user.id)
       .order('started_at', { ascending: false })
       .limit(limit);

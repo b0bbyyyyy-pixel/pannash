@@ -37,7 +37,10 @@ function isMissed(c: HistoryRow) {
 }
 
 function partyNumber(c: HistoryRow) {
-  return c.direction === 'inbound' ? (c.from_number || c.to_number || '') : (c.to_number || c.from_number || '');
+  const from = c.from_number || '';
+  const to = c.to_number || '';
+  if (c.direction === 'inbound') return from || to;
+  return to || from;
 }
 
 function whenLabel(iso: string) {

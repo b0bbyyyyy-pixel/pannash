@@ -112,17 +112,18 @@ export async function POST(req: NextRequest) {
     }
 
     const from = params.From ?? '';
+    const caller = isE164(from) ? from : (isE164(params.Caller) ? params.Caller : from);
     const callSid = params.CallSid ?? null;
     const base = publicAppUrl();
     const vr = new twilio.twiml.VoiceResponse();
     const isOutgoing = from.startsWith('client:');
     const outboundTo = destNumber(params);
 
-    console.log('[twilio/voice-app]', { isOutgoing, from, To: params.To, phone: params.phone, outboundTo, fromNumber });
+    console.log('[twilio/voice-app]', { isOutgoing, from, caller, To: params.To, phone: params.phone, outboundTo, fromNumber });
 
     let dbId: string | null = null;
     if (userId) {
-      const otherParty = isOutgoing ? (outboundTo ?? params.To ?? '') : from;
+      const otherParty = isOutgoing ? (outboundTo ?? params.To ?? '') : caller;
       const { data: lead } = await supabase
         .from('leads')
         .select('id, name')
@@ -138,7 +139,7 @@ export async function POST(req: NextRequest) {
           agent_id: userId,
           lead_name: lead?.name ?? otherParty,
           to_number: isOutgoing ? (outboundTo ?? params.To) : (fromNumber ?? params.To),
-          from_number: isOutgoing ? (fromNumber ?? '') : from,
+          from_number: isOutgoing ? (fromNumber ?? '') : caller,
           direction: isOutgoing ? 'outbound' : 'inbound',
           status: 'in_progress',
           twilio_call_sid: callSid,
