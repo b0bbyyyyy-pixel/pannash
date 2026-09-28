@@ -69,24 +69,35 @@ export default async function PipelinePage({
   const lastTextByLead: Record<string, { preview: string; outbound: boolean }> = {};
   const inboundLeadIds = new Set<string>();
 
-  let convQuery = await supabase
+  type ConvRow = {
+    lead_id: string;
+    last_message_preview: string | null;
+    last_direction: string | null;
+    last_inbound_at?: string | null;
+  };
+
+  let convRows: ConvRow[] = [];
+  const withInbound = await supabase
     .from('inbox_conversations')
     .select('lead_id, last_message_preview, last_direction, last_inbound_at')
     .eq('user_id', user.id);
-  if (convQuery.error) {
-    convQuery = await supabase
+  if (!withInbound.error) {
+    convRows = (withInbound.data ?? []) as ConvRow[];
+  } else {
+    const fallback = await supabase
       .from('inbox_conversations')
       .select('lead_id, last_message_preview, last_direction')
       .eq('user_id', user.id);
-  }
-  if (convQuery.error) {
-    console.error('Error fetching inbox conversations:', convQuery.error);
+    if (fallback.error) {
+      console.error('Error fetching inbox conversations:', fallback.error);
+    } else {
+      convRows = (fallback.data ?? []) as ConvRow[];
+    }
   }
 
-  for (const c of convQuery.data ?? []) {
+  for (const c of convRows) {
     if (!c.lead_id) continue;
-    const row = c as { last_inbound_at?: string | null; last_direction?: string | null; last_message_preview?: string | null; lead_id: string };
-    if (row.last_inbound_at || row.last_direction === 'inbound') inboundLeadIds.add(String(c.lead_id));
+    if (c.last_inbound_at || c.last_direction === 'inbound') inboundLeadIds.add(String(c.lead_id));
     const preview = (c.last_message_preview || '').trim();
     if (!preview) continue;
     lastTextByLead[String(c.lead_id)] = {
