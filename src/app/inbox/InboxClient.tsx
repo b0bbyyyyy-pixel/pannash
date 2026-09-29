@@ -746,9 +746,24 @@ export default function InboxClient({
                     </span>
                   )}
                 </div>
-                <p className="text-xs text-[#6b6b6b]">
-                  {selectedLead.company && `${selectedLead.company} · `}
-                  {fmt(selectedLead.phone)}
+                <p className="flex items-center gap-1.5 text-xs text-[#6b6b6b]">
+                  <span>
+                    {selectedLead.company && `${selectedLead.company} · `}
+                    {fmt(selectedLead.phone)}
+                  </span>
+                  {selectedLead.phone && (
+                    <button
+                      type="button"
+                      onClick={() => webphone.openDialPad(selectedLead.phone)}
+                      className="shrink-0 p-0.5 text-[#9ca3af] hover:text-[#6b7280] transition-colors focus:outline-none"
+                      title="Call"
+                    >
+                      <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
+                          d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498A1 1 0 0121 15.72V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 7V5z" />
+                      </svg>
+                    </button>
+                  )}
                 </p>
               </div>
               <div className="flex items-center gap-3">
@@ -792,20 +807,6 @@ export default function InboxClient({
                     Casper
                   </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => webphone.openDialPad(selectedLead.phone)}
-                  className="focus:outline-none hover:opacity-70 transition-opacity"
-                  title="Call"
-                >
-                  <img
-                    src="/images/icons/phone-handset.png"
-                    alt="Call"
-                    width={14}
-                    height={14}
-                    className="w-[14px] h-[14px]"
-                  />
-                </button>
               </div>
             </div>
 
