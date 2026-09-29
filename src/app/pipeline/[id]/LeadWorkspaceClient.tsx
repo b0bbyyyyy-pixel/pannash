@@ -92,10 +92,20 @@ function Field({
     ? (value ? '•••-••-••••' : '—')
     : (value || '—');
 
+  const startEdit = () => {
+    if (readOnly) return;
+    setEditVal(value || '');
+    setEditing(true);
+  };
+
   const handleSave = async () => {
     if (!onSave) { setEditing(false); return; }
     setSaving(true);
-    try { await onSave(editVal); } finally { setSaving(false); setEditing(false); }
+    try { await onSave(editVal); } finally {
+      setSaving(false);
+      setEditing(false);
+      if (masked) setRevealed(false);
+    }
   };
 
   return (
@@ -110,6 +120,7 @@ function Field({
             onBlur={handleSave}
             onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') setEditing(false); }}
             autoFocus
+            placeholder={masked ? 'XXX-XX-XXXX' : undefined}
             className="flex-1 px-2 py-0.5 text-sm border border-[#e5e5e5] rounded focus:outline-none focus:ring-1 focus:ring-[#1a1a1a]"
           />
           {saving && <span className="text-xs text-[#9b9b9b] pt-1">…</span>}
@@ -119,22 +130,24 @@ function Field({
           <span
             className={`text-sm text-[#1a1a1a] flex-1 min-w-0 truncate ${!readOnly ? 'cursor-pointer hover:underline underline-offset-2 decoration-dotted' : ''}`}
             style={valueStyle}
-            title={value || undefined}
-            onClick={() => { if (!readOnly && !masked) { setEditVal(value || ''); setEditing(true); } }}
+            title={!masked || revealed ? (value || undefined) : undefined}
+            onClick={startEdit}
           >
             {masked && !revealed ? <span className="text-[#9b9b9b]">{display}</span> : display}
           </span>
           {masked && value && (
             <button
+              type="button"
               onClick={() => setRevealed(r => !r)}
               className="text-[10px] text-[#9b9b9b] hover:text-[#1a1a1a] px-1"
             >
               {revealed ? 'hide' : 'show'}
             </button>
           )}
-          {!readOnly && !masked && (
+          {!readOnly && (
             <button
-              onClick={() => { setEditVal(value || ''); setEditing(true); }}
+              type="button"
+              onClick={startEdit}
               className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 text-[#9b9b9b] hover:text-[#1a1a1a]"
             >
               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
