@@ -51,7 +51,29 @@ interface ParsedLead {
   purposeOfFunds?: string | null;
   leadStatus?: string | null;
   leadSource?: string | null;
+  /** 1-based Google Sheets row number (header is row 1). */
+  sheetRow?: number;
 }
+
+function parseSheetCsv(csv: string): string[][] {
+  const result = Papa.parse<string[]>(csv, { skipEmptyLines: false, header: false });
+  const rows = (result.data ?? []).filter((r): r is string[] => Array.isArray(r));
+  let last = rows.length;
+  while (last > 0 && !rows[last - 1].some(c => String(c ?? '').trim())) last--;
+  return rows.slice(0, last);
+}
+
+function isImportableLead(l: ParsedLead): boolean {
+  return Boolean(l.name || l.phone || l.email || l.company);
+}
+
+const EMPTY_PARSED_LEAD: ParsedLead = {
+  name: '',
+  email: '',
+  phone: null,
+  company: null,
+  notes: null,
+};
 
 function isEmptyish(v: string | null | undefined): boolean {
   if (!v) return true;
@@ -158,8 +180,9 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
   const [rawSheetsCsv, setRawSheetsCsv] = useState<string>(''); // original CSV for AI re-parse
   const [aiParsing, setAiParsing] = useState(false);
   const [aiParseError, setAiParseError] = useState<string>('');
-  const [rangeFrom, setRangeFrom] = useState<string>('1');
+  const [rangeFrom, setRangeFrom] = useState<string>('2');
   const [rangeTo, setRangeTo] = useState<string>('');
+  const [sheetsHasHeader, setSheetsHasHeader] = useState(true);
   // Google OAuth state
   const [googleStatus, setGoogleStatus] = useState<GoogleStatus | null>(null);
   const [googleStatusLoading, setGoogleStatusLoading] = useState(false);
@@ -1421,28 +1444,43 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
   // ─────────────────────────────────────────────────────────────────────────
 
   // ── Google Sheets range helper ───────────────────────────────────────────
+  // Range numbers match the gray row numbers in Google Sheets (row 1 = header).
+  const firstDataSheetRow = sheetsHasHeader ? 2 : 1;
+  const lastSheetRow = sheetsAllRows.length
+    ? (sheetsAllRows[sheetsAllRows.length - 1].sheetRow ?? (firstDataSheetRow + sheetsAllRows.length - 1))
+    : 0;
+  const importablePreviewCount = sheetsPreview.filter(isImportableLead).length;
+
   const applyRange = useCallback((all: ParsedLead[], from: string, to: string) => {
-    const f = Math.max(1, parseInt(from) || 1);
-    const t = to.trim() ? Math.min(all.length, parseInt(to)) : all.length;
-    return all.slice(f - 1, t);
+    if (all.length === 0) return [];
+    const minRow = all[0].sheetRow ?? 1;
+    const maxRow = all[all.length - 1].sheetRow ?? all.length;
+    const f = Math.max(minRow, parseInt(from) || minRow);
+    const t = to.trim() ? Math.min(maxRow, parseInt(to) || maxRow) : maxRow;
+    return all.filter(l => {
+      const r = l.sheetRow ?? 0;
+      return r >= f && r <= t;
+    });
   }, []);
 
-  const selectedRange = (total: number) => {
-    const f = Math.max(1, parseInt(rangeFrom) || 1);
-    const t = rangeTo.trim() ? Math.min(total, parseInt(rangeTo) || total) : total;
+  const selectedRange = () => {
+    const minRow = firstDataSheetRow;
+    const maxRow = lastSheetRow || minRow;
+    const f = Math.max(minRow, parseInt(rangeFrom) || minRow);
+    const t = rangeTo.trim() ? Math.min(maxRow, parseInt(rangeTo) || maxRow) : maxRow;
     return { from: f, to: Math.max(f, t) };
   };
 
-  const sliceCsvToRange = (csv: string, from: number, to: number) => {
-    const result = Papa.parse<string[]>(csv, { skipEmptyLines: true, header: false });
-    const rows = (result.data ?? []).filter(r => Array.isArray(r) && r.some(c => String(c ?? '').trim()));
-    if (rows.length < 2) return { csv, count: 0 };
-    const header = rows[0];
-    const data = rows.slice(1);
+  const sliceCsvToRange = (csv: string, from: number, to: number, hasHeader: boolean) => {
+    const rows = parseSheetCsv(csv);
+    if (rows.length === 0) return { csv, count: 0 };
     const start = Math.max(0, from - 1);
-    const end = Math.min(data.length, to);
-    const slice = data.slice(start, end);
-    return { csv: Papa.unparse([header, ...slice]), count: slice.length };
+    const end = Math.min(rows.length, to);
+    let slice = rows.slice(start, end);
+    if (hasHeader && start === 0) slice = slice.slice(1);
+    const header = hasHeader ? rows[0] : null;
+    const out = header ? [header, ...slice] : slice;
+    return { csv: Papa.unparse(out), count: slice.length };
   };
 
   const handleRangeChange = (from: string, to: string) => {
@@ -1468,8 +1506,8 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
   // ── AI-powered re-parse ─────────────────────────────────────────────────
   const handleAiParse = async () => {
     if (!rawSheetsCsv) return;
-    const { from, to } = selectedRange(sheetsAllRows.length || 1);
-    const { csv: rangedCsv, count } = sliceCsvToRange(rawSheetsCsv, from, to);
+    const { from, to } = selectedRange();
+    const { csv: rangedCsv, count } = sliceCsvToRange(rawSheetsCsv, from, to, sheetsHasHeader);
     if (count === 0) {
       setAiParseError('No rows in the selected range to parse.');
       return;
@@ -1480,36 +1518,40 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       const res = await fetch('/api/import/ai-parse-leads', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ csv: rangedCsv }),
+        body: JSON.stringify({ csv: rangedCsv, expectedCount: count }),
       });
       const json = await res.json();
       if (!res.ok) {
         setAiParseError(json.error || 'AI parse failed. Check your XAI_API_KEY.');
         return;
       }
-      // Map AI response to ParsedLead shape
-      const aiLeads: ParsedLead[] = (json.leads as Array<{
+      const mapped: ParsedLead[] = (json.leads as Array<{
         name: string | null; email: string | null; phone: string | null; company: string | null;
         industry?: string | null; address?: string | null; city?: string | null;
         state?: string | null; zip?: string | null; start_date?: string | null;
-      }>)
-        .filter(l => l.name || l.email || l.phone)
-        .map(l => ({
-          name:      l.name    || '',
-          email:     l.email   || '',
-          phone:     l.phone   || null,
-          company:   l.company || null,
-          notes:     null,
-          industry:  l.industry   || null,
-          address:   l.address    || null,
-          city:      l.city       || null,
-          state:     l.state      || null,
-          zip:       l.zip        || null,
-          startDate: l.start_date || null,
-        }));
+      }>).map(l => ({
+        name:      l.name    || '',
+        email:     l.email   || '',
+        phone:     l.phone   || null,
+        company:   l.company || null,
+        notes:     null,
+        industry:  l.industry   || null,
+        address:   l.address    || null,
+        city:      l.city       || null,
+        state:     l.state      || null,
+        zip:       l.zip        || null,
+        startDate: l.start_date || null,
+      }));
+      // Keep 1:1 with Google Sheets rows — never drop/shift before writeback
+      while (mapped.length < count) mapped.push({ ...EMPTY_PARSED_LEAD });
+      mapped.length = count;
+
+      const firstDataSheetRowInRange = sheetsHasHeader ? Math.max(from, 2) : from;
       const next = [...sheetsAllRows];
-      for (let i = 0; i < aiLeads.length && from - 1 + i < next.length; i++) {
-        next[from - 1 + i] = aiLeads[i];
+      for (let i = 0; i < mapped.length; i++) {
+        const sheetRow = firstDataSheetRowInRange + i;
+        const idx = next.findIndex(l => l.sheetRow === sheetRow);
+        if (idx >= 0) next[idx] = { ...mapped[i], sheetRow };
       }
       setSheetsAllRows(next);
       setSheetsPreview(applyRange(next, rangeFrom, rangeTo));
@@ -1541,10 +1583,10 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
       if (!res.ok) { setMessage(json.error || 'Failed to fetch sheet'); setSheetsLoading(false); return; }
 
       setRawSheetsCsv(json.csv); // store for optional AI re-parse
-      const result = Papa.parse<string[]>(json.csv, { skipEmptyLines: true, header: false });
-      if (!result.data || result.data.length === 0) { setMessage('Sheet appears empty'); setSheetsLoading(false); return; }
+      const sheetRows = parseSheetCsv(json.csv);
+      if (sheetRows.length === 0) { setMessage('Sheet appears empty'); setSheetsLoading(false); return; }
 
-      const firstRow = result.data[0] as string[];
+      const firstRow = sheetRows[0];
       const headerKeywords = ['name', 'email', 'phone', 'company', 'business', 'contact', 'first', 'last', 'mobile', 'cell'];
       // A cell only counts as a header label if it has no digits and no @ —
       // otherwise data like "2292200603 mobile" or emails would be mistaken for headers
@@ -1554,30 +1596,29 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
         return headerKeywords.some(k => s.includes(k));
       };
       const hasHeaders = firstRow.some(looksLikeHeaderCell);
+      setSheetsHasHeader(hasHeaders);
 
       let leads: ParsedLead[];
       if (hasHeaders) {
         const headers = firstRow.map(h => String(h).trim());
-        leads = (result.data.slice(1) as string[][])
-          .map(row => {
-            const obj: Record<string, string> = {};
-            row.forEach((val, i) => { obj[headers[i] || `col${i}`] = String(val || '').trim(); });
-            return smartColumnMapper(obj) as ParsedLead;
-          })
-          .filter(l => l.name || l.phone || l.email);
+        leads = sheetRows.slice(1).map((row, i) => {
+          const obj: Record<string, string> = {};
+          row.forEach((val, col) => { obj[headers[col] || `col${col}`] = String(val || '').trim(); });
+          return { ...(smartColumnMapper(obj) as ParsedLead), sheetRow: i + 2 };
+        });
       } else {
-        leads = (result.data as string[][])
-          .map(row => positionalColumnMapper(row.map(v => String(v || '').trim())) as ParsedLead)
-          .filter(l => l.name || l.phone || l.email);
+        leads = sheetRows.map((row, i) => ({
+          ...(positionalColumnMapper(row.map(v => String(v || '').trim())) as ParsedLead),
+          sheetRow: i + 1,
+        }));
       }
 
       if (leads.length === 0) {
         setMessage('No leads detected — check column headers in your sheet');
       } else {
         setSheetsAllRows(leads);
-        // Reset range to show all
-        const defaultFrom = '1';
-        const defaultTo = String(leads.length);
+        const defaultFrom = hasHeaders ? '2' : '1';
+        const defaultTo = String(leads[leads.length - 1].sheetRow);
         setRangeFrom(defaultFrom);
         setRangeTo(defaultTo);
         setSheetsPreview(applyRange(leads, defaultFrom, defaultTo));
@@ -1589,13 +1630,14 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
   };
 
   const handleSheetsImport = async () => {
-    if (sheetsPreview.length === 0) return;
+    const toImport = sheetsPreview.filter(isImportableLead);
+    if (toImport.length === 0) return;
     setLoading(true);
     setMessage('');
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { setMessage('Not authenticated'); setLoading(false); return; }
 
-    const rows = sheetsPreview.map(l => leadInsertPayload(
+    const rows = toImport.map(l => leadInsertPayload(
       l,
       user.id,
       selectedListId,
@@ -2062,37 +2104,42 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
             </button>
           </div>
 
-          {/* Row range selector */}
+          {/* Row range selector — numbers match the gray row numbers in Google Sheets */}
           {sheetsAllRows.length > 0 && (
-            <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
-              <span className="text-xs text-gray-500 whitespace-nowrap">
-                <strong>{sheetsAllRows.length}</strong> total rows — import rows:
-              </span>
-              <input
-                type="number"
-                min={1}
-                max={sheetsAllRows.length}
-                value={rangeFrom}
-                onChange={e => handleRangeChange(e.target.value, rangeTo)}
-                className="w-20 px-2 py-1 border border-gray-200 rounded text-sm text-center focus:outline-none focus:ring-2 focus:ring-gray-900"
-                placeholder="1"
-              />
-              <span className="text-xs text-gray-400">to</span>
-              <input
-                type="number"
-                min={1}
-                max={sheetsAllRows.length}
-                value={rangeTo}
-                onChange={e => handleRangeChange(rangeFrom, e.target.value)}
-                className="w-20 px-2 py-1 border border-gray-200 rounded text-sm text-center focus:outline-none focus:ring-2 focus:ring-gray-900"
-                placeholder={String(sheetsAllRows.length)}
-              />
-              <button
-                onClick={() => handleRangeChange('1', String(sheetsAllRows.length))}
-                className="text-xs text-gray-400 hover:text-gray-700 underline whitespace-nowrap"
-              >
-                All
-              </button>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+                <span className="text-xs text-gray-500 whitespace-nowrap">
+                  <strong>{lastSheetRow}</strong> Google Sheets rows — import rows:
+                </span>
+                <input
+                  type="number"
+                  min={firstDataSheetRow}
+                  max={lastSheetRow}
+                  value={rangeFrom}
+                  onChange={e => handleRangeChange(e.target.value, rangeTo)}
+                  className="w-20 px-2 py-1 border border-gray-200 rounded text-sm text-center focus:outline-none focus:ring-2 focus:ring-gray-900"
+                  placeholder={String(firstDataSheetRow)}
+                />
+                <span className="text-xs text-gray-400">to</span>
+                <input
+                  type="number"
+                  min={firstDataSheetRow}
+                  max={lastSheetRow}
+                  value={rangeTo}
+                  onChange={e => handleRangeChange(rangeFrom, e.target.value)}
+                  className="w-20 px-2 py-1 border border-gray-200 rounded text-sm text-center focus:outline-none focus:ring-2 focus:ring-gray-900"
+                  placeholder={String(lastSheetRow)}
+                />
+                <button
+                  onClick={() => handleRangeChange(String(firstDataSheetRow), String(lastSheetRow))}
+                  className="text-xs text-gray-400 hover:text-gray-700 underline whitespace-nowrap"
+                >
+                  All
+                </button>
+              </div>
+              <p className="text-[10px] text-gray-400 px-1">
+                Same numbers as the left side of Google Sheets.{sheetsHasHeader ? ' Row 1 is the header.' : ''}
+              </p>
             </div>
           )}
 
@@ -2106,7 +2153,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
-              {`Names look wrong? Re-parse rows ${selectedRange(sheetsAllRows.length).from}–${selectedRange(sheetsAllRows.length).to} with AI`}
+              {`Names look wrong? Re-parse rows ${selectedRange().from}–${selectedRange().to} with AI`}
             </button>
           )}
 
@@ -2118,7 +2165,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
               </svg>
               <span className="text-xs text-gray-600">
-                AI is reading rows {selectedRange(sheetsAllRows.length).from}–{selectedRange(sheetsAllRows.length).to}…
+                AI is reading Google Sheets rows {selectedRange().from}–{selectedRange().to}…
               </span>
             </div>
           )}
@@ -2135,9 +2182,9 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
             <div className="border border-gray-200 rounded-lg overflow-hidden">
               <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
                 <p className="text-xs font-semibold text-gray-700">
-                  {sheetsPreview.length} lead{sheetsPreview.length !== 1 ? 's' : ''} selected
-                  {sheetsAllRows.length !== sheetsPreview.length && (
-                    <span className="text-gray-400 font-normal"> (of {sheetsAllRows.length})</span>
+                  {importablePreviewCount} lead{importablePreviewCount !== 1 ? 's' : ''} selected
+                  {sheetsPreview.length !== importablePreviewCount && (
+                    <span className="text-gray-400 font-normal"> ({sheetsPreview.length} sheet rows)</span>
                   )}
                 </p>
                 <button
@@ -2155,6 +2202,7 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
                 <table className="w-full text-xs">
                   <thead className="bg-gray-50 sticky top-0">
                     <tr>
+                      <th className="px-2 py-1.5 text-left font-medium text-gray-400 uppercase tracking-wider w-10">#</th>
                       {['Name', 'Company', 'Phone', 'Email'].map(h => (
                         <th key={h} className="px-3 py-1.5 text-left font-medium text-gray-500 uppercase tracking-wider">{h}</th>
                       ))}
@@ -2162,7 +2210,8 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {sheetsPreview.map((lead, i) => (
-                      <tr key={i} className="hover:bg-gray-50">
+                      <tr key={lead.sheetRow ?? i} className="hover:bg-gray-50">
+                        <td className="px-2 py-1.5 text-gray-400 tabular-nums">{lead.sheetRow ?? '—'}</td>
                         <td className="px-3 py-1.5 font-medium text-gray-900 truncate max-w-[110px]">{lead.name || '—'}</td>
                         <td className="px-3 py-1.5 text-gray-600 truncate max-w-[110px]">{lead.company || '—'}</td>
                         <td className="px-3 py-1.5 text-gray-600 whitespace-nowrap">{lead.phone || '—'}</td>
@@ -2191,13 +2240,13 @@ export default function UploadForm({ selectedListId, onSuccess }: UploadFormProp
           {/* Import button */}
           <button
             onClick={handleSheetsImport}
-            disabled={loading || sheetsPreview.length === 0}
+            disabled={loading || importablePreviewCount === 0}
             className="w-full px-6 py-3 bg-[#1a1a1a] text-white rounded-md font-medium hover:bg-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {loading
               ? 'Importing…'
-              : sheetsPreview.length > 0
-                ? `Import ${sheetsPreview.length} Lead${sheetsPreview.length !== 1 ? 's' : ''}${sheetsAddToDialer ? ' + Dialer' : ''}`
+              : importablePreviewCount > 0
+                ? `Import ${importablePreviewCount} Lead${importablePreviewCount !== 1 ? 's' : ''}${sheetsAddToDialer ? ' + Dialer' : ''}`
                 : 'Load a sheet above'}
           </button>
 
