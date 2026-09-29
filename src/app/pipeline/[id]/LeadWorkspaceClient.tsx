@@ -50,6 +50,7 @@ interface LeadWorkspaceClientProps {
   fromLeads?: boolean;
   /** True when opened in the iframe overlay (dialer / pipeline modal) */
   isModal?: boolean;
+  campaignName?: string | null;
 }
 
 // ── Status helpers (dynamic) ───────────────────────────────────────────────────
@@ -259,6 +260,7 @@ export default function LeadWorkspaceClient({
   userName,
   fromLeads = false,
   isModal = false,
+  campaignName = null,
 }: LeadWorkspaceClientProps) {
   const router = useRouter();
   const [lead, setLead]               = useState(initialLead);
@@ -932,6 +934,17 @@ export default function LeadWorkspaceClient({
               {status}
             </span>
           )}
+          {campaignName && (
+            <a
+              href={`/leads?list=${lead.list_id}`}
+              target={isModal ? '_blank' : undefined}
+              rel={isModal ? 'noopener noreferrer' : undefined}
+              className="max-w-[220px] truncate px-2.5 py-0.5 rounded text-xs font-medium bg-[#f5f5f5] text-[#6b6b6b] hover:text-[#1a1a1a] hover:bg-[#ececec] transition-colors"
+              title={`Campaign: ${campaignName}`}
+            >
+              {campaignName}
+            </a>
+          )}
 
           {/* SOS + Google quick lookup buttons */}
           <div className="relative flex items-center gap-1.5">
@@ -1160,6 +1173,7 @@ export default function LeadWorkspaceClient({
 
           {/* META */}
           <Section title="Meta">
+            {campaignName ? <Field label="Campaign" value={campaignName} readOnly /> : null}
             <Field label="Created At"  value={fmtDate(lead.created_at)}  readOnly />
             <Field label="Updated At"  value={fmtDate(lead.updated_at)}  readOnly />
           </Section>

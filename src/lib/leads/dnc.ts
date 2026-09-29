@@ -4,10 +4,14 @@ export const DNC_STATUS = {
   bg_color: '#fee2e2',
 } as const;
 
-const STOP_RE = /^(STOP|UNSUBSCRIBE|CANCEL|QUIT|END)\s*$/i;
+const STOP_WORDS = new Set(['STOP', 'UNSUBSCRIBE', 'CANCEL', 'QUIT', 'END']);
 
 export function isSmsStopBody(body: string | null | undefined) {
-  return STOP_RE.test(String(body ?? '').trim());
+  const t = String(body ?? '').trim();
+  if (!t) return false;
+  if (STOP_WORDS.has(t.toUpperCase())) return true;
+  const letters = t.replace(/[^A-Za-z]/g, '').toUpperCase();
+  return STOP_WORDS.has(letters);
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

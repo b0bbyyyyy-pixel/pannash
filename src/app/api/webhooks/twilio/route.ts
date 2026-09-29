@@ -159,15 +159,17 @@ export async function POST(req: NextRequest) {
         }
 
         const nowIso = new Date().toISOString();
+        const convPatch: Record<string, unknown> = {
+          last_message_at: nowIso,
+          last_message_preview: preview,
+          last_direction: 'inbound',
+          unread_count: stopped ? (conv.unread_count ?? 0) : (conv.unread_count ?? 0) + 1,
+        };
+        if (!stopped) convPatch.last_inbound_at = nowIso;
+        else convPatch.last_inbound_at = null;
         const { error: convUpdateErr } = await supabase
           .from('inbox_conversations')
-          .update({
-            last_message_at: nowIso,
-            last_inbound_at: nowIso,
-            last_message_preview: preview,
-            last_direction: 'inbound',
-            unread_count: (conv.unread_count ?? 0) + 1,
-          })
+          .update(convPatch)
           .eq('id', conv.id);
         if (convUpdateErr) {
           // last_inbound_at column may not exist yet — retry without it
@@ -211,18 +213,20 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    after(async () => {
-      try {
-        await notifyUserOfInboundSms(supabase, {
-          userId: ownerId,
-          threadId: lead.id,
-          name: lead.name,
-          body: storedBody,
-        });
-      } catch (notifyErr) {
-        console.error('[SMS Webhook] notify', notifyErr);
-      }
-    });
+    if (!stopped) {
+      after(async () => {
+        try {
+          await notifyUserOfInboundSms(supabase, {
+            userId: ownerId,
+            threadId: lead.id,
+            name: lead.name,
+            body: storedBody,
+          });
+        } catch (notifyErr) {
+          console.error('[SMS Webhook] notify', notifyErr);
+        }
+      });
+    }
 
     if (stopped) {
       return emptyTwiml();

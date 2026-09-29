@@ -62,6 +62,16 @@ export default async function PipelineLeadPage({
 
   const userName = user.email?.split('@')[0] || 'User';
 
+  let campaignName: string | null = null;
+  if (lead.list_id) {
+    const { data: list } = await supabase
+      .from('lead_lists')
+      .select('name')
+      .eq('id', lead.list_id)
+      .maybeSingle();
+    campaignName = list?.name ?? null;
+  }
+
   if (isModal) {
     // Stripped-down render for iframe overlay — no nav, no extra padding
     return (
@@ -75,6 +85,7 @@ export default async function PipelineLeadPage({
             userName={userName}
             fromLeads={fromLeads}
             isModal
+            campaignName={campaignName}
           />
         </div>
       </div>
@@ -92,6 +103,7 @@ export default async function PipelineLeadPage({
             allLeadIds={pipelineIds}
             userId={user.id}
             userName={userName}
+            campaignName={campaignName}
           />
         </div>
       </main>

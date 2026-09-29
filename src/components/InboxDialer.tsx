@@ -116,6 +116,7 @@ export default function InboxDialer({
               onSave={handleDisposition}
               saving={state === 'saving'}
               onEmailSaved={(email) => setLead(prev => prev ? { ...prev, email } : prev)}
+              onNotesSaved={(notes) => setLead(prev => prev ? { ...prev, notes } : prev)}
               onQuickEmail={() => setShowEmailModal(true)}
               compact
               className="!rounded-none !border-0 !border-t !border-[#f0f0f0] !shadow-none !p-4"

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import { isSmsStopBody } from '@/lib/leads/dnc';
 
 const LEAD_COLS = 'id, name, company, phone, stage, month_key, last_contact, created_at, notes, in_pipeline, lead_status, list_id';
 const LIMIT = 40;
@@ -73,6 +74,13 @@ export async function GET(req: NextRequest) {
       } catch {
         // Table not created yet
       }
+
+      convs = convs.filter(c => {
+        const preview = String(c.last_message_preview ?? '');
+        const inbound = c.last_inbound_at || c.last_direction === 'inbound';
+        if (inbound && isSmsStopBody(preview)) return false;
+        return true;
+      });
 
       const convLeadIds = convs.map(c => String(c.lead_id)).filter(Boolean);
       if (convLeadIds.length) {
@@ -170,12 +178,22 @@ export async function GET(req: NextRequest) {
 
     const merged: Record<string, unknown>[] = list.map(lead => ({
       ...lead,
+      id: lead.id,
       phone: (lead.phone as string) || '',
       sms_opt_out: optOutMap[String(lead.id)] ?? false,
       casper_enabled: casperMap[String(lead.id)] ?? null,
       conversation: convMap[String(lead.id)] ?? null,
       lead_status: (optOutMap[String(lead.id)] ? 'DNC' : lead.lead_status) ?? null,
-    }));
+    })).filter(lead => {
+      if (q || (pinLeadId && lead.id === pinLeadId)) return true;
+      const conv = lead.conversation as { last_message_preview?: string | null; last_inbound_at?: string | null; last_direction?: string | null } | null;
+      const preview = conv?.last_message_preview ?? '';
+      const hasInbound = !!(conv?.last_inbound_at || conv?.last_direction === 'inbound');
+      if (hasInbound && isSmsStopBody(preview)) return false;
+      const dnc = !!(lead.sms_opt_out) || String(lead.lead_status ?? '') === 'DNC';
+      if (dnc && !(hasInbound && !isSmsStopBody(preview))) return false;
+      return true;
+    });
 
     merged.sort((a, b) => {
       if (pinLeadId) {

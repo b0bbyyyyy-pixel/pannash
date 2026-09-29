@@ -697,7 +697,7 @@ export default function InboxClient({
                       </span>
                       {lead.lead_status && (
                         <span
-                          className="text-[10px] font-medium px-1.5 py-0.5 rounded max-w-[120px] truncate"
+                          className="inline-flex h-[18px] w-[88px] items-center justify-center truncate rounded px-1.5 text-[10px] font-medium"
                           style={{
                             background: getStatusStyleFrom(lead.lead_status, dbStatuses).bg,
                             color: getStatusStyleFrom(lead.lead_status, dbStatuses).text,

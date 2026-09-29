@@ -174,6 +174,7 @@ export function DialerCard({
   onSave,
   saving,
   onEmailSaved,
+  onNotesSaved,
   onQuickEmail,
   className = '',
   compact = false,
@@ -186,6 +187,7 @@ export function DialerCard({
   onSave: (disposition: DispositionKey, notes: string) => void;
   saving: boolean;
   onEmailSaved: (email: string) => void;
+  onNotesSaved?: (notes: string | null) => void;
   onQuickEmail: () => void;
   className?: string;
   compact?: boolean;
@@ -193,6 +195,8 @@ export function DialerCard({
   const [copied, setCopied] = useState(false);
   const [showText, setShowText] = useState(false);
   const [notesExpanded, setNotesExpanded] = useState(false);
+  const [leadNotes, setLeadNotes] = useState(lead.notes || '');
+  const [savingNotes, setSavingNotes] = useState(false);
   // Derive city/state/timezone from the phone's area code
   const phoneLoc = getPhoneLocation(lead.phone_e164);
   const effectiveTz = lead.timezone || phoneLoc?.timezone || null;
@@ -243,7 +247,12 @@ export function DialerCard({
     setPipelineChoice(null);
     setNotes('');
     setNotesExpanded(false);
+    setLeadNotes(lead.notes || '');
   }, [lead.id]);
+
+  useEffect(() => {
+    setLeadNotes(lead.notes || '');
+  }, [lead.notes]);
 
   const pickTile = (key: TileKey) => {
     setSelected(key);
@@ -315,6 +324,24 @@ export function DialerCard({
       setEmailError('Could not save email');
     } finally {
       setSavingEmail(false);
+    }
+  };
+
+  const saveLeadNotes = async () => {
+    const value = leadNotes.trim();
+    const current = (lead.notes || '').trim();
+    if (value === current) return;
+    setSavingNotes(true);
+    try {
+      const res = await fetch('/api/leads/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ leadId: lead.id, field: 'notes', value: value || null }),
+      });
+      if (res.ok) onNotesSaved?.(value || null);
+    } finally {
+      setSavingNotes(false);
     }
   };
 
@@ -541,18 +568,20 @@ export function DialerCard({
         </div>
       )}
 
-      {/* Lead notes — one line until clicked, read-only */}
-      {lead.notes && (
-        <button
-          type="button"
-          onClick={() => setNotesExpanded(v => !v)}
-          title={notesExpanded ? 'Collapse notes' : 'Expand notes'}
-          className={`w-full text-left bg-[#f9f9f9] text-[#6b7280] ${
-            compact ? 'rounded-none px-0 py-1 mb-3 text-[11px]' : 'rounded-xl px-4 py-3 mb-6 text-sm'
-          } ${notesExpanded ? 'whitespace-pre-wrap break-words' : 'truncate'}`}
-        >
-          {lead.notes}
-        </button>
+      {/* Lead notes */}
+      <textarea
+        value={leadNotes}
+        onChange={e => setLeadNotes(e.target.value)}
+        onFocus={() => setNotesExpanded(true)}
+        onBlur={() => { void saveLeadNotes(); }}
+        placeholder="Notes"
+        rows={notesExpanded || leadNotes.length > 80 ? (compact ? 5 : 7) : (compact ? 2 : 3)}
+        className={`w-full resize-y bg-[#f9f9f9] text-[#1a1a1a] placeholder:text-[#c4c4c4] focus:outline-none focus:ring-1 focus:ring-[#e5e5e5] ${
+          compact ? 'rounded-lg px-2.5 py-1.5 mb-3 text-[11px]' : 'rounded-xl px-4 py-3 mb-6 text-sm'
+        }`}
+      />
+      {savingNotes && (
+        <p className={`text-[10px] text-[#9ca3af] ${compact ? '-mt-2 mb-2' : '-mt-5 mb-3'}`}>Saving…</p>
       )}
 
       {/* Footer: Call → Ringing/Hang up → 3 outcomes + Save & next */}
@@ -898,6 +927,7 @@ export default function DialerClient() {
               onSave={handleDisposition}
               saving={state === 'saving'}
               onEmailSaved={(email) => setLead((prev) => prev ? { ...prev, email } : prev)}
+              onNotesSaved={(notes) => setLead((prev) => prev ? { ...prev, notes } : prev)}
               onQuickEmail={() => setShowEmailModal(true)}
             />
           ) : null}
