@@ -2,66 +2,39 @@
 
 import { useEffect, useRef } from 'react';
 
-const ICON_HREF = '/icon.png';
-const RED = '#e11d48';
+const ICON_DEFAULT = '/icon.png';
+const ICON_UNREAD = '/icon-unread.png';
 
 function setFavicon(href: string) {
-  const links = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel="icon"], link[rel="shortcut icon"]'));
-  if (links.length === 0) {
-    const link = document.createElement('link');
-    link.rel = 'icon';
-    document.head.appendChild(link);
-    links.push(link);
-  }
-  for (const link of links) {
-    link.type = 'image/png';
-    link.href = href;
-  }
-}
+  const old = document.querySelectorAll('link[rel="icon"], link[rel="shortcut icon"]');
+  old.forEach(el => el.parentNode?.removeChild(el));
 
-function tintRed(img: HTMLImageElement): string {
-  const size = 64;
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return ICON_HREF;
-  ctx.drawImage(img, 0, 0, size, size);
-  ctx.globalCompositeOperation = 'source-in';
-  ctx.fillStyle = RED;
-  ctx.fillRect(0, 0, size, size);
-  return canvas.toDataURL('image/png');
+  const link = document.createElement('link');
+  link.rel = 'icon';
+  link.type = 'image/png';
+  link.href = href;
+  document.head.appendChild(link);
+
+  const shortcut = document.createElement('link');
+  shortcut.rel = 'shortcut icon';
+  shortcut.type = 'image/png';
+  shortcut.href = href;
+  document.head.appendChild(shortcut);
 }
 
 export default function TabUnreadBadge() {
-  const imgRef = useRef<HTMLImageElement | null>(null);
-  const redRef = useRef<string | null>(null);
-  const countRef = useRef(0);
   const stopped = useRef(false);
+  const lastUnread = useRef<boolean | null>(null);
 
   useEffect(() => {
     stopped.current = false;
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      imgRef.current = img;
-      apply(countRef.current);
-    };
-    img.src = ICON_HREF;
 
     const apply = (count: number) => {
-      countRef.current = count;
-      if (count <= 0) {
-        setFavicon(`${ICON_HREF}?v=default`);
-        return;
-      }
-      if (redRef.current) {
-        setFavicon(redRef.current);
-        return;
-      }
-      if (!imgRef.current) return;
-      redRef.current = tintRed(imgRef.current);
-      setFavicon(redRef.current);
+      const unread = count > 0;
+      if (lastUnread.current === unread) return;
+      lastUnread.current = unread;
+      // Distinct paths so Windows Chrome does not reuse a cached tab icon.
+      setFavicon(unread ? `${ICON_UNREAD}?v=unread` : `${ICON_DEFAULT}?v=default`);
     };
 
     const tick = async () => {
@@ -94,7 +67,8 @@ export default function TabUnreadBadge() {
       window.clearInterval(interval);
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVis);
-      setFavicon(ICON_HREF);
+      lastUnread.current = null;
+      setFavicon(ICON_DEFAULT);
     };
   }, []);
 
