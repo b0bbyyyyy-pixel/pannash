@@ -834,7 +834,7 @@ export default function DialerClient() {
   const {
     state, lead, queue, error, setError,
     activeCampaign, showPicker, setShowPicker,
-    testMode, toggleTestMode, showCallCount, setShowCallCount,
+    testMode, toggleTestMode, autoCall, toggleAutoCall, showCallCount, setShowCallCount,
     showEmailModal, setShowEmailModal,
     webphone, campaignPct, claimNext,
     handleLoadCampaign, handleClearCampaign,
@@ -867,6 +867,16 @@ export default function DialerClient() {
         {/* Left: lead card / empty / loading */}
         <div className="lg:col-span-2">
           <div className="flex items-center justify-end gap-3 mb-2 min-h-[20px]">
+            <button
+              onClick={toggleAutoCall}
+              title="Auto call — dial the next lead after you save a status"
+              className="flex items-center gap-1.5 shrink-0"
+            >
+              <span className={`text-xs ${autoCall ? 'text-[#1a1a1a] font-medium' : 'text-[#c4c4c4]'}`}>Auto</span>
+              <span className={`relative inline-block w-7 h-4 rounded-full transition-colors ${autoCall ? 'bg-[#1a1a1a]' : 'bg-[#e5e5e5]'}`}>
+                <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${autoCall ? 'left-3.5' : 'left-0.5'}`} />
+              </span>
+            </button>
             <button
               onClick={toggleTestMode}
               title="Test mode — Call skips the real phone dial"

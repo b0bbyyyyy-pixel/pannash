@@ -26,9 +26,12 @@ export function useDialerSession() {
   const [activeCampaign, setActiveCampaign] = useState<Campaign | null>(null);
   const [showPicker, setShowPicker] = useState(false);
   const [testMode, setTestMode] = useState(false);
+  const [autoCall, setAutoCall] = useState(true);
   const [showCallCount, setShowCallCount] = useState(false);
   const [showEmailModal, setShowEmailModal] = useState(false);
   const initDone = useRef(false);
+  const pendingAutoCallRef = useRef(false);
+  const callInFlightRef = useRef(false);
   const webphone = useWebPhone();
   const listIdRef = useRef<string | null>(null);
 
@@ -60,6 +63,9 @@ export function useDialerSession() {
     if (initDone.current) return;
     initDone.current = true;
     try { setTestMode(localStorage.getItem('dialer_test_mode') === '1'); } catch { /* ignore */ }
+    try {
+      if (localStorage.getItem('dialer_auto_call') === '0') setAutoCall(false);
+    } catch { /* ignore */ }
     let saved: Campaign | null = null;
     try {
       const raw = localStorage.getItem('dialer_active_campaign');
@@ -162,17 +168,28 @@ export function useDialerSession() {
     });
   };
 
-  const handleCall = async () => {
-    if (!lead) return;
-    if (!testMode) {
-      try {
-        await webphone.connect(lead.phone_e164, { name: lead.name, leadId: lead.id, company: lead.company ?? undefined });
-      } catch (e: unknown) {
-        setError(e instanceof Error ? e.message : 'Could not start call');
-        return;
-      }
-    }
+  const toggleAutoCall = () => {
+    setAutoCall((prev) => {
+      const next = !prev;
+      try { localStorage.setItem('dialer_auto_call', next ? '1' : '0'); } catch { /* ignore */ }
+      if (!next) pendingAutoCallRef.current = false;
+      return next;
+    });
+  };
+
+  const handleCall = useCallback(async () => {
+    if (!lead || callInFlightRef.current) return;
+    callInFlightRef.current = true;
+    pendingAutoCallRef.current = false;
     try {
+      if (!testMode) {
+        try {
+          await webphone.connect(lead.phone_e164, { name: lead.name, leadId: lead.id, company: lead.company ?? undefined });
+        } catch (e: unknown) {
+          setError(e instanceof Error ? e.message : 'Could not start call');
+          return;
+        }
+      }
       const res = await fetch('/api/dialer/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -184,8 +201,10 @@ export function useDialerSession() {
       setState(testMode ? 'wrap_up' : 'on_call');
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error starting call');
+    } finally {
+      callInFlightRef.current = false;
     }
-  };
+  }, [lead, testMode, webphone]);
 
   const handleHangup = () => {
     webphone.hangup();
@@ -225,12 +244,24 @@ export function useDialerSession() {
         try { localStorage.setItem('dialer_active_campaign', JSON.stringify(updated)); } catch { /* ignore */ }
         return updated;
       });
+      pendingAutoCallRef.current = autoCall;
       await claimNext(lead.id);
     } catch (e: unknown) {
+      pendingAutoCallRef.current = false;
       setError(e instanceof Error ? e.message : 'Error saving disposition');
       setState('wrap_up');
     }
   };
+
+  // After Save & next, auto-dial the newly claimed lead (not on first load / campaign switch).
+  useEffect(() => {
+    if (state !== 'ready' || !lead || !autoCall || !pendingAutoCallRef.current) return;
+    const t = window.setTimeout(() => {
+      pendingAutoCallRef.current = false;
+      void handleCall();
+    }, 350);
+    return () => window.clearTimeout(t);
+  }, [state, lead, autoCall, handleCall]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -239,7 +270,7 @@ export function useDialerSession() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [state, lead, testMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [state, handleCall]);
 
   const campaignPct = activeCampaign && activeCampaign.total > 0
     ? Math.round((activeCampaign.called / activeCampaign.total) * 100)
@@ -248,7 +279,7 @@ export function useDialerSession() {
   return {
     state, lead, queue, error, setError,
     activeCampaign, showPicker, setShowPicker,
-    testMode, toggleTestMode, showCallCount, setShowCallCount,
+    testMode, toggleTestMode, autoCall, toggleAutoCall, showCallCount, setShowCallCount,
     showEmailModal, setShowEmailModal,
     webphone, campaignPct, claimNext,
     handleLoadCampaign, handleClearCampaign,

@@ -16,7 +16,7 @@ export default function InboxDialer({
   const {
     state, lead, error, setError,
     activeCampaign, showPicker, setShowPicker,
-    testMode, toggleTestMode, showCallCount, setShowCallCount,
+    testMode, toggleTestMode, autoCall, toggleAutoCall, showCallCount, setShowCallCount,
     showEmailModal, setShowEmailModal,
     webphone, campaignPct, claimNext,
     handleLoadCampaign, handleClearCampaign,
@@ -44,6 +44,16 @@ export default function InboxDialer({
       {open && (
         <div>
           <div className="flex flex-wrap items-center justify-end gap-x-1.5 gap-y-1 pl-6 pr-3 pb-2">
+            <button
+              onClick={toggleAutoCall}
+              title="Auto call — dial the next lead after you save a status"
+              className="flex items-center gap-1 shrink-0"
+            >
+              <span className={`text-[9px] ${autoCall ? 'text-[#1a1a1a] font-medium' : 'text-[#c4c4c4]'}`}>Auto</span>
+              <span className={`relative inline-block w-5 h-3 rounded-full transition-colors ${autoCall ? 'bg-[#1a1a1a]' : 'bg-[#e5e5e5]'}`}>
+                <span className={`absolute top-0.5 w-2 h-2 rounded-full bg-white transition-all ${autoCall ? 'left-2.5' : 'left-0.5'}`} />
+              </span>
+            </button>
             <button
               onClick={toggleTestMode}
               title="Test mode — Call skips the real phone dial"
