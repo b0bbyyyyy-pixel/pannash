@@ -75,6 +75,11 @@ export async function POST(req: NextRequest) {
       'last_email_sent',
       'last_text_sent',
       'follow_up_at',
+      'follow_up_due_at',
+      'follow_up_auto_text',
+      'follow_up_sms_body',
+      'follow_up_calendar_event_id',
+      'follow_up_sms_sent_at',
     ];
 
     if (!allowedFields.includes(field)) {

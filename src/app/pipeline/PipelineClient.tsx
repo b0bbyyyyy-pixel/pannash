@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 
 const AddPipelineLeadModal   = dynamic(() => import('@/components/AddPipelineLeadModal'),   { ssr: false });
@@ -25,6 +26,7 @@ interface Lead {
   stage?: string | null;
   value?: number | string | null;
   follow_up_at?: string | null;
+  follow_up_due_at?: string | null;
   underwriting_data?: Record<string, unknown> | null;
   last_text?: string | null;
   last_text_outbound?: boolean;
@@ -129,10 +131,15 @@ function parseLocalDate(dateStr: string): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+function followUpRaw(lead: Lead): string | null {
+  if (lead.follow_up_at) return String(lead.follow_up_at);
+  if (lead.follow_up_due_at) return String(lead.follow_up_due_at);
+  const ud = lead.underwriting_data?.followUpDate;
+  return typeof ud === 'string' ? ud : null;
+}
+
 function followUpLabel(lead: Lead): string {
-  const raw = lead.follow_up_at || (typeof lead.underwriting_data?.followUpDate === 'string'
-    ? lead.underwriting_data.followUpDate
-    : null);
+  const raw = followUpRaw(lead);
   if (!raw) return '';
   const d = parseLocalDate(raw);
   if (!d) return '';
@@ -240,6 +247,8 @@ function FilterSection({
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function PipelineClient({ leads, userId, compact = false }: PipelineClientProps) {
+  const router = useRouter();
+  const [rows, setRows]                     = useState(leads);
   const [search, setSearch]                 = useState('');
   const [showAddModal, setShowAddModal]     = useState(false);
   const [showManageStatuses, setShowManageStatuses] = useState(false);
@@ -255,15 +264,27 @@ export default function PipelineClient({ leads, userId, compact = false }: Pipel
   }, []);
 
   useEffect(() => { loadStatuses(); }, [loadStatuses]);
+  useEffect(() => { setRows(leads); }, [leads]);
+
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      const d = e.data;
+      if (!d || d.type !== 'gostwrk-pipeline-lead' || !d.id || !d.patch) return;
+      setRows(prev => prev.map(l => l.id === d.id ? { ...l, ...d.patch } : l));
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
+
   const [applied, setApplied]               = useState<Filters>(buildDefaultFilters);
   const [pending, setPending]               = useState<Filters>(buildDefaultFilters);
 
   // Derive unique assigned-to values from leads for the dropdown
   const agents = useMemo(() => {
     const set = new Set<string>();
-    leads.forEach(l => { if (l.assigned_to) set.add(l.assigned_to); });
+    rows.forEach(l => { if (l.assigned_to) set.add(l.assigned_to); });
     return [...set].sort();
-  }, [leads]);
+  }, [rows]);
 
   const openDrawer = useCallback(() => {
     setPending(applied);   // seed pending with currently applied
@@ -295,12 +316,12 @@ export default function PipelineClient({ leads, userId, compact = false }: Pipel
 
   // ── Sort + filter (most-recent first) ─────────────────────────────────────
   const sorted = useMemo(() => {
-    return [...leads].sort((a, b) => {
+    return [...rows].sort((a, b) => {
       const tA = new Date(activityAt(a) || 0).getTime();
       const tB = new Date(activityAt(b) || 0).getTime();
       return tB - tA;
     });
-  }, [leads]);
+  }, [rows]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -374,6 +395,10 @@ export default function PipelineClient({ leads, userId, compact = false }: Pipel
   const statusNames  = useMemo(() => dbStatuses.map(s => s.name), [dbStatuses]);
   const [leadOverlayId, setLeadOverlayId] = useState<string | null>(null);
   const goTo = (id: string) => setLeadOverlayId(id);
+  const closeLeadOverlay = useCallback(() => {
+    setLeadOverlayId(null);
+    router.refresh();
+  }, [router]);
 
   return (
     <div>
@@ -533,7 +558,7 @@ export default function PipelineClient({ leads, userId, compact = false }: Pipel
                 {/* Follow-up */}
                 <div className="flex items-center min-w-0">
                   {followUp && (
-                    <span className="text-[11px] text-[#1a1a1a] truncate">{followUp}</span>
+                    <span className="text-[11px] font-semibold text-[#dc2626] truncate">{followUp}</span>
                   )}
                 </div>
 
@@ -888,7 +913,7 @@ export default function PipelineClient({ leads, userId, compact = false }: Pipel
           {/* Backdrop */}
           <div
             className="fixed inset-0 bg-black/40 z-[80]"
-            onClick={() => setLeadOverlayId(null)}
+            onClick={closeLeadOverlay}
           />
           {/* Panel */}
           <div
@@ -912,7 +937,7 @@ export default function PipelineClient({ leads, userId, compact = false }: Pipel
                   Full page
                 </a>
                 <button
-                  onClick={() => setLeadOverlayId(null)}
+                  onClick={closeLeadOverlay}
                   className="text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors p-1 rounded hover:bg-[#f5f5f5]"
                   title="Close"
                 >

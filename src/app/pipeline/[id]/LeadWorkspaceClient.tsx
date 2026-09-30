@@ -16,6 +16,7 @@ const SendToLenderModal    = dynamic(() => import('@/components/SendToLenderModa
 const CallHistoryPanel     = dynamic(() => import('@/components/CallHistoryPanel'), { ssr: false });
 const ManageStatusesModal  = dynamic(() => import('@/components/ManageStatusesModal'), { ssr: false });
 const QuickTextPopup       = dynamic(() => import('@/components/QuickTextPopup'), { ssr: false });
+const FollowUpModal        = dynamic(() => import('@/components/FollowUpModal'), { ssr: false });
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface Lead {
@@ -37,6 +38,11 @@ interface Lead {
   value?: number | null;
   lead_source?: string | null;
   follow_up_at?: string | null;
+  follow_up_due_at?: string | null;
+  follow_up_auto_text?: boolean | null;
+  follow_up_sms_body?: string | null;
+  follow_up_calendar_event_id?: string | null;
+  follow_up_sms_sent_at?: string | null;
   underwriting_data?: Record<string, unknown> | null;
   list_id?: string | null;
 }
@@ -284,6 +290,7 @@ export default function LeadWorkspaceClient({
   const [deleting, setDeleting] = useState(false);
   const [showEmailModal, setShowEmailModal]     = useState(false);
   const [showTextPopup, setShowTextPopup]       = useState(false);
+  const [showFollowUpModal, setShowFollowUpModal] = useState(false);
   const [showDocsModal, setShowDocsModal]       = useState(false);
   const [showVault, setShowVault]               = useState(false);
   const [showSendModal, setShowSendModal]       = useState(false);
@@ -1390,6 +1397,24 @@ export default function LeadWorkspaceClient({
               <p className="text-[11px] text-[#6b6b6b] mt-1.5">{appMsg}</p>
             )}
 
+            <div className="mt-2">
+              <button
+                onClick={() => setShowFollowUpModal(true)}
+                className="w-full px-3 py-2.5 border border-[#e5e5e5] text-[#1a1a1a] text-xs font-medium rounded-md hover:bg-[#f5f5f5] transition-colors"
+              >
+                {lead.follow_up_at
+                  ? `Follow-up · ${(() => {
+                      const raw = String(lead.follow_up_at).slice(0, 10);
+                      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+                      const d = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(raw);
+                      if (Number.isNaN(d.getTime())) return 'Set';
+                      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                    })()}`
+                  : 'Follow-up'}
+                {lead.follow_up_auto_text ? ' · auto-text' : ''}
+              </button>
+            </div>
+
             {/* Call — in-app WebRTC (headset) */}
             <div className="mt-2">
               <button
@@ -1592,6 +1617,41 @@ export default function LeadWorkspaceClient({
             in_pipeline: lead.in_pipeline,
           }}
           onClose={() => setShowTextPopup(false)}
+        />
+      )}
+
+      {showFollowUpModal && (
+        <FollowUpModal
+          leadId={lead.id}
+          leadName={lead.company || lead.name}
+          currentDueAt={lead.follow_up_due_at}
+          currentAutoText={!!lead.follow_up_auto_text}
+          currentSmsBody={lead.follow_up_sms_body}
+          onClose={() => setShowFollowUpModal(false)}
+          onSaved={next => {
+            setLead(prev => ({ ...prev, ...next }));
+            try {
+              window.parent?.postMessage({
+                type: 'gostwrk-pipeline-lead',
+                id: lead.id,
+                patch: next,
+              }, '*');
+            } catch { /* not in iframe */ }
+          }}
+          onCleared={() => {
+            const patch = {
+              follow_up_at: null,
+              follow_up_due_at: null,
+              follow_up_auto_text: false,
+              follow_up_sms_body: null,
+              follow_up_calendar_event_id: null,
+              follow_up_sms_sent_at: null,
+            };
+            setLead(prev => ({ ...prev, ...patch }));
+            try {
+              window.parent?.postMessage({ type: 'gostwrk-pipeline-lead', id: lead.id, patch }, '*');
+            } catch { /* not in iframe */ }
+          }}
         />
       )}
 
