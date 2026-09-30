@@ -123,12 +123,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Write or pick a text to send when the timer ends' }, { status: 400 });
   }
 
-  let { data: lead, error: leadErr } = await supabase
-    .from('leads')
-    .select('id, name, company, follow_up_calendar_event_id, underwriting_data')
-    .eq('id', leadId)
-    .eq('user_id', user.id)
-    .maybeSingle();
+  type LeadRow = {
+    id: string;
+    name: string | null;
+    company: string | null;
+    underwriting_data?: Record<string, unknown> | null;
+    follow_up_calendar_event_id?: string | null;
+  };
+
+  let lead: LeadRow | null = null;
+  let leadErr: { message?: string } | null = null;
+
+  {
+    const first = await supabase
+      .from('leads')
+      .select('id, name, company, follow_up_calendar_event_id, underwriting_data')
+      .eq('id', leadId)
+      .eq('user_id', user.id)
+      .maybeSingle();
+    lead = first.data as LeadRow | null;
+    leadErr = first.error;
+  }
 
   if (leadErr) {
     const retry = await supabase
@@ -137,7 +152,7 @@ export async function POST(req: NextRequest) {
       .eq('id', leadId)
       .eq('user_id', user.id)
       .maybeSingle();
-    lead = retry.data;
+    lead = retry.data as LeadRow | null;
     leadErr = retry.error;
   }
 
