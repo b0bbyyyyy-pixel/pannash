@@ -6,6 +6,7 @@ import nodemailer from 'nodemailer';
 import { Resend } from 'resend';
 import { addEmailTracking, convertToHtml } from '@/lib/email-tracking';
 import { appendEmailSignature } from '@/lib/email-signature';
+import { resolveFromHeader } from '@/lib/email-from';
 
 // Lazy initialization to avoid build-time errors
 function getResend() {
@@ -40,10 +41,11 @@ export async function POST(req: NextRequest) {
 
     const { data: settings } = await supabase
       .from('user_settings')
-      .select('email_signature')
+      .select('email_signature, email_from_name')
       .eq('user_id', user.id)
       .maybeSingle();
     const emailSignature = settings?.email_signature as string | undefined;
+    const settingsFromName = settings?.email_from_name as string | undefined;
 
     // Fetch scheduled follow-ups that are ready to send
     const now = new Date().toISOString();
@@ -117,7 +119,12 @@ export async function POST(req: NextRequest) {
 
             const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
+            const { from } = resolveFromHeader({
+              connection: gmailConnection,
+              settingsFromName,
+            });
             const message = [
+              `From: ${from}`,
               `To: ${lead.email}`,
               `Subject: ${followUp.subject}`,
               `Content-Type: text/html; charset=utf-8`,
@@ -159,8 +166,12 @@ export async function POST(req: NextRequest) {
               },
             });
 
+            const { from } = resolveFromHeader({
+              connection: outlookConnection,
+              settingsFromName,
+            });
             await transporter.sendMail({
-              from: `${outlookConnection.from_name || 'Pannash'} <${outlookConnection.from_email}>`,
+              from,
               to: lead.email,
               subject: followUp.subject,
               html: htmlBody,
@@ -177,9 +188,14 @@ export async function POST(req: NextRequest) {
         // Fallback to Resend
         if (!success) {
           try {
+            const { from } = resolveFromHeader({
+              connection: gmailConnection || outlookConnection,
+              settingsFromName,
+              fallbackEmail: 'onboarding@resend.dev',
+            });
             const resend = getResend();
             await resend.emails.send({
-              from: 'Pannash <onboarding@resend.dev>',
+              from,
               to: lead.email,
               subject: followUp.subject,
               html: htmlBody,

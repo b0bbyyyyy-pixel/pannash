@@ -8,6 +8,7 @@ import { replaceTemplateVariables } from '@/lib/queue';
 import { addEmailTracking, convertToHtml, generateTrackingId } from '@/lib/email-tracking';
 import { refreshGmailToken, isTokenExpired } from '@/lib/gmail-refresh';
 import { appendEmailSignature } from '@/lib/email-signature';
+import { resolveFromHeader } from '@/lib/email-from';
 
 // Lazy initialization to avoid build-time errors
 function getResend() {
@@ -43,10 +44,11 @@ export async function POST(req: NextRequest) {
 
     const { data: settings } = await supabase
       .from('user_settings')
-      .select('email_signature')
+      .select('email_signature, email_from_name')
       .eq('user_id', user.id)
       .maybeSingle();
     const emailSignature = settings?.email_signature as string | undefined;
+    const settingsFromName = settings?.email_from_name as string | undefined;
 
     // Fetch pending emails that are ready to send (scheduled_for <= now)
     // ONLY for active campaigns
@@ -178,7 +180,12 @@ export async function POST(req: NextRequest) {
 
             const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
+            const { from } = resolveFromHeader({
+              connection: gmailConnection,
+              settingsFromName,
+            });
             const message = [
+              `From: ${from}`,
               `To: ${lead.email}`,
               `Subject: ${subject}`,
               `Content-Type: text/html; charset=utf-8`,
@@ -229,8 +236,12 @@ export async function POST(req: NextRequest) {
               },
             });
 
+            const { from } = resolveFromHeader({
+              connection: outlookConnection,
+              settingsFromName,
+            });
             await transporter.sendMail({
-              from: `${outlookConnection.from_name || 'Pannash'} <${outlookConnection.from_email}>`,
+              from,
               to: lead.email,
               subject: subject,
               html: htmlBody,
@@ -247,11 +258,11 @@ export async function POST(req: NextRequest) {
         // Fallback to Resend if both failed
         if (!success) {
           try {
-            // Use Gmail's from_email if available, otherwise use Resend test domain
-            const fromAddress = gmailConnection?.from_email 
-              ? `Gostwrk <${gmailConnection.from_email}>`
-              : 'Gostwrk <onboarding@resend.dev>';
-            
+            const { from: fromAddress } = resolveFromHeader({
+              connection: gmailConnection || outlookConnection,
+              settingsFromName,
+              fallbackEmail: 'onboarding@resend.dev',
+            });
             const resend = getResend();
             await resend.emails.send({
               from: fromAddress,

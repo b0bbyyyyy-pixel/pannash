@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import nodemailer from 'nodemailer';
+import { resolveFromHeader } from '@/lib/email-from';
 
 export const runtime  = 'nodejs';
 export const dynamic  = 'force-dynamic';
@@ -83,6 +84,12 @@ export async function POST(request: Request) {
     .limit(1)
     .single();
 
+  const { data: settings } = await supabase
+    .from('user_settings')
+    .select('email_from_name')
+    .eq('user_id', user.id)
+    .maybeSingle();
+
   // ── Get signed URLs for attached documents ────────────────────────────────
   const attachments: { filename: string; path: string; contentType: string }[] = [];
   for (const doc of (documents || [])) {
@@ -114,8 +121,13 @@ export async function POST(request: Request) {
           auth:   { user: smtpConn.smtp_username, pass: smtpConn.smtp_password },
         });
 
+        const { from } = resolveFromHeader({
+          connection: smtpConn,
+          settingsFromName: settings?.email_from_name,
+          extraName: senderName,
+        });
         await transporter.sendMail({
-          from:        `${smtpConn.from_name || senderName || 'Gostwrk'} <${smtpConn.from_email || smtpConn.smtp_username}>`,
+          from,
           to:          lender.email,
           cc:          lender.ccEmail || undefined,
           subject:     emailSubject,

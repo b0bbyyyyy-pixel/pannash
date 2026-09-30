@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
+import { DEFAULT_FROM_NAME, mailboxEmail } from '@/lib/email-from';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,11 +21,27 @@ export async function GET() {
 
   const { data } = await supabase
     .from('user_settings')
-    .select('email_signature')
+    .select('email_signature, email_from_name')
     .eq('user_id', user.id)
     .maybeSingle();
 
-  return NextResponse.json({ signature: data?.email_signature || '' });
+  const { data: connections } = await supabase
+    .from('email_connections')
+    .select('*')
+    .eq('user_id', user.id);
+
+  const conn = connections?.find((c: { provider?: string }) => c.provider === 'gmail')
+    || connections?.[0]
+    || null;
+
+  const fromName = (conn?.from_name || data?.email_from_name || DEFAULT_FROM_NAME || '').trim();
+  const fromEmail = mailboxEmail(conn);
+
+  return NextResponse.json({
+    signature: data?.email_signature || '',
+    fromName,
+    fromEmail,
+  });
 }
 
 export async function POST(req: NextRequest) {
@@ -32,8 +49,10 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { signature } = await req.json();
-  const value = typeof signature === 'string' ? signature : '';
+  const body = await req.json();
+  const hasSignature = typeof body.signature === 'string';
+  const hasFromName = typeof body.fromName === 'string';
+  const connectionId = typeof body.connectionId === 'string' ? body.connectionId : null;
 
   const { data: existing } = await supabase
     .from('user_settings')
@@ -41,15 +60,38 @@ export async function POST(req: NextRequest) {
     .eq('user_id', user.id)
     .maybeSingle();
 
-  const payload = { email_signature: value, updated_at: new Date().toISOString() };
-  const { error } = existing
-    ? await supabase.from('user_settings').update(payload).eq('user_id', user.id)
-    : await supabase.from('user_settings').insert({ user_id: user.id, ...payload });
+  const payload: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (hasSignature) payload.email_signature = body.signature;
+  if (hasFromName) payload.email_from_name = body.fromName.trim();
 
-  if (error) {
-    console.error('[email-signature]', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  if (hasSignature || hasFromName) {
+    const { error } = existing
+      ? await supabase.from('user_settings').update(payload).eq('user_id', user.id)
+      : await supabase.from('user_settings').insert({ user_id: user.id, ...payload });
+
+    if (error) {
+      console.error('[email-signature]', error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
   }
 
-  return NextResponse.json({ success: true, signature: value });
+  if (hasFromName && connectionId) {
+    await supabase
+      .from('email_connections')
+      .update({ from_name: body.fromName.trim() || null })
+      .eq('id', connectionId)
+      .eq('user_id', user.id);
+  } else if (hasFromName) {
+    const name = body.fromName.trim() || null;
+    await supabase
+      .from('email_connections')
+      .update({ from_name: name })
+      .eq('user_id', user.id);
+  }
+
+  return NextResponse.json({
+    success: true,
+    signature: hasSignature ? body.signature : undefined,
+    fromName: hasFromName ? body.fromName.trim() : undefined,
+  });
 }

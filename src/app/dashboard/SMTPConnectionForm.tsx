@@ -137,13 +137,13 @@ export default function SMTPConnectionForm({
 
           <div>
             <label htmlFor="from_name" className="block text-sm font-medium text-gray-700 mb-1">
-              From Name (Optional)
+              From Name
             </label>
             <input
               type="text"
               id="from_name"
               name="from_name"
-              placeholder="Your Name"
+              placeholder="Bob"
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-transparent"
             />
           </div>

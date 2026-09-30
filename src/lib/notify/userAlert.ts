@@ -3,6 +3,7 @@ import webpush, { type PushSubscription } from 'web-push';
 import { getTwilioCreds, publicAppUrl, serviceClient } from '@/lib/telephony/twilio';
 import { sendTwilioSms } from '@/lib/telephony/sms';
 import { rowToSettings } from '@/lib/mobile/settings';
+import { formatFromHeader, DEFAULT_FROM_NAME } from '@/lib/email-from';
 
 export type UserAlert = {
   userId: string;
@@ -68,7 +69,7 @@ export async function notifyUserAlert(supabase: any, alert: UserAlert) {
   if (email && process.env.RESEND_API_KEY) {
     try {
       await new Resend(process.env.RESEND_API_KEY).emails.send({
-        from: 'Gostwrk <onboarding@resend.dev>',
+        from: formatFromHeader(DEFAULT_FROM_NAME, 'onboarding@resend.dev'),
         to: email,
         subject: alert.title,
         html: `<p>${alert.body}</p><p><a href="${origin}${path}">Open campaign</a></p>`,

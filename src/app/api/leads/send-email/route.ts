@@ -5,6 +5,7 @@ import { google } from 'googleapis';
 import nodemailer from 'nodemailer';
 import { refreshGmailToken, isTokenExpired } from '@/lib/gmail-refresh';
 import { appendEmailSignature } from '@/lib/email-signature';
+import { resolveFromHeader } from '@/lib/email-from';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -97,7 +98,7 @@ export async function POST(req: NextRequest) {
 
     const { data: settings } = await supabase
       .from('user_settings')
-      .select('email_signature')
+      .select('email_signature, email_from_name')
       .eq('user_id', user.id)
       .maybeSingle();
 
@@ -135,7 +136,10 @@ export async function POST(req: NextRequest) {
         if (!accessToken) {
           throw new Error('Gmail token expired — reconnect in Settings');
         }
-        const from = (gmailConn.email || gmailConn.from_email || gmailConn.email_address || 'me') as string;
+        const { from } = resolveFromHeader({
+          connection: gmailConn,
+          settingsFromName: settings?.email_from_name,
+        });
         const result = await sendViaGmail({
           accessToken,
           refreshToken,
@@ -170,9 +174,10 @@ export async function POST(req: NextRequest) {
         secure: smtpConn.smtp_port === 465,
         auth: { user: smtpConn.smtp_username, pass: smtpConn.smtp_password },
       });
-      const from = smtpConn.from_name
-        ? `${smtpConn.from_name} <${smtpConn.from_email || smtpConn.smtp_username}>`
-        : (smtpConn.from_email || smtpConn.smtp_username);
+      const { from } = resolveFromHeader({
+        connection: smtpConn,
+        settingsFromName: settings?.email_from_name,
+      });
       await transporter.sendMail({ from, to: lead.email, subject, html: htmlBody });
       await markSent();
       return NextResponse.json({ success: true, to: lead.email, from });

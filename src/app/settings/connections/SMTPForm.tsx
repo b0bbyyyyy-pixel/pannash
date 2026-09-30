@@ -94,12 +94,12 @@ export default function SMTPForm({ saveSMTP }: SMTPFormProps) {
 
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">
-          From Name (optional)
+          From Name
         </label>
         <input
           type="text"
           name="from_name"
-          placeholder="Your Name"
+          placeholder="Bob"
           className="w-full px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
         />
       </div>

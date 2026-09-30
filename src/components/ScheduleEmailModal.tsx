@@ -119,6 +119,8 @@ export default function ScheduleEmailModal({ lead, onClose }: ScheduleEmailModal
   const [managing, setManaging]                     = useState(false);
   const [deletingId, setDeletingId]                 = useState<string | null>(null);
   const [signature, setSignature]                   = useState('');
+  const [fromName, setFromName]                     = useState('');
+  const [fromEmail, setFromEmail]                   = useState('');
   const [savingSignature, setSavingSignature]       = useState(false);
   const [signatureSaved, setSignatureSaved]         = useState(false);
 
@@ -145,7 +147,11 @@ export default function ScheduleEmailModal({ lead, onClose }: ScheduleEmailModal
       .finally(() => setLoadingTemplates(false));
     fetch('/api/settings/email-signature', { credentials: 'include' })
       .then(r => r.json())
-      .then(d => setSignature(d.signature || ''))
+      .then(d => {
+        setSignature(d.signature || '');
+        setFromName(d.fromName || 'Bob');
+        setFromEmail(d.fromEmail || '');
+      })
       .catch(console.error);
   }, []);
 
@@ -249,7 +255,7 @@ export default function ScheduleEmailModal({ lead, onClose }: ScheduleEmailModal
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ signature }),
+        body: JSON.stringify({ signature, fromName }),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
@@ -443,23 +449,39 @@ export default function ScheduleEmailModal({ lead, onClose }: ScheduleEmailModal
                     ))}
                   </ul>
                 )}
-                <div className="border-t border-[#e5e5e5] px-3 py-3 bg-[#fafafa]">
-                  <label className="block text-xs font-semibold text-[#1a1a1a] mb-1.5">Email signature</label>
-                  <p className="text-[11px] text-[#9b9b9b] mb-2">Added to the bottom of every email you send.</p>
-                  <textarea
-                    value={signature}
-                    onChange={e => { setSignature(e.target.value); setSignatureSaved(false); }}
-                    rows={4}
-                    placeholder={"Best,\nYour name\nYour company"}
-                    className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm resize-y focus:outline-none focus:ring-1 focus:ring-[#1a1a1a] bg-white"
-                  />
+                <div className="border-t border-[#e5e5e5] px-3 py-3 bg-[#fafafa] space-y-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-[#1a1a1a] mb-1.5">Display name</label>
+                    <p className="text-[11px] text-[#9b9b9b] mb-2">Shown as the sender. Does not change your sending address.</p>
+                    <input
+                      type="text"
+                      value={fromName}
+                      onChange={e => { setFromName(e.target.value); setSignatureSaved(false); }}
+                      placeholder="Bob"
+                      className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-[#1a1a1a] bg-white"
+                    />
+                    <p className="mt-1 text-[11px] text-[#9b9b9b]">
+                      Sends as <span className="font-medium text-[#6b6b6b]">{`"${fromName.trim() || 'Bob'}" <${fromEmail || 'your address'}>`}</span>
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-[#1a1a1a] mb-1.5">Email signature</label>
+                    <p className="text-[11px] text-[#9b9b9b] mb-2">Added to the bottom of every email you send.</p>
+                    <textarea
+                      value={signature}
+                      onChange={e => { setSignature(e.target.value); setSignatureSaved(false); }}
+                      rows={4}
+                      placeholder={"Best,\nYour name\nYour company"}
+                      className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm resize-y focus:outline-none focus:ring-1 focus:ring-[#1a1a1a] bg-white"
+                    />
+                  </div>
                   <button
                     type="button"
                     onClick={saveSignature}
                     disabled={savingSignature}
-                    className="mt-2 px-3 py-1.5 bg-[#1a1a1a] text-white rounded-md text-xs font-medium hover:bg-[#333] disabled:opacity-40"
+                    className="px-3 py-1.5 bg-[#1a1a1a] text-white rounded-md text-xs font-medium hover:bg-[#333] disabled:opacity-40"
                   >
-                    {savingSignature ? 'Saving…' : signatureSaved ? 'Saved' : 'Save signature'}
+                    {savingSignature ? 'Saving…' : signatureSaved ? 'Saved' : 'Save sender'}
                   </button>
                 </div>
               </div>

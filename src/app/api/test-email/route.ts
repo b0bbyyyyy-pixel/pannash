@@ -4,6 +4,7 @@ import { cookies } from 'next/headers';
 import { Resend } from 'resend';
 import nodemailer from 'nodemailer';
 import { google } from 'googleapis';
+import { resolveFromHeader } from '@/lib/email-from';
 
 // Lazy initialization to avoid build-time errors
 function getResend() {
@@ -52,6 +53,13 @@ export async function POST(req: NextRequest) {
       .select('*')
       .eq('user_id', user.id);
 
+    const { data: settings } = await supabase
+      .from('user_settings')
+      .select('email_from_name')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    const settingsFromName = settings?.email_from_name as string | undefined;
+
     const gmailConnection = connections?.find((c) => c.provider === 'gmail');
     const outlookConnection = connections?.find((c) => c.provider === 'outlook');
 
@@ -77,8 +85,12 @@ export async function POST(req: NextRequest) {
       const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
       // Create email in RFC 2822 format
+      const { from } = resolveFromHeader({
+        connection: gmailConnection,
+        settingsFromName,
+      });
       const emailLines = [
-        `From: ${gmailConnection.email}`,
+        `From: ${from}`,
         `To: ${to}`,
         `Subject: ${subject || 'Test Email from Pannash'}`,
         'Content-Type: text/html; charset=utf-8',
@@ -104,7 +116,7 @@ export async function POST(req: NextRequest) {
         success: true,
         messageId: result.data.id,
         method: 'gmail_oauth',
-        from: gmailConnection.email,
+        from,
       });
     } else if (outlookConnection) {
       // Send via Outlook SMTP
@@ -120,12 +132,12 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      const fromAddress = outlookConnection.from_name
-        ? `${outlookConnection.from_name} <${outlookConnection.from_email}>`
-        : outlookConnection.from_email;
-
+      const { from } = resolveFromHeader({
+        connection: outlookConnection,
+        settingsFromName,
+      });
       const info = await transporter.sendMail({
-        from: fromAddress,
+        from,
         to,
         subject: subject || 'Test Email from Pannash',
         html: html || '<p>This is a test email from your Pannash app!</p>',
@@ -135,15 +147,19 @@ export async function POST(req: NextRequest) {
         success: true,
         messageId: info.messageId,
         method: 'outlook_smtp',
-        from: outlookConnection.from_email,
+        from,
       });
     } else {
       // Fall back to Resend (no connections configured)
       console.log('Sending via Resend (no connections configured)');
 
+      const { from } = resolveFromHeader({
+        fallbackEmail: 'onboarding@resend.dev',
+        settingsFromName,
+      });
       const resend = getResend();
       const { data, error } = await resend.emails.send({
-        from: 'Pannash Test <onboarding@resend.dev>',
+        from,
         to,
         subject: subject || 'Test Email from Pannash',
         html: html || '<p>This is a test email from your Pannash app!</p>',
@@ -158,6 +174,7 @@ export async function POST(req: NextRequest) {
         success: true,
         messageId: data?.id,
         method: 'resend',
+        from,
       });
     }
   } catch (err: any) {

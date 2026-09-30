@@ -6,6 +6,7 @@ import Navbar from '@/components/Navbar';
 import GmailConnectButton from './GmailConnectButton';
 import SMTPForm from './SMTPForm';
 import DisconnectButton from './DisconnectButton';
+import EmailDisplayNameForm from './EmailDisplayNameForm';
 import TwilioForm from './TwilioForm';
 import TwilioMessagingSidForm from './TwilioMessagingSidForm';
 
@@ -218,42 +219,56 @@ export default async function ConnectionsPage({
               <div className="space-y-4">
                 {/* Gmail Connection */}
                 {gmailConnection && (
-                  <div className="flex items-center justify-between p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                    <div className="flex items-center space-x-3">
-                      <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white font-semibold">
-                        G
-                      </div>
-                      <div>
-                        <div className="font-medium text-gray-900">Gmail</div>
-                        <div className="text-sm text-gray-600">
-                          {gmailConnection.from_email || gmailConnection.email || 'Connected'}
+                  <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-3">
+                        <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white font-semibold">
+                          G
+                        </div>
+                        <div>
+                          <div className="font-medium text-gray-900">Gmail</div>
+                          <div className="text-sm text-gray-600">
+                            {gmailConnection.from_email || gmailConnection.email || 'Connected'}
+                          </div>
                         </div>
                       </div>
+                      <DisconnectButton
+                        provider="Gmail"
+                        disconnectAction={disconnectGmail}
+                      />
                     </div>
-                    <DisconnectButton 
-                      provider="Gmail"
-                      disconnectAction={disconnectGmail}
+                    <EmailDisplayNameForm
+                      mailboxEmail={gmailConnection.from_email || gmailConnection.email}
+                      connectionId={gmailConnection.id}
+                      initialFromName={gmailConnection.from_name}
                     />
                   </div>
                 )}
 
                 {/* Outlook Connection */}
                 {outlookConnection && (
-                  <div className="flex items-center justify-between p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                    <div className="flex items-center space-x-3">
-                      <div className="w-10 h-10 bg-blue-500 rounded-lg flex items-center justify-center text-white font-semibold">
-                        O
-                      </div>
-                      <div>
-                        <div className="font-medium text-gray-900">Outlook</div>
-                        <div className="text-sm text-gray-600">
-                          {outlookConnection.from_email || 'Connected'}
+                  <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-3">
+                        <div className="w-10 h-10 bg-blue-500 rounded-lg flex items-center justify-center text-white font-semibold">
+                          O
+                        </div>
+                        <div>
+                          <div className="font-medium text-gray-900">Outlook</div>
+                          <div className="text-sm text-gray-600">
+                            {outlookConnection.from_email || 'Connected'}
+                          </div>
                         </div>
                       </div>
+                      <DisconnectButton
+                        provider="Outlook"
+                        disconnectAction={disconnectOutlook}
+                      />
                     </div>
-                    <DisconnectButton 
-                      provider="Outlook"
-                      disconnectAction={disconnectOutlook}
+                    <EmailDisplayNameForm
+                      mailboxEmail={outlookConnection.from_email}
+                      connectionId={outlookConnection.id}
+                      initialFromName={outlookConnection.from_name}
                     />
                   </div>
                 )}

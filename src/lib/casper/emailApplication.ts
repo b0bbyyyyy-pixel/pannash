@@ -1,6 +1,7 @@
 import nodemailer from 'nodemailer';
 import { applicationFileName, buildFundingApplication } from '@/lib/fundingApplication';
 import { buildFundingApplicationPdf } from '@/lib/fundingApplicationPdf';
+import { resolveFromHeader } from '@/lib/email-from';
 
 export type EmailAppResult = {
   sent: boolean;
@@ -35,6 +36,12 @@ export async function emailApplicationToLead(
     return { sent: false, error: 'No email connection' };
   }
 
+  const { data: settings } = await supabase
+    .from('user_settings')
+    .select('email_from_name')
+    .eq('user_id', args.userId)
+    .maybeSingle();
+
   const pdf = await buildFundingApplicationPdf(data);
   const fileName = applicationFileName(String(args.lead.company || args.lead.name || 'Application'));
 
@@ -46,8 +53,12 @@ export async function emailApplicationToLead(
   });
 
   const company = String(args.lead.company || args.lead.name || 'your business');
+  const { from } = resolveFromHeader({
+    connection: smtpConn,
+    settingsFromName: settings?.email_from_name,
+  });
   await transporter.sendMail({
-    from: `${smtpConn.from_name || 'One Funding'} <${smtpConn.from_email || smtpConn.smtp_username}>`,
+    from,
     to: email,
     subject: 'Funding application — One Funding',
     html: `<p>Hi,</p><p>Attached is the funding application for ${company}. Please complete it and send it back along with the last 3–6 months of business bank statements.</p><p>Robert Gulinello<br/>One Funding</p>`,
