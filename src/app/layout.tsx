@@ -3,6 +3,7 @@ import { Barlow, Crimson_Text, Dancing_Script, Inter, Roboto_Mono } from "next/f
 import "./globals.css";
 import WebPhoneProvider from "@/components/webphone/WebPhone";
 import SmsDripProcessor from "@/components/SmsDripProcessor";
+import TabUnreadBadge from "@/components/TabUnreadBadge";
 
 /** Load fonts via next/font (self-hosted) so a blocked Google Fonts @import can’t nuke the whole CSS bundle. */
 const barlow = Barlow({
@@ -50,6 +51,7 @@ export default function RootLayout({
         className={`${barlow.variable} ${crimsonText.variable} ${dancingScript.variable} ${inter.variable} ${robotoMono.variable} font-sans antialiased`}
       >
         <SmsDripProcessor />
+        <TabUnreadBadge />
         <WebPhoneProvider>{children}</WebPhoneProvider>
       </body>
     </html>
