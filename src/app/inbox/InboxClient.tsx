@@ -176,7 +176,9 @@ export default function InboxClient({
   const [leadOverlayId, setLeadOverlayId] = useState<string | null>(null);
   const [showPipeline, setShowPipeline] = useState(false);
 
-  const threadEndRef = useRef<HTMLDivElement>(null);
+  const threadScrollerRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
+  const lastScrolledMsgIdRef = useRef<string | null>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
 
   const selectedLead = leads.find(l => l.id === selectedLeadId) ?? null;
@@ -255,7 +257,21 @@ export default function InboxClient({
       const res = await fetch(`/api/inbox/messages?leadId=${leadId}`);
       if (!res.ok) return;
       const data = await res.json();
-      setMessages(data.messages ?? []);
+      const next: InboxMessage[] = data.messages ?? [];
+      setMessages(prev => {
+        if (
+          prev.length === next.length &&
+          prev.every((m, i) =>
+            m.id === next[i].id &&
+            m.status === next[i].status &&
+            m.body === next[i].body &&
+            m.error_message === next[i].error_message
+          )
+        ) {
+          return prev;
+        }
+        return next;
+      });
       setConversationId(data.conversationId ?? null);
 
       // Update unread in local state
@@ -274,6 +290,8 @@ export default function InboxClient({
     setShowTpls(false);
     setAddingTpl(false);
     setEditingTplId(null);
+    stickToBottomRef.current = true;
+    lastScrolledMsgIdRef.current = null;
   }, [selectedLeadId, loadMessages]);
 
   // Replies arrive via Twilio webhook — poll so they show without a refresh.
@@ -298,9 +316,20 @@ export default function InboxClient({
     return () => window.clearTimeout(t);
   }, [selectedLeadId, casperWaiting, lastThreadMsg?.id, loadMessages]);
 
-  // ── Scroll to bottom on new messages ───────────────────────────────────────
+  // Keep the thread pinned to newest only if the user is already at the bottom
+  // (or just opened/sent). Polling must not yank the view while reading history.
   useEffect(() => {
-    threadEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const lastId = messages[messages.length - 1]?.id ?? null;
+    const openedThread = lastScrolledMsgIdRef.current === null && messages.length > 0;
+    const newTail = lastId !== lastScrolledMsgIdRef.current;
+    lastScrolledMsgIdRef.current = lastId;
+    if (!openedThread && !newTail) return;
+    if (!openedThread && !stickToBottomRef.current) return;
+    const el = threadScrollerRef.current;
+    if (!el) return;
+    requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
   }, [messages]);
 
   // ── Supabase realtime for new inbound messages ──────────────────────────────
@@ -430,6 +459,7 @@ export default function InboxClient({
 
     const body = composerText.trim();
     setComposerText('');
+    stickToBottomRef.current = true;
 
     // Optimistic message
     const optimistic: InboxMessage = {
@@ -824,7 +854,14 @@ export default function InboxClient({
             )}
 
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-1">
+            <div
+              ref={threadScrollerRef}
+              className="flex-1 overflow-y-auto px-6 py-4 space-y-1"
+              onScroll={e => {
+                const el = e.currentTarget;
+                stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 96;
+              }}
+            >
               {loadingMsgs ? (
                 <div className="flex items-center justify-center py-12 text-sm text-gray-400">Loading thread…</div>
               ) : messages.length === 0 ? (
@@ -925,7 +962,6 @@ export default function InboxClient({
                   </div>
                 </div>
               )}
-              <div ref={threadEndRef} />
             </div>
 
             {/* Composer */}
