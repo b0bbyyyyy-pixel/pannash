@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { usePathname } from 'next/navigation';
 import { createClient } from '@supabase/supabase-js';
 import { useWebPhone } from '@/components/webphone/WebPhone';
@@ -8,6 +9,7 @@ import InboxDialer from '@/components/InboxDialer';
 import LeadUpdatesTimeline from '@/components/LeadUpdatesTimeline';
 import { casperEffectiveForLead } from '@/lib/casper/allow';
 import InboundPhoto from '@/components/mobile/InboundPhoto';
+import { getPhoneLocation } from '@/lib/phoneLocation';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -69,6 +71,54 @@ function fmt(phone: string) {
   }
   if (d.length === 10) return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
   return phone;
+}
+
+function offsetFromYou(offset: string) {
+  if (offset === 'Same timezone') return 'same time as you';
+  if (offset.startsWith('+')) return `${offset.slice(1)} ahead of you`;
+  if (offset.startsWith('-')) return `${offset.slice(1)} behind you`;
+  return offset;
+}
+
+function PhoneLocHover({
+  phone,
+  userTz,
+  formatted,
+}: {
+  phone: string;
+  userTz: string;
+  formatted: string;
+}) {
+  const loc = getPhoneLocation(phone, userTz);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  if (!loc) return <span>{formatted}</span>;
+
+  return (
+    <span
+      className="cursor-default"
+      onMouseEnter={e => {
+        const r = e.currentTarget.getBoundingClientRect();
+        setPos({ left: r.left, top: r.top - 8 });
+      }}
+      onMouseLeave={() => setPos(null)}
+    >
+      {formatted}
+      {pos && createPortal(
+        <span
+          className="fixed z-[200] pointer-events-none w-max max-w-[260px] rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-left shadow-lg"
+          style={{ left: pos.left, top: pos.top, transform: 'translateY(-100%)' }}
+        >
+          <span className="block text-[11px] font-semibold text-[#1a1a1a]">
+            {loc.city}, {loc.state}
+          </span>
+          <span className="block text-[11px] text-[#6b6b6b]">
+            {loc.localTime} · {offsetFromYou(loc.timeOffset)}
+          </span>
+        </span>,
+        document.body,
+      )}
+    </span>
+  );
 }
 
 function relativeTime(iso: string | null) {
@@ -195,6 +245,13 @@ export default function InboxClient({
   const webphone = useWebPhone();
   const pathname = usePathname();
   const [dialerOpen, setDialerOpen] = useState(false);
+  const [userTz, setUserTz] = useState(() => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
+    } catch {
+      return 'America/New_York';
+    }
+  });
 
   useEffect(() => {
     setDialerOpen(false);
@@ -204,6 +261,13 @@ export default function InboxClient({
     fetch('/api/settings/casper')
       .then(r => r.json())
       .then(d => setCasperOn(!!d.enabled))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    fetch('/api/settings/timezone', { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => { if (d.timezone) setUserTz(d.timezone); })
       .catch(() => {});
   }, []);
 
@@ -779,7 +843,9 @@ export default function InboxClient({
                 <p className="flex items-center gap-1.5 text-xs text-[#6b6b6b]">
                   <span>
                     {selectedLead.company && `${selectedLead.company} · `}
-                    {fmt(selectedLead.phone)}
+                    {selectedLead.phone ? (
+                      <PhoneLocHover phone={selectedLead.phone} userTz={userTz} formatted={fmt(selectedLead.phone)} />
+                    ) : null}
                   </span>
                   {selectedLead.phone && (
                     <button
