@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { getTwilioCreds } from '@/lib/telephony/twilio';
-import { refreshSmsStatuses } from '@/lib/telephony/sms';
+import { refreshSmsStatuses, fetchTwilioSmsBody } from '@/lib/telephony/sms';
 import { backfillInboundPhotos } from '@/lib/inbox/saveInboundMms';
+import { isPlaceholderSmsBody, recoverOutboundSmsBody } from '@/lib/inbox/recordOutboundSms';
 
 // GET /api/inbox/messages?leadId=xxx  — fetch thread + mark read
 export async function GET(req: NextRequest) {
@@ -62,6 +63,40 @@ export async function GET(req: NextRequest) {
     }
 
     messages = await backfillInboundPhotos(supabase, user.id, messages);
+
+    // Drop ghost "(undelivered)" bubbles when the real send already exists.
+    const realBySid = new Set(
+      messages
+        .filter((m: { twilio_sid?: string | null; body?: string; direction?: string }) =>
+          m.direction === 'outbound' && m.twilio_sid && !isPlaceholderSmsBody(m.body)
+        )
+        .map((m: { twilio_sid: string }) => m.twilio_sid)
+    );
+    const ghostIds = messages
+      .filter((m: { id: string; twilio_sid?: string | null; body?: string; direction?: string }) =>
+        m.direction === 'outbound' && m.twilio_sid && isPlaceholderSmsBody(m.body) && realBySid.has(m.twilio_sid)
+      )
+      .map((m: { id: string }) => m.id);
+    if (ghostIds.length) {
+      await supabase.from('inbox_messages').delete().in('id', ghostIds);
+      messages = messages.filter((m: { id: string }) => !ghostIds.includes(m.id));
+    }
+
+    const placeholders = messages.filter((m: { direction?: string; twilio_sid?: string | null; body?: string }) =>
+      m.direction === 'outbound' && m.twilio_sid && isPlaceholderSmsBody(m.body)
+    );
+    if (placeholders.length) {
+      const creds = await getTwilioCreds(supabase, user.id);
+      for (const row of placeholders.slice(-12)) {
+        let nextBody = await recoverOutboundSmsBody(supabase, row.twilio_sid);
+        if (!nextBody && creds) {
+          try { nextBody = await fetchTwilioSmsBody(creds, row.twilio_sid); } catch { /* keep */ }
+        }
+        if (!nextBody || isPlaceholderSmsBody(nextBody)) continue;
+        await supabase.from('inbox_messages').update({ body: nextBody }).eq('id', row.id);
+        row.body = nextBody;
+      }
+    }
 
     // Mark as read
     if (conv.unread_count > 0) {

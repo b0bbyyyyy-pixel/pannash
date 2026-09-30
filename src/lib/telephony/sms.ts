@@ -132,6 +132,12 @@ export async function sendTwilioSms(
   };
 }
 
+export async function fetchTwilioSmsBody(creds: TwilioCreds, sid: string): Promise<string> {
+  const client = twilio(creds.accountSid, creds.authToken);
+  const fresh = await client.messages(sid).fetch();
+  return String(fresh.body || '').trim();
+}
+
 /** Re-fetch Twilio for messages still in-flight so Inbox can show delivered/failed without the webhook. */
 export async function refreshSmsStatuses(
   creds: TwilioCreds,

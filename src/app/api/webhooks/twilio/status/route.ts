@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { formatTwilioSmsError, mapTwilioStatus } from '@/lib/telephony/sms';
-import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
+import { formatTwilioSmsError, mapTwilioStatus, fetchTwilioSmsBody } from '@/lib/telephony/sms';
+import { getTwilioCreds } from '@/lib/telephony/twilio';
+import {
+  recordOutboundInboxSms,
+  recoverOutboundSmsBody,
+  isPlaceholderSmsBody,
+} from '@/lib/inbox/recordOutboundSms';
 import { onDripDeliveryFailed } from '@/lib/smsDrip/failsafe';
 
 const supabase = createClient(
@@ -56,7 +61,7 @@ export async function POST(req: NextRequest) {
         ...(inboxError ? { error_message: inboxError } : {}),
       })
       .eq('twilio_sid', messageSid)
-      .select('id, lead_id');
+      .select('id, lead_id, body');
 
     if (updateErr) {
       console.error('[SMS Status] inbox_messages update failed', messageSid, updateErr);
@@ -68,11 +73,46 @@ export async function POST(req: NextRequest) {
       .eq('twilio_sid', messageSid)
       .maybeSingle();
 
+    const leadIdForCreds = updated?.[0]?.lead_id ?? queueItem?.lead_id ?? null;
+    let recoveredBody = await recoverOutboundSmsBody(supabase, messageSid, body || queueItem?.sms_body);
+
+    if (!recoveredBody && (leadIdForCreds || updated?.length)) {
+      let userId: string | null = null;
+      if (leadIdForCreds) {
+        const { data: lead } = await supabase
+          .from('leads')
+          .select('user_id')
+          .eq('id', leadIdForCreds)
+          .maybeSingle();
+        userId = lead?.user_id ?? null;
+      }
+      if (userId) {
+        const creds = await getTwilioCreds(supabase, userId);
+        if (creds) {
+          try {
+            recoveredBody = await fetchTwilioSmsBody(creds, messageSid);
+          } catch (err) {
+            console.warn('[SMS Status] Twilio body fetch failed', messageSid, err);
+          }
+        }
+      }
+    }
+
+    if (recoveredBody && updated?.length) {
+      const placeholders = updated.filter(row => isPlaceholderSmsBody(row.body));
+      if (placeholders.length) {
+        await supabase
+          .from('inbox_messages')
+          .update({ body: recoveredBody })
+          .eq('twilio_sid', messageSid);
+      }
+    }
+
     if (!updated?.length) {
       console.warn('[SMS Status] No inbox_messages row for SID', messageSid, 'status', messageStatus, 'error', errorCode || '(none)');
 
       let leadId: string | null = queueItem?.lead_id ?? null;
-      let storedBody = body || queueItem?.sms_body || '';
+      let storedBody = recoveredBody;
 
       if (!leadId || !storedBody) {
         const { data: smsMsg } = await supabase
@@ -80,7 +120,7 @@ export async function POST(req: NextRequest) {
           .select('body, campaign_lead_id')
           .eq('twilio_sid', messageSid)
           .maybeSingle();
-        if (smsMsg?.body) storedBody = storedBody || smsMsg.body;
+        if (smsMsg?.body && !storedBody) storedBody = smsMsg.body;
         if (!leadId && smsMsg?.campaign_lead_id) {
           const { data: cl } = await supabase
             .from('campaign_leads')
@@ -101,12 +141,25 @@ export async function POST(req: NextRequest) {
         userId = lead?.user_id ?? null;
       }
 
-      if (storedBody || leadId || to) {
+      if (!storedBody && userId) {
+        const creds = await getTwilioCreds(supabase, userId);
+        if (creds) {
+          try {
+            storedBody = await fetchTwilioSmsBody(creds, messageSid);
+          } catch (err) {
+            console.warn('[SMS Status] Twilio body fetch failed', messageSid, err);
+          }
+        }
+      }
+
+      // Never create a thread bubble with a fake "(undelivered)" body.
+      // The send path writes the real text once Twilio returns the SID.
+      if (storedBody && (leadId || to)) {
         const recorded = await recordOutboundInboxSms(supabase, {
           userId,
           leadId,
           toPhone: to,
-          body: storedBody || '(undelivered)',
+          body: storedBody,
           twilioSid: messageSid,
           status: inboxStatus,
           errorMessage: inboxError,
@@ -119,7 +172,7 @@ export async function POST(req: NextRequest) {
           console.error('[SMS Status] Could not reconcile SID', messageSid, { to, from, errorCode, leadId });
         }
       } else {
-        console.error('[SMS Status] Dropped status with no inbox row and no To/body/lead', messageSid, { from, errorCode });
+        console.warn('[SMS Status] Waiting for send path to record SID', messageSid, { to, from, errorCode, leadId });
       }
     }
 

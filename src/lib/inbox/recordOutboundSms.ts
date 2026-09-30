@@ -15,6 +15,11 @@ export type RecordOutboundSmsArgs = {
   existingMessageId?: string | null;
 };
 
+export function isPlaceholderSmsBody(body: string | null | undefined): boolean {
+  const t = String(body ?? '').trim().toLowerCase();
+  return !t || t === '(undelivered)' || t === '(no body)';
+}
+
 function last10(raw: string | null | undefined): string {
   return String(raw ?? '').replace(/\D/g, '').slice(-10);
 }
@@ -52,19 +57,29 @@ async function findLeadByPhone(supabase: any, phone: string, userId?: string | n
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function recordOutboundInboxSms(supabase: any, args: RecordOutboundSmsArgs) {
   const sid = args.twilioSid?.trim() || null;
-  const body = (args.body ?? '').trim();
+  const body = isPlaceholderSmsBody(args.body) ? '' : (args.body ?? '').trim();
   if (!body && !sid) return null;
 
   if (args.existingMessageId) {
+    const patch: Record<string, unknown> = {
+      status: args.status,
+      twilio_sid: sid,
+      error_message: args.errorMessage ?? null,
+    };
+    if (body) patch.body = body;
     const { error } = await supabase
       .from('inbox_messages')
-      .update({
-        status: args.status,
-        twilio_sid: sid,
-        error_message: args.errorMessage ?? null,
-      })
+      .update(patch)
       .eq('id', args.existingMessageId);
     if (error) console.error('[inbox] recordOutboundInboxSms update', error);
+    // Status webhooks can insert a duplicate SID row before we attach the SID here.
+    if (sid) {
+      await supabase
+        .from('inbox_messages')
+        .delete()
+        .eq('twilio_sid', sid)
+        .neq('id', args.existingMessageId);
+    }
     return { messageId: args.existingMessageId };
   }
 
@@ -120,6 +135,10 @@ export async function recordOutboundInboxSms(supabase: any, args: RecordOutbound
     conv = created;
   }
   if (!conv) return null;
+  if (!body) {
+    console.warn('[inbox] recordOutboundInboxSms: skip empty-body insert', sid);
+    return null;
+  }
 
   const { data: msg, error } = await supabase
     .from('inbox_messages')
@@ -127,7 +146,7 @@ export async function recordOutboundInboxSms(supabase: any, args: RecordOutbound
       conversation_id: conv.id,
       lead_id: leadId,
       direction: 'outbound',
-      body: body || '(no body)',
+      body,
       status: args.status,
       sent_by: args.sentBy ?? 'system',
       twilio_sid: sid,
@@ -151,4 +170,31 @@ export async function recordOutboundInboxSms(supabase: any, args: RecordOutbound
   await supabase.from('inbox_conversations').update(convPatch).eq('id', conv.id);
 
   return { messageId: msg?.id as string, conversationId: conv.id as string };
+}
+
+/** Look up the original SMS text for a Twilio SID. Status callbacks usually omit Body. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function recoverOutboundSmsBody(
+  supabase: any,
+  messageSid: string,
+  fallback?: string | null,
+): Promise<string> {
+  const fromCallback = isPlaceholderSmsBody(fallback) ? '' : String(fallback ?? '').trim();
+  if (fromCallback) return fromCallback;
+
+  const { data: queueItem } = await supabase
+    .from('sms_queue')
+    .select('sms_body')
+    .eq('twilio_sid', messageSid)
+    .maybeSingle();
+  if (!isPlaceholderSmsBody(queueItem?.sms_body)) return String(queueItem.sms_body).trim();
+
+  const { data: smsMsg } = await supabase
+    .from('sms_messages')
+    .select('body')
+    .eq('twilio_sid', messageSid)
+    .maybeSingle();
+  if (!isPlaceholderSmsBody(smsMsg?.body)) return String(smsMsg.body).trim();
+
+  return '';
 }
