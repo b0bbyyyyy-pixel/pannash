@@ -179,8 +179,7 @@ export default function DocumentsModal({
   const [uploading, setUploading]         = useState(false);
   const [uploadProgress, setUploadProgress] = useState<Record<string, 'pending' | 'done' | 'error'>>({});
 
-  // "Parse as Application" flow
-  const [parseAsApp, setParseAsApp]       = useState(true); // ON by default
+  // Optional AI extract after upload
   const [parseStep, setParseStep]         = useState<'upload' | 'parsing' | 'review'>('upload');
   const [parsedFields, setParsedFields]   = useState<Record<string, string>>({});
   const [parsedSelected, setParsedSelected] = useState<Set<string>>(new Set());
@@ -221,7 +220,6 @@ export default function DocumentsModal({
     setShowUpload(false);
     setPendingFiles([]);
     setUploadProgress({});
-    setParseAsApp(false);
     setParseStep('upload');
     setParsedFields({});
     setParsedSelected(new Set());
@@ -263,7 +261,7 @@ export default function DocumentsModal({
     setPendingFiles(prev => prev.filter((_, i) => i !== idx));
 
   // ── Upload ─────────────────────────────────────────────────────────────────
-  const handleUpload = async () => {
+  const handleUpload = async (extract: boolean) => {
     if (!pendingFiles.length) return;
     setUploading(true);
     const progress: Record<string, 'pending' | 'done' | 'error'> = {};
@@ -294,8 +292,7 @@ export default function DocumentsModal({
     setAttachments(prev => [...newAttachments, ...prev]);
     setUploading(false);
 
-    // If auto-extract is ON, process ALL uploaded files and merge results
-    if (parseAsApp && onApplyParsed && newAttachments.length > 0) {
+    if (extract && onApplyParsed && newAttachments.length > 0) {
       setPendingFiles([]);
       setUploadProgress({});
       setParseStep('parsing');
@@ -790,32 +787,10 @@ export default function DocumentsModal({
                   </div>
                 )}
 
-                {/* Auto-extract toggle — shown whenever onApplyParsed is wired */}
-                {onApplyParsed && pendingFiles.length > 0 && (
-                  <div className="px-6 pb-2 pt-1">
-                    <label className="flex items-start gap-3 p-3 bg-indigo-50 border border-indigo-100 rounded-xl cursor-pointer hover:bg-indigo-100/60 transition-colors">
-                      <input
-                        type="checkbox"
-                        checked={parseAsApp}
-                        onChange={e => setParseAsApp(e.target.checked)}
-                        className="mt-0.5 w-4 h-4 rounded border-indigo-300 accent-indigo-600 cursor-pointer flex-shrink-0"
-                      />
-                      <div>
-                        <p className="text-xs font-semibold text-indigo-800">
-                          ✦ Auto-extract &amp; fill lead data
-                          <span className="ml-1.5 text-[10px] font-medium bg-indigo-600 text-white px-1.5 py-0.5 rounded-full">ON</span>
-                        </p>
-                        <p className="text-[11px] text-indigo-600 mt-0.5">
-                          AI scans all uploaded files — applications fill contact/business fields, bank statements fill financial fields. Works on scanned PDFs too.
-                        </p>
-                      </div>
-                    </label>
-                  </div>
-                )}
-
-                <div className="px-6 py-5">
+                <div className="px-6 py-5 space-y-2">
                   <button
-                    onClick={handleUpload}
+                    type="button"
+                    onClick={() => handleUpload(false)}
                     disabled={uploading || pendingFiles.length === 0}
                     className="w-full py-3.5 bg-[#22c55e] text-white rounded-xl text-sm font-semibold hover:bg-[#16a34a] disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
                   >
@@ -832,10 +807,23 @@ export default function DocumentsModal({
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
                         </svg>
-                        {parseAsApp ? 'Upload & Extract Data' : 'Save & Upload Files'}
+                        Upload to Documents
                       </>
                     )}
                   </button>
+                  {onApplyParsed && (
+                    <button
+                      type="button"
+                      onClick={() => handleUpload(true)}
+                      disabled={uploading || pendingFiles.length === 0}
+                      className="w-full py-2.5 bg-white border border-[#e5e5e5] text-[#1a1a1a] rounded-xl text-sm font-medium hover:bg-[#fafafa] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    >
+                      Upload &amp; Extract Data
+                    </button>
+                  )}
+                  <p className="text-[11px] text-center text-[#9b9b9b]">
+                    Upload to Documents just saves the files. Extract is for applications and bank statements.
+                  </p>
                 </div>
               </>
             )}
