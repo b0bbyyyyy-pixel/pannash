@@ -24,7 +24,7 @@ export default function UploadModal({ selectedListId }: Props) {
           className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
           onClick={(e) => { if (e.target === e.currentTarget) setOpen(false); }}
         >
-          <div className="bg-white rounded-xl p-8 max-w-xl w-full max-h-[90vh] overflow-y-auto shadow-xl">
+          <div className="bg-white rounded-xl p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-xl">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-xl font-bold text-[#1a1a1a] tracking-tight">Upload Leads</h2>
               <button

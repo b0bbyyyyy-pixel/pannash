@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import UploadForm from './UploadForm';
 
 interface Props {
@@ -14,6 +15,7 @@ function todayLabel() {
 type Step = 'name' | 'upload';
 
 export default function NewCampaignModal({ createCampaign }: Props) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<Step>('name');
   const [name, setName] = useState(todayLabel());
@@ -47,8 +49,7 @@ export default function NewCampaignModal({ createCampaign }: Props) {
 
   const handleClose = () => {
     setOpen(false);
-    // Refresh to show newly created campaign
-    window.location.reload();
+    router.refresh();
   };
 
   return (
@@ -61,10 +62,12 @@ export default function NewCampaignModal({ createCampaign }: Props) {
       </button>
 
       {open && (
-        <>
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={handleClose} />
+        <div
+          className="fixed inset-0 bg-black/50 z-[90] flex items-center justify-center p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}
+        >
           <div
-            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden"
+            className="relative z-[91] pointer-events-auto bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
@@ -118,7 +121,7 @@ export default function NewCampaignModal({ createCampaign }: Props) {
               </div>
             )}
           </div>
-        </>
+        </div>
       )}
     </>
   );

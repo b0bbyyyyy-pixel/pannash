@@ -4,22 +4,23 @@ import { useEffect, useRef } from 'react';
 
 const ICON_DEFAULT = '/icon.png';
 const ICON_UNREAD = '/icon-unread.png';
+const LINK_ID = 'gostwrk-tab-icon';
 
+/** Swap the tab icon without removing Next-managed <link> tags (that crashes React). */
 function setFavicon(href: string) {
-  const old = document.querySelectorAll('link[rel="icon"], link[rel="shortcut icon"]');
-  old.forEach(el => el.parentNode?.removeChild(el));
+  if (typeof document === 'undefined') return;
 
-  const link = document.createElement('link');
-  link.rel = 'icon';
-  link.type = 'image/png';
-  link.href = href;
-  document.head.appendChild(link);
-
-  const shortcut = document.createElement('link');
-  shortcut.rel = 'shortcut icon';
-  shortcut.type = 'image/png';
-  shortcut.href = href;
-  document.head.appendChild(shortcut);
+  let ours = document.getElementById(LINK_ID) as HTMLLinkElement | null;
+  if (!ours) {
+    ours = document.createElement('link');
+    ours.id = LINK_ID;
+    ours.rel = 'icon';
+    ours.type = 'image/png';
+    document.head.appendChild(ours);
+  }
+  if (ours.getAttribute('href') !== href) {
+    ours.href = href;
+  }
 }
 
 export default function TabUnreadBadge() {
@@ -33,7 +34,6 @@ export default function TabUnreadBadge() {
       const unread = count > 0;
       if (lastUnread.current === unread) return;
       lastUnread.current = unread;
-      // Distinct paths so Windows Chrome does not reuse a cached tab icon.
       setFavicon(unread ? `${ICON_UNREAD}?v=unread` : `${ICON_DEFAULT}?v=default`);
     };
 
@@ -68,7 +68,6 @@ export default function TabUnreadBadge() {
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVis);
       lastUnread.current = null;
-      setFavicon(ICON_DEFAULT);
     };
   }, []);
 

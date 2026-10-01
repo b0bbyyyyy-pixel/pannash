@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import RunSmsModal, { type ExistingDripJob } from '@/components/RunSmsModal';
 import QuickTextPopup from '@/components/QuickTextPopup';
 import { zoneForLocation, formatLocal } from '@/lib/smsDrip/timezones';
+import UploadForm from './UploadForm';
 
 interface DripJob {
   id: string;
@@ -144,6 +145,7 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
   const [dripSends, setDripSends] = useState<Map<string, DripSend>>(new Map());
   const [savedTemplates, setSavedTemplates] = useState<string[] | null>(null);
   const [showRunSms, setShowRunSms] = useState(false);
+  const [showUpload, setShowUpload] = useState(false);
   const [textLead, setTextLead] = useState<CampaignLead | null>(null);
   const [dripBusy, setDripBusy] = useState(false);
   const [, setClockTick] = useState(0); // 1s re-render for the countdown
@@ -186,9 +188,10 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
 
   // Open the Run SMS modal when arriving via ?runsms=1 (campaign list row button)
   useEffect(() => {
-    if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('runsms') === '1') {
-      setShowRunSms(true);
-    }
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('runsms') === '1') setShowRunSms(true);
+    if (params.get('upload') === 'sheets') setShowUpload(true);
   }, []);
 
   const dripAction = async (action: 'pause' | 'resume' | 'cancel') => {
@@ -435,6 +438,14 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
                 className="w-36 pl-5 pr-1 py-0.5 text-xs bg-transparent text-[#1a1a1a] placeholder:text-[#9b9b9b] focus:outline-none"
               />
             </div>
+
+            <button
+              type="button"
+              onClick={() => setShowUpload(true)}
+              className="text-[10px] font-semibold text-[#1a1a1a] hover:underline underline-offset-2"
+            >
+              Upload
+            </button>
           </div>
         </div>
       </div>
@@ -634,6 +645,42 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
           }}
           onClose={() => setTextLead(null)}
         />
+      )}
+
+      {showUpload && (
+        <div
+          className="fixed inset-0 bg-black/50 z-[90] flex items-center justify-center p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowUpload(false); }}
+        >
+          <div
+            className="relative z-[91] pointer-events-auto bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b border-[#f0f0f0]">
+              <h2 className="text-base font-bold text-[#1a1a1a]">Upload leads · {campaignName}</h2>
+              <button
+                type="button"
+                onClick={() => setShowUpload(false)}
+                className="text-[#9b9b9b] hover:text-[#1a1a1a] transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="px-6 py-4">
+              <UploadForm
+                selectedListId={listId}
+                initialMode={typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('upload') === 'sheets' ? 'sheets' : 'file'}
+                onSuccess={() => {
+                  setShowUpload(false);
+                  router.refresh();
+                }}
+              />
+            </div>
+          </div>
+        </div>
       )}
 
       {showRunSms && (

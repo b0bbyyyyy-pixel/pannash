@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import SearchBar from './SearchBar';
 import LeadsTable from './LeadsTable';
@@ -41,18 +41,7 @@ export default function LeadsTableWrapper({
   const [showUpload, setShowUpload] = useState(false);
   const [validating, setValidating] = useState(false);
   const [finding, setFinding] = useState(false);
-  const uploadRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
-
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (uploadRef.current && !uploadRef.current.contains(e.target as Node)) {
-        setShowUpload(false);
-      }
-    }
-    if (showUpload) document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [showUpload]);
 
   const handleValidate = async () => {
     if (!confirm(`Validate emails for ${selectedListId ? 'this list' : 'all leads'}?`)) return;
@@ -124,7 +113,7 @@ export default function LeadsTableWrapper({
 
           {/* Upload dropdown — only for specific lists */}
           {selectedListId && selectedListId !== 'unlisted' && (
-            <div className="relative" ref={uploadRef}>
+            <div className="relative">
               <button
                 onClick={() => setShowUpload(v => !v)}
                 className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
@@ -136,12 +125,22 @@ export default function LeadsTableWrapper({
               </button>
 
               {showUpload && (
-                <div className="absolute right-0 top-full mt-2 w-96 bg-white border border-gray-200 rounded-xl shadow-xl z-50 p-5">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-sm font-bold text-gray-900">Upload Leads to {selectedListName}</h3>
-                    <button onClick={() => setShowUpload(false)} className="text-gray-400 hover:text-gray-600 text-lg leading-none">×</button>
+                <div
+                  className="fixed inset-0 bg-black/50 z-[90] flex items-center justify-center p-4"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => { if (e.target === e.currentTarget) setShowUpload(false); }}
+                >
+                  <div
+                    className="relative z-[91] pointer-events-auto bg-white border border-gray-200 rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6"
+                    onClick={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-sm font-bold text-gray-900">Upload Leads to {selectedListName}</h3>
+                      <button type="button" onClick={() => setShowUpload(false)} className="text-gray-400 hover:text-gray-600 text-lg leading-none">×</button>
+                    </div>
+                    <UploadForm selectedListId={selectedListId} onSuccess={() => { setShowUpload(false); router.refresh(); }} />
                   </div>
-                  <UploadForm selectedListId={selectedListId} />
                 </div>
               )}
             </div>
