@@ -41,6 +41,25 @@ export async function ensureDncStatus(supabase: any, userId: string) {
   });
 }
 
+export function isDncLead(lead?: {
+  lead_status?: string | null;
+  sms_opt_out?: boolean | null;
+  dnc?: boolean | null;
+} | null) {
+  if (!lead) return false;
+  if (lead.sms_opt_out || lead.dnc) return true;
+  return String(lead.lead_status ?? '').trim().toUpperCase() === 'DNC';
+}
+
+/** Hide STOP replies and DNC leads from inbox / mobile thread lists. */
+export function isHiddenInboxThread(
+  lead: Parameters<typeof isDncLead>[0],
+  preview?: string | null,
+) {
+  if (isSmsStopBody(preview)) return true;
+  return isDncLead(lead);
+}
+
 /** STOP / DNC: pipeline status DNC, no SMS, no dialer. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function markLeadDnc(supabase: any, leadId: string, userId?: string | null) {
