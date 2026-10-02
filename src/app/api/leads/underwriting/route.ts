@@ -35,11 +35,16 @@ export async function PUT(request: NextRequest) {
     );
   }
 
+  const ud = underwritingData as Record<string, unknown>;
+  const funded = ud.isFunded === true || ud.isFunded === 'true';
+  if (funded && !ud.fundedAt) ud.fundedAt = new Date().toISOString();
+
+  const patch: Record<string, unknown> = { underwriting_data: ud };
+  if (funded) patch.lead_status = 'Funded';
+
   const { data, error } = await supabase
     .from('leads')
-    .update({
-      underwriting_data: underwritingData,
-    })
+    .update(patch)
     .eq('id', leadId)
     .eq('user_id', user.id)
     .select()

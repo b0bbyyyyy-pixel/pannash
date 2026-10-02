@@ -118,13 +118,6 @@ function isBankStatement(filename: string, text: string): boolean {
   ].some(k => lower.includes(k));
 }
 
-function hasBankMetrics(fields: Record<string, string>) {
-  return Boolean(
-    fields.totalDeposits || fields.monthlyRevenue || fields.endingBalance ||
-    fields.statementMonth || fields.avgDailyBalance || fields.openingBalance
-  );
-}
-
 async function loadPdfjs() {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -158,37 +151,6 @@ async function extractPdfTextPdfjs(buffer: Buffer): Promise<string> {
   } catch (e) {
     console.warn('[parse-application] pdfjs text failed:', e instanceof Error ? e.message : e);
     return '';
-  }
-}
-
-async function renderPdfPages(buffer: Buffer, maxPages = 4): Promise<Buffer[]> {
-  try {
-    const pdfjs = await loadPdfjs();
-    const { createCanvas } = await import('@napi-rs/canvas');
-    const pdf = await pdfjs.getDocument({
-      data: new Uint8Array(buffer),
-      useWorkerFetch: false,
-      disableFontFace: true,
-    }).promise;
-    const out: Buffer[] = [];
-    const last = Math.min(pdf.numPages, maxPages);
-    for (let n = 1; n <= last; n++) {
-      const page = await pdf.getPage(n);
-      const viewport = page.getViewport({ scale: 1.35 });
-      const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
-      const ctx = canvas.getContext('2d');
-      try {
-        await page.render({ canvasContext: ctx as unknown as CanvasRenderingContext2D, viewport }).promise;
-      } catch {
-        // pdfjs 6 some builds want the canvas itself
-        await page.render({ canvas, viewport } as never).promise;
-      }
-      out.push(canvas.toBuffer('image/png'));
-    }
-    return out;
-  } catch (e) {
-    console.warn('[parse-application] PDF page render failed:', e instanceof Error ? e.message : e);
-    return [];
   }
 }
 
@@ -404,24 +366,8 @@ export async function POST(request: Request) {
     fields = await extractWithVisionAI(buffer, filename, prompt);
   } else if (usableText) {
     fields = await extractWithTextAI(textContent, prompt);
-  }
-
-  const needsVision =
-    isPdf && (
-      !usableText ||
-      (isBank && !hasBankMetrics(fields))
-    );
-
-  if (needsVision) {
-    console.log('[parse-application] Rendering PDF pages for vision OCR');
-    const pages = await renderPdfPages(buffer, 4);
-    if (pages.length) {
-      const visionFields = await extractWithVisionImages(
-        pages.map(p => ({ mime: 'image/png', buffer: p })),
-        prompt,
-      );
-      fields = { ...visionFields, ...fields };
-    }
+  } else if (isPdf && textContent.replace(/\s/g, '').length > 20) {
+    fields = await extractWithTextAI(textContent, prompt);
   }
 
   console.log(`[parse-application] Extracted ${Object.keys(fields).length} field(s):`, Object.keys(fields));

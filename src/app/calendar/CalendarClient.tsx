@@ -195,18 +195,28 @@ export default function CalendarClient() {
   const [saveError, setSaveError] = useState('');
   const [deleting, setDeleting] = useState<string | null>(null);
   const [clearingTimer, setClearingTimer] = useState<string | null>(null);
+  const [monthStats, setMonthStats] = useState({ fundedCount: 0, fundedAmount: 0, commission: 0 });
 
   const monthKey = `${year}-${String(month + 1).padStart(2, '0')}`;
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const tk = todayKey();
 
   const fetchEvents = useCallback(async () => {
-    const [evRes, timerRes] = await Promise.all([
+    const [evRes, timerRes, statsRes] = await Promise.all([
       fetch(`/api/calendar/events?month=${monthKey}`),
       fetch('/api/calendar/timers'),
+      fetch(`/api/calendar/funding-stats?month=${monthKey}`, { cache: 'no-store' }),
     ]);
     if (evRes.ok) { const d = await evRes.json(); setEvents(d.events ?? []); }
     if (timerRes.ok) { const d = await timerRes.json(); setTimers(d.timers ?? []); }
+    if (statsRes.ok) {
+      const d = await statsRes.json();
+      setMonthStats({
+        fundedCount: Number(d.fundedCount) || 0,
+        fundedAmount: Number(d.fundedAmount) || 0,
+        commission: Number(d.commission) || 0,
+      });
+    }
     setLoading(false);
   }, [monthKey]);
 
@@ -482,6 +492,12 @@ export default function CalendarClient() {
                 {MONTHS[month]} {year}
               </h1>
             )}
+            <span className="text-[11px] font-medium text-emerald-700 normal-case tracking-normal">
+              Funded - {monthStats.fundedCount}
+            </span>
+            <span className="text-[11px] font-medium text-emerald-700 normal-case tracking-normal">
+              Commission - ${Math.round(monthStats.commission).toLocaleString()}
+            </span>
           </div>
           <div className="flex items-center gap-4 text-xs tracking-wide uppercase shrink-0">
             <button

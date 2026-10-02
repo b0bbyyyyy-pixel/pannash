@@ -678,22 +678,24 @@ export default function LeadWorkspaceClient({
 
   // ── Underwriting save ────────────────────────────────────────────────────────
   const handleUnderwritingSave = async (data: Record<string, unknown>) => {
+    const payload = { ...data };
+    if (payload.isFunded && !payload.fundedAt) payload.fundedAt = new Date().toISOString();
     await fetch('/api/leads/underwriting', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ leadId: lead.id, underwritingData: data }),
+      body: JSON.stringify({ leadId: lead.id, underwritingData: payload }),
     });
-    if (data.isFunded && lead.lead_status !== 'Funded') {
-      await fetch('/api/leads/update-crm', {
-        method: 'POST',
+    if (payload.isFunded && lead.lead_status !== 'Funded') {
+      await fetch('/api/leads/pipeline', {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ leadId: lead.id, field: 'lead_status', value: 'Funded' }),
       });
     }
     setLead(prev => ({
       ...prev,
-      underwriting_data: data,
-      ...(data.isFunded ? { lead_status: 'Funded' } : {}),
+      underwriting_data: payload,
+      ...(payload.isFunded ? { lead_status: 'Funded' } : {}),
     }));
   };
 
@@ -724,7 +726,21 @@ export default function LeadWorkspaceClient({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ leadId: lead.id, field: 'lead_status', value: val }),
     });
-    setLead(prev => ({ ...prev, lead_status: val }));
+    let nextUd = lead.underwriting_data as Record<string, unknown> | null | undefined;
+    if (val === 'Funded') {
+      const merged = {
+        ...(lead.underwriting_data || {}),
+        isFunded: true,
+        fundedAt: (lead.underwriting_data as Record<string, unknown> | null)?.fundedAt || new Date().toISOString(),
+      };
+      nextUd = merged;
+      await fetch('/api/leads/underwriting', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadId: lead.id, underwritingData: merged }),
+      });
+    }
+    setLead(prev => ({ ...prev, lead_status: val, ...(nextUd ? { underwriting_data: nextUd } : {}) }));
   };
 
   const saveTemperature = async (val: string) => {

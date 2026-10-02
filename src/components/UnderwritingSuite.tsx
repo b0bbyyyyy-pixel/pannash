@@ -57,6 +57,7 @@ interface UnderwritingData {
   commission?: number;
   isFunded?: boolean;
   commissionPaid?: boolean;
+  fundedAt?: string;
   
   // System will calculate these
   hasCalculated?: boolean;
@@ -1180,6 +1181,7 @@ export default function UnderwritingSuite({
     commission: calculatedCommission,
     isFunded,
     commissionPaid,
+    fundedAt: data.fundedAt,
     hasCalculated,
     lastUpdated: new Date().toISOString(),
     ...overrides,
@@ -1209,6 +1211,7 @@ export default function UnderwritingSuite({
       isFunded: checked,
       commissionPaid: checked ? commissionPaid : false,
       commission: calculatedCommission,
+      fundedAt: checked ? (data.fundedAt || new Date().toISOString()) : undefined,
     }, true);
   };
 
