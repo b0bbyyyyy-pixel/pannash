@@ -43,6 +43,15 @@ interface PipelineClientProps {
 // ── Status helpers (dynamic, loaded from DB) ───────────────────────────────────
 interface DBStatus { id: string; name: string; color: string; bg_color: string; sort_order: number; }
 
+function fundedStatusLabel(lead: Lead, status: string) {
+  if (status !== 'Funded') return status;
+  const ud = lead.underwriting_data || {};
+  const comm = Number(ud.commission) || 0;
+  const money = comm > 0 ? ` - $${Math.round(comm).toLocaleString()}` : '';
+  const paid = ud.commissionPaid ? ' · Paid' : comm > 0 ? ' · Unpaid' : '';
+  return `Funded${money}${paid}`;
+}
+
 function getStatusStyleFrom(status: string | null | undefined, list: DBStatus[]) {
   if (!status) return { bg: '#f5f5f5', text: '#6b6b6b' };
   const found = list.find(s => s.name === status);
@@ -540,8 +549,9 @@ export default function PipelineClient({ leads, userId, compact = false }: Pipel
                     <span
                       className="w-full px-2 py-0.5 rounded text-[11px] font-medium text-center truncate"
                       style={{ background: statusStyle.bg, color: statusStyle.text }}
+                      title={fundedStatusLabel(lead, status)}
                     >
-                      {status}
+                      {fundedStatusLabel(lead, status)}
                     </span>
                   ) : (
                     <span className="text-[11px] text-[#c4c4c4]">—</span>

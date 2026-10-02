@@ -683,7 +683,18 @@ export default function LeadWorkspaceClient({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ leadId: lead.id, underwritingData: data }),
     });
-    setLead(prev => ({ ...prev, underwriting_data: data }));
+    if (data.isFunded && lead.lead_status !== 'Funded') {
+      await fetch('/api/leads/update-crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadId: lead.id, field: 'lead_status', value: 'Funded' }),
+      });
+    }
+    setLead(prev => ({
+      ...prev,
+      underwriting_data: data,
+      ...(data.isFunded ? { lead_status: 'Funded' } : {}),
+    }));
   };
 
   // ── Delete lead ──────────────────────────────────────────────────────────────
@@ -1453,6 +1464,35 @@ export default function LeadWorkspaceClient({
                 {dbStatuses.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
               </select>
             </div>
+
+            {(lead.lead_status === 'Funded' || Boolean(ud.isFunded)) && (
+              <div className="flex items-center gap-2 py-2 border-b border-[#f5f5f5]">
+                <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0">Commission</span>
+                <span className="flex-1 text-sm font-medium text-[#1a1a1a] tabular-nums">
+                  ${Math.round(Number(ud.commission) || 0).toLocaleString()}
+                </span>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const next = !ud.commissionPaid;
+                    const merged = { ...(lead.underwriting_data || {}), commissionPaid: next, isFunded: true };
+                    await fetch('/api/leads/underwriting', {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ leadId: lead.id, underwritingData: merged }),
+                    });
+                    setLead(prev => ({ ...prev, underwriting_data: merged }));
+                  }}
+                  className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors ${
+                    ud.commissionPaid
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : 'bg-[#f0f0f0] text-[#6b6b6b] hover:bg-[#e8e8e8]'
+                  }`}
+                >
+                  {ud.commissionPaid ? 'Paid' : 'Not Paid'}
+                </button>
+              </div>
+            )}
 
             {/* Temperature pills */}
             <div className="flex items-start gap-2 py-2 border-b border-[#f5f5f5]">

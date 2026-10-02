@@ -56,6 +56,7 @@ interface UnderwritingData {
   myPercentage?: number;
   commission?: number;
   isFunded?: boolean;
+  commissionPaid?: boolean;
   
   // System will calculate these
   hasCalculated?: boolean;
@@ -790,6 +791,7 @@ export default function UnderwritingSuite({
   const [points] = useState<number>(initialData?.points || 0);
   const [myPercentage] = useState<number>(initialData?.myPercentage || 0);
   const [isFunded, setIsFunded] = useState<boolean>(initialData?.isFunded || false);
+  const [commissionPaid, setCommissionPaid] = useState<boolean>(!!initialData?.commissionPaid);
   
   // Get the selected offer
   const selectedOffer = actualOffers.find(o => o.id === selectedOfferId);
@@ -1165,31 +1167,102 @@ export default function UnderwritingSuite({
     setHasCalculated(true);
   };
 
-  const handleSave = async () => {
+  const buildSavePayload = (overrides: Partial<UnderwritingData> = {}): UnderwritingData => ({
+    ...data,
+    actualOffers,
+    offersNotes,
+    selectedOfferId,
+    adjustedAmount,
+    negotiationAddedPoints,
+    leadMaxAddedPoints: commissionPointsMax,
+    points,
+    myPercentage,
+    commission: calculatedCommission,
+    isFunded,
+    commissionPaid,
+    hasCalculated,
+    lastUpdated: new Date().toISOString(),
+    ...overrides,
+  });
+
+  const persistUnderwriting = async (overrides: Partial<UnderwritingData> = {}, silent = false) => {
     setSaving(true);
     try {
-      await onSave({ 
-        ...data, 
-        actualOffers,
-        offersNotes,
-        selectedOfferId,
-        adjustedAmount,
-        negotiationAddedPoints,
-        leadMaxAddedPoints: commissionPointsMax,
-        points,
-        myPercentage,
-        commission: calculatedCommission,
-        isFunded,
-        hasCalculated,
-        lastUpdated: new Date().toISOString() 
-      });
-      alert('Underwriting data saved successfully!');
+      await onSave(buildSavePayload(overrides));
+      if (!silent) alert('Underwriting data saved successfully!');
     } catch (error) {
       console.error('Error saving:', error);
-      alert('Failed to save underwriting data');
+      if (!silent) alert('Failed to save underwriting data');
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleSave = async () => {
+    await persistUnderwriting();
+  };
+
+  const setDealFunded = async (checked: boolean) => {
+    setIsFunded(checked);
+    if (!checked) setCommissionPaid(false);
+    await persistUnderwriting({
+      isFunded: checked,
+      commissionPaid: checked ? commissionPaid : false,
+      commission: calculatedCommission,
+    }, true);
+  };
+
+  const setCommissionReceived = async (checked: boolean) => {
+    setCommissionPaid(checked);
+    await persistUnderwriting({ commissionPaid: checked, isFunded: true, commission: calculatedCommission }, true);
+  };
+
+  const commissionLabel = `$${Math.round(calculatedCommission || 0).toLocaleString()}`;
+
+  const renderFundingToggles = (tone: 'green' | 'blue') => {
+    const title = tone === 'green' ? 'text-green-900' : 'text-blue-900';
+    const sub = tone === 'green' ? 'text-green-700' : 'text-blue-700';
+    const ring = tone === 'green' ? 'peer-focus:ring-green-500 peer-checked:bg-green-600' : 'peer-focus:ring-blue-500 peer-checked:bg-blue-600';
+    return (
+      <div className="space-y-3">
+        <label className="flex items-center justify-between cursor-pointer">
+          <div>
+            <span className={`text-xs font-semibold ${title}`}>Deal Funded</span>
+            <p className={`text-xs ${sub}`}>
+              {isFunded ? `Commission ${commissionLabel}` : 'Mark when money is received'}
+            </p>
+          </div>
+          <div className="relative inline-block w-10 h-5">
+            <input
+              type="checkbox"
+              checked={isFunded}
+              onChange={e => setDealFunded(e.target.checked)}
+              className="sr-only peer"
+            />
+            <div className={`w-10 h-5 bg-gray-300 peer-focus:outline-none peer-focus:ring-2 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all ${ring}`} />
+          </div>
+        </label>
+        {isFunded && (
+          <label className="flex items-center justify-between cursor-pointer">
+            <div>
+              <span className={`text-xs font-semibold ${title}`}>Commission Paid</span>
+              <p className={`text-xs ${sub}`}>
+                {commissionPaid ? `${commissionLabel} received` : `${commissionLabel} not paid yet`}
+              </p>
+            </div>
+            <div className="relative inline-block w-10 h-5">
+              <input
+                type="checkbox"
+                checked={commissionPaid}
+                onChange={e => setCommissionReceived(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className={`w-10 h-5 bg-gray-300 peer-focus:outline-none peer-focus:ring-2 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all ${ring}`} />
+            </div>
+          </label>
+        )}
+      </div>
+    );
   };
 
   const addActualOffer = () => {
@@ -2109,18 +2182,8 @@ export default function UnderwritingSuite({
                                           <span className="font-medium">${Math.round(monthlyPmt * n).toLocaleString()}</span>
                                         </div>
                                       </div>
-                                      {/* Deal Funded toggle */}
                                       <div className="pt-3 border-t border-blue-300">
-                                        <label className="flex items-center justify-between cursor-pointer">
-                                          <div>
-                                            <span className="text-xs font-semibold text-blue-900">Deal Funded</span>
-                                            <p className="text-xs text-blue-700">Mark when money is received</p>
-                                          </div>
-                                          <div className="relative inline-block w-10 h-5">
-                                            <input type="checkbox" checked={isFunded} onChange={(e) => setIsFunded(e.target.checked)} className="sr-only peer" />
-                                            <div className="w-10 h-5 bg-gray-300 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
-                                          </div>
-                                        </label>
+                                        {renderFundingToggles('blue')}
                                       </div>
                                     </div>
                                   )}
@@ -2249,21 +2312,7 @@ export default function UnderwritingSuite({
                                   </div>
                                   
                                   <div className="pt-3 border-t border-green-300">
-                                    <label className="flex items-center justify-between cursor-pointer">
-                                      <div>
-                                        <span className="text-xs font-semibold text-green-900">Deal Funded</span>
-                                        <p className="text-xs text-green-700">Mark when money is received</p>
-                                      </div>
-                                      <div className="relative inline-block w-10 h-5">
-                                        <input
-                                          type="checkbox"
-                                          checked={isFunded}
-                                          onChange={(e) => setIsFunded(e.target.checked)}
-                                          className="sr-only peer"
-                                        />
-                                        <div className="w-10 h-5 bg-gray-300 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-green-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-600"></div>
-                                      </div>
-                                    </label>
+                                    {renderFundingToggles('green')}
                                   </div>
                                 </div>
                                 )}
