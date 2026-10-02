@@ -27,7 +27,7 @@ interface DocumentsModalProps {
   leadId: string;
   leadName: string;
   leadCompany?: string | null;
-  /** If provided, "Analyze" buttons will call this for PDFs */
+  /** Optional FastAPI bank analyzer — unused by the AI Analyze buttons */
   onAnalyze?: (attachment: Attachment) => void;
   /** If provided, "Parse as Application" toggle will appear and call this on apply */
   onApplyParsed?: (fields: Record<string, string>, selected: Set<string>) => Promise<void>;
@@ -260,6 +260,19 @@ export default function DocumentsModal({
   const removePending = (idx: number) =>
     setPendingFiles(prev => prev.filter((_, i) => i !== idx));
 
+  const looksLikeStatement = (a: { file_name: string; column_field?: string }) =>
+    a.column_field === 'bank_statements' ||
+    /stmt|statement|checking|savings|\bbank\b|frost/i.test(a.file_name);
+
+  const parseAttachment = async (a: Attachment) => {
+    const fd = new FormData();
+    fd.append('attachmentId', a.id);
+    if (looksLikeStatement(a)) fd.append('documentType', 'bank_statement');
+    const res = await fetch('/api/leads/parse-application', { method: 'POST', body: fd, credentials: 'include' });
+    const json = await res.json();
+    return { ok: res.ok, json };
+  };
+
   // ── Upload ─────────────────────────────────────────────────────────────────
   const handleUpload = async (extract: boolean) => {
     if (!pendingFiles.length) return;
@@ -300,20 +313,17 @@ export default function DocumentsModal({
       const mergedFields: Record<string, string> = {};
       const months: StatementMonth[] = [];
 
-      for (const file of pendingFiles) {
-        const fd = new FormData();
-        fd.append('file', file);
+      for (const att of newAttachments) {
         try {
-          const res  = await fetch('/api/leads/parse-application', { method: 'POST', body: fd, credentials: 'include' });
-          const json = await res.json();
-          if (res.ok && json.fields && Object.keys(json.fields).length > 0) {
+          const { ok, json } = await parseAttachment(att);
+          if (ok && json.fields && Object.keys(json.fields).length > 0) {
             const incoming = json.fields as Record<string, string>;
             const row = statementMonthFromFields(incoming);
             if (row) months.push(row);
             mergeParseFields(mergedFields, incoming);
           }
         } catch {
-          console.warn('Parse failed for', file.name);
+          console.warn('Parse failed for', att.file_name);
         }
       }
 
@@ -375,31 +385,25 @@ export default function DocumentsModal({
     } finally { setDeleting(null); }
   };
 
-  // Re-extract: download the file from storage then send to parse-application
+  // Re-extract: server reads the stored file and sends it to parse-application
   const handleReExtract = async (a: Attachment) => {
     if (!onApplyParsed) return;
     setReExtracting(a.id);
     try {
-      // Get signed URL for the file
-      const dlRes = await fetch(`/api/attachments/download?id=${a.id}`, { credentials: 'include' });
-      if (!dlRes.ok) throw new Error('Could not fetch file');
-      const { url } = await dlRes.json();
-      const fileBlob = await fetch(url).then(r => r.blob());
-      const file = new File([fileBlob], a.file_name, { type: a.file_type || 'application/pdf' });
-      const fd = new FormData();
-      fd.append('file', file);
-      const res  = await fetch('/api/leads/parse-application', { method: 'POST', body: fd, credentials: 'include' });
-      const json = await res.json();
-      if (res.ok) {
+      const { ok, json } = await parseAttachment(a);
+      if (ok) {
         const extractedFields = { ...(json.fields ?? {}) } as Record<string, string>;
         const row = statementMonthFromFields(extractedFields);
         if (row) attachStatementMonths(extractedFields, [row]);
         setParsedFields(extractedFields);
         setParsedSelected(new Set(Object.keys(extractedFields)));
         setParseStep('review');
-        setShowUpload(true); // Show upload panel so review is visible
+        setShowUpload(true);
         if (json.warning) {
           console.warn('[DocumentsModal] Extraction warning:', json.warning);
+        }
+        if (!Object.keys(extractedFields).length) {
+          alert(json.warning || 'Could not extract data from this file.');
         }
       } else {
         alert(json.error || 'Could not extract data from this file.');
@@ -427,15 +431,8 @@ export default function DocumentsModal({
     let anySuccess = false;
     for (const a of targets) {
       try {
-        const dlRes = await fetch(`/api/attachments/download?id=${a.id}`, { credentials: 'include' });
-        if (!dlRes.ok) continue;
-        const { url } = await dlRes.json();
-        const blob = await fetch(url).then(r => r.blob());
-        const file = new File([blob], a.file_name, { type: a.file_type || 'application/pdf' });
-        const fd = new FormData(); fd.append('file', file);
-        const res = await fetch('/api/leads/parse-application', { method: 'POST', body: fd, credentials: 'include' });
-        const json = await res.json();
-        if (res.ok && json.fields && Object.keys(json.fields).length > 0) {
+        const { ok, json } = await parseAttachment(a);
+        if (ok && json.fields && Object.keys(json.fields).length > 0) {
           const incoming = json.fields as Record<string, string>;
           const row = statementMonthFromFields(incoming);
           if (row) months.push(row);
@@ -474,11 +471,7 @@ export default function DocumentsModal({
     setRenamingId(null);
   };
 
-  const isBankStatement = (a: Attachment) =>
-    a.column_field === 'bank_statements' ||
-    a.file_type.includes('pdf') ||
-    a.file_name.toLowerCase().includes('bank') ||
-    a.file_name.toLowerCase().includes('statement');
+  const isBankStatement = (a: Attachment) => looksLikeStatement(a);
 
   const displayName = leadCompany || leadName;
   const parsedCount = Object.keys(parsedFields).length;
@@ -635,15 +628,17 @@ export default function DocumentsModal({
                         </p>
                       </div>
                       <div className="flex items-center gap-1.5 flex-shrink-0">
-                        {onAnalyze && isBankStatement(a) && (
+                        {onApplyParsed && isBankStatement(a) && (
                           <button
-                            onClick={() => { onAnalyze(a); onClose(); }}
-                            className="flex items-center gap-1 px-2.5 py-1 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-md text-[11px] font-semibold transition-colors"
+                            type="button"
+                            onClick={() => handleReExtract(a)}
+                            disabled={reExtracting === a.id}
+                            className="flex items-center gap-1 px-2.5 py-1 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-md text-[11px] font-semibold transition-colors disabled:opacity-40"
                           >
                             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                             </svg>
-                            Analyze
+                            {reExtracting === a.id ? 'Analyzing…' : 'Analyze'}
                           </button>
                         )}
                         {/* Re-extract — only show when onApplyParsed is wired */}

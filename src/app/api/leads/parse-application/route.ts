@@ -105,15 +105,91 @@ If no MCA / advance remittances are found, omit mcaPositions and set hasOtherMCA
 
 // ── Detect bank statement ──────────────────────────────────────────────────────
 function isBankStatement(filename: string, text: string): boolean {
-  const lower = filename.toLowerCase() + ' ' + text.slice(0, 500).toLowerCase();
+  const lower = `${filename} ${text.slice(0, 2500)}`.toLowerCase();
   return [
-    'bank statement','statement of account','account statement',
-    'chase','bank of america','wells fargo','citibank','td bank',
-    'us bank','pnc bank','capital one','regions','suntrust','truist',
-    'fifth third','huntington','citizens bank','cross river','mercury',
-    'ending balance','beginning balance','opening balance',
-    'total deposits','total withdrawals','nsf','overdraft',
+    'bank statement', 'statement of account', 'account statement',
+    'stmt', 'stmt_', 'checking', 'savings', 'business checking',
+    'frost', 'chase', 'bank of america', 'wells fargo', 'citibank', 'td bank',
+    'us bank', 'pnc bank', 'capital one', 'regions', 'suntrust', 'truist',
+    'fifth third', 'huntington', 'citizens bank', 'cross river', 'mercury',
+    'ending balance', 'beginning balance', 'opening balance',
+    'total deposits', 'total withdrawals', 'nsf', 'overdraft',
+    'account ending', 'deposits and other credits',
   ].some(k => lower.includes(k));
+}
+
+function hasBankMetrics(fields: Record<string, string>) {
+  return Boolean(
+    fields.totalDeposits || fields.monthlyRevenue || fields.endingBalance ||
+    fields.statementMonth || fields.avgDailyBalance || fields.openingBalance
+  );
+}
+
+async function loadPdfjs() {
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (pdfjs as any).GlobalWorkerOptions.workerSrc = '';
+  return pdfjs;
+}
+
+async function extractPdfTextPdfjs(buffer: Buffer): Promise<string> {
+  try {
+    const pdfjs = await loadPdfjs();
+    const pdf = await pdfjs.getDocument({
+      data: new Uint8Array(buffer),
+      useWorkerFetch: false,
+      disableFontFace: true,
+    }).promise;
+    let full = '';
+    for (let n = 1; n <= pdf.numPages; n++) {
+      const page = await pdf.getPage(n);
+      const content = await page.getTextContent();
+      let prevY: number | null = null;
+      for (const item of content.items) {
+        if (!('str' in item)) continue;
+        const y = (item as { transform: number[] }).transform[5];
+        if (prevY !== null && Math.abs(y - prevY) > 2) full += '\n';
+        full += (item as { str: string }).str + ' ';
+        prevY = y;
+      }
+      full += '\n\n';
+    }
+    return full.replace(/\s+/g, ' ').trim();
+  } catch (e) {
+    console.warn('[parse-application] pdfjs text failed:', e instanceof Error ? e.message : e);
+    return '';
+  }
+}
+
+async function renderPdfPages(buffer: Buffer, maxPages = 4): Promise<Buffer[]> {
+  try {
+    const pdfjs = await loadPdfjs();
+    const { createCanvas } = await import('@napi-rs/canvas');
+    const pdf = await pdfjs.getDocument({
+      data: new Uint8Array(buffer),
+      useWorkerFetch: false,
+      disableFontFace: true,
+    }).promise;
+    const out: Buffer[] = [];
+    const last = Math.min(pdf.numPages, maxPages);
+    for (let n = 1; n <= last; n++) {
+      const page = await pdf.getPage(n);
+      const viewport = page.getViewport({ scale: 1.35 });
+      const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
+      const ctx = canvas.getContext('2d');
+      try {
+        await page.render({ canvasContext: ctx as unknown as CanvasRenderingContext2D, viewport }).promise;
+      } catch {
+        // pdfjs 6 some builds want the canvas itself
+        await page.render({ canvas, viewport } as never).promise;
+      }
+      out.push(canvas.toBuffer('image/png'));
+    }
+    return out;
+  } catch (e) {
+    console.warn('[parse-application] PDF page render failed:', e instanceof Error ? e.message : e);
+    return [];
+  }
 }
 
 // ── Parse JSON safely ──────────────────────────────────────────────────────────
@@ -183,17 +259,13 @@ async function extractWithTextAI(text: string, prompt: string): Promise<Record<s
   }
 }
 
-// ── Vision OCR (for actual image files: JPEG, PNG, WebP) ──────────────────────
-async function extractWithVisionAI(buffer: Buffer, filename: string, prompt: string): Promise<Record<string, string>> {
-  const ext = filename.split('.').pop()?.toLowerCase() ?? '';
-  const mime =
-    ext === 'png'  ? 'image/png'  :
-    ext === 'webp' ? 'image/webp' :
-    ext === 'gif'  ? 'image/gif'  : 'image/jpeg';
-
-  const dataUrl = `data:${mime};base64,${buffer.toString('base64')}`;
-  console.log(`[parse-application] Vision OCR → ${ext} (${buffer.length} bytes)`);
-
+// ── Vision OCR (real images only — never send PDF bytes as JPEG) ──────────────
+async function extractWithVisionImages(
+  images: { mime: string; buffer: Buffer }[],
+  prompt: string,
+): Promise<Record<string, string>> {
+  if (!images.length) return {};
+  console.log(`[parse-application] Vision OCR → ${images.length} image(s)`);
   try {
     const ai = getAIClient();
     const completion = await ai.chat.completions.create({
@@ -204,7 +276,16 @@ async function extractWithVisionAI(buffer: Buffer, filename: string, prompt: str
         {
           role: 'user',
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          content: [{ type: 'image_url', image_url: { url: dataUrl, detail: 'high' } }] as any,
+          content: [
+            { type: 'text', text: 'These are pages from one document. Extract fields from all pages.' },
+            ...images.map(img => ({
+              type: 'image_url',
+              image_url: {
+                url: `data:${img.mime};base64,${img.buffer.toString('base64')}`,
+                detail: 'high',
+              },
+            })),
+          ] as any,
         },
       ],
     });
@@ -215,6 +296,15 @@ async function extractWithVisionAI(buffer: Buffer, filename: string, prompt: str
     console.error('[parse-application] Vision OCR failed:', e);
     return {};
   }
+}
+
+async function extractWithVisionAI(buffer: Buffer, filename: string, prompt: string): Promise<Record<string, string>> {
+  const ext = filename.split('.').pop()?.toLowerCase() ?? '';
+  const mime =
+    ext === 'png'  ? 'image/png'  :
+    ext === 'webp' ? 'image/webp' :
+    ext === 'gif'  ? 'image/gif'  : 'image/jpeg';
+  return extractWithVisionImages([{ mime, buffer }], prompt);
 }
 
 // ── POST handler ───────────────────────────────────────────────────────────────
@@ -230,12 +320,34 @@ export async function POST(request: Request) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const formData = await request.formData();
+  const attachmentId = String(formData.get('attachmentId') ?? '').trim();
   const file = formData.get('file') as File | null;
-  if (!file) return NextResponse.json({ error: 'No file provided' }, { status: 400 });
 
-  const buffer   = Buffer.from(await file.arrayBuffer());
-  const filename = file.name;
-  const mime     = file.type || 'application/octet-stream';
+  let buffer: Buffer;
+  let filename: string;
+  let mime: string;
+
+  if (attachmentId) {
+    const { data: att } = await supabase
+      .from('lead_attachments')
+      .select('file_path, file_name, file_type')
+      .eq('id', attachmentId)
+      .eq('user_id', user.id)
+      .maybeSingle();
+    if (!att?.file_path) return NextResponse.json({ error: 'Attachment not found' }, { status: 404 });
+    const { data: blob, error: dlErr } = await supabase.storage.from('lead-attachments').download(att.file_path);
+    if (dlErr || !blob) return NextResponse.json({ error: 'Could not download file' }, { status: 502 });
+    buffer = Buffer.from(await blob.arrayBuffer());
+    filename = att.file_name;
+    mime = att.file_type || 'application/octet-stream';
+  } else if (file) {
+    buffer = Buffer.from(await file.arrayBuffer());
+    filename = file.name;
+    mime = file.type || 'application/octet-stream';
+  } else {
+    return NextResponse.json({ error: 'No file provided' }, { status: 400 });
+  }
+
   const ext      = filename.split('.').pop()?.toLowerCase() ?? '';
   const isPdf    = ext === 'pdf' || mime.includes('pdf');
   const isImage  = ['jpg','jpeg','png','webp','gif'].includes(ext);
@@ -257,6 +369,12 @@ export async function POST(request: Request) {
     }
 
     // If sparse, also pull raw strings (catches OCR-layer scanned PDFs)
+    if (textContent.length < 400) {
+      const pdfjsText = await extractPdfTextPdfjs(buffer);
+      console.log(`[parse-application] pdfjs text: ${pdfjsText.length} chars`);
+      if (pdfjsText.length > textContent.length) textContent = pdfjsText;
+    }
+
     if (textContent.length < 200) {
       const raw = extractRawStringsFromPdf(buffer);
       console.log(`[parse-application] raw binary strings: ${raw.length} chars`);
@@ -280,27 +398,30 @@ export async function POST(request: Request) {
   // ── Step 3: Extract fields ─────────────────────────────────────────────────
   let fields: Record<string, string> = {};
 
+  const usableText = textContent.replace(/\s/g, '').length >= 100;
+
   if (isImage) {
-    // Real image file → vision OCR directly
     fields = await extractWithVisionAI(buffer, filename, prompt);
-
-  } else if (isPdf && textContent.replace(/\s/g, '').length < 100) {
-    // Truly scanned PDF with no usable text → send raw PDF bytes to vision model
-    // Grok Vision will attempt to read it as a document image
-    console.log('[parse-application] Sparse PDF → sending to Grok Vision as PDF');
-    fields = await extractWithVisionAI(buffer, 'document.pdf', prompt);
-
-    // If vision returned nothing, make one more attempt with the raw binary strings
-    if (Object.keys(fields).length === 0) {
-      const rawOnly = extractRawStringsFromPdf(buffer);
-      if (rawOnly.length > 50) {
-        fields = await extractWithTextAI(rawOnly, prompt);
-      }
-    }
-
-  } else {
-    // Text-based PDF or plain text → AI text extraction
+  } else if (usableText) {
     fields = await extractWithTextAI(textContent, prompt);
+  }
+
+  const needsVision =
+    isPdf && (
+      !usableText ||
+      (isBank && !hasBankMetrics(fields))
+    );
+
+  if (needsVision) {
+    console.log('[parse-application] Rendering PDF pages for vision OCR');
+    const pages = await renderPdfPages(buffer, 4);
+    if (pages.length) {
+      const visionFields = await extractWithVisionImages(
+        pages.map(p => ({ mime: 'image/png', buffer: p })),
+        prompt,
+      );
+      fields = { ...visionFields, ...fields };
+    }
   }
 
   console.log(`[parse-application] Extracted ${Object.keys(fields).length} field(s):`, Object.keys(fields));
