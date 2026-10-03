@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { getPingSettings } from '@/lib/casper/ping';
+import {
+  applyClientTimes,
+  buildPingSchedule,
+  decodePingSchedule,
+  earliestPingAt,
+  encodePingSchedule,
+} from '@/lib/casper/calendarPing';
 
 async function getSupabase() {
   const cookieStore = await cookies();
@@ -26,27 +33,61 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await req.json();
-  const { title, end_date, notes, alertEnabled, alertAt, alertPhone, color, start_time } = body;
+  const { title, end_date, notes, alertEnabled, alertOffsets, alertTimes, color, start_time, date } = body;
   const ping = alertEnabled ? await getPingSettings(supabase, user.id) : { phone: '' };
 
-  const { data, error } = await supabase
+  const { data: existing } = await supabase
     .from('calendar_events')
-    .update({
-      title,
-      end_date: end_date || null,
-      notes: notes || null,
-      alert_enabled: alertEnabled ?? false,
-      alert_at: alertAt || null,
-      alert_phone: (alertPhone || ping.phone || null) as string | null,
-      alert_sent: false,
-      color: color || 'black',
-      start_time: start_time || null,
-      updated_at: new Date().toISOString(),
-    })
+    .select('date, start_time, alert_schedule, alert_phone, alert_at')
+    .eq('id', id)
+    .eq('user_id', user.id)
+    .maybeSingle();
+
+  const offsets = Array.isArray(alertOffsets) ? alertOffsets.map(Number).filter(Number.isFinite) : [];
+  const prev = decodePingSchedule(existing?.alert_schedule, null)
+    || decodePingSchedule(existing?.alert_phone, existing?.alert_at);
+  const eventDate = date || existing?.date;
+  const built = alertEnabled && offsets.length && eventDate
+    ? applyClientTimes(buildPingSchedule(eventDate, start_time ?? existing?.start_time, offsets), alertTimes)
+    : null;
+  const schedule = built
+    ? {
+        ...built,
+        sent: (prev?.sent ?? []).filter(m => prev?.times?.[String(m)] === built.times[String(m)]),
+      }
+    : null;
+
+  const patch: Record<string, unknown> = {
+    title,
+    end_date: end_date || null,
+    notes: notes || null,
+    alert_enabled: Boolean(alertEnabled && schedule),
+    alert_at: schedule ? earliestPingAt(schedule) : null,
+    alert_phone: schedule ? encodePingSchedule(schedule) : (ping.phone || null),
+    alert_schedule: schedule,
+    alert_sent: !schedule || !earliestPingAt(schedule),
+    color: color || 'black',
+    start_time: start_time || null,
+    updated_at: new Date().toISOString(),
+  };
+
+  let { data, error } = await supabase
+    .from('calendar_events')
+    .update(patch)
     .eq('id', id)
     .eq('user_id', user.id)
     .select()
     .single();
+  if (error && /alert_schedule/i.test(error.message || '')) {
+    delete patch.alert_schedule;
+    ({ data, error } = await supabase
+      .from('calendar_events')
+      .update(patch)
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .select()
+      .single());
+  }
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ event: data });

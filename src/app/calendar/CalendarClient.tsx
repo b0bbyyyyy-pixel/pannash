@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { JotPad, type JotPadHandle } from '@/components/JotPad';
+import { PING_BEFORE_OPTIONS, buildPingSchedule, offsetsFromEvent } from '@/lib/casper/calendarPingSchedule';
 
 interface LeadTimer {
   leadId: string;
@@ -19,6 +20,7 @@ interface CalendarEvent {
   alert_enabled: boolean;
   alert_at: string | null;
   alert_phone: string | null;
+  alert_schedule?: unknown;
   alert_sent: boolean;
   color: string;
   start_time?: string | null;
@@ -41,8 +43,7 @@ interface EventFormState {
   title: string;
   notes: string;
   alertEnabled: boolean;
-  alertAt: string;
-  alertPhone: string;
+  alertOffsets: number[];
   multiDay: boolean;
   endDate: string;
   startTime: string;
@@ -97,7 +98,7 @@ function dayHabitsComplete(habits: Habit[], day: number): boolean {
 
 const blankForm = (): EventFormState => ({
   title: '', notes: '',
-  alertEnabled: false, alertAt: '', alertPhone: '',
+  alertEnabled: false, alertOffsets: [],
   multiDay: false, endDate: '', startTime: '', color: 'black',
 });
 
@@ -196,7 +197,6 @@ export default function CalendarClient() {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [clearingTimer, setClearingTimer] = useState<string | null>(null);
   const [monthStats, setMonthStats] = useState({ fundedCount: 0, fundedAmount: 0, commission: 0 });
-  const [pingPhone, setPingPhone] = useState('');
 
   const monthKey = `${year}-${String(month + 1).padStart(2, '0')}`;
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -222,13 +222,6 @@ export default function CalendarClient() {
   }, [monthKey]);
 
   useEffect(() => { fetchEvents(); }, [fetchEvents]);
-
-  useEffect(() => {
-    fetch('/api/casper/ping')
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.phone) setPingPhone(String(d.phone)); })
-      .catch(() => {});
-  }, []);
 
   useEffect(() => {
     fetch(`/api/calendar/planner?month=${monthKey}`)
@@ -384,7 +377,6 @@ export default function CalendarClient() {
     const hh = hour != null ? `${String(hour).padStart(2, '0')}:00` : '';
     setForm({
       ...blankForm(),
-      alertAt: `${date}T${hh || '09:00'}`,
       endDate: date,
       startTime: hh,
     });
@@ -394,12 +386,12 @@ export default function CalendarClient() {
   function openEditForm(event: CalendarEvent) {
     setEditingEvent(event);
     const hasEndDate = !!event.end_date && event.end_date !== event.date;
+    const offsets = event.alert_enabled ? offsetsFromEvent(event) : [];
     setForm({
       title: event.title,
       notes: event.notes ?? '',
       alertEnabled: event.alert_enabled,
-      alertAt: event.alert_at ? event.alert_at.slice(0, 16) : '',
-      alertPhone: event.alert_phone ?? '',
+      alertOffsets: event.alert_enabled ? (offsets.length ? offsets : [30]) : [],
       multiDay: hasEndDate,
       endDate: event.end_date ?? event.date,
       startTime: event.start_time ?? '',
@@ -413,6 +405,9 @@ export default function CalendarClient() {
     setSaving(true);
     setSaveError('');
     try {
+      const schedule = form.alertEnabled && form.alertOffsets.length
+        ? buildPingSchedule(selectedDate, form.startTime, form.alertOffsets)
+        : null;
       const payload = {
         date: selectedDate,
         end_date: form.multiDay && form.endDate && form.endDate >= selectedDate ? form.endDate : null,
@@ -420,9 +415,9 @@ export default function CalendarClient() {
         notes: form.notes.trim() || null,
         color: form.color || 'black',
         start_time: form.startTime || null,
-        alertEnabled: form.alertEnabled,
-        alertAt: form.alertEnabled && form.alertAt ? new Date(form.alertAt).toISOString() : null,
-        alertPhone: form.alertEnabled ? form.alertPhone.trim() || null : null,
+        alertEnabled: Boolean(schedule),
+        alertOffsets: schedule?.offsets ?? [],
+        alertTimes: schedule?.times ?? null,
       };
       if (editingEvent) {
         const res = await fetch(`/api/calendar/events/${editingEvent.id}`, {
@@ -654,7 +649,6 @@ export default function CalendarClient() {
             onDelete={deleteEvent}
             onSave={saveEvent}
             onCancelForm={() => { setShowForm(false); setEditingEvent(null); setForm(blankForm()); setSaveError(''); }}
-            pingPhone={pingPhone}
             onClearTimer={async (leadId) => {
               setClearingTimer(leadId);
               await fetch(`/api/calendar/timers?leadId=${leadId}`, { method: 'DELETE' });
@@ -976,7 +970,6 @@ function DayPanel(props: {
   saveError: string;
   deleting: string | null;
   clearingTimer: string | null;
-  pingPhone?: string;
   onClose: () => void;
   onNotes: (t: string) => void;
   onFinished: () => void;
@@ -1325,30 +1318,33 @@ function DayPanel(props: {
                 onChange={e => props.setForm(f => ({
                   ...f,
                   alertEnabled: e.target.checked,
-                  alertPhone: e.target.checked && !f.alertPhone ? (props.pingPhone || '') : f.alertPhone,
+                  alertOffsets: e.target.checked ? (f.alertOffsets.length ? f.alertOffsets : [30]) : [],
                 }))}
                 className="accent-[#1a1a1a]"
               />
               Ping me
             </label>
             {props.form.alertEnabled && (
-              <div className="space-y-2">
-                <input
-                  type="datetime-local"
-                  value={props.form.alertAt}
-                  onChange={e => props.setForm(f => ({ ...f, alertAt: e.target.value }))}
-                  className="w-full text-xs border-b border-[#e5e5e5] py-1 focus:outline-none"
-                />
-                <input
-                  type="tel"
-                  value={props.form.alertPhone}
-                  onChange={e => props.setForm(f => ({ ...f, alertPhone: e.target.value }))}
-                  placeholder={props.pingPhone || 'Uses Casper Ping number'}
-                  className="w-full text-xs border-b border-[#e5e5e5] py-1 focus:outline-none"
-                />
-                <p className="text-[10px] text-[#9b9b9b]">
-                  Casper texts this number. Set it under Agent → Ping.
-                </p>
+              <div className="space-y-1.5 pl-6">
+                {PING_BEFORE_OPTIONS.map(opt => {
+                  const checked = props.form.alertOffsets.includes(opt.minutes);
+                  return (
+                    <label key={opt.minutes} className="flex items-center gap-2 text-xs text-[#555]">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => props.setForm(f => ({
+                          ...f,
+                          alertOffsets: checked
+                            ? f.alertOffsets.filter(m => m !== opt.minutes)
+                            : [...f.alertOffsets, opt.minutes].sort((a, b) => a - b),
+                        }))}
+                        className="accent-[#1a1a1a]"
+                      />
+                      {opt.label}
+                    </label>
+                  );
+                })}
               </div>
             )}
             {props.saveError && <p className="text-xs text-red-600">{props.saveError}</p>}

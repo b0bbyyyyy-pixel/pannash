@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { getPingSettings } from '@/lib/casper/ping';
+import {
+  applyClientTimes,
+  buildPingSchedule,
+  earliestPingAt,
+  encodePingSchedule,
+} from '@/lib/casper/calendarPing';
 
 async function getSupabase() {
   const cookieStore = await cookies();
@@ -53,26 +59,33 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await req.json();
-  const { date, end_date, title, notes, alertEnabled, alertAt, alertPhone, color, start_time } = body;
+  const { date, end_date, title, notes, alertEnabled, alertOffsets, alertTimes, color, start_time } = body;
   const ping = alertEnabled ? await getPingSettings(supabase, user.id) : { phone: '' };
+  const offsets = Array.isArray(alertOffsets) ? alertOffsets.map(Number).filter(Number.isFinite) : [];
+  const schedule = alertEnabled && offsets.length
+    ? applyClientTimes(buildPingSchedule(date, start_time, offsets), alertTimes)
+    : null;
 
-  const { data, error } = await supabase
-    .from('calendar_events')
-    .insert({
-      user_id: user.id,
-      date,
-      end_date: end_date || null,
-      title,
-      notes: notes || null,
-      alert_enabled: alertEnabled ?? false,
-      alert_at: alertAt || null,
-      alert_phone: (alertPhone || ping.phone || null) as string | null,
-      alert_sent: false,
-      color: color || 'black',
-      start_time: start_time || null,
-    })
-    .select()
-    .single();
+  const row: Record<string, unknown> = {
+    user_id: user.id,
+    date,
+    end_date: end_date || null,
+    title,
+    notes: notes || null,
+    alert_enabled: Boolean(alertEnabled && schedule),
+    alert_at: schedule ? earliestPingAt(schedule) : null,
+    alert_phone: schedule ? encodePingSchedule(schedule) : (ping.phone || null),
+    alert_schedule: schedule,
+    alert_sent: false,
+    color: color || 'black',
+    start_time: start_time || null,
+  };
+
+  let { data, error } = await supabase.from('calendar_events').insert(row).select().single();
+  if (error && /alert_schedule/i.test(error.message || '')) {
+    delete row.alert_schedule;
+    ({ data, error } = await supabase.from('calendar_events').insert(row).select().single());
+  }
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ event: data });
