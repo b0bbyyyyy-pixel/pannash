@@ -10,6 +10,7 @@ import LeadUpdatesTimeline from '@/components/LeadUpdatesTimeline';
 import { casperEffectiveForLead } from '@/lib/casper/allow';
 import InboundPhoto from '@/components/mobile/InboundPhoto';
 import { getPhoneLocation } from '@/lib/phoneLocation';
+import { outboundSmsReceipt } from '@/lib/inbox/smsReceipt';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -49,7 +50,7 @@ interface InboxMessage {
   lead_id: string;
   direction: 'inbound' | 'outbound';
   body: string;
-  status: 'queued' | 'sent' | 'delivered' | 'failed' | 'received';
+  status: 'queued' | 'sent' | 'delivered' | 'read' | 'failed' | 'received';
   sent_by: string;
   twilio_sid: string | null;
   error_message: string | null;
@@ -950,7 +951,7 @@ export default function InboxClient({
                     {/* Messages in group */}
                     <div className="space-y-1.5">
                       {group.msgs.map(msg => {
-                        const receipt = msg.status === 'queued' && msg.twilio_sid ? 'sent' : msg.status;
+                        const receipt = outboundSmsReceipt(msg, messages);
                         const photos = (msg.media_items ?? []).filter(item => item?.sid || item?.path);
                         const caption = msg.body === 'Attachment: 1 Photo' && photos.length ? '' : msg.body;
                         return (
@@ -994,6 +995,7 @@ export default function InboxClient({
                                   {receipt === 'queued' && <span className="text-[10px] text-gray-300">sending…</span>}
                                   {receipt === 'sent' && <span className="text-[10px] text-gray-400">✓ sent</span>}
                                   {receipt === 'delivered' && <span className="text-[10px] text-blue-400">✓✓ delivered</span>}
+                                  {receipt === 'read' && <span className="text-[10px] text-blue-500">✓✓ Read</span>}
                                   {receipt === 'failed' && (
                                     <span className="text-[10px] text-red-500">
                                       ✕ failed

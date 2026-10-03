@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   DEFAULT_CASPER_CAPABILITIES,
   DEFAULT_CASPER_SYSTEM_PROMPT,
@@ -243,6 +243,225 @@ export function CapabilitiesPanel() {
             {item.future && <span className="text-[10px] text-gray-400 uppercase">later</span>}
           </label>
         ))}
+      </div>
+    </div>
+  );
+}
+
+type PingMsg = {
+  id: string;
+  direction: 'inbound' | 'outbound';
+  body: string;
+  kind: string;
+  status: string;
+  created_at: string;
+};
+
+function pingTime(iso: string) {
+  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+}
+
+export function PingPanel() {
+  const [enabled, setEnabled] = useState(false);
+  const [phone, setPhone] = useState('');
+  const [savedPhone, setSavedPhone] = useState('');
+  const [messages, setMessages] = useState<PingMsg[]>([]);
+  const [setupRequired, setSetupRequired] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [savedNote, setSavedNote] = useState('');
+  const [draft, setDraft] = useState('');
+  const [sending, setSending] = useState(false);
+  const [replying, setReplying] = useState(false);
+  const [error, setError] = useState('');
+  const catchingUp = useRef(false);
+  const lastCatchUpId = useRef<string | null>(null);
+
+  const load = useCallback(async (silent = false) => {
+    const res = await fetch('/api/casper/ping', { cache: 'no-store' });
+    const d = await res.json();
+    setMessages(Array.isArray(d.messages) ? d.messages : []);
+    setSetupRequired(!!d.setupRequired);
+    if (!silent) {
+      setEnabled(!!d.enabled);
+      setPhone(d.phone || '');
+      setSavedPhone(d.phone || '');
+    }
+    setLoading(false);
+    return d as { messages?: PingMsg[] };
+  }, []);
+
+  useEffect(() => { load(false); }, [load]);
+
+  useEffect(() => {
+    const id = setInterval(() => { load(true); }, 4000);
+    return () => clearInterval(id);
+  }, [load]);
+
+  useEffect(() => {
+    const last = messages[messages.length - 1];
+    if (!last || last.direction !== 'inbound' || catchingUp.current) return;
+    if (lastCatchUpId.current === last.id) return;
+    lastCatchUpId.current = last.id;
+    catchingUp.current = true;
+    setReplying(true);
+    fetch('/api/casper/ping', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ catchUp: true }),
+    })
+      .then(() => load(true))
+      .finally(() => {
+        catchingUp.current = false;
+        setReplying(false);
+      });
+  }, [messages, load]);
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    setSavedNote('');
+    try {
+      const res = await fetch('/api/casper/ping', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled, phone: phone.trim() }),
+      });
+      const d = await res.json();
+      if (!res.ok) setError(d.error || 'Could not save');
+      else {
+        setEnabled(!!d.enabled);
+        setPhone(d.phone || phone);
+        setSavedPhone(d.phone || phone.trim());
+        setSavedNote('Saved');
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const send = async (test = false) => {
+    const text = draft.trim();
+    if (!test && !text) return;
+    if (phone.trim() && phone.trim() !== savedPhone) await save();
+    setSending(true);
+    setError('');
+    try {
+      const res = await fetch('/api/casper/ping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(test ? { test: true } : { body: text }),
+      });
+      const d = await res.json();
+      if (!res.ok) setError(d.reason || d.error || 'Send failed');
+      else {
+        setDraft('');
+        await load(true);
+      }
+    } finally {
+      setSending(false);
+    }
+  };
+
+  if (loading) return <p className="text-sm text-gray-400 py-12 text-center">Loading ping…</p>;
+
+  return (
+    <div className="space-y-4 max-w-2xl">
+      <div className="bg-white border border-[#e5e5e5] rounded-2xl p-5">
+        <h3 className="text-sm font-semibold text-[#1a1a1a] mb-1">Ping</h3>
+        <p className="text-[11px] text-gray-400 mb-4">
+          Casper texts your personal cell for calendar alerts and when she needs you. Text her back on that thread.
+        </p>
+        {setupRequired && (
+          <p className="text-xs text-amber-700 bg-amber-50 rounded-xl px-3 py-2 mb-4">
+            Run <code>add-casper-ping.sql</code> in Supabase so Ping can save the thread.
+          </p>
+        )}
+        <label className="flex items-center justify-between gap-3 mb-4">
+          <span className="text-sm text-[#1a1a1a]">Allow Casper to ping me</span>
+          <input
+            type="checkbox"
+            checked={enabled}
+            disabled={saving}
+            onChange={e => setEnabled(e.target.checked)}
+            className="rounded border-gray-300"
+          />
+        </label>
+        <label className="block text-[11px] text-gray-500 mb-1">Your cell</label>
+        <div className="flex gap-2">
+          <input
+            type="tel"
+            value={phone}
+            onChange={e => { setPhone(e.target.value); setSavedNote(''); }}
+            placeholder="(555) 555-5555"
+            className="flex-1 text-sm border border-[#e5e5e5] rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#1a1a1a]"
+          />
+          <button
+            type="button"
+            onClick={save}
+            disabled={saving || !phone.trim()}
+            className="px-3 py-2 text-xs font-semibold bg-[#1a1a1a] text-white rounded-xl disabled:opacity-40"
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+          <button
+            type="button"
+            onClick={() => send(true)}
+            disabled={sending || !phone.trim()}
+            className="px-3 py-2 text-xs font-semibold border border-[#e5e5e5] rounded-xl disabled:opacity-40"
+          >
+            {sending ? '…' : 'Test ping'}
+          </button>
+        </div>
+        {savedNote && <p className="text-xs text-emerald-600 mt-2">{savedNote}</p>}
+        {error && <p className="text-xs text-red-500 mt-2">{error}</p>}
+      </div>
+
+      <div className="bg-white border border-[#e5e5e5] rounded-2xl p-5 flex flex-col min-h-[360px]">
+        <p className="text-[10px] uppercase tracking-wider text-gray-400 mb-3">Thread with Casper</p>
+        <div className="flex-1 space-y-2 overflow-y-auto max-h-[420px] mb-3">
+          {messages.length === 0 ? (
+            <p className="text-sm text-gray-400 text-center py-10">No pings yet. Send a test or text her from your phone.</p>
+          ) : (
+            messages.map(msg => (
+              <div key={msg.id} className={`flex ${msg.direction === 'outbound' ? 'justify-start' : 'justify-end'}`}>
+                <div className={`max-w-[80%] ${msg.direction === 'outbound' ? 'items-start' : 'items-end'} flex flex-col gap-0.5`}>
+                  <div className={`px-3 py-2 rounded-2xl text-sm ${
+                    msg.direction === 'outbound'
+                      ? 'bg-[#f0f0f0] text-[#1a1a1a] rounded-bl-sm'
+                      : 'bg-[#1a1a1a] text-white rounded-br-sm'
+                  }`}>
+                    {msg.body}
+                  </div>
+                  <span className="text-[10px] text-gray-400 px-1">
+                    {msg.direction === 'outbound' ? 'Casper' : 'You'} · {pingTime(msg.created_at)}
+                    {msg.kind !== 'chat' ? ` · ${msg.kind.replace('_', ' ')}` : ''}
+                  </span>
+                </div>
+              </div>
+            ))
+          )}
+          {replying && (
+            <p className="text-[11px] text-gray-400 px-1">Casper is answering…</p>
+          )}
+        </div>
+        <div className="flex gap-2">
+          <input
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(false); } }}
+            placeholder="Text Casper…"
+            className="flex-1 text-sm border border-[#e5e5e5] rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#1a1a1a]"
+          />
+          <button
+            type="button"
+            onClick={() => send(false)}
+            disabled={sending || !draft.trim()}
+            className="px-4 py-2 bg-[#1a1a1a] text-white text-xs font-semibold rounded-xl disabled:opacity-40"
+          >
+            Send
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { outboundSmsReceipt } from '@/lib/inbox/smsReceipt';
 
 interface Msg {
   id: string;
@@ -19,11 +20,6 @@ export interface QuickTextLead {
   list_id?: string | null;
   lead_status?: string | null;
   in_pipeline?: boolean | null;
-}
-
-function receipt(status: string, sid: string | null) {
-  if (status === 'queued' && sid) return 'sent';
-  return status;
 }
 
 function msgTime(iso: string) {
@@ -226,7 +222,7 @@ export default function QuickTextPopup({
             <p className="text-[11px] text-[#9ca3af] text-center py-8">No texts yet</p>
           ) : (
             messages.map(msg => {
-              const r = receipt(msg.status, msg.twilio_sid);
+              const r = outboundSmsReceipt(msg, messages);
               return (
                 <div key={msg.id} className={`flex ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}>
                   <div className={`max-w-[85%] flex flex-col gap-0.5 ${msg.direction === 'outbound' ? 'items-end' : 'items-start'}`}>
@@ -246,6 +242,7 @@ export default function QuickTextPopup({
                           {r === 'queued' && <span className="text-[9px] text-gray-300">sending…</span>}
                           {r === 'sent' && <span className="text-[9px] text-gray-400">sent</span>}
                           {r === 'delivered' && <span className="text-[9px] text-blue-400">delivered</span>}
+                          {r === 'read' && <span className="text-[9px] text-blue-500">Read</span>}
                           {r === 'failed' && <span className="text-[9px] text-red-500">failed</span>}
                         </>
                       )}

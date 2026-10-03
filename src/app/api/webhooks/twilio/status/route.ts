@@ -54,10 +54,18 @@ export async function POST(req: NextRequest) {
     const inboxError = formatTwilioSmsError(errorCode || null, errorMessage || null)
       ?? (inboxStatus === 'failed' ? (errorMessage || messageStatus) : null);
 
+    const { data: existing } = await supabase
+      .from('inbox_messages')
+      .select('id, lead_id, body, status')
+      .eq('twilio_sid', messageSid);
+
+    const alreadyRead = (existing ?? []).some(row => row.status === 'read');
+    const nextStatus = alreadyRead && inboxStatus !== 'failed' ? 'read' : inboxStatus;
+
     const { data: updated, error: updateErr } = await supabase
       .from('inbox_messages')
       .update({
-        status: inboxStatus,
+        status: nextStatus,
         ...(inboxError ? { error_message: inboxError } : {}),
       })
       .eq('twilio_sid', messageSid)

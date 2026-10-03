@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import { getPingSettings } from '@/lib/casper/ping';
 
 async function getSupabase() {
   const cookieStore = await cookies();
@@ -53,6 +54,7 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json();
   const { date, end_date, title, notes, alertEnabled, alertAt, alertPhone, color, start_time } = body;
+  const ping = alertEnabled ? await getPingSettings(supabase, user.id) : { phone: '' };
 
   const { data, error } = await supabase
     .from('calendar_events')
@@ -64,7 +66,7 @@ export async function POST(req: NextRequest) {
       notes: notes || null,
       alert_enabled: alertEnabled ?? false,
       alert_at: alertAt || null,
-      alert_phone: alertPhone || null,
+      alert_phone: (alertPhone || ping.phone || null) as string | null,
       alert_sent: false,
       color: color || 'black',
       start_time: start_time || null,

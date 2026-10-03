@@ -1,6 +1,6 @@
 import { toE164 } from '@/lib/dialer/e164';
 
-export type InboxSmsStatus = 'queued' | 'sent' | 'delivered' | 'failed';
+export type InboxSmsStatus = 'queued' | 'sent' | 'delivered' | 'read' | 'failed';
 
 export type RecordOutboundSmsArgs = {
   userId?: string | null;

@@ -4,7 +4,7 @@ import { publicAppUrl, type TwilioCreds } from '@/lib/telephony/twilio';
 
 export type SmsSendResult = {
   sid: string;
-  status: 'queued' | 'sent' | 'delivered' | 'failed';
+  status: 'queued' | 'sent' | 'delivered' | 'read' | 'failed';
   error?: string;
 };
 
@@ -23,6 +23,7 @@ const ERROR_COPY: Record<number, string> = {
 
 export function mapTwilioStatus(status: string | undefined, errorCode?: number | null): SmsSendResult['status'] {
   if (errorCode || status === 'failed' || status === 'undelivered') return 'failed';
+  if (status === 'read') return 'read';
   if (status === 'delivered') return 'delivered';
   // Twilio's create() returns queued/accepted/sending — the carrier already has it.
   // Reserve "queued" for messages we never handed to Twilio.

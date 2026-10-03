@@ -10,6 +10,7 @@ import { logCasperRun, upsertCasperLeadState } from '@/lib/casper/runs';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
 import { sendTwilioSms } from '@/lib/telephony/sms';
 import { getTwilioCreds } from '@/lib/telephony/twilio';
+import { sendCasperPing } from '@/lib/casper/ping';
 
 type MissionJson = {
   thinking?: string;
@@ -208,6 +209,12 @@ Lead just texted: "${args.body}"`,
       proposal: parsed.human_reason || `${args.lead.name || 'Lead'} asked Casper for a human.`,
       metadata: { phase: parsed.phase || 'handed_off' },
     });
+    const ping = await sendCasperPing(supabase, {
+      userId: args.userId,
+      kind: 'needs_human',
+      body: `Casper: ${args.lead.name || 'A lead'} needs you. ${parsed.human_reason || 'They asked for a person.'}`.slice(0, 320),
+    });
+    actions.push({ type: 'ping', ...ping });
   }
 
   if (args.delay !== false) {

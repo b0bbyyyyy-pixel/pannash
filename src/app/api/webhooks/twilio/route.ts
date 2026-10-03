@@ -6,6 +6,9 @@ import { runCasperInboundSms } from '@/lib/casper/reply';
 import { notifyUserOfInboundSms } from '@/lib/mobile/notifyInbound';
 import { saveInboundMms } from '@/lib/inbox/saveInboundMms';
 import { isSmsStopBody, markLeadDnc } from '@/lib/leads/dnc';
+import { markOutboundReadAfterReply } from '@/lib/inbox/markOutboundRead';
+import { findUserByPingPhone, recordPingMessage } from '@/lib/casper/ping';
+import { runCasperPingReply } from '@/lib/casper/pingReply';
 
 export const maxDuration = 60;
 
@@ -82,6 +85,32 @@ export async function POST(req: NextRequest) {
 
     if (!from || !storedBody) return emptyTwiml();
 
+    const pingUserId = await findUserByPingPhone(supabase, from);
+    if (pingUserId) {
+      await recordPingMessage(supabase, {
+        userId: pingUserId,
+        direction: 'inbound',
+        body: storedBody,
+        kind: 'chat',
+        status: 'received',
+        twilioSid: messageSid || null,
+      });
+      after(async () => {
+        try {
+          const result = await runCasperPingReply(supabase, {
+            userId: pingUserId,
+            body: storedBody,
+            alreadyRecorded: true,
+            twilioSid: messageSid || null,
+          });
+          console.log('[SMS Webhook] Casper ping', result);
+        } catch (err) {
+          console.error('[SMS Webhook] Casper ping', err);
+        }
+      });
+      return emptyTwiml();
+    }
+
     // SECURITY DEFINER RPC — works even when the webhook has no login / RLS blocks reads.
     const { data: ingested, error: ingestErr } = await supabase.rpc('ingest_inbound_sms', {
       p_from: from,
@@ -91,6 +120,24 @@ export async function POST(req: NextRequest) {
     });
     if (ingestErr) console.error('[SMS Webhook] ingest_inbound_sms:', ingestErr);
     else console.log('[SMS Webhook] ingest_inbound_sms:', ingested);
+
+    const ingestedObj = ingested && typeof ingested === 'object' ? ingested as { ok?: boolean; ping?: boolean; user_id?: string } : null;
+    if (ingestedObj?.ping && ingestedObj.user_id) {
+      after(async () => {
+        try {
+          const result = await runCasperPingReply(supabase, {
+            userId: ingestedObj.user_id!,
+            body: storedBody,
+            alreadyRecorded: true,
+            twilioSid: messageSid || null,
+          });
+          console.log('[SMS Webhook] Casper ping via ingest', result);
+        } catch (err) {
+          console.error('[SMS Webhook] Casper ping via ingest', err);
+        }
+      });
+      return emptyTwiml();
+    }
 
     const to10 = last10(to);
 
@@ -117,6 +164,7 @@ export async function POST(req: NextRequest) {
     const rpcOk = Boolean(ingested && typeof ingested === 'object' && (ingested as { ok?: boolean }).ok);
     if (!stopped) {
       try { await promoteCampaignLeadOnReply(supabase, lead.id); } catch { /* ignore */ }
+      try { await markOutboundReadAfterReply(supabase, lead.id); } catch { /* ignore */ }
     }
 
     // Fallback write if the SQL function isn't installed yet

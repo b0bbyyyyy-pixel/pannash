@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import FullCrmLink from '@/components/mobile/FullCrmLink';
 import InboundPhoto from '@/components/mobile/InboundPhoto';
 import { dayStamp, initial } from '@/components/mobile/format';
+import { outboundSmsReceipt } from '@/lib/inbox/smsReceipt';
 
 type MediaItem = { sid?: string; path?: string; type: string; savedAt?: string | null };
 
@@ -177,7 +178,8 @@ export default function ThreadScreen() {
           const showDay = !prev || dayStamp(prev.created_at) !== dayStamp(msg.created_at);
           const out = msg.direction === 'outbound';
           const failed = msg.status === 'failed';
-          const receipt = msg.id === lastOutboundId && (msg.status === 'delivered' || msg.status === 'read');
+          const receiptStatus = outboundSmsReceipt(msg, messages);
+          const receipt = msg.id === lastOutboundId && (receiptStatus === 'delivered' || receiptStatus === 'read');
           const photos = (msg.media_items ?? []).filter(item => item?.sid || item?.path);
           const caption = msg.body === 'Attachment: 1 Photo' && photos.length ? '' : msg.body;
           return (
@@ -221,7 +223,7 @@ export default function ThreadScreen() {
                   )}
                   {receipt && (
                     <p className="px-1 text-[11px] text-[#8E8E93]">
-                      {msg.status === 'read' ? 'Read' : 'Delivered'} {dayStamp(msg.created_at)}
+                      {receiptStatus === 'read' ? 'Read' : 'Delivered'} {dayStamp(msg.created_at)}
                     </p>
                   )}
                 </div>

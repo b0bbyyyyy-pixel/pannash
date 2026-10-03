@@ -196,6 +196,7 @@ export default function CalendarClient() {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [clearingTimer, setClearingTimer] = useState<string | null>(null);
   const [monthStats, setMonthStats] = useState({ fundedCount: 0, fundedAmount: 0, commission: 0 });
+  const [pingPhone, setPingPhone] = useState('');
 
   const monthKey = `${year}-${String(month + 1).padStart(2, '0')}`;
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -221,6 +222,13 @@ export default function CalendarClient() {
   }, [monthKey]);
 
   useEffect(() => { fetchEvents(); }, [fetchEvents]);
+
+  useEffect(() => {
+    fetch('/api/casper/ping')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.phone) setPingPhone(String(d.phone)); })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     fetch(`/api/calendar/planner?month=${monthKey}`)
@@ -646,6 +654,7 @@ export default function CalendarClient() {
             onDelete={deleteEvent}
             onSave={saveEvent}
             onCancelForm={() => { setShowForm(false); setEditingEvent(null); setForm(blankForm()); setSaveError(''); }}
+            pingPhone={pingPhone}
             onClearTimer={async (leadId) => {
               setClearingTimer(leadId);
               await fetch(`/api/calendar/timers?leadId=${leadId}`, { method: 'DELETE' });
@@ -967,6 +976,7 @@ function DayPanel(props: {
   saveError: string;
   deleting: string | null;
   clearingTimer: string | null;
+  pingPhone?: string;
   onClose: () => void;
   onNotes: (t: string) => void;
   onFinished: () => void;
@@ -1312,10 +1322,14 @@ function DayPanel(props: {
               <input
                 type="checkbox"
                 checked={props.form.alertEnabled}
-                onChange={e => props.setForm(f => ({ ...f, alertEnabled: e.target.checked }))}
+                onChange={e => props.setForm(f => ({
+                  ...f,
+                  alertEnabled: e.target.checked,
+                  alertPhone: e.target.checked && !f.alertPhone ? (props.pingPhone || '') : f.alertPhone,
+                }))}
                 className="accent-[#1a1a1a]"
               />
-              Text alert
+              Ping me
             </label>
             {props.form.alertEnabled && (
               <div className="space-y-2">
@@ -1329,9 +1343,12 @@ function DayPanel(props: {
                   type="tel"
                   value={props.form.alertPhone}
                   onChange={e => props.setForm(f => ({ ...f, alertPhone: e.target.value }))}
-                  placeholder="Phone"
+                  placeholder={props.pingPhone || 'Uses Casper Ping number'}
                   className="w-full text-xs border-b border-[#e5e5e5] py-1 focus:outline-none"
                 />
+                <p className="text-[10px] text-[#9b9b9b]">
+                  Casper texts this number. Set it under Agent → Ping.
+                </p>
               </div>
             )}
             {props.saveError && <p className="text-xs text-red-600">{props.saveError}</p>}
