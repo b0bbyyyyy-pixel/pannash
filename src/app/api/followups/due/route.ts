@@ -5,6 +5,7 @@ import { getTwilioCreds } from '@/lib/telephony/twilio';
 import { sendTwilioSms } from '@/lib/telephony/sms';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
 import { followUpTitle, localDateKey, localTimeHm, renderFollowUpSms } from '@/lib/lead-follow-up';
+import { fireDueCalendarPings } from '@/lib/casper/calendarPing';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -149,5 +150,12 @@ export async function POST() {
     }
   }
 
-  return NextResponse.json({ processed: due.length, calendar, texts });
+  let pings = 0;
+  try {
+    pings = await fireDueCalendarPings(supabase, user.id);
+  } catch (err) {
+    console.error('[follow-up due] calendar ping', err);
+  }
+
+  return NextResponse.json({ processed: due.length, calendar, texts, pings });
 }
