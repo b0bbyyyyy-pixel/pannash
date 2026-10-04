@@ -15,8 +15,11 @@ import {
 } from 'react';
 import type { Call, Device } from '@twilio/voice-sdk';
 import { usePathname, useRouter } from 'next/navigation';
-import { BACK_TO_PIPELINE_MSG, CALL_MSG, LEAD_DELETED_MSG, postLeadActionToFrame } from '@/lib/pipeline/iframeMessages';
-import LeadActionsMenu from '@/components/LeadActionsMenu';
+import { BACK_TO_PIPELINE_MSG, CALL_MSG, LEAD_DELETED_MSG, LEAD_STATE_MSG, postLeadActionToFrame } from '@/lib/pipeline/iframeMessages';
+import LeadActionsMenu, { type LeadActionId } from '@/components/LeadActionsMenu';
+import dynamic from 'next/dynamic';
+
+const DocumentsModal = dynamic(() => import('@/components/DocumentsModal'), { ssr: false });
 
 type PhoneStatus = 'offline' | 'ready' | 'connecting' | 'ringing' | 'in-call';
 
@@ -75,20 +78,30 @@ function customParam(call: Call, key: string): string | null {
 
 function LeadCardOverlay({
   leadId,
+  leadName,
+  leadCompany,
   inCall,
   onClose,
 }: {
   leadId: string;
+  leadName?: string;
+  leadCompany?: string | null;
   inCall: boolean;
   onClose: () => void;
 }) {
   const router = useRouter();
   const frameRef = useRef<HTMLIFrameElement>(null);
+  const [leadMenuState, setLeadMenuState] = useState<{ section: LeadActionId; appComplete: boolean } | null>(null);
+  const [showDocs, setShowDocs] = useState(false);
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       if (e.origin !== window.location.origin) return;
       const d = e.data;
       if (!d || typeof d !== 'object') return;
+      if (d.type === LEAD_STATE_MSG && typeof d.section === 'string') {
+        setLeadMenuState({ section: d.section as LeadActionId, appComplete: !!d.appComplete });
+        return;
+      }
       if (d.type === BACK_TO_PIPELINE_MSG) onClose();
       if (d.type === LEAD_DELETED_MSG) {
         onClose();
@@ -113,7 +126,13 @@ function LeadCardOverlay({
         <div className="flex flex-shrink-0 items-center justify-between border-b border-[#e5e5e5] bg-white px-4 py-2.5">
           <LeadActionsMenu
             align="left"
-            onAction={id => postLeadActionToFrame(frameRef.current, id)}
+            onAction={id => {
+              if (id === 'docs') { setShowDocs(true); return; }
+              postLeadActionToFrame(frameRef.current, id);
+            }}
+            currentSection={leadMenuState?.section}
+            showAppDot
+            appComplete={leadMenuState?.appComplete ?? false}
           />
           <div className="flex items-center gap-3">
             <a
@@ -146,6 +165,14 @@ function LeadCardOverlay({
           title="Lead workspace"
         />
       </div>
+      {showDocs && (
+        <DocumentsModal
+          leadId={leadId}
+          leadName={leadName || 'Lead'}
+          leadCompany={leadCompany}
+          onClose={() => setShowDocs(false)}
+        />
+      )}
     </>
   );
 }
@@ -454,6 +481,8 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
       {showLeadCard && matchedLead && !onMobileText && (
         <LeadCardOverlay
           leadId={matchedLead.id}
+          leadName={matchedLead.name}
+          leadCompany={matchedLead.company}
           inCall={inCall}
           onClose={() => setShowLeadCard(false)}
         />

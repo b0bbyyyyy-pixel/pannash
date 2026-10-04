@@ -22,25 +22,17 @@ export type LeadActionId =
 
 type MenuEntry =
   | { kind: 'item'; id: LeadActionId; label: string }
-  | { kind: 'group'; label: string; groupId?: LeadActionId; items: { id: LeadActionId; label: string }[] };
+  | { kind: 'group'; label: string; groupId?: LeadActionId; collapse?: boolean; items: { id: LeadActionId; label: string }[] };
 
 const MENU: MenuEntry[] = [
   { kind: 'item', id: 'application', label: 'Application' },
   { kind: 'item', id: 'status', label: 'Status' },
-  {
-    kind: 'group',
-    label: 'Lender',
-    groupId: 'lender',
-    items: [
-      { id: 'send', label: 'Lenders Match' },
-      { id: 'offers', label: 'Offers' },
-      { id: 'financials', label: 'Financials' },
-    ],
-  },
+  { kind: 'item', id: 'lender', label: 'Lenders' },
   { kind: 'item', id: 'docs', label: 'Docs' },
   {
     kind: 'group',
     label: 'Comms',
+    collapse: true,
     items: [
       { id: 'sms', label: 'Send SMS' },
       { id: 'email', label: 'Send Email' },
@@ -66,6 +58,7 @@ export default function LeadActionsMenu({
   currentSection,
   showAppDot = false,
   appComplete = false,
+  hiddenItems,
 }: {
   onAction: (id: LeadActionId) => void;
   align?: 'left' | 'right';
@@ -73,9 +66,11 @@ export default function LeadActionsMenu({
   currentSection?: LeadActionId | null;
   showAppDot?: boolean;
   appComplete?: boolean;
+  hiddenItems?: LeadActionId[];
 }) {
   const [open, setOpen] = useState(false);
-  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
+  const [coords, setCoords] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -84,15 +79,26 @@ export default function LeadActionsMenu({
     if (!el) return;
     const r = el.getBoundingClientRect();
     const width = 200;
+    const gap = 4;
+    const pad = 8;
     const left = align === 'right' ? r.right - width : r.left;
-    let top = r.bottom + 4;
-    const estimatedH = 380;
-    if (top + estimatedH > window.innerHeight - 8) {
-      top = Math.max(8, r.top - estimatedH - 4);
+    const spaceBelow = window.innerHeight - r.bottom - pad;
+    const spaceAbove = r.top - pad;
+    // Keep the plus clickable: never draw the menu over the trigger.
+    const openBelow = spaceBelow >= 120 || spaceBelow >= spaceAbove;
+    if (openBelow) {
+      setCoords({
+        top: r.bottom + gap,
+        left: Math.min(Math.max(pad, left), window.innerWidth - width - pad),
+        maxHeight: Math.max(120, spaceBelow),
+      });
+      return;
     }
+    const maxHeight = Math.max(120, spaceAbove);
     setCoords({
-      top,
-      left: Math.min(Math.max(8, left), window.innerWidth - width - 8),
+      top: Math.max(pad, r.top - gap - maxHeight),
+      left: Math.min(Math.max(pad, left), window.innerWidth - width - pad),
+      maxHeight,
     });
   };
 
@@ -102,6 +108,7 @@ export default function LeadActionsMenu({
     setOpen(v => {
       const next = !v;
       if (next) place();
+      else setOpenGroup(null);
       return next;
     });
   };
@@ -112,6 +119,7 @@ export default function LeadActionsMenu({
       const t = e.target as Node;
       if (btnRef.current?.contains(t) || menuRef.current?.contains(t)) return;
       setOpen(false);
+      setOpenGroup(null);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false);
@@ -129,6 +137,10 @@ export default function LeadActionsMenu({
     };
   }, [open, align]);
 
+  useEffect(() => {
+    if (open) place();
+  }, [openGroup, open]);
+
   const fire = (e: React.MouseEvent, id: LeadActionId) => {
     e.stopPropagation();
     e.preventDefault();
@@ -139,6 +151,7 @@ export default function LeadActionsMenu({
   const itemCls =
     'w-full text-left px-3 py-1.5 text-sm text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors flex items-center gap-1.5';
 
+  const hidden = new Set(hiddenItems ?? []);
   const mark = (id?: LeadActionId) =>
     currentSection && id && currentSection === id;
 
@@ -149,7 +162,7 @@ export default function LeadActionsMenu({
         type="button"
         onClick={toggle}
         onMouseDown={e => e.stopPropagation()}
-        className={`relative ${compact ? 'p-1' : 'p-2'} rounded-md border border-[#e5e5e5] hover:bg-[#f5f5f5] text-[#9b9b9b] hover:text-[#1a1a1a] transition-colors`}
+        className={`relative ${open ? 'z-[210]' : ''} ${compact ? 'p-1' : 'p-2'} rounded-md border border-[#e5e5e5] hover:bg-[#f5f5f5] text-[#9b9b9b] hover:text-[#1a1a1a] transition-colors`}
         title="Lead actions"
         aria-haspopup="menu"
         aria-expanded={open}
@@ -167,11 +180,12 @@ export default function LeadActionsMenu({
           role="menu"
           onClick={e => e.stopPropagation()}
           onMouseDown={e => e.stopPropagation()}
-          className="fixed z-[200] w-[200px] bg-white border border-[#e5e5e5] rounded-lg shadow-xl py-1 max-h-[min(420px,calc(100vh-16px))] overflow-y-auto"
-          style={{ top: coords.top, left: coords.left }}
+          className="fixed z-[200] w-[200px] bg-white border border-[#e5e5e5] rounded-lg shadow-xl py-1 overflow-y-auto"
+          style={{ top: coords.top, left: coords.left, maxHeight: coords.maxHeight }}
         >
           {MENU.map((entry, i) => {
             if (entry.kind === 'item') {
+              if (hidden.has(entry.id)) return null;
               const current = mark(entry.id);
               return (
                 <button
@@ -189,15 +203,39 @@ export default function LeadActionsMenu({
                 </button>
               );
             }
-            const sectionId = entry.groupId ?? (entry.label === 'Comms' && currentSection != null ? 'comms' as const : undefined);
-            const groupCurrent = mark(sectionId);
+            const visibleItems = entry.items.filter(item => !hidden.has(item.id));
+            if (visibleItems.length === 0) return null;
+            const groupCurrent = mark(entry.groupId);
+            const expanded = !entry.collapse || openGroup === entry.label;
             return (
               <div key={entry.label} className={i > 0 ? 'mt-1 pt-1 border-t border-[#f0f0f0]' : ''}>
-                {sectionId ? (
+                {entry.collapse ? (
                   <button
                     type="button"
                     role="menuitem"
-                    onClick={e => fire(e, sectionId)}
+                    aria-expanded={expanded}
+                    onClick={e => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      setOpenGroup(g => g === entry.label ? null : entry.label);
+                    }}
+                    className={`${itemCls} ${groupCurrent ? 'font-semibold' : ''}`}
+                  >
+                    <span className="flex-1">{entry.label}</span>
+                    <svg
+                      className={`w-3 h-3 text-[#9b9b9b] flex-shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                ) : entry.groupId ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={e => fire(e, entry.groupId!)}
                     className={`w-full text-left px-3 pt-1.5 pb-0.5 text-[10px] font-bold uppercase tracking-wider hover:text-[#1a1a1a] flex items-center gap-1.5 ${
                       groupCurrent ? 'text-[#1a1a1a]' : 'text-[#9b9b9b]'
                     }`}
@@ -210,7 +248,7 @@ export default function LeadActionsMenu({
                     {entry.label}
                   </p>
                 )}
-                {entry.items.map(item => (
+                {expanded && visibleItems.map(item => (
                   <button
                     key={item.id}
                     type="button"

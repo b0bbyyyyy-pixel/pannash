@@ -10,6 +10,7 @@ export const LEAD_DELETED_MSG = 'gostwrk-lead-deleted';
 export const LEAD_SHOWN_MSG = 'gostwrk-lead-shown';
 export const CALL_MSG = 'gostwrk-call';
 export const LEAD_ACTION_MSG = 'gostwrk-lead-action';
+export const LEAD_STATE_MSG = 'gostwrk-lead-state';
 
 export type PipelineLeadPatchMsg = {
   type: typeof PIPELINE_LEAD_MSG;
@@ -52,6 +53,12 @@ export type LeadActionMsg = {
   action: string;
 };
 
+export type LeadStateMsg = {
+  type: typeof LEAD_STATE_MSG;
+  section: string;
+  appComplete: boolean;
+};
+
 export type PipelineFrameMsg =
   | PipelineLeadPatchMsg
   | OpenLeadMsg
@@ -59,7 +66,8 @@ export type PipelineFrameMsg =
   | LeadDeletedMsg
   | LeadShownMsg
   | CallMsg
-  | LeadActionMsg;
+  | LeadActionMsg
+  | LeadStateMsg;
 
 export function isInIframe(): boolean {
   if (typeof window === 'undefined') return false;
@@ -96,6 +104,10 @@ export function postLeadDeleted(id: string) {
 
 export function postLeadShown(id: string) {
   postToParent({ type: LEAD_SHOWN_MSG, id });
+}
+
+export function postLeadState(section: string, appComplete: boolean) {
+  postToParent({ type: LEAD_STATE_MSG, section, appComplete });
 }
 
 export function postCallToTop(data: Omit<CallMsg, 'type'>) {

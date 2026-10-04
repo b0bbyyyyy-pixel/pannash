@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback, DragEvent } from 'react';
+import { createPortal } from 'react-dom';
 import DocumentVault from '@/components/DocumentVault';
+import { enrichParsedBusinessFields } from '@/lib/businessName';
 import {
   parseMcaPositions,
   coerceNumber,
@@ -35,6 +37,15 @@ interface DocumentsModalProps {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+function docsPortalTarget(): HTMLElement | null {
+  if (typeof document === 'undefined') return null;
+  try {
+    const topDoc = window.top?.document;
+    if (topDoc?.body) return topDoc.body;
+  } catch { /* cross-origin */ }
+  return document.body;
+}
+
 function fmtSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -197,6 +208,8 @@ export default function DocumentsModal({
   const [showVaultPick, setShowVaultPick] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [portalEl, setPortalEl] = useState<HTMLElement | null>(null);
+  useEffect(() => { setPortalEl(docsPortalTarget()); }, []);
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
   const fetchDocs = useCallback(async () => {
@@ -328,10 +341,11 @@ export default function DocumentsModal({
       }
 
       attachStatementMonths(mergedFields, months);
+      const reviewFields = enrichParsedBusinessFields(mergedFields);
 
-      if (Object.keys(mergedFields).length > 0) {
-        setParsedFields(mergedFields);
-        setParsedSelected(new Set(Object.keys(mergedFields)));
+      if (Object.keys(reviewFields).length > 0) {
+        setParsedFields(reviewFields);
+        setParsedSelected(new Set(Object.keys(reviewFields)));
         setParseStep('review');
       } else {
         // Still show review step so user can manually fill in what was missed
@@ -392,7 +406,7 @@ export default function DocumentsModal({
     try {
       const { ok, json } = await parseAttachment(a);
       if (ok) {
-        const extractedFields = { ...(json.fields ?? {}) } as Record<string, string>;
+        const extractedFields = enrichParsedBusinessFields({ ...(json.fields ?? {}) } as Record<string, string>);
         const row = statementMonthFromFields(extractedFields);
         if (row) attachStatementMonths(extractedFields, [row]);
         setParsedFields(extractedFields);
@@ -442,11 +456,12 @@ export default function DocumentsModal({
       } catch { /* skip */ }
     }
     attachStatementMonths(merged, months);
+    const reviewFields = enrichParsedBusinessFields(merged);
 
     setAnalyzing(false);
     if (anySuccess) {
-      setParsedFields(merged);
-      setParsedSelected(new Set(Object.keys(merged)));
+      setParsedFields(reviewFields);
+      setParsedSelected(new Set(Object.keys(reviewFields)));
       setParseStep('review');
     } else {
       setParseStep('upload');
@@ -477,10 +492,10 @@ export default function DocumentsModal({
   const parsedCount = Object.keys(parsedFields).length;
 
   // ── Render ────────────────────────────────────────────────────────────────
-  return (
+  const ui = (
     <>
       {/* ── Main modal ────────────────────────────────────────────────────── */}
-      <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[200] p-4" onClick={onClose}>
         <div
           className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[88vh] flex flex-col overflow-hidden"
           onClick={e => e.stopPropagation()}
@@ -690,7 +705,7 @@ export default function DocumentsModal({
       {/* ── Upload + optional parse sub-modal ────────────────────────────────── */}
       {showUpload && (
         <div
-          className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4"
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-[210] p-4"
           onClick={() => closeUpload()}
         >
           <div
@@ -968,8 +983,12 @@ export default function DocumentsModal({
           accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.xls,.xlsx"
           onPick={(files) => addFiles(files)}
           onClose={() => setShowVaultPick(false)}
+          zClass="z-[220]"
         />
       )}
     </>
   );
+
+  if (!portalEl) return null;
+  return createPortal(ui, portalEl);
 }

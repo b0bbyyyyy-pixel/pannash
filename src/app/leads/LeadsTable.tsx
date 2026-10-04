@@ -3,8 +3,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import BulkDeleteButton from './BulkDeleteButton';
-import { BACK_TO_PIPELINE_MSG, LEAD_DELETED_MSG, PIPELINE_LEAD_MSG, postLeadActionToFrame } from '@/lib/pipeline/iframeMessages';
-import LeadActionsMenu from '@/components/LeadActionsMenu';
+import { BACK_TO_PIPELINE_MSG, LEAD_DELETED_MSG, LEAD_STATE_MSG, PIPELINE_LEAD_MSG, postLeadActionToFrame } from '@/lib/pipeline/iframeMessages';
+import LeadActionsMenu, { type LeadActionId } from '@/components/LeadActionsMenu';
+import dynamic from 'next/dynamic';
+
+const DocumentsModal = dynamic(() => import('@/components/DocumentsModal'), { ssr: false });
 
 interface Lead {
   id: string;
@@ -78,8 +81,10 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
   const router = useRouter();
   const [selectedLeads, setSelectedLeads] = useState<string[]>([]);
   const [leadOverlayId, setLeadOverlayId] = useState<string | null>(null);
+  const [docsLead, setDocsLead] = useState<{ id: string; name: string; company?: string | null } | null>(null);
   const [rows, setRows] = useState(leads);
   const leadFrameRef = useRef<HTMLIFrameElement>(null);
+  const [leadMenuState, setLeadMenuState] = useState<{ section: LeadActionId; appComplete: boolean } | null>(null);
 
   // Context menu
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; lead: Lead } | null>(null);
@@ -126,6 +131,9 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
       if (!d || typeof d !== 'object') return;
       if (d.type === PIPELINE_LEAD_MSG && d.id && d.patch) {
         setRows(prev => prev.map(l => l.id === d.id ? { ...l, ...d.patch } : l));
+      }
+      if (d.type === LEAD_STATE_MSG && typeof d.section === 'string') {
+        setLeadMenuState({ section: d.section as LeadActionId, appComplete: !!d.appComplete });
       }
       if (d.type === BACK_TO_PIPELINE_MSG) {
         setLeadOverlayId(null);
@@ -450,7 +458,17 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
             <div className="flex items-center justify-between px-4 py-2.5 bg-white border-b border-[#e5e5e5] flex-shrink-0">
               <LeadActionsMenu
                 align="left"
-                onAction={id => postLeadActionToFrame(leadFrameRef.current, id)}
+                onAction={id => {
+                  if (id === 'docs') {
+                    const lead = rows.find(l => l.id === leadOverlayId);
+                    if (lead) setDocsLead({ id: lead.id, name: lead.name, company: lead.company ?? null });
+                    return;
+                  }
+                  postLeadActionToFrame(leadFrameRef.current, id);
+                }}
+                currentSection={leadMenuState?.section}
+                showAppDot
+                appComplete={leadMenuState?.appComplete ?? false}
               />
               <div className="flex items-center gap-3">
                 <a
@@ -483,6 +501,14 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
             />
           </div>
         </>
+      )}
+      {docsLead && (
+        <DocumentsModal
+          leadId={docsLead.id}
+          leadName={docsLead.name}
+          leadCompany={docsLead.company}
+          onClose={() => setDocsLead(null)}
+        />
       )}
     </>
   );

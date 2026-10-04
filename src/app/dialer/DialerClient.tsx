@@ -4,8 +4,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
-import { BACK_TO_PIPELINE_MSG, LEAD_DELETED_MSG, postLeadActionToFrame } from '@/lib/pipeline/iframeMessages';
-import LeadActionsMenu from '@/components/LeadActionsMenu';
+import { BACK_TO_PIPELINE_MSG, LEAD_DELETED_MSG, LEAD_STATE_MSG, postLeadActionToFrame } from '@/lib/pipeline/iframeMessages';
+import LeadActionsMenu, { type LeadActionId } from '@/components/LeadActionsMenu';
 import { formatDisplay } from '@/lib/dialer/e164';
 import { getPhoneLocation } from '@/lib/phoneLocation';
 import ManualDialPanel from './ManualDialPanel';
@@ -13,6 +13,7 @@ import { useDialerSession } from './useDialerSession';
 
 const ScheduleEmailModal = dynamic(() => import('@/components/ScheduleEmailModal'), { ssr: false });
 const QuickTextPopup = dynamic(() => import('@/components/QuickTextPopup'), { ssr: false });
+const DocumentsModal = dynamic(() => import('@/components/DocumentsModal'), { ssr: false });
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -120,20 +121,30 @@ function dispositionColor(key: string | null): string {
 
 function LeadInfoOverlay({
   leadId,
+  leadName,
+  leadCompany,
   onClose,
   onDeleted,
 }: {
   leadId: string;
+  leadName?: string;
+  leadCompany?: string | null;
   onClose: () => void;
   onDeleted?: (id: string) => void;
 }) {
   const router = useRouter();
   const frameRef = useRef<HTMLIFrameElement>(null);
+  const [leadMenuState, setLeadMenuState] = useState<{ section: LeadActionId; appComplete: boolean } | null>(null);
+  const [showDocs, setShowDocs] = useState(false);
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       if (e.origin !== window.location.origin) return;
       const d = e.data;
       if (!d || typeof d !== 'object') return;
+      if (d.type === LEAD_STATE_MSG && typeof d.section === 'string') {
+        setLeadMenuState({ section: d.section as LeadActionId, appComplete: !!d.appComplete });
+        return;
+      }
       if (d.type === BACK_TO_PIPELINE_MSG) onClose();
       if (d.type === LEAD_DELETED_MSG) {
         onDeleted?.(d.id || leadId);
@@ -158,7 +169,13 @@ function LeadInfoOverlay({
         <div className="flex items-center justify-between px-4 py-2.5 bg-white border-b border-[#e5e5e5] flex-shrink-0">
           <LeadActionsMenu
             align="left"
-            onAction={id => postLeadActionToFrame(frameRef.current, id)}
+            onAction={id => {
+              if (id === 'docs') { setShowDocs(true); return; }
+              postLeadActionToFrame(frameRef.current, id);
+            }}
+            currentSection={leadMenuState?.section}
+            showAppDot
+            appComplete={leadMenuState?.appComplete ?? false}
           />
           <div className="flex items-center gap-3">
             <a
@@ -192,6 +209,14 @@ function LeadInfoOverlay({
           title="Lead workspace"
         />
       </div>
+      {showDocs && (
+        <DocumentsModal
+          leadId={leadId}
+          leadName={leadName || 'Lead'}
+          leadCompany={leadCompany}
+          onClose={() => setShowDocs(false)}
+        />
+      )}
     </>
   );
 }
@@ -518,6 +543,8 @@ export function DialerCard({
       {showOverlay && (
         <LeadInfoOverlay
           leadId={lead.id}
+          leadName={lead.name}
+          leadCompany={lead.company}
           onClose={() => setShowOverlay(false)}
           onDeleted={onLeadDeleted}
         />

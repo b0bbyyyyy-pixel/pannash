@@ -7,6 +7,7 @@ import {
   BACK_TO_PIPELINE_MSG,
   LEAD_DELETED_MSG,
   LEAD_SHOWN_MSG,
+  LEAD_STATE_MSG,
   PIPELINE_LEAD_MSG,
   isInIframe,
   leadInfoUrl,
@@ -26,6 +27,7 @@ const ManageStatusesModal    = dynamic(() => import('@/components/ManageStatuses
 const QuickTextPopup         = dynamic(() => import('@/components/QuickTextPopup'),         { ssr: false });
 const ScheduleEmailModal     = dynamic(() => import('@/components/ScheduleEmailModal'),     { ssr: false });
 const FollowUpModal          = dynamic(() => import('@/components/FollowUpModal'),          { ssr: false });
+const DocumentsModal         = dynamic(() => import('@/components/DocumentsModal'),         { ssr: false });
 
 interface Lead {
   id: string;
@@ -296,6 +298,8 @@ export default function PipelineClient({ leads, userId, compact = false, initial
   const [rowEmailLead, setRowEmailLead]     = useState<Lead | null>(null);
   const [rowFollowUpLead, setRowFollowUpLead] = useState<Lead | null>(null);
   const [rowCallMsg, setRowCallMsg]         = useState<string | null>(null);
+  const [docsLead, setDocsLead]             = useState<{ id: string; name: string; company?: string | null } | null>(null);
+  const [leadMenuState, setLeadMenuState]   = useState<{ section: LeadActionId; appComplete: boolean } | null>(null);
   const leadFrameRef = useRef<HTMLIFrameElement>(null);
   const webphone = useWebPhone();
 
@@ -311,6 +315,11 @@ export default function PipelineClient({ leads, userId, compact = false, initial
   useEffect(() => { setRows(leads); }, [leads]);
   useEffect(() => { setEmbedded(compact || isInIframe()); }, [compact]);
   useEffect(() => { if (initialSelectedId) setSelectedLeadId(initialSelectedId); }, [initialSelectedId]);
+  useEffect(() => {
+    if (!rowCallMsg) return;
+    const t = setTimeout(() => setRowCallMsg(null), 4000);
+    return () => clearTimeout(t);
+  }, [rowCallMsg]);
 
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
@@ -319,6 +328,10 @@ export default function PipelineClient({ leads, userId, compact = false, initial
       if (!d || typeof d !== 'object') return;
       if (d.type === LEAD_SHOWN_MSG && d.id) {
         setSelectedLeadId(d.id);
+        return;
+      }
+      if (d.type === LEAD_STATE_MSG && typeof d.section === 'string') {
+        setLeadMenuState({ section: d.section as LeadActionId, appComplete: !!d.appComplete });
         return;
       }
       if (d.type === PIPELINE_LEAD_MSG && d.id && d.patch) {
@@ -523,7 +536,7 @@ export default function PipelineClient({ leads, userId, compact = false, initial
         goTo(lead.id, { tab: 'lender' });
         break;
       case 'docs':
-        goTo(lead.id, { tab: 'docs' });
+        setDocsLead({ id: lead.id, name: lead.name, company: lead.company ?? null });
         break;
       case 'send':
         goTo(lead.id, { tab: 'lender', action: 'send' });
@@ -532,7 +545,7 @@ export default function PipelineClient({ leads, userId, compact = false, initial
         goTo(lead.id, { tab: 'lender', action: 'offers' });
         break;
       case 'financials':
-        goTo(lead.id, { tab: 'lender', action: 'financials' });
+        goTo(lead.id, { tab: 'lender' });
         break;
       case 'edit':
         goTo(lead.id, { tab: 'application', action: 'edit' });
@@ -1120,7 +1133,17 @@ export default function PipelineClient({ leads, userId, compact = false, initial
             <div className="flex items-center justify-between px-4 py-2.5 bg-white border-b border-[#e5e5e5] flex-shrink-0">
               <LeadActionsMenu
                 align="left"
-                onAction={id => postLeadActionToFrame(leadFrameRef.current, id)}
+                onAction={id => {
+                  if (id === 'docs') {
+                    const lead = rows.find(l => l.id === leadOverlayId) ?? rows.find(l => l.id === selectedLeadId);
+                    if (lead) setDocsLead({ id: lead.id, name: lead.name, company: lead.company ?? null });
+                    return;
+                  }
+                  postLeadActionToFrame(leadFrameRef.current, id);
+                }}
+                currentSection={leadMenuState?.section}
+                showAppDot
+                appComplete={leadMenuState?.appComplete ?? false}
               />
               <div className="flex items-center gap-3">
                 <a
@@ -1156,6 +1179,15 @@ export default function PipelineClient({ leads, userId, compact = false, initial
             />
           </div>
         </>
+      )}
+
+      {docsLead && (
+        <DocumentsModal
+          leadId={docsLead.id}
+          leadName={docsLead.name}
+          leadCompany={docsLead.company}
+          onClose={() => setDocsLead(null)}
+        />
       )}
 
       {rowSmsLead && (

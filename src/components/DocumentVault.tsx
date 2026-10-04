@@ -46,12 +46,14 @@ export default function DocumentVault({
   onPick,
   accept,
   inline,
+  zClass = 'z-[80]',
 }: {
   onClose?: () => void;
   pick?: boolean;
   onPick?: (files: File[]) => void;
   accept?: string;
   inline?: boolean;
+  zClass?: string;
 }) {
   const [files, setFiles] = useState<VaultFile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -410,7 +412,7 @@ export default function DocumentVault({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[80] p-4" onClick={onClose}>
+    <div className={`fixed inset-0 bg-black/40 flex items-center justify-center ${zClass} p-4`} onClick={onClose}>
       <div
         className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[84vh] flex flex-col overflow-hidden"
         onClick={e => e.stopPropagation()}
