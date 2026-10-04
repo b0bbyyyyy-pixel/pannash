@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import BulkDeleteButton from './BulkDeleteButton';
+import { BACK_TO_PIPELINE_MSG, LEAD_DELETED_MSG, PIPELINE_LEAD_MSG } from '@/lib/pipeline/iframeMessages';
 
 interface Lead {
   id: string;
@@ -75,6 +76,7 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
   const router = useRouter();
   const [selectedLeads, setSelectedLeads] = useState<string[]>([]);
   const [leadOverlayId, setLeadOverlayId] = useState<string | null>(null);
+  const [rows, setRows] = useState(leads);
 
   // Context menu
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; lead: Lead } | null>(null);
@@ -112,7 +114,30 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
-  const filtered = leads.filter(lead => {
+  useEffect(() => { setRows(leads); }, [leads]);
+
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      if (e.origin !== window.location.origin) return;
+      const d = e.data;
+      if (!d || typeof d !== 'object') return;
+      if (d.type === PIPELINE_LEAD_MSG && d.id && d.patch) {
+        setRows(prev => prev.map(l => l.id === d.id ? { ...l, ...d.patch } : l));
+      }
+      if (d.type === BACK_TO_PIPELINE_MSG) {
+        setLeadOverlayId(null);
+      }
+      if (d.type === LEAD_DELETED_MSG && d.id) {
+        setLeadOverlayId(null);
+        setRows(prev => prev.filter(l => l.id !== d.id));
+        router.refresh();
+      }
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, [router]);
+
+  const filtered = rows.filter(lead => {
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
     return (

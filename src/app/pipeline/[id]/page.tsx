@@ -19,6 +19,7 @@ export default async function PipelineLeadPage({
   const sp = await searchParams;
   const isModal = sp.modal === '1';
   const fromLeads = sp.from === 'leads';
+  const hidePipelineNav = sp.from === 'inbox' || sp.from === 'dialer';
 
   const cookieStore = await cookies();
   const supabase = createServerClient(
@@ -85,6 +86,8 @@ export default async function PipelineLeadPage({
             userName={userName}
             fromLeads={fromLeads}
             isModal
+            hidePipelineNav={hidePipelineNav}
+            fromSource={sp.from ?? null}
             campaignName={campaignName}
           />
         </div>

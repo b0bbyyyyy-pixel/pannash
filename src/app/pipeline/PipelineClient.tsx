@@ -3,6 +3,13 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
+import {
+  BACK_TO_PIPELINE_MSG,
+  LEAD_DELETED_MSG,
+  PIPELINE_LEAD_MSG,
+  isInIframe,
+  postOpenLead,
+} from '@/lib/pipeline/iframeMessages';
 
 const AddPipelineLeadModal   = dynamic(() => import('@/components/AddPipelineLeadModal'),   { ssr: false });
 const ManageStatusesModal    = dynamic(() => import('@/components/ManageStatusesModal'),     { ssr: false });
@@ -38,6 +45,7 @@ interface PipelineClientProps {
   leads: Lead[];
   userId: string;
   compact?: boolean;
+  initialSelectedId?: string | null;
 }
 
 // ── Status helpers (dynamic, loaded from DB) ───────────────────────────────────
@@ -255,14 +263,17 @@ function FilterSection({
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function PipelineClient({ leads, userId, compact = false }: PipelineClientProps) {
+export default function PipelineClient({ leads, userId, compact = false, initialSelectedId = null }: PipelineClientProps) {
   const router = useRouter();
   const [rows, setRows]                     = useState(leads);
+  const [embedded, setEmbedded]             = useState(!!compact);
+  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(initialSelectedId);
   const [search, setSearch]                 = useState('');
   const [showAddModal, setShowAddModal]     = useState(false);
   const [showManageStatuses, setShowManageStatuses] = useState(false);
   const [showDrawer, setShowDrawer]         = useState(false);
   const [dbStatuses, setDbStatuses]         = useState<DBStatus[]>([]);
+  const [leadOverlayId, setLeadOverlayId]   = useState<string | null>(null);
 
   // Load dynamic statuses
   const loadStatuses = useCallback(() => {
@@ -274,16 +285,34 @@ export default function PipelineClient({ leads, userId, compact = false }: Pipel
 
   useEffect(() => { loadStatuses(); }, [loadStatuses]);
   useEffect(() => { setRows(leads); }, [leads]);
+  useEffect(() => { setEmbedded(compact || isInIframe()); }, [compact]);
+  useEffect(() => { if (initialSelectedId) setSelectedLeadId(initialSelectedId); }, [initialSelectedId]);
 
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
+      if (e.origin !== window.location.origin) return;
       const d = e.data;
-      if (!d || d.type !== 'gostwrk-pipeline-lead' || !d.id || !d.patch) return;
-      setRows(prev => prev.map(l => l.id === d.id ? { ...l, ...d.patch } : l));
+      if (!d || typeof d !== 'object') return;
+      if (d.type === PIPELINE_LEAD_MSG && d.id && d.patch) {
+        setRows(prev => prev.map(l => l.id === d.id ? { ...l, ...d.patch } : l));
+        return;
+      }
+      if (d.type === BACK_TO_PIPELINE_MSG) {
+        if (d.id) setSelectedLeadId(d.id);
+        setLeadOverlayId(null);
+        router.refresh();
+        return;
+      }
+      if (d.type === LEAD_DELETED_MSG && d.id) {
+        setRows(prev => prev.filter(l => l.id !== d.id));
+        setLeadOverlayId(null);
+        setSelectedLeadId(prev => (prev === d.id ? null : prev));
+        router.refresh();
+      }
     };
     window.addEventListener('message', onMsg);
     return () => window.removeEventListener('message', onMsg);
-  }, []);
+  }, [router]);
 
   const [applied, setApplied]               = useState<Filters>(buildDefaultFilters);
   const [pending, setPending]               = useState<Filters>(buildDefaultFilters);
@@ -402,8 +431,14 @@ export default function PipelineClient({ leads, userId, compact = false }: Pipel
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [applied]);
   const statusNames  = useMemo(() => dbStatuses.map(s => s.name), [dbStatuses]);
-  const [leadOverlayId, setLeadOverlayId] = useState<string | null>(null);
-  const goTo = (id: string) => setLeadOverlayId(id);
+  const goTo = (id: string, extra?: { tab?: string; action?: string }) => {
+    setSelectedLeadId(id);
+    if (embedded) {
+      postOpenLead(id, extra);
+      return;
+    }
+    setLeadOverlayId(id);
+  };
   const closeLeadOverlay = useCallback(() => {
     setLeadOverlayId(null);
     router.refresh();
@@ -514,7 +549,7 @@ export default function PipelineClient({ leads, userId, compact = false }: Pipel
                 onClick={() => goTo(lead.id)}
                 className={`grid ${PIPELINE_COLS} gap-x-2 px-3 py-1.5 cursor-pointer hover:bg-[#fafafa] transition-colors border-b border-[#f5f5f5] ${
                   idx === filtered.length - 1 ? 'border-b-0' : ''
-                }`}
+                } ${selectedLeadId === lead.id ? 'bg-[#e8e8e8] shadow-[inset_3px_0_0_#1a1a1a]' : ''}`}
               >
                 {/* Added / created date */}
                 <div className="flex items-center">
@@ -917,8 +952,8 @@ export default function PipelineClient({ leads, userId, compact = false }: Pipel
         />
       )}
 
-      {/* ── LEAD OVERLAY ─────────────────────────────────────────────────── */}
-      {leadOverlayId && (
+      {/* ── LEAD OVERLAY — never nest this iframe when Pipeline is already in one ── */}
+      {leadOverlayId && !embedded && (
         <>
           {/* Backdrop */}
           <div

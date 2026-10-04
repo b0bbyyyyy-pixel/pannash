@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
+import { useRouter } from 'next/navigation';
+import { BACK_TO_PIPELINE_MSG, LEAD_DELETED_MSG } from '@/lib/pipeline/iframeMessages';
 import { formatDisplay } from '@/lib/dialer/e164';
 import { getPhoneLocation } from '@/lib/phoneLocation';
 import ManualDialPanel from './ManualDialPanel';
@@ -116,6 +118,22 @@ function dispositionColor(key: string | null): string {
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function LeadInfoOverlay({ leadId, onClose }: { leadId: string; onClose: () => void }) {
+  const router = useRouter();
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      if (e.origin !== window.location.origin) return;
+      const d = e.data;
+      if (!d || typeof d !== 'object') return;
+      if (d.type === BACK_TO_PIPELINE_MSG) onClose();
+      if (d.type === LEAD_DELETED_MSG) {
+        onClose();
+        router.refresh();
+      }
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, [onClose, router]);
+
   return (
     <>
       {/* Backdrop */}
@@ -154,7 +172,7 @@ function LeadInfoOverlay({ leadId, onClose }: { leadId: string; onClose: () => v
         </div>
         {/* iframe — reuses the same modal=1 route the pipeline uses */}
         <iframe
-          src={`/pipeline/${leadId}?modal=1`}
+          src={`/pipeline/${leadId}?modal=1&from=dialer`}
           className="flex-1 w-full bg-white border-0"
           title="Lead workspace"
         />

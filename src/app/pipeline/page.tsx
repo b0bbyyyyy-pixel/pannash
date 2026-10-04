@@ -11,7 +11,7 @@ export const revalidate = 0;
 export default async function PipelinePage({
   searchParams,
 }: {
-  searchParams: Promise<{ modal?: string }>;
+  searchParams: Promise<{ modal?: string; selected?: string }>;
 }) {
   const cookieStore = await cookies();
   const supabase = createServerClient(
@@ -166,7 +166,7 @@ export default async function PipelinePage({
     return (
       <div className="min-h-screen bg-[#fafafa]">
         <div className="px-3 py-3">
-          <PipelineClient leads={leadsWithText} userId={user.id} compact />
+          <PipelineClient leads={leadsWithText} userId={user.id} compact initialSelectedId={sp.selected ?? null} />
         </div>
       </div>
     );

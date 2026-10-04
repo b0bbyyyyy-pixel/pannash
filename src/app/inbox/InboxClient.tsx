@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@supabase/supabase-js';
 import { useWebPhone } from '@/components/webphone/WebPhone';
 import InboxDialer from '@/components/InboxDialer';
@@ -11,6 +11,15 @@ import { casperEffectiveForLead } from '@/lib/casper/allow';
 import InboundPhoto from '@/components/mobile/InboundPhoto';
 import { getPhoneLocation } from '@/lib/phoneLocation';
 import { outboundSmsReceipt } from '@/lib/inbox/smsReceipt';
+import {
+  BACK_TO_PIPELINE_MSG,
+  LEAD_DELETED_MSG,
+  LEAD_SHOWN_MSG,
+  OPEN_LEAD_MSG,
+  PIPELINE_LEAD_MSG,
+  leadInfoUrl,
+  pipelineListUrl,
+} from '@/lib/pipeline/iframeMessages';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -226,6 +235,9 @@ export default function InboxClient({
   // Lead overlay — shows the pipeline lead workspace in a floating panel
   const [leadOverlayId, setLeadOverlayId] = useState<string | null>(null);
   const [showPipeline, setShowPipeline] = useState(false);
+  const [pipelineFrameSrc, setPipelineFrameSrc] = useState('/pipeline?modal=1');
+  const [pipelineLeadId, setPipelineLeadId] = useState<string | null>(null);
+  const [pipelineShowingLead, setPipelineShowingLead] = useState(false);
 
   const threadScrollerRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
@@ -244,6 +256,7 @@ export default function InboxClient({
     Date.now() - new Date(lastThreadMsg.created_at).getTime() < 10 * 60_000
   );
   const webphone = useWebPhone();
+  const router = useRouter();
   const pathname = usePathname();
   const [dialerOpen, setDialerOpen] = useState(false);
   const [userTz, setUserTz] = useState(() => {
@@ -310,6 +323,50 @@ export default function InboxClient({
   }, [initialLeadId, debouncedSearch, activeListName]);
 
   useEffect(() => { loadLeads(); }, [loadLeads]);
+
+  // Inbox owns the single iframe: Pipeline list ↔ Lead Info swap, never nest.
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      if (e.origin !== window.location.origin) return;
+      const d = e.data;
+      if (!d || typeof d !== 'object') return;
+      if (d.type === OPEN_LEAD_MSG && d.id) {
+        setShowPipeline(true);
+        setPipelineShowingLead(true);
+        setPipelineLeadId(d.id);
+        setPipelineFrameSrc(leadInfoUrl(d.id, { tab: d.tab, action: d.action }));
+        return;
+      }
+      if (d.type === LEAD_SHOWN_MSG && d.id) {
+        setPipelineLeadId(d.id);
+        return;
+      }
+      if (d.type === BACK_TO_PIPELINE_MSG) {
+        const id = d.id || pipelineLeadId;
+        setPipelineLeadId(id || null);
+        setPipelineShowingLead(false);
+        setPipelineFrameSrc(pipelineListUrl(id));
+        if (leadOverlayId && (!d.id || d.id === leadOverlayId)) {
+          setLeadOverlayId(null);
+        }
+        return;
+      }
+      if (d.type === LEAD_DELETED_MSG && d.id) {
+        setLeads(prev => prev.filter(l => l.id !== d.id));
+        if (leadOverlayId === d.id) setLeadOverlayId(null);
+        setPipelineShowingLead(false);
+        setPipelineLeadId(prev => (prev === d.id ? null : prev));
+        setPipelineFrameSrc('/pipeline?modal=1');
+        router.refresh();
+        return;
+      }
+      if (d.type === PIPELINE_LEAD_MSG && d.id && d.patch) {
+        setLeads(prev => prev.map(l => l.id === d.id ? { ...l, ...d.patch } as InboxLead : l));
+      }
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, [pipelineLeadId, leadOverlayId, router]);
 
   // ── Load messages on lead select ────────────────────────────────────────────
   const loadMessages = useCallback(async (leadId: string, opts?: { quiet?: boolean }) => {
@@ -713,7 +770,12 @@ export default function InboxClient({
 
             <button
               type="button"
-              onClick={() => setShowPipeline(true)}
+              onClick={() => {
+                setPipelineFrameSrc('/pipeline?modal=1');
+                setPipelineLeadId(null);
+                setPipelineShowingLead(false);
+                setShowPipeline(true);
+              }}
               className="flex-shrink-0 text-[11px] font-medium text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors bg-transparent border-0 p-0"
             >
               Pipeline
@@ -1280,17 +1342,38 @@ export default function InboxClient({
       <>
         <div
           className="fixed inset-0 bg-black/40 z-[80]"
-          onClick={() => setShowPipeline(false)}
+          onClick={() => {
+            setShowPipeline(false);
+            setPipelineFrameSrc('/pipeline?modal=1');
+            setPipelineLeadId(null);
+            setPipelineShowingLead(false);
+          }}
         />
         <div
           className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[81] flex flex-col rounded-xl shadow-2xl overflow-hidden"
           style={{ width: 'min(88vw, 920px)', height: 'min(78vh, 680px)' }}
         >
           <div className="flex items-center justify-between px-4 py-2.5 bg-white border-b border-[#e5e5e5] flex-shrink-0">
-            <span className="text-xs text-[#6b6b6b] font-medium">Pipeline</span>
+            <div className="flex items-center gap-2">
+              {pipelineShowingLead && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPipelineShowingLead(false);
+                    setPipelineFrameSrc(pipelineListUrl(pipelineLeadId));
+                  }}
+                  className="text-xs text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors"
+                >
+                  ← Pipeline
+                </button>
+              )}
+              <span className="text-xs text-[#6b6b6b] font-medium">
+                {pipelineShowingLead ? 'Lead Info' : 'Pipeline'}
+              </span>
+            </div>
             <div className="flex items-center gap-3">
               <a
-                href="/pipeline"
+                href={pipelineLeadId ? `/pipeline/${pipelineLeadId}` : '/pipeline'}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-[#6b6b6b] hover:text-[#1a1a1a] text-xs flex items-center gap-1 transition-colors"
@@ -1302,7 +1385,12 @@ export default function InboxClient({
                 Full page
               </a>
               <button
-                onClick={() => setShowPipeline(false)}
+                onClick={() => {
+                  setShowPipeline(false);
+                  setPipelineFrameSrc('/pipeline?modal=1');
+                  setPipelineLeadId(null);
+                  setPipelineShowingLead(false);
+                }}
                 className="text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors p-1 rounded hover:bg-[#f5f5f5]"
                 title="Close"
               >
@@ -1313,9 +1401,9 @@ export default function InboxClient({
             </div>
           </div>
           <iframe
-            src="/pipeline?modal=1"
+            src={pipelineFrameSrc}
             className="flex-1 w-full bg-white border-0"
-            title="Pipeline"
+            title={pipelineShowingLead ? 'Lead workspace' : 'Pipeline'}
           />
         </div>
       </>
@@ -1362,7 +1450,7 @@ export default function InboxClient({
           </div>
           {/* iframe */}
           <iframe
-            src={`/pipeline/${leadOverlayId}?modal=1`}
+            src={`/pipeline/${leadOverlayId}?modal=1&from=inbox`}
             className="flex-1 w-full bg-white rounded-b-xl border-0"
             title="Lead workspace"
           />

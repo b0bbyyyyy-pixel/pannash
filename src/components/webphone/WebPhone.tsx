@@ -14,7 +14,8 @@ import {
   createContext, useContext, useCallback, useEffect, useRef, useState,
 } from 'react';
 import type { Call, Device } from '@twilio/voice-sdk';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+import { BACK_TO_PIPELINE_MSG, LEAD_DELETED_MSG } from '@/lib/pipeline/iframeMessages';
 
 type PhoneStatus = 'offline' | 'ready' | 'connecting' | 'ringing' | 'in-call';
 
@@ -80,6 +81,22 @@ function LeadCardOverlay({
   inCall: boolean;
   onClose: () => void;
 }) {
+  const router = useRouter();
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      if (e.origin !== window.location.origin) return;
+      const d = e.data;
+      if (!d || typeof d !== 'object') return;
+      if (d.type === BACK_TO_PIPELINE_MSG) onClose();
+      if (d.type === LEAD_DELETED_MSG) {
+        onClose();
+        router.refresh();
+      }
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, [onClose, router]);
+
   return (
     <>
       <div className="fixed inset-0 bg-black/40 z-[90]" onClick={onClose} />
@@ -118,7 +135,7 @@ function LeadCardOverlay({
           </div>
         </div>
         <iframe
-          src={`/pipeline/${leadId}?modal=1`}
+          src={`/pipeline/${leadId}?modal=1&from=dialer`}
           className="w-full flex-1 border-0 bg-white"
           title="Lead workspace"
         />

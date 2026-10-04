@@ -3,6 +3,7 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
+import { isInIframe, postBackToPipeline, postLeadDeleted, postLeadPatch, postLeadShown } from '@/lib/pipeline/iframeMessages';
 import { toE164 } from '@/lib/dialer/e164';
 import { buildFundingApplication } from '@/lib/fundingApplication';
 import { useWebPhone } from '@/components/webphone/WebPhone';
@@ -56,6 +57,10 @@ interface LeadWorkspaceClientProps {
   fromLeads?: boolean;
   /** True when opened in the iframe overlay (dialer / pipeline modal) */
   isModal?: boolean;
+  /** Hide Back / Add to Pipeline (Inbox View Lead, Dialer, WebPhone) */
+  hidePipelineNav?: boolean;
+  /** modal `from` query so Prev/Next keeps the same chrome */
+  fromSource?: string | null;
   campaignName?: string | null;
 }
 
@@ -279,6 +284,8 @@ export default function LeadWorkspaceClient({
   userName,
   fromLeads = false,
   isModal = false,
+  hidePipelineNav = false,
+  fromSource = null,
   campaignName = null,
 }: LeadWorkspaceClientProps) {
   const router = useRouter();
@@ -381,6 +388,22 @@ export default function LeadWorkspaceClient({
   const currentIdx = allLeadIds.indexOf(lead.id);
   const prevId = currentIdx > 0 ? allLeadIds[currentIdx - 1] : null;
   const nextId = currentIdx < allLeadIds.length - 1 ? allLeadIds[currentIdx + 1] : null;
+
+  const modalSiblingQs = () => {
+    const qs = new URLSearchParams({ modal: '1' });
+    if (fromSource) qs.set('from', fromSource);
+    return `?${qs.toString()}`;
+  };
+
+  const goToSibling = (id: string) => {
+    const inFrame = isModal || isInIframe();
+    if (inFrame) postLeadShown(id);
+    router.push(`/pipeline/${id}${inFrame ? modalSiblingQs() : ''}`);
+  };
+
+  useEffect(() => {
+    if (isModal && isInIframe()) postLeadShown(lead.id);
+  }, [isModal, lead.id]);
 
   const status = lead.lead_status || '';
   const statusStyle = getStatusStyle(status, dbStatuses);
@@ -708,9 +731,8 @@ export default function LeadWorkspaceClient({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ leadId: lead.id }),
       });
-      // If inside iframe overlay, break out to parent; otherwise navigate normally
-      if (typeof window !== 'undefined' && window.top && window.top !== window.self) {
-        window.top.location.href = '/pipeline';
+      if (isModal && isInIframe()) {
+        postLeadDeleted(lead.id);
       } else {
         router.push('/pipeline');
       }
@@ -741,6 +763,7 @@ export default function LeadWorkspaceClient({
       });
     }
     setLead(prev => ({ ...prev, lead_status: val, ...(nextUd ? { underwriting_data: nextUd } : {}) }));
+    postLeadPatch(lead.id, { lead_status: val, ...(nextUd ? { underwriting_data: nextUd } : {}) });
   };
 
   const saveTemperature = async (val: string) => {
@@ -750,6 +773,7 @@ export default function LeadWorkspaceClient({
       body: JSON.stringify({ leadId: lead.id, field: 'temperature', value: val }),
     });
     setLead(prev => ({ ...prev, temperature: val }));
+    postLeadPatch(lead.id, { temperature: val });
   };
 
   const saveAssignedTo = async (val: string) => {
@@ -759,6 +783,7 @@ export default function LeadWorkspaceClient({
       body: JSON.stringify({ leadId: lead.id, field: 'assigned_to', value: val }),
     });
     setLead(prev => ({ ...prev, assigned_to: val }));
+    postLeadPatch(lead.id, { assigned_to: val });
   };
 
   const fmtDate = (d: string | null | undefined) =>
@@ -935,18 +960,25 @@ export default function LeadWorkspaceClient({
       <div className="bg-white border-b border-[#e5e5e5] px-6 py-3 flex items-center justify-between flex-shrink-0">
         {/* Left: back + title */}
         <div className="flex items-center gap-4">
-          {!isModal && (
+          {!hidePipelineNav && (
             <>
               {lead.in_pipeline && !fromLeads ? (
-                <a
-                  href="/pipeline"
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isModal && isInIframe()) {
+                      postBackToPipeline(lead.id);
+                      return;
+                    }
+                    router.push('/pipeline');
+                  }}
                   className="flex items-center gap-1.5 text-sm text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                   </svg>
                   Back to Pipeline
-                </a>
+                </button>
               ) : (
                 <button
                   onClick={async () => {
@@ -956,6 +988,10 @@ export default function LeadWorkspaceClient({
                       body: JSON.stringify({ leadId: lead.id }),
                     });
                     setLead(prev => ({ ...prev, in_pipeline: true }));
+                    if (isModal && isInIframe()) {
+                      postBackToPipeline(lead.id);
+                      return;
+                    }
                     router.push('/pipeline');
                   }}
                   className="flex items-center gap-1.5 text-sm font-semibold text-white bg-[#1a1a1a] hover:bg-[#333] px-3 py-1 rounded-md transition-colors"
@@ -1075,8 +1111,7 @@ export default function LeadWorkspaceClient({
             <button
               onClick={() => {
                 if (!prevId) return;
-                const inIframe = typeof window !== 'undefined' && window.top && window.top !== window.self;
-                router.push(`/pipeline/${prevId}${inIframe ? '?modal=1' : ''}`);
+                goToSibling(prevId);
               }}
               disabled={!prevId}
               className="px-2 py-1.5 text-sm border border-[#e5e5e5] rounded-md disabled:opacity-30 hover:bg-[#f5f5f5] transition-colors"
@@ -1087,8 +1122,7 @@ export default function LeadWorkspaceClient({
             <button
               onClick={() => {
                 if (!nextId) return;
-                const inIframe = typeof window !== 'undefined' && window.top && window.top !== window.self;
-                router.push(`/pipeline/${nextId}${inIframe ? '?modal=1' : ''}`);
+                goToSibling(nextId);
               }}
               disabled={!nextId}
               className="px-2 py-1.5 text-sm border border-[#e5e5e5] rounded-md disabled:opacity-30 hover:bg-[#f5f5f5] transition-colors"
@@ -1686,13 +1720,7 @@ export default function LeadWorkspaceClient({
           onClose={() => setShowFollowUpModal(false)}
           onSaved={next => {
             setLead(prev => ({ ...prev, ...next }));
-            try {
-              window.parent?.postMessage({
-                type: 'gostwrk-pipeline-lead',
-                id: lead.id,
-                patch: next,
-              }, '*');
-            } catch { /* not in iframe */ }
+            postLeadPatch(lead.id, next);
           }}
           onCleared={() => {
             const patch = {
@@ -1704,9 +1732,7 @@ export default function LeadWorkspaceClient({
               follow_up_sms_sent_at: null,
             };
             setLead(prev => ({ ...prev, ...patch }));
-            try {
-              window.parent?.postMessage({ type: 'gostwrk-pipeline-lead', id: lead.id, patch }, '*');
-            } catch { /* not in iframe */ }
+            postLeadPatch(lead.id, patch);
           }}
         />
       )}

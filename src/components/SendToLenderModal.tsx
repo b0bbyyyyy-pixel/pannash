@@ -256,7 +256,7 @@ export default function SendToLenderModal({
 
     setLenders(enriched);
     setSubmissions(rawSubs);
-    setTemplates(tJson.templates || tJson || []);
+    setTemplates(Array.isArray(tJson.templates) ? tJson.templates : []);
 
     const docs = dJson.attachments || [];
     setDocuments(docs);
