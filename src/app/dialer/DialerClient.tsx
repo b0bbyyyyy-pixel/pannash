@@ -14,6 +14,7 @@ import { useDialerSession } from './useDialerSession';
 const ScheduleEmailModal = dynamic(() => import('@/components/ScheduleEmailModal'), { ssr: false });
 const QuickTextPopup = dynamic(() => import('@/components/QuickTextPopup'), { ssr: false });
 const DocumentsModal = dynamic(() => import('@/components/DocumentsModal'), { ssr: false });
+const FollowUpModal = dynamic(() => import('@/components/FollowUpModal'), { ssr: false });
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -123,26 +124,30 @@ function LeadInfoOverlay({
   leadId,
   leadName,
   leadCompany,
+  leadEmail,
   onClose,
   onDeleted,
 }: {
   leadId: string;
-  leadName?: string;
+  leadName: string;
   leadCompany?: string | null;
+  leadEmail?: string | null;
   onClose: () => void;
   onDeleted?: (id: string) => void;
 }) {
   const router = useRouter();
   const frameRef = useRef<HTMLIFrameElement>(null);
-  const [leadMenuState, setLeadMenuState] = useState<{ section: LeadActionId; appComplete: boolean } | null>(null);
+  const [leadMenuState, setLeadMenuState] = useState<{ section: LeadActionId; appComplete: boolean; lendersComplete: boolean } | null>(null);
   const [showDocs, setShowDocs] = useState(false);
+  const [showEmail, setShowEmail] = useState(false);
+  const [showFollowUp, setShowFollowUp] = useState(false);
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       if (e.origin !== window.location.origin) return;
       const d = e.data;
       if (!d || typeof d !== 'object') return;
       if (d.type === LEAD_STATE_MSG && typeof d.section === 'string') {
-        setLeadMenuState({ section: d.section as LeadActionId, appComplete: !!d.appComplete });
+        setLeadMenuState({ section: d.section as LeadActionId, appComplete: !!d.appComplete, lendersComplete: !!d.lendersComplete });
         return;
       }
       if (d.type === BACK_TO_PIPELINE_MSG) onClose();
@@ -171,11 +176,14 @@ function LeadInfoOverlay({
             align="left"
             onAction={id => {
               if (id === 'docs') { setShowDocs(true); return; }
+              if (id === 'email') { setShowEmail(true); return; }
+              if (id === 'followup') { setShowFollowUp(true); return; }
               postLeadActionToFrame(frameRef.current, id);
             }}
             currentSection={leadMenuState?.section}
             showAppDot
             appComplete={leadMenuState?.appComplete ?? false}
+            lendersComplete={leadMenuState?.lendersComplete ?? false}
           />
           <div className="flex items-center gap-3">
             <a
@@ -212,9 +220,22 @@ function LeadInfoOverlay({
       {showDocs && (
         <DocumentsModal
           leadId={leadId}
-          leadName={leadName || 'Lead'}
+          leadName={leadName}
           leadCompany={leadCompany}
           onClose={() => setShowDocs(false)}
+        />
+      )}
+      {showEmail && (
+        <ScheduleEmailModal
+          lead={{ id: leadId, name: leadName, email: leadEmail, company: leadCompany }}
+          onClose={() => setShowEmail(false)}
+        />
+      )}
+      {showFollowUp && (
+        <FollowUpModal
+          leadId={leadId}
+          leadName={leadCompany || leadName}
+          onClose={() => setShowFollowUp(false)}
         />
       )}
     </>
@@ -545,6 +566,7 @@ export function DialerCard({
           leadId={lead.id}
           leadName={lead.name}
           leadCompany={lead.company}
+          leadEmail={lead.email}
           onClose={() => setShowOverlay(false)}
           onDeleted={onLeadDeleted}
         />

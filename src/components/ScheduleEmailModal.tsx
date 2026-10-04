@@ -1,6 +1,16 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
+
+function emailPortalTarget(): HTMLElement | null {
+  if (typeof document === 'undefined') return null;
+  try {
+    const topDoc = window.top?.document;
+    if (topDoc?.body) return topDoc.body;
+  } catch { /* cross-origin */ }
+  return document.body;
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface EmailTemplate {
@@ -104,7 +114,29 @@ function replacePlaceholdersWithExamples(text: string): string {
 }
 
 // ── Modal ─────────────────────────────────────────────────────────────────────
-export default function ScheduleEmailModal({ lead, onClose }: ScheduleEmailModalProps) {
+export default function ScheduleEmailModal({ lead: initialLead, onClose }: ScheduleEmailModalProps) {
+  const [lead, setLead] = useState(initialLead);
+  const [portalEl, setPortalEl] = useState<HTMLElement | null>(null);
+  useEffect(() => { setPortalEl(emailPortalTarget()); }, []);
+  useEffect(() => {
+    setLead(initialLead);
+    if (initialLead.email && initialLead.underwriting_data) return;
+    fetch(`/api/leads/${initialLead.id}`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => {
+        const next = d.lead as Partial<LeadForEmail> | undefined;
+        if (!next) return;
+        setLead(prev => ({
+          ...prev,
+          name: prev.name || next.name || prev.name,
+          email: prev.email || next.email || null,
+          phone: prev.phone || next.phone || null,
+          company: prev.company || next.company || null,
+          underwriting_data: prev.underwriting_data || next.underwriting_data || null,
+        }));
+      })
+      .catch(() => {});
+  }, [initialLead]);
   // Template list
   const [templates, setTemplates]                   = useState<EmailTemplate[]>([]);
   const [loadingTemplates, setLoadingTemplates]     = useState(true);
@@ -339,8 +371,9 @@ export default function ScheduleEmailModal({ lead, onClose }: ScheduleEmailModal
   const selectedTemplate = templates.find(t => t.id === selectedId);
 
   // ── Render ────────────────────────────────────────────────────────────────
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[80] p-4" onClick={onClose}>
+  if (!portalEl) return null;
+  return createPortal(
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[200] p-4" onClick={onClose}>
       <div
         className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col overflow-hidden"
         onClick={e => e.stopPropagation()}
@@ -756,6 +789,7 @@ export default function ScheduleEmailModal({ lead, onClose }: ScheduleEmailModal
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    portalEl,
   );
 }

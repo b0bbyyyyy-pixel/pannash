@@ -4,10 +4,12 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import BulkDeleteButton from './BulkDeleteButton';
 import { BACK_TO_PIPELINE_MSG, LEAD_DELETED_MSG, LEAD_STATE_MSG, PIPELINE_LEAD_MSG, postLeadActionToFrame } from '@/lib/pipeline/iframeMessages';
-import LeadActionsMenu, { type LeadActionId } from '@/components/LeadActionsMenu';
 import dynamic from 'next/dynamic';
+import LeadActionsMenu, { type LeadActionId } from '@/components/LeadActionsMenu';
 
 const DocumentsModal = dynamic(() => import('@/components/DocumentsModal'), { ssr: false });
+const ScheduleEmailModal = dynamic(() => import('@/components/ScheduleEmailModal'), { ssr: false });
+const FollowUpModal = dynamic(() => import('@/components/FollowUpModal'), { ssr: false });
 
 interface Lead {
   id: string;
@@ -81,10 +83,12 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
   const router = useRouter();
   const [selectedLeads, setSelectedLeads] = useState<string[]>([]);
   const [leadOverlayId, setLeadOverlayId] = useState<string | null>(null);
-  const [docsLead, setDocsLead] = useState<{ id: string; name: string; company?: string | null } | null>(null);
   const [rows, setRows] = useState(leads);
   const leadFrameRef = useRef<HTMLIFrameElement>(null);
-  const [leadMenuState, setLeadMenuState] = useState<{ section: LeadActionId; appComplete: boolean } | null>(null);
+  const [leadMenuState, setLeadMenuState] = useState<{ section: LeadActionId; appComplete: boolean; lendersComplete: boolean } | null>(null);
+  const [docsLead, setDocsLead] = useState<{ id: string; name: string; company?: string } | null>(null);
+  const [emailLead, setEmailLead] = useState<Lead | null>(null);
+  const [followLead, setFollowLead] = useState<Lead | null>(null);
 
   // Context menu
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; lead: Lead } | null>(null);
@@ -133,7 +137,7 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
         setRows(prev => prev.map(l => l.id === d.id ? { ...l, ...d.patch } : l));
       }
       if (d.type === LEAD_STATE_MSG && typeof d.section === 'string') {
-        setLeadMenuState({ section: d.section as LeadActionId, appComplete: !!d.appComplete });
+        setLeadMenuState({ section: d.section as LeadActionId, appComplete: !!d.appComplete, lendersComplete: !!d.lendersComplete });
       }
       if (d.type === BACK_TO_PIPELINE_MSG) {
         setLeadOverlayId(null);
@@ -447,6 +451,28 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
         deleteMultipleLeads={deleteMultipleLeads}
       />
 
+      {docsLead && (
+        <DocumentsModal
+          leadId={docsLead.id}
+          leadName={docsLead.name}
+          leadCompany={docsLead.company}
+          onClose={() => setDocsLead(null)}
+        />
+      )}
+      {emailLead && (
+        <ScheduleEmailModal
+          lead={emailLead}
+          onClose={() => setEmailLead(null)}
+        />
+      )}
+      {followLead && (
+        <FollowUpModal
+          leadId={followLead.id}
+          leadName={followLead.company || followLead.name}
+          onClose={() => setFollowLead(null)}
+        />
+      )}
+
       {/* ── Lead overlay ─────────────────────────────────────────────────── */}
       {leadOverlayId && (
         <>
@@ -459,9 +485,17 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
               <LeadActionsMenu
                 align="left"
                 onAction={id => {
+                  const l = rows.find(r => r.id === leadOverlayId);
                   if (id === 'docs') {
-                    const lead = rows.find(l => l.id === leadOverlayId);
-                    if (lead) setDocsLead({ id: lead.id, name: lead.name, company: lead.company ?? null });
+                    setDocsLead({ id: leadOverlayId!, name: l?.name || 'Lead', company: l?.company });
+                    return;
+                  }
+                  if (id === 'email') {
+                    if (l) setEmailLead(l);
+                    return;
+                  }
+                  if (id === 'followup') {
+                    if (l) setFollowLead(l);
                     return;
                   }
                   postLeadActionToFrame(leadFrameRef.current, id);
@@ -469,6 +503,7 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
                 currentSection={leadMenuState?.section}
                 showAppDot
                 appComplete={leadMenuState?.appComplete ?? false}
+                lendersComplete={leadMenuState?.lendersComplete ?? false}
               />
               <div className="flex items-center gap-3">
                 <a
@@ -501,14 +536,6 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
             />
           </div>
         </>
-      )}
-      {docsLead && (
-        <DocumentsModal
-          leadId={docsLead.id}
-          leadName={docsLead.name}
-          leadCompany={docsLead.company}
-          onClose={() => setDocsLead(null)}
-        />
       )}
     </>
   );

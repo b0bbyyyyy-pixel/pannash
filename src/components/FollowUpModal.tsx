@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   DEFAULT_FOLLOW_UP_SMS,
   FOLLOW_UP_TIMERS,
@@ -29,14 +30,22 @@ export default function FollowUpModal({
   currentAutoText?: boolean;
   currentSmsBody?: string | null;
   onClose: () => void;
-  onSaved: (next: {
+  onSaved?: (next: {
     follow_up_at: string;
     follow_up_due_at: string;
     follow_up_auto_text: boolean;
     follow_up_sms_body: string | null;
   }) => void;
-  onCleared: () => void;
+  onCleared?: () => void;
 }) {
+  const [portalEl, setPortalEl] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    try {
+      setPortalEl(window.top?.document?.body ?? document.body);
+    } catch {
+      setPortalEl(document.body);
+    }
+  }, []);
   const [timerId, setTimerId] = useState<FollowUpTimerId>('3_days');
   const [customDate, setCustomDate] = useState('');
   const [customTime, setCustomTime] = useState('10:00');
@@ -49,21 +58,31 @@ export default function FollowUpModal({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (currentDueAt) {
-      const d = new Date(currentDueAt);
-      if (!Number.isNaN(d.getTime())) {
-        setTimerId('custom');
+    const applyCurrent = (dueAt?: string | null, auto?: boolean, body?: string | null) => {
+      if (dueAt) {
+        const d = new Date(dueAt);
+        if (!Number.isNaN(d.getTime())) {
+          setTimerId('custom');
+          setCustomDate(localDateKey(d));
+          setCustomTime(localTimeHm(d));
+        }
+      } else {
+        const d = followUpDueFromPreset(3);
         setCustomDate(localDateKey(d));
         setCustomTime(localTimeHm(d));
       }
-    } else {
-      const d = followUpDueFromPreset(3);
-      setCustomDate(localDateKey(d));
-      setCustomTime(localTimeHm(d));
+      setAutoText(!!auto);
+      if (body) setSmsBody(body);
+    };
+    if (currentDueAt !== undefined) {
+      applyCurrent(currentDueAt, currentAutoText, currentSmsBody);
+      return;
     }
-    setAutoText(!!currentAutoText);
-    if (currentSmsBody) setSmsBody(currentSmsBody);
-  }, [currentDueAt, currentAutoText, currentSmsBody]);
+    fetch(`/api/leads/${leadId}`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => applyCurrent(d.lead?.follow_up_due_at, d.lead?.follow_up_auto_text, d.lead?.follow_up_sms_body))
+      .catch(() => applyCurrent(null, false, null));
+  }, [leadId, currentDueAt, currentAutoText, currentSmsBody]);
 
   useEffect(() => {
     fetch('/api/text-templates', { credentials: 'include' })
@@ -107,7 +126,7 @@ export default function FollowUpModal({
         setError(data.error || 'Could not save follow-up');
         return;
       }
-      onSaved({
+      onSaved?.({
         follow_up_at: data.follow_up_at,
         follow_up_due_at: data.follow_up_due_at,
         follow_up_auto_text: data.follow_up_auto_text,
@@ -132,15 +151,16 @@ export default function FollowUpModal({
         setError(data.error || 'Could not clear follow-up');
         return;
       }
-      onCleared();
+      onCleared?.();
       onClose();
     } finally {
       setClearing(false);
     }
   };
 
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+  if (!portalEl) return null;
+  return createPortal(
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[200] p-4" onClick={onClose}>
       <div
         className="bg-white rounded-lg p-5 max-w-md w-full max-h-[90vh] overflow-y-auto"
         onClick={e => e.stopPropagation()}
@@ -275,6 +295,7 @@ export default function FollowUpModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    portalEl,
   );
 }

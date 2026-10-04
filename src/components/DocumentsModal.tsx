@@ -5,6 +5,12 @@ import { createPortal } from 'react-dom';
 import DocumentVault from '@/components/DocumentVault';
 import { enrichParsedBusinessFields } from '@/lib/businessName';
 import {
+  analyzeBankAttachmentForLead,
+  analyzeBankFilesForLead,
+  applyParsedFieldsToLead,
+  splitFullPackFiles,
+} from '@/lib/leadDocActions';
+import {
   parseMcaPositions,
   coerceNumber,
   statementMonthFromFields,
@@ -29,9 +35,9 @@ interface DocumentsModalProps {
   leadId: string;
   leadName: string;
   leadCompany?: string | null;
-  /** Optional FastAPI bank analyzer — unused by the AI Analyze buttons */
+  /** Bank-statement analyze — used by row Analyze and Bank statements upload */
   onAnalyze?: (attachment: Attachment) => void;
-  /** If provided, "Parse as Application" toggle will appear and call this on apply */
+  /** Application parse — used by row Parse application and Application upload */
   onApplyParsed?: (fields: Record<string, string>, selected: Set<string>) => Promise<void>;
   onClose: () => void;
 }
@@ -205,7 +211,17 @@ export default function DocumentsModal({
   const [downloading, setDownloading] = useState<string | null>(null);
   const [deleting, setDeleting]       = useState<string | null>(null);
   const [reExtracting, setReExtracting] = useState<string | null>(null);
+  const [analyzingId, setAnalyzingId]     = useState<string | null>(null);
   const [showVaultPick, setShowVaultPick] = useState(false);
+  const [uploadKind, setUploadKind]       = useState<'save' | 'application' | 'bank' | 'fullpack'>('save');
+  const [uploadStatus, setUploadStatus]   = useState<string | null>(null);
+  const pendingBankSnapFiles = useRef<File[]>([]);
+
+  const applyParsed = onApplyParsed
+    ?? ((fields: Record<string, string>, selected: Set<string>) =>
+      applyParsedFieldsToLead(leadId, fields, selected, leadCompany));
+  const analyzeOne = onAnalyze
+    ?? ((a: Attachment) => analyzeBankAttachmentForLead(leadId, a));
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [portalEl, setPortalEl] = useState<HTMLElement | null>(null);
@@ -236,6 +252,9 @@ export default function DocumentsModal({
     setParseStep('upload');
     setParsedFields({});
     setParsedSelected(new Set());
+    setUploadKind('save');
+    setUploadStatus(null);
+    pendingBankSnapFiles.current = [];
   }, [uploading]);
 
   // ── Sort + filter ──────────────────────────────────────────────────────────
@@ -277,30 +296,38 @@ export default function DocumentsModal({
     a.column_field === 'bank_statements' ||
     /stmt|statement|checking|savings|\bbank\b|frost/i.test(a.file_name);
 
-  const parseAttachment = async (a: Attachment) => {
+  const parseAttachment = async (a: Attachment, documentType?: 'application' | 'bank_statement') => {
     const fd = new FormData();
     fd.append('attachmentId', a.id);
-    if (looksLikeStatement(a)) fd.append('documentType', 'bank_statement');
+    const kind = documentType ?? (looksLikeStatement(a) ? 'bank_statement' : undefined);
+    if (kind) fd.append('documentType', kind);
     const res = await fetch('/api/leads/parse-application', { method: 'POST', body: fd, credentials: 'include' });
     const json = await res.json();
     return { ok: res.ok, json };
   };
 
   // ── Upload ─────────────────────────────────────────────────────────────────
-  const handleUpload = async (extract: boolean) => {
+  const handleUpload = async () => {
     if (!pendingFiles.length) return;
     setUploading(true);
+    setUploadStatus(null);
     const progress: Record<string, 'pending' | 'done' | 'error'> = {};
     pendingFiles.forEach(f => { progress[f.name] = 'pending'; });
     setUploadProgress({ ...progress });
 
     const newAttachments: Attachment[] = [];
+    const packSplit = uploadKind === 'fullpack' ? splitFullPackFiles(pendingFiles.map(f => ({ name: f.name, file: f }))) : null;
+    const bankNameSet = new Set((packSplit?.banks ?? []).map(b => b.name));
+    pendingBankSnapFiles.current = packSplit ? packSplit.banks.map(b => b.file) : [];
 
     for (const file of pendingFiles) {
       const fd = new FormData();
       fd.append('file', file);
       fd.append('leadId', leadId);
-      fd.append('columnField', 'documents');
+      const columnField = uploadKind === 'bank' || (uploadKind === 'fullpack' && bankNameSet.has(file.name))
+        ? 'bank_statements'
+        : 'documents';
+      fd.append('columnField', columnField);
       try {
         const res = await fetch('/api/attachments', { method: 'POST', body: fd, credentials: 'include' });
         if (res.ok) {
@@ -316,12 +343,13 @@ export default function DocumentsModal({
     }
 
     setAttachments(prev => [...newAttachments, ...prev]);
-    setUploading(false);
 
-    if (extract && onApplyParsed && newAttachments.length > 0) {
+    if (uploadKind === 'application' && newAttachments.length > 0) {
+      setUploading(false);
       setPendingFiles([]);
       setUploadProgress({});
       setParseStep('parsing');
+      setUploadStatus('Parsing…');
 
       const mergedFields: Record<string, string> = {};
       const months: StatementMonth[] = [];
@@ -347,28 +375,125 @@ export default function DocumentsModal({
         setParsedFields(reviewFields);
         setParsedSelected(new Set(Object.keys(reviewFields)));
         setParseStep('review');
+        setUploadStatus(null);
       } else {
-        // Still show review step so user can manually fill in what was missed
         setParsedFields({});
         setParsedSelected(new Set());
         setParseStep('review');
+        setUploadStatus('Could not extract application fields.');
       }
-    } else {
-      setPendingFiles([]);
-      setUploadProgress({});
-      setShowUpload(false);
+      return;
     }
+
+    if (uploadKind === 'bank' && newAttachments.length > 0) {
+      const n = newAttachments.length;
+      setUploadStatus(n === 1 ? 'Analyzing…' : `Analyzing ${n} statements…`);
+      try {
+        for (const att of newAttachments) {
+          await analyzeOne(att);
+        }
+        setUploadStatus('Applied to lead');
+        setPendingFiles([]);
+        setUploadProgress({});
+      } catch (e) {
+        setUploadStatus(e instanceof Error ? e.message : 'Analyze failed');
+      } finally {
+        setUploading(false);
+      }
+      return;
+    }
+
+    if (uploadKind === 'fullpack' && newAttachments.length > 0) {
+      setUploading(false);
+      setParseStep('parsing');
+      const byName = new Map(newAttachments.map(a => [a.file_name, a]));
+      const appAtts = (packSplit?.apps ?? []).map(f => byName.get(f.name)).filter(Boolean) as Attachment[];
+      const bankAtts = (packSplit?.banks ?? []).map(f => byName.get(f.name)).filter(Boolean) as Attachment[];
+      const mergedFields: Record<string, string> = {};
+      const months: StatementMonth[] = [];
+
+      try {
+        setUploadStatus('Parsing application…');
+        for (const att of appAtts) {
+          try {
+            const { ok, json } = await parseAttachment(att, 'application');
+            if (ok && json.fields && Object.keys(json.fields).length > 0) {
+              mergeParseFields(mergedFields, json.fields as Record<string, string>);
+            }
+          } catch {
+            console.warn('Parse failed for', att.file_name);
+          }
+        }
+
+        for (let i = 0; i < bankAtts.length; i++) {
+          setUploadStatus(`Parsing statement ${i + 1} of ${bankAtts.length}…`);
+          try {
+            const { ok, json } = await parseAttachment(bankAtts[i], 'bank_statement');
+            if (ok && json.fields && Object.keys(json.fields).length > 0) {
+              const incoming = json.fields as Record<string, string>;
+              const row = statementMonthFromFields(incoming);
+              if (row) months.push(row);
+              mergeParseFields(mergedFields, incoming);
+            }
+          } catch {
+            console.warn('Parse failed for', bankAtts[i].file_name);
+          }
+        }
+
+        attachStatementMonths(mergedFields, months);
+        const reviewFields = enrichParsedBusinessFields(mergedFields);
+        const bankFiles = pendingBankSnapFiles.current;
+        setPendingFiles([]);
+        setUploadProgress({});
+        if (Object.keys(reviewFields).length > 0) {
+          setParsedFields(reviewFields);
+          setParsedSelected(new Set(Object.keys(reviewFields)));
+          setParseStep('review');
+          setUploadStatus(null);
+        } else if (bankFiles.length > 0) {
+          setUploadStatus(bankFiles.length === 1 ? 'Analyzing bank statements…' : `Analyzing ${bankFiles.length} statements…`);
+          await analyzeBankFilesForLead(leadId, bankFiles);
+          setParseStep('upload');
+          setUploadStatus('Applied to lead');
+        } else {
+          setParsedFields({});
+          setParsedSelected(new Set());
+          setParseStep('upload');
+          setUploadStatus('Could not extract application fields.');
+        }
+      } catch (e) {
+        setParseStep('upload');
+        setUploadStatus(e instanceof Error ? e.message : 'Full pack parse failed');
+      }
+      return;
+    }
+
+    setUploading(false);
+    setPendingFiles([]);
+    setUploadProgress({});
+    if (uploadKind === 'save') setShowUpload(false);
+    else if (!newAttachments.length) setUploadStatus('Upload failed.');
   };
 
   // ── Apply parsed fields ────────────────────────────────────────────────────
   const handleApplyFields = async () => {
-    if (!onApplyParsed) return;
     setApplying(true);
     const selected = new Set(parsedSelected);
     if (parsedFields.statementMonths) selected.add('statementMonths');
-    await onApplyParsed(parsedFields, selected);
+    try {
+      await applyParsed(parsedFields, selected);
+      if (uploadKind === 'fullpack' && pendingBankSnapFiles.current.length > 0) {
+        setUploadStatus(pendingBankSnapFiles.current.length === 1 ? 'Analyzing bank statements…' : `Analyzing ${pendingBankSnapFiles.current.length} statements…`);
+        await analyzeBankFilesForLead(leadId, pendingBankSnapFiles.current);
+      }
+      setUploadStatus('Applied to lead');
+      setParseStep('upload');
+      setPendingFiles([]);
+      setUploadProgress({});
+    } catch (e) {
+      setUploadStatus(e instanceof Error ? e.message : 'Could not apply fields');
+    }
     setApplying(false);
-    closeUpload();
   };
 
   // ── Download ───────────────────────────────────────────────────────────────
@@ -401,7 +526,6 @@ export default function DocumentsModal({
 
   // Re-extract: server reads the stored file and sends it to parse-application
   const handleReExtract = async (a: Attachment) => {
-    if (!onApplyParsed) return;
     setReExtracting(a.id);
     try {
       const { ok, json } = await parseAttachment(a);
@@ -429,9 +553,17 @@ export default function DocumentsModal({
     }
   };
 
+  const handleAnalyzeFile = async (a: Attachment) => {
+    setAnalyzingId(a.id);
+    try {
+      await analyzeOne(a);
+    } finally {
+      setAnalyzingId(null);
+    }
+  };
+
   // Analyze selected (or all) docs via parse-application (bank statement or app extraction)
   const handleAnalyzeSelected = async () => {
-    if (!onApplyParsed) return;
     const targets = attachments.filter(a =>
       selected.size > 0 ? selected.has(a.id) : true
     );
@@ -486,8 +618,6 @@ export default function DocumentsModal({
     setRenamingId(null);
   };
 
-  const isBankStatement = (a: Attachment) => looksLikeStatement(a);
-
   const displayName = leadCompany || leadName;
   const parsedCount = Object.keys(parsedFields).length;
 
@@ -540,8 +670,7 @@ export default function DocumentsModal({
               />
             </div>
             {/* Analyze button — extract & fill fields from selected docs */}
-            {onApplyParsed && (
-              <button
+            <button
                 onClick={handleAnalyzeSelected}
                 disabled={analyzing}
                 title={selected.size > 0 ? `Analyze ${selected.size} selected doc(s)` : 'Analyze all docs'}
@@ -554,7 +683,6 @@ export default function DocumentsModal({
                 )}
                 {selected.size > 0 ? `Analyze (${selected.size})` : 'Analyze'}
               </button>
-            )}
 
             <select
               value={sortOrder} onChange={e => setSortOrder(e.target.value as typeof sortOrder)}
@@ -643,34 +771,22 @@ export default function DocumentsModal({
                         </p>
                       </div>
                       <div className="flex items-center gap-1.5 flex-shrink-0">
-                        {onApplyParsed && isBankStatement(a) && (
-                          <button
-                            type="button"
-                            onClick={() => handleReExtract(a)}
-                            disabled={reExtracting === a.id}
-                            className="flex items-center gap-1 px-2.5 py-1 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-md text-[11px] font-semibold transition-colors disabled:opacity-40"
-                          >
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                            </svg>
-                            {reExtracting === a.id ? 'Analyzing…' : 'Analyze'}
-                          </button>
-                        )}
-                        {/* Re-extract — only show when onApplyParsed is wired */}
-                        {onApplyParsed && (
-                          <button
-                            onClick={() => handleReExtract(a)}
-                            disabled={reExtracting === a.id}
-                            title="Re-extract & fill lead data"
-                            className="p-1.5 rounded-lg text-indigo-500 hover:bg-indigo-50 transition-colors disabled:opacity-40"
-                          >
-                            {reExtracting === a.id ? (
-                              <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                            ) : (
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
-                            )}
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleReExtract(a)}
+                          disabled={reExtracting === a.id}
+                          className="flex items-center gap-1 px-2.5 py-1 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-md text-[11px] font-semibold transition-colors disabled:opacity-40"
+                        >
+                          {reExtracting === a.id ? 'Parsing…' : 'Parse application'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAnalyzeFile(a)}
+                          disabled={analyzingId === a.id}
+                          className="flex items-center gap-1 px-2.5 py-1 bg-[#f0f0f0] text-[#1a1a1a] hover:bg-[#e8e8e8] rounded-md text-[11px] font-semibold transition-colors disabled:opacity-40"
+                        >
+                          {analyzingId === a.id ? 'Analyzing…' : 'Analyze'}
+                        </button>
                         <button onClick={() => handleView(a.id)} title="View" className="p-1.5 rounded-lg text-emerald-500 hover:bg-emerald-50 transition-colors">
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -797,10 +913,32 @@ export default function DocumentsModal({
                   </div>
                 )}
 
-                <div className="px-6 py-5 space-y-2">
+                <div className="px-6 py-5 space-y-3">
+                  <div>
+                    <p className="text-[11px] font-semibold text-[#9b9b9b] uppercase tracking-wider mb-1.5">What are these files?</p>
+                    <div className="grid grid-cols-4 gap-1 bg-[#f0f0f0] rounded-lg p-1">
+                      {([
+                        ['save', 'Just save'],
+                        ['application', 'Application'],
+                        ['bank', 'Bank statements'],
+                        ['fullpack', 'Full pack'],
+                      ] as const).map(([id, label]) => (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() => setUploadKind(id)}
+                          className={`px-2 py-1.5 text-[11px] font-medium rounded-md transition-colors ${
+                            uploadKind === id ? 'bg-white text-[#1a1a1a] shadow-sm' : 'text-[#6b6b6b] hover:text-[#1a1a1a]'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <button
                     type="button"
-                    onClick={() => handleUpload(false)}
+                    onClick={() => handleUpload()}
                     disabled={uploading || pendingFiles.length === 0}
                     className="w-full py-3.5 bg-[#22c55e] text-white rounded-xl text-sm font-semibold hover:bg-[#16a34a] disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
                   >
@@ -810,29 +948,30 @@ export default function DocumentsModal({
                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
                           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
                         </svg>
-                        Uploading…
+                        {uploadStatus && /Analyz|Pars/i.test(uploadStatus) ? uploadStatus : 'Uploading…'}
                       </>
+                    ) : uploadKind === 'application' ? (
+                      'Upload & Parse Application'
+                    ) : uploadKind === 'bank' ? (
+                      'Upload & Analyze Statements'
+                    ) : uploadKind === 'fullpack' ? (
+                      'Upload & Parse Full Pack'
                     ) : (
-                      <>
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                        </svg>
-                        Upload to Documents
-                      </>
+                      'Upload to Documents'
                     )}
                   </button>
-                  {onApplyParsed && (
-                    <button
-                      type="button"
-                      onClick={() => handleUpload(true)}
-                      disabled={uploading || pendingFiles.length === 0}
-                      className="w-full py-2.5 bg-white border border-[#e5e5e5] text-[#1a1a1a] rounded-xl text-sm font-medium hover:bg-[#fafafa] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                    >
-                      Upload &amp; Extract Data
-                    </button>
+                  {uploadStatus && (
+                    <p className={`text-[11px] text-center ${
+                      uploadStatus === 'Applied to lead' ? 'text-emerald-600' :
+                      /fail|error|could not/i.test(uploadStatus) ? 'text-red-600' : 'text-[#6b6b6b]'
+                    }`}>
+                      {uploadStatus}
+                    </p>
                   )}
                   <p className="text-[11px] text-center text-[#9b9b9b]">
-                    Upload to Documents just saves the files. Extract is for applications and bank statements.
+                    {uploadKind === 'fullpack'
+                      ? 'Full pack parses the application and bank statements together, the same way as Add lead → Add full pack.'
+                      : 'Just save stores the files. Application, Bank statements, and Full pack also extract the data into the lead.'}
                   </p>
                 </div>
               </>
@@ -848,8 +987,8 @@ export default function DocumentsModal({
                   </svg>
                 </div>
                 <div className="text-center">
-                  <p className="text-sm font-semibold text-[#1a1a1a]">Documents uploaded ✓ — now extracting data…</p>
-                  <p className="text-xs text-[#9b9b9b] mt-1">AI is scanning for application fields &amp; financial data. Takes ~10–20 seconds.</p>
+                  <p className="text-sm font-semibold text-[#1a1a1a]">{uploadStatus || 'Parsing…'}</p>
+                  <p className="text-xs text-[#9b9b9b] mt-1">AI is scanning for application fields. Takes ~10–20 seconds.</p>
                 </div>
               </div>
             )}
@@ -947,7 +1086,15 @@ export default function DocumentsModal({
                   })}
                 </div>
 
-                <div className="px-6 py-4 border-t border-[#f0f0f0] flex gap-2">
+                <div className="px-6 py-4 border-t border-[#f0f0f0] space-y-2">
+                  {uploadStatus && (
+                    <p className={`text-[11px] text-center ${
+                      /fail|error|could not/i.test(uploadStatus) ? 'text-red-600' : 'text-[#6b6b6b]'
+                    }`}>
+                      {uploadStatus}
+                    </p>
+                  )}
+                  <div className="flex gap-2">
                   <button
                     onClick={closeUpload}
                     className="flex-1 py-2.5 border border-[#e5e5e5] rounded-xl text-sm text-[#6b6b6b] hover:bg-[#f5f5f5] transition-colors"
@@ -970,6 +1117,7 @@ export default function DocumentsModal({
                       </>
                     )}
                   </button>
+                  </div>
                 </div>
               </>
             )}

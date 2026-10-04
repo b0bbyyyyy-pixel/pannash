@@ -37,7 +37,7 @@ export async function GET(
 
     const { data: lead, error } = await supabase
       .from('leads')
-      .select('id, max_added_points, underwriting_data')
+      .select('id, name, company, email, phone, max_added_points, underwriting_data, follow_up_due_at, follow_up_auto_text, follow_up_sms_body')
       .eq('id', id)
       .eq('user_id', user.id)
       .maybeSingle();

@@ -4,7 +4,6 @@ import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { isInIframe, LEAD_ACTION_MSG, postBackToPipeline, postCallToTop, postLeadDeleted, postLeadPatch, postLeadShown, postLeadState } from '@/lib/pipeline/iframeMessages';
-import { downloadBankCsv, printBankReport } from '@/lib/pipeline/bankReport';
 import { saveLeadStatusWrite } from '@/lib/pipeline/saveLeadStatus';
 import { toE164 } from '@/lib/dialer/e164';
 import { buildFundingApplication } from '@/lib/fundingApplication';
@@ -1057,10 +1056,17 @@ export default function LeadWorkspaceClient({
   }), [lead.name, lead.email, lead.phone, lead.company, lead.value, lead.underwriting_data]);
   const appComplete = appCheck.missing.length === 0;
   const missingList = appMissing.length ? appMissing : appCheck.missing;
+  const lendersComplete = useMemo(() => {
+    const offers = Array.isArray(ud.actualOffers) ? ud.actualOffers : [];
+    if (offers.length > 0) return true;
+    if (submissions.some(s => /approv/i.test(s.status || ''))) return true;
+    if (/approv/i.test(lead.lead_status || '')) return true;
+    return false;
+  }, [ud.actualOffers, submissions, lead.lead_status]);
 
   useEffect(() => {
-    postLeadState(surfaceTab, appComplete);
-  }, [surfaceTab, appComplete]);
+    postLeadState(surfaceTab, appComplete, lendersComplete);
+  }, [surfaceTab, appComplete, lendersComplete]);
 
   const lenderCriteria = useMemo(() => ({
     timeInBusiness:    derivedTIB ?? Number(ud.timeInBusiness ?? 0),
@@ -1117,16 +1123,6 @@ export default function LeadWorkspaceClient({
       case 'followup':
         setSurfaceTab('comms');
         openChildOverlay('followup');
-        break;
-      case 'edit':
-        setSurfaceTab('application');
-        setNameEditKey(k => k + 1);
-        break;
-      case 'print':
-        printBankReport(lead);
-        break;
-      case 'csv':
-        downloadBankCsv(lead);
         break;
     }
   };
@@ -1338,6 +1334,7 @@ export default function LeadWorkspaceClient({
               currentSection={surfaceTab}
               showAppDot
               appComplete={appComplete}
+              lendersComplete={lendersComplete}
             />
           )}
           <button

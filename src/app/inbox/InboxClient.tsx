@@ -26,6 +26,8 @@ import LeadActionsMenu, { type LeadActionId } from '@/components/LeadActionsMenu
 import dynamic from 'next/dynamic';
 
 const DocumentsModal = dynamic(() => import('@/components/DocumentsModal'), { ssr: false });
+const ScheduleEmailModal = dynamic(() => import('@/components/ScheduleEmailModal'), { ssr: false });
+const FollowUpModal = dynamic(() => import('@/components/FollowUpModal'), { ssr: false });
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -239,16 +241,17 @@ export default function InboxClient({
   const [casperOn, setCasperOn] = useState(false);
 
   // Lead overlay — shows the pipeline lead workspace in a floating panel
-  const [docsLead, setDocsLead] = useState<{ id: string; name: string; company?: string | null } | null>(null);
   const [leadOverlayId, setLeadOverlayId] = useState<string | null>(null);
   const [leadOverlayExtra, setLeadOverlayExtra] = useState<{ tab?: string; action?: string } | undefined>();
   const [leadOverlayKey, setLeadOverlayKey] = useState(0);
+  const [docsLead, setDocsLead] = useState<{ id: string; name: string; company?: string | null } | null>(null);
+  const [emailLead, setEmailLead] = useState<{ id: string; name: string; company?: string | null; phone?: string | null } | null>(null);
+  const [followLead, setFollowLead] = useState<{ id: string; name: string } | null>(null);
   const [showPipeline, setShowPipeline] = useState(false);
   const [pipelineFrameSrc, setPipelineFrameSrc] = useState('/pipeline?modal=1');
   const pipelineFrameRef = useRef<HTMLIFrameElement>(null);
   const leadOverlayFrameRef = useRef<HTMLIFrameElement>(null);
-  const [leadMenuState, setLeadMenuState] = useState<{ section: LeadActionId; appComplete: boolean } | null>(null);
-  const pendingLeadActionRef = useRef<LeadActionId | null>(null);
+  const [leadMenuState, setLeadMenuState] = useState<{ section: LeadActionId; appComplete: boolean; lendersComplete: boolean } | null>(null);
   const [pipelineLeadId, setPipelineLeadId] = useState<string | null>(null);
   const [pipelineShowingLead, setPipelineShowingLead] = useState(false);
 
@@ -352,15 +355,10 @@ export default function InboxClient({
       }
       if (d.type === LEAD_SHOWN_MSG && d.id) {
         setPipelineLeadId(d.id);
-        const pending = pendingLeadActionRef.current;
-        if (pending) {
-          pendingLeadActionRef.current = null;
-          postLeadActionToFrame(leadOverlayFrameRef.current, pending);
-        }
         return;
       }
       if (d.type === LEAD_STATE_MSG && typeof d.section === 'string') {
-        setLeadMenuState({ section: d.section as LeadActionId, appComplete: !!d.appComplete });
+        setLeadMenuState({ section: d.section as LeadActionId, appComplete: !!d.appComplete, lendersComplete: !!d.lendersComplete });
         return;
       }
       if (d.type === BACK_TO_PIPELINE_MSG) {
@@ -771,7 +769,7 @@ export default function InboxClient({
         openInboxLead({ tab: 'lender' });
         break;
       case 'docs':
-        if (selectedLead) setDocsLead({ id: selectedLead.id, name: selectedLead.name, company: selectedLead.company ?? null });
+        if (selectedLead) setDocsLead({ id: selectedLead.id, name: selectedLead.name, company: selectedLead.company });
         break;
       case 'comms':
         openInboxLead({ tab: 'comms' });
@@ -785,24 +783,16 @@ export default function InboxClient({
       case 'financials':
         openInboxLead({ tab: 'lender' });
         break;
-      case 'edit':
-        openInboxLead({ tab: 'application', action: 'edit' });
-        break;
       case 'sms':
         break;
       case 'email':
-        openInboxLead({ tab: 'comms', action: 'email' });
+        if (selectedLead) setEmailLead({ id: selectedLead.id, name: selectedLead.name, company: selectedLead.company, phone: selectedLead.phone });
         break;
       case 'followup':
-        openInboxLead({ tab: 'comms', action: 'followup' });
+        if (selectedLead) setFollowLead({ id: selectedLead.id, name: selectedLead.company || selectedLead.name });
         break;
       case 'call':
         if (selectedLead?.phone) webphone.openDialPad(selectedLead.phone);
-        break;
-      case 'print':
-      case 'csv':
-        pendingLeadActionRef.current = id;
-        openInboxLead();
         break;
     }
   };
@@ -1009,6 +999,9 @@ export default function InboxClient({
                     align="right"
                     onAction={handleInboxLeadAction}
                     hiddenItems={['sms']}
+                    showAppDot
+                    appComplete={leadMenuState?.appComplete ?? false}
+                    lendersComplete={leadMenuState?.lendersComplete ?? false}
                   />
                   <button
                     type="button"
@@ -1448,9 +1441,19 @@ export default function InboxClient({
                 <LeadActionsMenu
                   align="left"
                   onAction={id => {
-                    if (id === 'docs') {
-                      const lead = (pipelineLeadId && leads.find(l => l.id === pipelineLeadId)) || selectedLead;
-                      if (lead) setDocsLead({ id: lead.id, name: lead.name, company: lead.company ?? null });
+                    if (id === 'docs' && pipelineLeadId) {
+                      const l = leads.find(x => x.id === pipelineLeadId);
+                      setDocsLead({ id: pipelineLeadId, name: l?.name || 'Lead', company: l?.company });
+                      return;
+                    }
+                    if (id === 'email' && pipelineLeadId) {
+                      const l = leads.find(x => x.id === pipelineLeadId);
+                      setEmailLead({ id: pipelineLeadId, name: l?.name || 'Lead', company: l?.company, phone: l?.phone });
+                      return;
+                    }
+                    if (id === 'followup' && pipelineLeadId) {
+                      const l = leads.find(x => x.id === pipelineLeadId);
+                      setFollowLead({ id: pipelineLeadId, name: l?.company || l?.name || 'Lead' });
                       return;
                     }
                     postLeadActionToFrame(pipelineFrameRef.current, id);
@@ -1458,6 +1461,7 @@ export default function InboxClient({
                   currentSection={leadMenuState?.section}
                   showAppDot
                   appComplete={leadMenuState?.appComplete ?? false}
+                  lendersComplete={leadMenuState?.lendersComplete ?? false}
                 />
               ) : (
                 <span className="text-xs text-[#6b6b6b] font-medium">Pipeline</span>
@@ -1503,6 +1507,28 @@ export default function InboxClient({
     )}
 
     {/* ── Lead Overlay ─────────────────────────────────────────────────────── */}
+    {docsLead && (
+      <DocumentsModal
+        leadId={docsLead.id}
+        leadName={docsLead.name}
+        leadCompany={docsLead.company}
+        onClose={() => setDocsLead(null)}
+      />
+    )}
+    {emailLead && (
+      <ScheduleEmailModal
+        lead={emailLead}
+        onClose={() => setEmailLead(null)}
+      />
+    )}
+    {followLead && (
+      <FollowUpModal
+        leadId={followLead.id}
+        leadName={followLead.name}
+        onClose={() => setFollowLead(null)}
+      />
+    )}
+
     {leadOverlayId && (
       <>
         {/* Backdrop — click to close */}
@@ -1519,9 +1545,17 @@ export default function InboxClient({
             <LeadActionsMenu
               align="left"
               onAction={id => {
+                const l = leads.find(x => x.id === leadOverlayId) || selectedLead;
                 if (id === 'docs') {
-                  const lead = (leadOverlayId && leads.find(l => l.id === leadOverlayId)) || selectedLead;
-                  if (lead) setDocsLead({ id: lead.id, name: lead.name, company: lead.company ?? null });
+                  if (leadOverlayId) setDocsLead({ id: leadOverlayId, name: l?.name || 'Lead', company: l?.company });
+                  return;
+                }
+                if (id === 'email') {
+                  if (leadOverlayId) setEmailLead({ id: leadOverlayId, name: l?.name || 'Lead', company: l?.company, phone: l?.phone });
+                  return;
+                }
+                if (id === 'followup') {
+                  if (leadOverlayId) setFollowLead({ id: leadOverlayId, name: l?.company || l?.name || 'Lead' });
                   return;
                 }
                 postLeadActionToFrame(leadOverlayFrameRef.current, id);
@@ -1529,6 +1563,7 @@ export default function InboxClient({
               currentSection={leadMenuState?.section}
               showAppDot
               appComplete={leadMenuState?.appComplete ?? false}
+              lendersComplete={leadMenuState?.lendersComplete ?? false}
             />
             <div className="flex items-center gap-3">
               <a
@@ -1566,14 +1601,6 @@ export default function InboxClient({
       </>
     )}
 
-    {docsLead && (
-      <DocumentsModal
-        leadId={docsLead.id}
-        leadName={docsLead.name}
-        leadCompany={docsLead.company}
-        onClose={() => setDocsLead(null)}
-      />
-    )}
     </>
   );
 }

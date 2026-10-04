@@ -15,11 +15,13 @@ import {
 } from 'react';
 import type { Call, Device } from '@twilio/voice-sdk';
 import { usePathname, useRouter } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import { BACK_TO_PIPELINE_MSG, CALL_MSG, LEAD_DELETED_MSG, LEAD_STATE_MSG, postLeadActionToFrame } from '@/lib/pipeline/iframeMessages';
 import LeadActionsMenu, { type LeadActionId } from '@/components/LeadActionsMenu';
-import dynamic from 'next/dynamic';
 
 const DocumentsModal = dynamic(() => import('@/components/DocumentsModal'), { ssr: false });
+const ScheduleEmailModal = dynamic(() => import('@/components/ScheduleEmailModal'), { ssr: false });
+const FollowUpModal = dynamic(() => import('@/components/FollowUpModal'), { ssr: false });
 
 type PhoneStatus = 'offline' | 'ready' | 'connecting' | 'ringing' | 'in-call';
 
@@ -84,22 +86,24 @@ function LeadCardOverlay({
   onClose,
 }: {
   leadId: string;
-  leadName?: string;
+  leadName: string;
   leadCompany?: string | null;
   inCall: boolean;
   onClose: () => void;
 }) {
   const router = useRouter();
   const frameRef = useRef<HTMLIFrameElement>(null);
-  const [leadMenuState, setLeadMenuState] = useState<{ section: LeadActionId; appComplete: boolean } | null>(null);
+  const [leadMenuState, setLeadMenuState] = useState<{ section: LeadActionId; appComplete: boolean; lendersComplete: boolean } | null>(null);
   const [showDocs, setShowDocs] = useState(false);
+  const [showEmail, setShowEmail] = useState(false);
+  const [showFollowUp, setShowFollowUp] = useState(false);
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       if (e.origin !== window.location.origin) return;
       const d = e.data;
       if (!d || typeof d !== 'object') return;
       if (d.type === LEAD_STATE_MSG && typeof d.section === 'string') {
-        setLeadMenuState({ section: d.section as LeadActionId, appComplete: !!d.appComplete });
+        setLeadMenuState({ section: d.section as LeadActionId, appComplete: !!d.appComplete, lendersComplete: !!d.lendersComplete });
         return;
       }
       if (d.type === BACK_TO_PIPELINE_MSG) onClose();
@@ -128,11 +132,14 @@ function LeadCardOverlay({
             align="left"
             onAction={id => {
               if (id === 'docs') { setShowDocs(true); return; }
+              if (id === 'email') { setShowEmail(true); return; }
+              if (id === 'followup') { setShowFollowUp(true); return; }
               postLeadActionToFrame(frameRef.current, id);
             }}
             currentSection={leadMenuState?.section}
             showAppDot
             appComplete={leadMenuState?.appComplete ?? false}
+            lendersComplete={leadMenuState?.lendersComplete ?? false}
           />
           <div className="flex items-center gap-3">
             <a
@@ -168,9 +175,22 @@ function LeadCardOverlay({
       {showDocs && (
         <DocumentsModal
           leadId={leadId}
-          leadName={leadName || 'Lead'}
+          leadName={leadName}
           leadCompany={leadCompany}
           onClose={() => setShowDocs(false)}
+        />
+      )}
+      {showEmail && (
+        <ScheduleEmailModal
+          lead={{ id: leadId, name: leadName, company: leadCompany }}
+          onClose={() => setShowEmail(false)}
+        />
+      )}
+      {showFollowUp && (
+        <FollowUpModal
+          leadId={leadId}
+          leadName={leadCompany || leadName}
+          onClose={() => setShowFollowUp(false)}
         />
       )}
     </>

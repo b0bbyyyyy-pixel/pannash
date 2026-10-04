@@ -15,10 +15,7 @@ export type LeadActionId =
   | 'sms'
   | 'email'
   | 'call'
-  | 'followup'
-  | 'edit'
-  | 'print'
-  | 'csv';
+  | 'followup';
 
 type MenuEntry =
   | { kind: 'item'; id: LeadActionId; label: string }
@@ -26,8 +23,8 @@ type MenuEntry =
 
 const MENU: MenuEntry[] = [
   { kind: 'item', id: 'application', label: 'Application' },
-  { kind: 'item', id: 'status', label: 'Status' },
   { kind: 'item', id: 'lender', label: 'Lenders' },
+  { kind: 'item', id: 'status', label: 'Status' },
   { kind: 'item', id: 'docs', label: 'Docs' },
   {
     kind: 'group',
@@ -40,15 +37,6 @@ const MENU: MenuEntry[] = [
       { id: 'followup', label: 'Follow-up' },
     ],
   },
-  {
-    kind: 'group',
-    label: 'More',
-    items: [
-      { id: 'edit', label: 'Edit lead' },
-      { id: 'print', label: 'Print report' },
-      { id: 'csv', label: 'Download CSV' },
-    ],
-  },
 ];
 
 export default function LeadActionsMenu({
@@ -58,6 +46,7 @@ export default function LeadActionsMenu({
   currentSection,
   showAppDot = false,
   appComplete = false,
+  lendersComplete = false,
   hiddenItems,
 }: {
   onAction: (id: LeadActionId) => void;
@@ -66,6 +55,7 @@ export default function LeadActionsMenu({
   currentSection?: LeadActionId | null;
   showAppDot?: boolean;
   appComplete?: boolean;
+  lendersComplete?: boolean;
   hiddenItems?: LeadActionId[];
 }) {
   const [open, setOpen] = useState(false);
@@ -162,7 +152,7 @@ export default function LeadActionsMenu({
         type="button"
         onClick={toggle}
         onMouseDown={e => e.stopPropagation()}
-        className={`relative ${open ? 'z-[210]' : ''} ${compact ? 'p-1' : 'p-2'} rounded-md border border-[#e5e5e5] hover:bg-[#f5f5f5] text-[#9b9b9b] hover:text-[#1a1a1a] transition-colors`}
+        className={`${open ? 'z-[210]' : ''} ${compact ? 'p-1' : 'p-2'} rounded-md border border-[#e5e5e5] hover:bg-[#f5f5f5] text-[#9b9b9b] hover:text-[#1a1a1a] transition-colors`}
         title="Lead actions"
         aria-haspopup="menu"
         aria-expanded={open}
@@ -170,9 +160,6 @@ export default function LeadActionsMenu({
         <svg className={compact ? 'w-3.5 h-3.5' : 'w-4 h-4'} fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
         </svg>
-        {showAppDot && (
-          <span className={`absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full ${appComplete ? 'bg-emerald-500' : 'bg-red-500'}`} />
-        )}
       </button>
       {open && coords && typeof document !== 'undefined' && createPortal(
         <div
@@ -195,10 +182,21 @@ export default function LeadActionsMenu({
                   onClick={e => fire(e, entry.id)}
                   className={`${itemCls} ${current ? 'font-semibold' : ''}`}
                 >
-                  <span className="flex-1">{entry.label}</span>
-                  {entry.id === 'application' && showAppDot && (
-                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${appComplete ? 'bg-emerald-500' : 'bg-red-500'}`} />
-                  )}
+                  <span className="flex-1 inline-flex items-center gap-1.5">
+                    {entry.id === 'application' && (
+                      <span
+                        className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${appComplete ? 'bg-emerald-500' : 'bg-red-500'}`}
+                        aria-hidden
+                      />
+                    )}
+                    {entry.id === 'lender' && (
+                      <span
+                        className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${lendersComplete ? 'bg-emerald-500' : 'bg-red-500'}`}
+                        aria-hidden
+                      />
+                    )}
+                    {entry.label}
+                  </span>
                   {current && <span className="text-[#1a1a1a] flex-shrink-0">✓</span>}
                 </button>
               );

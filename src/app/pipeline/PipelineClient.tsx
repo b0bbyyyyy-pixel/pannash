@@ -16,8 +16,8 @@ import {
   postLeadPatch,
   postOpenLead,
 } from '@/lib/pipeline/iframeMessages';
-import { downloadBankCsv, printBankReport } from '@/lib/pipeline/bankReport';
 import { saveLeadStatusWrite } from '@/lib/pipeline/saveLeadStatus';
+import { buildFundingApplication } from '@/lib/fundingApplication';
 import { toE164 } from '@/lib/dialer/e164';
 import { useWebPhone } from '@/components/webphone/WebPhone';
 import LeadActionsMenu, { type LeadActionId } from '@/components/LeadActionsMenu';
@@ -159,6 +159,24 @@ function amountForLead(lead: Lead): number | null {
   return offer ?? requested;
 }
 
+function rowAppComplete(lead: Lead): boolean {
+  return buildFundingApplication({
+    name: lead.name,
+    email: lead.email,
+    phone: lead.phone,
+    company: lead.company,
+    value: lead.value,
+    underwriting_data: lead.underwriting_data,
+  }).missing.length === 0;
+}
+
+function rowLendersComplete(lead: Lead): boolean {
+  const ud = lead.underwriting_data || {};
+  const offers = Array.isArray(ud.actualOffers) ? ud.actualOffers : [];
+  if (offers.length > 0) return true;
+  return /approv/i.test(lead.lead_status || '');
+}
+
 function parseLocalDate(dateStr: string): Date | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateStr.slice(0, 10));
   if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
@@ -298,8 +316,8 @@ export default function PipelineClient({ leads, userId, compact = false, initial
   const [rowEmailLead, setRowEmailLead]     = useState<Lead | null>(null);
   const [rowFollowUpLead, setRowFollowUpLead] = useState<Lead | null>(null);
   const [rowCallMsg, setRowCallMsg]         = useState<string | null>(null);
+  const [leadMenuState, setLeadMenuState]   = useState<{ section: LeadActionId; appComplete: boolean; lendersComplete: boolean } | null>(null);
   const [docsLead, setDocsLead]             = useState<{ id: string; name: string; company?: string | null } | null>(null);
-  const [leadMenuState, setLeadMenuState]   = useState<{ section: LeadActionId; appComplete: boolean } | null>(null);
   const leadFrameRef = useRef<HTMLIFrameElement>(null);
   const webphone = useWebPhone();
 
@@ -331,7 +349,7 @@ export default function PipelineClient({ leads, userId, compact = false, initial
         return;
       }
       if (d.type === LEAD_STATE_MSG && typeof d.section === 'string') {
-        setLeadMenuState({ section: d.section as LeadActionId, appComplete: !!d.appComplete });
+        setLeadMenuState({ section: d.section as LeadActionId, appComplete: !!d.appComplete, lendersComplete: !!d.lendersComplete });
         return;
       }
       if (d.type === PIPELINE_LEAD_MSG && d.id && d.patch) {
@@ -536,7 +554,7 @@ export default function PipelineClient({ leads, userId, compact = false, initial
         goTo(lead.id, { tab: 'lender' });
         break;
       case 'docs':
-        setDocsLead({ id: lead.id, name: lead.name, company: lead.company ?? null });
+        setDocsLead({ id: lead.id, name: lead.name, company: lead.company });
         break;
       case 'send':
         goTo(lead.id, { tab: 'lender', action: 'send' });
@@ -546,15 +564,6 @@ export default function PipelineClient({ leads, userId, compact = false, initial
         break;
       case 'financials':
         goTo(lead.id, { tab: 'lender' });
-        break;
-      case 'edit':
-        goTo(lead.id, { tab: 'application', action: 'edit' });
-        break;
-      case 'print':
-        printBankReport(lead);
-        break;
-      case 'csv':
-        downloadBankCsv(lead);
         break;
     }
   };
@@ -774,7 +783,13 @@ export default function PipelineClient({ leads, userId, compact = false, initial
                 </div>
 
                 <div className="flex items-center justify-center" onClick={e => e.stopPropagation()}>
-                  <LeadActionsMenu compact onAction={id => handleRowAction(lead, id)} />
+                  <LeadActionsMenu
+                    compact
+                    onAction={id => handleRowAction(lead, id)}
+                    showAppDot
+                    appComplete={rowAppComplete(lead)}
+                    lendersComplete={rowLendersComplete(lead)}
+                  />
                 </div>
               </div>
             );
@@ -1106,6 +1121,15 @@ export default function PipelineClient({ leads, userId, compact = false, initial
       )}
 
       {/* ── ADD PIPELINE LEAD MODAL ──────────────────────────────────────── */}
+      {docsLead && (
+        <DocumentsModal
+          leadId={docsLead.id}
+          leadName={docsLead.name}
+          leadCompany={docsLead.company}
+          onClose={() => setDocsLead(null)}
+        />
+      )}
+
       {showAddModal && <AddPipelineLeadModal onClose={() => setShowAddModal(false)} />}
 
       {/* ── MANAGE STATUSES MODAL ────────────────────────────────────────── */}
@@ -1134,9 +1158,17 @@ export default function PipelineClient({ leads, userId, compact = false, initial
               <LeadActionsMenu
                 align="left"
                 onAction={id => {
+                  const l = rows.find(r => r.id === leadOverlayId);
                   if (id === 'docs') {
-                    const lead = rows.find(l => l.id === leadOverlayId) ?? rows.find(l => l.id === selectedLeadId);
-                    if (lead) setDocsLead({ id: lead.id, name: lead.name, company: lead.company ?? null });
+                    setDocsLead({ id: leadOverlayId!, name: l?.name || 'Lead', company: l?.company });
+                    return;
+                  }
+                  if (id === 'email') {
+                    if (l) setRowEmailLead(l);
+                    return;
+                  }
+                  if (id === 'followup') {
+                    if (l) setRowFollowUpLead(l);
                     return;
                   }
                   postLeadActionToFrame(leadFrameRef.current, id);
@@ -1144,6 +1176,7 @@ export default function PipelineClient({ leads, userId, compact = false, initial
                 currentSection={leadMenuState?.section}
                 showAppDot
                 appComplete={leadMenuState?.appComplete ?? false}
+                lendersComplete={leadMenuState?.lendersComplete ?? false}
               />
               <div className="flex items-center gap-3">
                 <a
@@ -1179,15 +1212,6 @@ export default function PipelineClient({ leads, userId, compact = false, initial
             />
           </div>
         </>
-      )}
-
-      {docsLead && (
-        <DocumentsModal
-          leadId={docsLead.id}
-          leadName={docsLead.name}
-          leadCompany={docsLead.company}
-          onClose={() => setDocsLead(null)}
-        />
       )}
 
       {rowSmsLead && (
