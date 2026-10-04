@@ -3,7 +3,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import BulkDeleteButton from './BulkDeleteButton';
-import { BACK_TO_PIPELINE_MSG, LEAD_DELETED_MSG, PIPELINE_LEAD_MSG } from '@/lib/pipeline/iframeMessages';
+import { BACK_TO_PIPELINE_MSG, LEAD_DELETED_MSG, PIPELINE_LEAD_MSG, postLeadActionToFrame } from '@/lib/pipeline/iframeMessages';
+import LeadActionsMenu from '@/components/LeadActionsMenu';
 
 interface Lead {
   id: string;
@@ -78,6 +79,7 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
   const [selectedLeads, setSelectedLeads] = useState<string[]>([]);
   const [leadOverlayId, setLeadOverlayId] = useState<string | null>(null);
   const [rows, setRows] = useState(leads);
+  const leadFrameRef = useRef<HTMLIFrameElement>(null);
 
   // Context menu
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; lead: Lead } | null>(null);
@@ -446,7 +448,10 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
             style={{ width: 'min(92vw, 1200px)', height: 'calc(100vh - 2rem)' }}
           >
             <div className="flex items-center justify-between px-4 py-2.5 bg-white border-b border-[#e5e5e5] flex-shrink-0">
-              <span className="text-xs text-[#6b6b6b] font-medium">Lead Info</span>
+              <LeadActionsMenu
+                align="left"
+                onAction={id => postLeadActionToFrame(leadFrameRef.current, id)}
+              />
               <div className="flex items-center gap-3">
                 <a
                   href={`/pipeline/${leadOverlayId}`}
@@ -471,6 +476,7 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
               </div>
             </div>
             <iframe
+              ref={leadFrameRef}
               src={`/pipeline/${leadOverlayId}?modal=1&from=leads`}
               className="flex-1 w-full bg-white border-0"
               title="Lead workspace"

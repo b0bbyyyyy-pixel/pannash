@@ -13,7 +13,7 @@ export default async function PipelineLeadPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ modal?: string; edit?: string; from?: string }>;
+  searchParams: Promise<{ modal?: string; edit?: string; from?: string; tab?: string; action?: string }>;
 }) {
   const { id } = await params;
   const sp = await searchParams;

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import {
@@ -9,11 +9,23 @@ import {
   LEAD_SHOWN_MSG,
   PIPELINE_LEAD_MSG,
   isInIframe,
+  leadInfoUrl,
+  postCallToTop,
+  postLeadActionToFrame,
+  postLeadPatch,
   postOpenLead,
 } from '@/lib/pipeline/iframeMessages';
+import { downloadBankCsv, printBankReport } from '@/lib/pipeline/bankReport';
+import { saveLeadStatusWrite } from '@/lib/pipeline/saveLeadStatus';
+import { toE164 } from '@/lib/dialer/e164';
+import { useWebPhone } from '@/components/webphone/WebPhone';
+import LeadActionsMenu, { type LeadActionId } from '@/components/LeadActionsMenu';
 
 const AddPipelineLeadModal   = dynamic(() => import('@/components/AddPipelineLeadModal'),   { ssr: false });
 const ManageStatusesModal    = dynamic(() => import('@/components/ManageStatusesModal'),     { ssr: false });
+const QuickTextPopup         = dynamic(() => import('@/components/QuickTextPopup'),         { ssr: false });
+const ScheduleEmailModal     = dynamic(() => import('@/components/ScheduleEmailModal'),     { ssr: false });
+const FollowUpModal          = dynamic(() => import('@/components/FollowUpModal'),          { ssr: false });
 
 interface Lead {
   id: string;
@@ -35,6 +47,9 @@ interface Lead {
   value?: number | string | null;
   follow_up_at?: string | null;
   follow_up_due_at?: string | null;
+  follow_up_auto_text?: boolean | null;
+  follow_up_sms_body?: string | null;
+  list_id?: string | null;
   underwriting_data?: Record<string, unknown> | null;
   last_text?: string | null;
   last_text_outbound?: boolean;
@@ -187,7 +202,7 @@ function pipelineAddedDate(lead: Lead): string {
   });
 }
 
-const PIPELINE_COLS = 'grid-cols-[68px_minmax(0,1.5fr)_minmax(0,1.8fr)_148px_84px_72px_80px]';
+const PIPELINE_COLS = 'grid-cols-[68px_minmax(0,1.5fr)_minmax(0,1.8fr)_148px_84px_72px_80px_36px]';
 
 // ── Filter state shape ────────────────────────────────────────────────────────
 interface Filters {
@@ -275,6 +290,14 @@ export default function PipelineClient({ leads, userId, compact = false, initial
   const [showDrawer, setShowDrawer]         = useState(false);
   const [dbStatuses, setDbStatuses]         = useState<DBStatus[]>([]);
   const [leadOverlayId, setLeadOverlayId]   = useState<string | null>(null);
+  const [leadOverlayExtra, setLeadOverlayExtra] = useState<{ tab?: string; action?: string } | undefined>();
+  const [overlayKey, setOverlayKey]         = useState(0);
+  const [rowSmsLead, setRowSmsLead]         = useState<Lead | null>(null);
+  const [rowEmailLead, setRowEmailLead]     = useState<Lead | null>(null);
+  const [rowFollowUpLead, setRowFollowUpLead] = useState<Lead | null>(null);
+  const [rowCallMsg, setRowCallMsg]         = useState<string | null>(null);
+  const leadFrameRef = useRef<HTMLIFrameElement>(null);
+  const webphone = useWebPhone();
 
   // Load dynamic statuses
   const loadStatuses = useCallback(() => {
@@ -305,6 +328,7 @@ export default function PipelineClient({ leads, userId, compact = false, initial
       if (d.type === BACK_TO_PIPELINE_MSG) {
         if (d.id) setSelectedLeadId(d.id);
         setLeadOverlayId(null);
+        setLeadOverlayExtra(undefined);
         router.refresh();
         return;
       }
@@ -442,10 +466,102 @@ export default function PipelineClient({ leads, userId, compact = false, initial
       postOpenLead(id, extra);
       return;
     }
+    setLeadOverlayExtra(extra);
     setLeadOverlayId(id);
+    setOverlayKey(k => k + 1);
+  };
+
+  const startRowCall = (lead: Lead) => {
+    const e164 = toE164(lead.phone);
+    if (!e164) { setRowCallMsg('No valid phone number'); return; }
+    const inFrame = embedded || isInIframe();
+    if (!inFrame && !webphone.ready) {
+      setRowCallMsg('Phone not ready — check Twilio setup in Settings → Phone.');
+      return;
+    }
+    if (inFrame) {
+      postCallToTop({ e164, name: lead.name, leadId: lead.id, company: lead.company ?? undefined });
+    } else {
+      void webphone.connect(e164, {
+        name: lead.name,
+        leadId: lead.id,
+        company: lead.company ?? undefined,
+      });
+    }
+    setRowCallMsg('Calling…');
+  };
+
+  const handleRowAction = (lead: Lead, id: LeadActionId) => {
+    switch (id) {
+      case 'sms':
+        setRowEmailLead(null);
+        setRowFollowUpLead(null);
+        setRowSmsLead(lead);
+        break;
+      case 'email':
+        setRowSmsLead(null);
+        setRowFollowUpLead(null);
+        setRowEmailLead(lead);
+        break;
+      case 'followup':
+        setRowSmsLead(null);
+        setRowEmailLead(null);
+        setRowFollowUpLead(lead);
+        break;
+      case 'call':
+        startRowCall(lead);
+        break;
+      case 'comms':
+        break;
+      case 'application':
+        goTo(lead.id, { tab: 'application' });
+        break;
+      case 'status':
+        goTo(lead.id, { tab: 'status' });
+        break;
+      case 'lender':
+        goTo(lead.id, { tab: 'lender' });
+        break;
+      case 'docs':
+        goTo(lead.id, { tab: 'docs' });
+        break;
+      case 'send':
+        goTo(lead.id, { tab: 'lender', action: 'send' });
+        break;
+      case 'offers':
+        goTo(lead.id, { tab: 'lender', action: 'offers' });
+        break;
+      case 'financials':
+        goTo(lead.id, { tab: 'lender', action: 'financials' });
+        break;
+      case 'edit':
+        goTo(lead.id, { tab: 'application', action: 'edit' });
+        break;
+      case 'print':
+        printBankReport(lead);
+        break;
+      case 'csv':
+        downloadBankCsv(lead);
+        break;
+    }
+  };
+
+  const changeRowStatus = async (lead: Lead, val: string) => {
+    const { underwritingData } = await saveLeadStatusWrite({
+      leadId: lead.id,
+      status: val,
+      underwritingData: lead.underwriting_data,
+    });
+    const patch = {
+      lead_status: val,
+      ...(underwritingData ? { underwriting_data: underwritingData } : {}),
+    };
+    setRows(prev => prev.map(l => l.id === lead.id ? { ...l, ...patch } : l));
+    if (embedded) postLeadPatch(lead.id, patch);
   };
   const closeLeadOverlay = useCallback(() => {
     setLeadOverlayId(null);
+    setLeadOverlayExtra(undefined);
     router.refresh();
   }, [router]);
 
@@ -460,6 +576,9 @@ export default function PipelineClient({ leads, userId, compact = false, initial
           <span className="text-xs font-semibold bg-[#f5f5f5] text-[#6b6b6b] px-2.5 py-1 rounded-full">
             {filtered.length}
           </span>
+          {rowCallMsg && (
+            <span className="text-[11px] text-[#6b6b6b]">{rowCallMsg}</span>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -524,6 +643,7 @@ export default function PipelineClient({ leads, userId, compact = false, initial
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
             </svg>
           </div>
+          <div />
         </div>
 
         {/* Rows */}
@@ -587,18 +707,37 @@ export default function PipelineClient({ leads, userId, compact = false, initial
                 </div>
 
                 {/* Status */}
-                <div className="flex items-center">
-                  {status ? (
+                <div className="flex items-center" onClick={e => e.stopPropagation()}>
+                  <div className="relative w-full">
                     <span
-                      className="w-full px-2 py-0.5 rounded text-[11px] font-medium text-center truncate"
+                      className="pointer-events-none absolute inset-0 flex items-center justify-center px-2 py-0.5 rounded text-[11px] font-medium truncate"
+                      style={{ background: statusStyle.bg, color: statusStyle.text }}
+                    >
+                      {status ? fundedStatusLabel(lead, status) : '—'}
+                    </span>
+                    <select
+                      value={status}
+                      onClick={e => e.stopPropagation()}
+                      onMouseDown={e => e.stopPropagation()}
+                      onChange={e => {
+                        e.stopPropagation();
+                        void changeRowStatus(lead, e.target.value);
+                      }}
+                      className="relative w-full px-2 py-0.5 rounded text-[11px] font-medium text-center truncate border-0 cursor-pointer opacity-0 focus:opacity-100 focus:outline-none focus:ring-1 focus:ring-[#1a1a1a]"
                       style={{ background: statusStyle.bg, color: statusStyle.text }}
                       title={fundedStatusLabel(lead, status)}
                     >
-                      {fundedStatusLabel(lead, status)}
-                    </span>
-                  ) : (
-                    <span className="text-[11px] text-[#c4c4c4]">—</span>
-                  )}
+                      <option value="">—</option>
+                      {status && !statusNames.includes(status) && (
+                        <option value={status}>{fundedStatusLabel(lead, status)}</option>
+                      )}
+                      {dbStatuses.map(s => (
+                        <option key={s.id} value={s.name}>
+                          {s.name === 'Funded' ? fundedStatusLabel(lead, 'Funded') : s.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
 
                 {/* Amount */}
@@ -619,6 +758,10 @@ export default function PipelineClient({ leads, userId, compact = false, initial
                 <div className="flex flex-col justify-center items-end text-right">
                   <span className="text-[11px] font-medium text-[#1a1a1a] leading-tight">{relativeTime(activityDate)}</span>
                   <span className="text-[10px] text-[#9b9b9b] leading-tight">{absDate(activityDate)}</span>
+                </div>
+
+                <div className="flex items-center justify-center" onClick={e => e.stopPropagation()}>
+                  <LeadActionsMenu compact onAction={id => handleRowAction(lead, id)} />
                 </div>
               </div>
             );
@@ -975,7 +1118,10 @@ export default function PipelineClient({ leads, userId, compact = false, initial
           >
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-2.5 bg-white border-b border-[#e5e5e5] flex-shrink-0">
-              <span className="text-xs text-[#6b6b6b] font-medium">Lead Info</span>
+              <LeadActionsMenu
+                align="left"
+                onAction={id => postLeadActionToFrame(leadFrameRef.current, id)}
+              />
               <div className="flex items-center gap-3">
                 <a
                   href={`/pipeline/${selectedLeadId || leadOverlayId}`}
@@ -1002,12 +1148,65 @@ export default function PipelineClient({ leads, userId, compact = false, initial
             </div>
             {/* iframe */}
             <iframe
-            src={`/pipeline/${leadOverlayId}?modal=1`}
+            ref={leadFrameRef}
+            key={overlayKey}
+            src={leadInfoUrl(leadOverlayId, leadOverlayExtra)}
             className="flex-1 w-full bg-white border-0"
             title="Lead workspace"
             />
           </div>
         </>
+      )}
+
+      {rowSmsLead && (
+        <QuickTextPopup
+          lead={{
+            id: rowSmsLead.id,
+            name: rowSmsLead.name,
+            company: rowSmsLead.company,
+            list_id: rowSmsLead.list_id,
+            lead_status: rowSmsLead.lead_status,
+            in_pipeline: rowSmsLead.in_pipeline,
+          }}
+          onClose={() => setRowSmsLead(null)}
+        />
+      )}
+
+      {rowEmailLead && (
+        <ScheduleEmailModal
+          lead={{
+            id: rowEmailLead.id,
+            name: rowEmailLead.name,
+            email: rowEmailLead.email,
+            phone: rowEmailLead.phone,
+            company: rowEmailLead.company,
+            underwriting_data: rowEmailLead.underwriting_data,
+          }}
+          onClose={() => setRowEmailLead(null)}
+        />
+      )}
+
+      {rowFollowUpLead && (
+        <FollowUpModal
+          leadId={rowFollowUpLead.id}
+          leadName={rowFollowUpLead.company || rowFollowUpLead.name}
+          currentDueAt={rowFollowUpLead.follow_up_due_at}
+          currentAutoText={!!rowFollowUpLead.follow_up_auto_text}
+          currentSmsBody={rowFollowUpLead.follow_up_sms_body}
+          onClose={() => setRowFollowUpLead(null)}
+          onSaved={next => {
+            setRows(prev => prev.map(l => l.id === rowFollowUpLead.id ? { ...l, ...next } : l));
+          }}
+          onCleared={() => {
+            const patch = {
+              follow_up_at: null,
+              follow_up_due_at: null,
+              follow_up_auto_text: false,
+              follow_up_sms_body: null,
+            };
+            setRows(prev => prev.map(l => l.id === rowFollowUpLead.id ? { ...l, ...patch } : l));
+          }}
+        />
       )}
     </div>
   );

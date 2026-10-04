@@ -15,7 +15,8 @@ import {
 } from 'react';
 import type { Call, Device } from '@twilio/voice-sdk';
 import { usePathname, useRouter } from 'next/navigation';
-import { BACK_TO_PIPELINE_MSG, LEAD_DELETED_MSG } from '@/lib/pipeline/iframeMessages';
+import { BACK_TO_PIPELINE_MSG, CALL_MSG, LEAD_DELETED_MSG, postLeadActionToFrame } from '@/lib/pipeline/iframeMessages';
+import LeadActionsMenu from '@/components/LeadActionsMenu';
 
 type PhoneStatus = 'offline' | 'ready' | 'connecting' | 'ringing' | 'in-call';
 
@@ -82,6 +83,7 @@ function LeadCardOverlay({
   onClose: () => void;
 }) {
   const router = useRouter();
+  const frameRef = useRef<HTMLIFrameElement>(null);
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       if (e.origin !== window.location.origin) return;
@@ -109,7 +111,10 @@ function LeadCardOverlay({
         }}
       >
         <div className="flex flex-shrink-0 items-center justify-between border-b border-[#e5e5e5] bg-white px-4 py-2.5">
-          <span className="text-xs font-medium text-[#6b6b6b]">Lead Info</span>
+          <LeadActionsMenu
+            align="left"
+            onAction={id => postLeadActionToFrame(frameRef.current, id)}
+          />
           <div className="flex items-center gap-3">
             <a
               href={`/pipeline/${leadId}`}
@@ -135,6 +140,7 @@ function LeadCardOverlay({
           </div>
         </div>
         <iframe
+          ref={frameRef}
           src={`/pipeline/${leadId}?modal=1&from=dialer`}
           className="w-full flex-1 border-0 bg-white"
           title="Lead workspace"
@@ -318,6 +324,18 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     wireCall(call);
     call.on('ringing', () => setStatus('ringing'));
   }, [wireCall]);
+
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      if (e.origin !== window.location.origin) return;
+      const d = e.data;
+      if (!d || typeof d !== 'object' || d.type !== CALL_MSG) return;
+      if (typeof d.e164 !== 'string' || !d.e164) return;
+      void connect(d.e164, { name: d.name, leadId: d.leadId, company: d.company }).catch(() => {});
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, [connect]);
 
   const hangup = useCallback(() => {
     callRef.current?.disconnect();

@@ -19,7 +19,9 @@ import {
   PIPELINE_LEAD_MSG,
   leadInfoUrl,
   pipelineListUrl,
+  postLeadActionToFrame,
 } from '@/lib/pipeline/iframeMessages';
+import LeadActionsMenu, { type LeadActionId } from '@/components/LeadActionsMenu';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -234,8 +236,12 @@ export default function InboxClient({
 
   // Lead overlay — shows the pipeline lead workspace in a floating panel
   const [leadOverlayId, setLeadOverlayId] = useState<string | null>(null);
+  const [leadOverlayExtra, setLeadOverlayExtra] = useState<{ tab?: string; action?: string } | undefined>();
+  const [leadOverlayKey, setLeadOverlayKey] = useState(0);
   const [showPipeline, setShowPipeline] = useState(false);
   const [pipelineFrameSrc, setPipelineFrameSrc] = useState('/pipeline?modal=1');
+  const pipelineFrameRef = useRef<HTMLIFrameElement>(null);
+  const leadOverlayFrameRef = useRef<HTMLIFrameElement>(null);
   const [pipelineLeadId, setPipelineLeadId] = useState<string | null>(null);
   const [pipelineShowingLead, setPipelineShowingLead] = useState(false);
 
@@ -730,6 +736,60 @@ export default function InboxClient({
 
   const { chars, segments, encoding } = smsSegments(composerText);
 
+  const openInboxLead = (extra?: { tab?: string; action?: string }) => {
+    if (!selectedLead) return;
+    setLeadOverlayExtra(extra);
+    setLeadOverlayId(selectedLead.id);
+    setLeadOverlayKey(k => k + 1);
+  };
+
+  const handleInboxLeadAction = (id: LeadActionId) => {
+    switch (id) {
+      case 'application':
+        openInboxLead({ tab: 'application' });
+        break;
+      case 'status':
+        openInboxLead({ tab: 'status' });
+        break;
+      case 'lender':
+        openInboxLead({ tab: 'lender' });
+        break;
+      case 'docs':
+        openInboxLead({ tab: 'docs' });
+        break;
+      case 'comms':
+        openInboxLead({ tab: 'comms' });
+        break;
+      case 'send':
+        openInboxLead({ tab: 'lender', action: 'send' });
+        break;
+      case 'offers':
+        openInboxLead({ tab: 'lender', action: 'offers' });
+        break;
+      case 'financials':
+        openInboxLead({ tab: 'lender', action: 'financials' });
+        break;
+      case 'edit':
+        openInboxLead({ tab: 'application', action: 'edit' });
+        break;
+      case 'sms':
+        break;
+      case 'email':
+        openInboxLead({ tab: 'comms', action: 'email' });
+        break;
+      case 'followup':
+        openInboxLead({ tab: 'comms', action: 'followup' });
+        break;
+      case 'call':
+        if (selectedLead?.phone) webphone.openDialPad(selectedLead.phone);
+        break;
+      case 'print':
+      case 'csv':
+        openInboxLead({ tab: 'application' });
+        break;
+    }
+  };
+
   // ─────────────────────────────────────────────────────────────────────────────
   return (
     <>
@@ -927,12 +987,11 @@ export default function InboxClient({
               </div>
               <div className="flex items-center gap-3">
                 <div className="flex flex-col items-end gap-0.5">
-                  <button
-                    onClick={() => setLeadOverlayId(selectedLead.id)}
-                    className="text-xs font-medium text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors"
-                  >
-                    View Lead
-                  </button>
+                  <LeadActionsMenu
+                    compact
+                    align="right"
+                    onAction={handleInboxLeadAction}
+                  />
                   <button
                     type="button"
                     onClick={async () => {
@@ -1367,9 +1426,14 @@ export default function InboxClient({
                   ← Pipeline
                 </button>
               )}
-              <span className="text-xs text-[#6b6b6b] font-medium">
-                {pipelineShowingLead ? 'Lead Info' : 'Pipeline'}
-              </span>
+              {pipelineShowingLead ? (
+                <LeadActionsMenu
+                  align="left"
+                  onAction={id => postLeadActionToFrame(pipelineFrameRef.current, id)}
+                />
+              ) : (
+                <span className="text-xs text-[#6b6b6b] font-medium">Pipeline</span>
+              )}
             </div>
             <div className="flex items-center gap-3">
               <a
@@ -1401,6 +1465,7 @@ export default function InboxClient({
             </div>
           </div>
           <iframe
+            ref={pipelineFrameRef}
             src={pipelineFrameSrc}
             className="flex-1 w-full bg-white border-0"
             title={pipelineShowingLead ? 'Lead workspace' : 'Pipeline'}
@@ -1415,7 +1480,7 @@ export default function InboxClient({
         {/* Backdrop — click to close */}
         <div
           className="fixed inset-0 bg-black/40 z-[80]"
-          onClick={() => setLeadOverlayId(null)}
+          onClick={() => { setLeadOverlayId(null); setLeadOverlayExtra(undefined); }}
         />
         {/* Panel */}
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[81] flex flex-col"
@@ -1423,7 +1488,10 @@ export default function InboxClient({
         >
           {/* Header bar */}
           <div className="flex items-center justify-between px-4 py-2.5 bg-white border-b border-[#e5e5e5] rounded-t-xl flex-shrink-0">
-            <span className="text-xs text-[#6b6b6b] font-medium">Lead Info</span>
+            <LeadActionsMenu
+              align="left"
+              onAction={id => postLeadActionToFrame(leadOverlayFrameRef.current, id)}
+            />
             <div className="flex items-center gap-3">
               <a
                 href={`/pipeline/${leadOverlayId}`}
@@ -1438,7 +1506,7 @@ export default function InboxClient({
                 Full page
               </a>
               <button
-                onClick={() => setLeadOverlayId(null)}
+                onClick={() => { setLeadOverlayId(null); setLeadOverlayExtra(undefined); }}
                 className="text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors p-1 rounded hover:bg-[#f5f5f5]"
                 title="Close"
               >
@@ -1450,7 +1518,9 @@ export default function InboxClient({
           </div>
           {/* iframe */}
           <iframe
-            src={`/pipeline/${leadOverlayId}?modal=1&from=inbox`}
+            ref={leadOverlayFrameRef}
+            key={leadOverlayKey}
+            src={leadInfoUrl(leadOverlayId, { ...leadOverlayExtra, from: 'inbox' })}
             className="flex-1 w-full bg-white rounded-b-xl border-0"
             title="Lead workspace"
           />

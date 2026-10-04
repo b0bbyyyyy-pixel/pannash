@@ -8,6 +8,8 @@ export const OPEN_LEAD_MSG = 'gostwrk-open-lead';
 export const BACK_TO_PIPELINE_MSG = 'gostwrk-back-to-pipeline';
 export const LEAD_DELETED_MSG = 'gostwrk-lead-deleted';
 export const LEAD_SHOWN_MSG = 'gostwrk-lead-shown';
+export const CALL_MSG = 'gostwrk-call';
+export const LEAD_ACTION_MSG = 'gostwrk-lead-action';
 
 export type PipelineLeadPatchMsg = {
   type: typeof PIPELINE_LEAD_MSG;
@@ -37,12 +39,27 @@ export type LeadShownMsg = {
   id: string;
 };
 
+export type CallMsg = {
+  type: typeof CALL_MSG;
+  e164: string;
+  name?: string;
+  leadId?: string;
+  company?: string;
+};
+
+export type LeadActionMsg = {
+  type: typeof LEAD_ACTION_MSG;
+  action: string;
+};
+
 export type PipelineFrameMsg =
   | PipelineLeadPatchMsg
   | OpenLeadMsg
   | BackToPipelineMsg
   | LeadDeletedMsg
-  | LeadShownMsg;
+  | LeadShownMsg
+  | CallMsg
+  | LeadActionMsg;
 
 export function isInIframe(): boolean {
   if (typeof window === 'undefined') return false;
@@ -79,6 +96,28 @@ export function postLeadDeleted(id: string) {
 
 export function postLeadShown(id: string) {
   postToParent({ type: LEAD_SHOWN_MSG, id });
+}
+
+export function postCallToTop(data: Omit<CallMsg, 'type'>) {
+  try {
+    window.top?.postMessage({ type: CALL_MSG, ...data }, window.location.origin);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function postLeadActionToFrame(
+  frame: HTMLIFrameElement | null | undefined,
+  action: string
+) {
+  try {
+    frame?.contentWindow?.postMessage(
+      { type: LEAD_ACTION_MSG, action },
+      window.location.origin
+    );
+  } catch {
+    /* ignore */
+  }
 }
 
 export function leadInfoUrl(

@@ -3,11 +3,14 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import { isInIframe, postBackToPipeline, postLeadDeleted, postLeadPatch, postLeadShown } from '@/lib/pipeline/iframeMessages';
+import { isInIframe, LEAD_ACTION_MSG, postBackToPipeline, postCallToTop, postLeadDeleted, postLeadPatch, postLeadShown } from '@/lib/pipeline/iframeMessages';
+import { downloadBankCsv, printBankReport } from '@/lib/pipeline/bankReport';
+import { saveLeadStatusWrite } from '@/lib/pipeline/saveLeadStatus';
 import { toE164 } from '@/lib/dialer/e164';
 import { buildFundingApplication } from '@/lib/fundingApplication';
 import { useWebPhone } from '@/components/webphone/WebPhone';
 import LeadUpdatesTimeline from '@/components/LeadUpdatesTimeline';
+import LeadActionsMenu, { type LeadActionId } from '@/components/LeadActionsMenu';
 
 const UnderwritingSuite    = dynamic(() => import('@/components/UnderwritingSuite'), { ssr: false });
 const ScheduleEmailModal   = dynamic(() => import('@/components/ScheduleEmailModal'), { ssr: false });
@@ -48,6 +51,10 @@ interface Lead {
   list_id?: string | null;
 }
 
+type SurfaceTab = 'application' | 'status' | 'lender' | 'docs' | 'comms';
+const SURFACE_TABS: SurfaceTab[] = ['application', 'status', 'lender', 'docs', 'comms'];
+type ChildOverlay = 'send' | 'offers' | 'financials' | 'docs' | 'sms' | 'email' | 'followup';
+
 interface LeadWorkspaceClientProps {
   lead: Lead;
   allLeadIds: string[];
@@ -85,6 +92,7 @@ function Field({
   readOnly = false,
   type = 'text',
   valueStyle,
+  startEditKey = 0,
 }: {
   label: string;
   value: string | null | undefined;
@@ -93,6 +101,7 @@ function Field({
   readOnly?: boolean;
   type?: string;
   valueStyle?: React.CSSProperties;
+  startEditKey?: number;
 }) {
   const [editing, setEditing]   = useState(false);
   const [editVal, setEditVal]   = useState(value || '');
@@ -108,6 +117,15 @@ function Field({
     setEditVal(value || '');
     setEditing(true);
   };
+
+  const lastEditKey = useRef(0);
+  useEffect(() => {
+    if (startEditKey > 0 && startEditKey !== lastEditKey.current) {
+      lastEditKey.current = startEditKey;
+      startEdit();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startEditKey]);
 
   const handleSave = async () => {
     if (!onSave) { setEditing(false); return; }
@@ -290,7 +308,8 @@ export default function LeadWorkspaceClient({
 }: LeadWorkspaceClientProps) {
   const router = useRouter();
   const [lead, setLead]               = useState(initialLead);
-  const [surfaceTab, setSurfaceTab]   = useState<'application' | 'status' | 'lender' | 'docs' | 'comms'>('application');
+  const [surfaceTab, setSurfaceTab]   = useState<SurfaceTab>('application');
+  const [nameEditKey, setNameEditKey] = useState(0);
   const [showOwner2, setShowOwner2]   = useState(false);
   const [notes, setNotes]             = useState(initialLead.notes || '');
   const [notesSaving, setNotesSaving] = useState(false);
@@ -304,7 +323,29 @@ export default function LeadWorkspaceClient({
   const [showSendModal, setShowSendModal]       = useState(false);
   const [showFinancials, setShowFinancials]     = useState(false);
   const [showManageStatuses, setShowManageStatuses] = useState(false);
+  const [showOffersModal, setShowOffersModal] = useState(false);
   const [dbStatuses, setDbStatuses]           = useState<DBStatus[]>([]);
+
+  const closeChildOverlays = useCallback(() => {
+    setShowSendModal(false);
+    setShowOffersModal(false);
+    setShowFinancials(false);
+    setShowDocsModal(false);
+    setShowTextPopup(false);
+    setShowEmailModal(false);
+    setShowFollowUpModal(false);
+  }, []);
+
+  const openChildOverlay = useCallback((which: ChildOverlay) => {
+    closeChildOverlays();
+    if (which === 'send') setShowSendModal(true);
+    else if (which === 'offers') setShowOffersModal(true);
+    else if (which === 'financials') setShowFinancials(true);
+    else if (which === 'docs') setShowDocsModal(true);
+    else if (which === 'sms') setShowTextPopup(true);
+    else if (which === 'email') setShowEmailModal(true);
+    else if (which === 'followup') setShowFollowUpModal(true);
+  }, [closeChildOverlays]);
 
   // ── Click-to-call (in-app WebRTC — audio through headset) ──────────────────
   const webphone = useWebPhone();
@@ -314,15 +355,22 @@ export default function LeadWorkspaceClient({
   const [appBusy, setAppBusy]     = useState(false);
   const [appMissing, setAppMissing] = useState<string[]>([]);
   const [appMsg, setAppMsg]       = useState<string | null>(null);
+  const [inFrame, setInFrame]     = useState(false);
+  useEffect(() => { setInFrame(isInIframe()); }, []);
 
   const startCall = useCallback(async () => {
     const e164 = toE164(lead.phone);
     if (!e164) { setCallMsg('No valid phone number'); return; }
-    if (!webphone.ready) { setCallMsg('Phone not ready — check Twilio setup in Settings → Phone.'); return; }
+    const inFrame = isInIframe();
+    if (!inFrame && !webphone.ready) { setCallMsg('Phone not ready — check Twilio setup in Settings → Phone.'); return; }
     setCallBusy(true);
     setCallMsg(null);
     try {
-      await webphone.connect(e164, { name: lead.name, leadId: lead.id, company: lead.company ?? undefined });
+      if (inFrame) {
+        postCallToTop({ e164, name: lead.name, leadId: lead.id, company: lead.company ?? undefined });
+      } else {
+        await webphone.connect(e164, { name: lead.name, leadId: lead.id, company: lead.company ?? undefined });
+      }
       setCallMsg('Calling…');
       setCallSeq((s) => s + 1);
     } catch (e) {
@@ -330,7 +378,7 @@ export default function LeadWorkspaceClient({
     } finally {
       setCallBusy(false);
     }
-  }, [lead.phone, lead.name, webphone]);
+  }, [lead.phone, lead.name, lead.id, lead.company, webphone]);
 
   const createApplication = useCallback(async () => {
     const { missing } = buildFundingApplication({
@@ -369,14 +417,13 @@ export default function LeadWorkspaceClient({
         }));
       }
       setAppMsg(`Saved ${json.fileName || 'application'} to Documents`);
-      setSurfaceTab('docs');
-      setShowDocsModal(true);
+      openChildOverlay('docs');
     } catch {
       setAppMsg('Could not create application');
     } finally {
       setAppBusy(false);
     }
-  }, [lead]);
+  }, [lead, openChildOverlay]);
 
   // Load dynamic statuses
   useEffect(() => {
@@ -388,14 +435,27 @@ export default function LeadWorkspaceClient({
 
   type SubRow = { id: string; lender_name: string; status: string; created_at: string };
   const [submissions, setSubmissions] = useState<SubRow[]>([]);
+  const [subsLoading, setSubsLoading] = useState(true);
+  const [subsError, setSubsError] = useState(false);
   const loadSubmissions = useCallback(() => {
+    setSubsLoading(true);
+    setSubsError(false);
     fetch(`/api/leads/submissions?leadId=${lead.id}`, { credentials: 'include' })
-      .then(r => r.json())
-      .then(j => setSubmissions(Array.isArray(j.submissions) ? j.submissions : []))
-      .catch(() => {});
+      .then(async r => {
+        if (!r.ok) throw new Error('fail');
+        const j = await r.json();
+        setSubmissions(Array.isArray(j.submissions) ? j.submissions : []);
+      })
+      .catch(() => {
+        setSubsError(true);
+        setSubmissions([]);
+      })
+      .finally(() => setSubsLoading(false));
   }, [lead.id]);
-  useEffect(() => { loadSubmissions(); }, [loadSubmissions]);
-  useEffect(() => { if (!showSendModal) loadSubmissions(); }, [showSendModal, loadSubmissions]);
+  useEffect(() => {
+    if (showSendModal) return;
+    loadSubmissions();
+  }, [showSendModal, loadSubmissions]);
   useEffect(() => {
     const u = (initialLead.underwriting_data || {}) as Record<string, unknown>;
     if (u.owner2FirstName || u.owner2LastName || u.owner2CreditScore) setShowOwner2(true);
@@ -760,27 +820,20 @@ export default function LeadWorkspaceClient({
 
   // ── Status / temperature / assigned save ────────────────────────────────────
   const saveLeadStatus = async (val: string) => {
-    await fetch('/api/leads/pipeline', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ leadId: lead.id, field: 'lead_status', value: val }),
+    const { underwritingData } = await saveLeadStatusWrite({
+      leadId: lead.id,
+      status: val,
+      underwritingData: lead.underwriting_data,
     });
-    let nextUd = lead.underwriting_data as Record<string, unknown> | null | undefined;
-    if (val === 'Funded') {
-      const merged = {
-        ...(lead.underwriting_data || {}),
-        isFunded: true,
-        fundedAt: (lead.underwriting_data as Record<string, unknown> | null)?.fundedAt || new Date().toISOString(),
-      };
-      nextUd = merged;
-      await fetch('/api/leads/underwriting', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ leadId: lead.id, underwritingData: merged }),
-      });
-    }
-    setLead(prev => ({ ...prev, lead_status: val, ...(nextUd ? { underwriting_data: nextUd } : {}) }));
-    postLeadPatch(lead.id, { lead_status: val, ...(nextUd ? { underwriting_data: nextUd } : {}) });
+    setLead(prev => ({
+      ...prev,
+      lead_status: val,
+      ...(underwritingData ? { underwriting_data: underwritingData } : {}),
+    }));
+    postLeadPatch(lead.id, {
+      lead_status: val,
+      ...(underwritingData ? { underwriting_data: underwritingData } : {}),
+    });
   };
 
   const saveTemperature = async (val: string) => {
@@ -832,7 +885,6 @@ export default function LeadWorkspaceClient({
 
   // ── Projected Offer calculation (mirrors UnderwritingSuite logic) ────────────
   const [showProjectedOffer, setShowProjectedOffer] = useState(false);
-  const [showOffersModal, setShowOffersModal] = useState(false);
 
   const projectedOffer = useMemo(() => {
     const rev      = Number(ud.monthlyRevenue  ?? 0);
@@ -994,64 +1046,117 @@ export default function LeadWorkspaceClient({
     isSoleProp:        Boolean(ud.isSoleProp     ?? false),
   }), [derivedTIB, ud, mcaPositions.length]);
 
-  const printBankReport = () => {
-    const d = ud;
-    const html = `<!DOCTYPE html><html><head><title>Bank Report — ${lead.company || lead.name}</title>
-                <style>body{font-family:sans-serif;padding:32px;max-width:680px;margin:auto;color:#1a1a1a}h1{font-size:18px;margin-bottom:4px}p.sub{font-size:12px;color:#6b6b6b;margin:0 0 24px}table{width:100%;border-collapse:collapse;font-size:13px}td{padding:8px 10px;border-bottom:1px solid #f0f0f0}td:first-child{color:#6b6b6b;width:55%}td:last-child{font-weight:600;text-align:right}.section{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#9b9b9b;padding:14px 10px 4px;border-bottom:2px solid #f0f0f0}@media print{body{padding:16px}}</style>
-                </head><body>
-                <h1>${lead.company || lead.name}</h1>
-                <p class="sub">Bank Statement Analysis · Generated ${new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</p>
-                <table>
-                  <tr><td class="section" colspan="2">Revenue</td></tr>
-                  <tr><td>Avg Monthly Revenue</td><td>${d.monthlyRevenue ? '$'+Number(d.monthlyRevenue).toLocaleString() : '—'}</td></tr>
-                  <tr><td>Month 1 Deposits</td><td>${d.month1Revenue ? '$'+Number(d.month1Revenue).toLocaleString() : '—'}</td></tr>
-                  <tr><td>Month 2 Deposits</td><td>${d.month2Revenue ? '$'+Number(d.month2Revenue).toLocaleString() : '—'}</td></tr>
-                  <tr><td>Month 3 Deposits</td><td>${d.month3Revenue ? '$'+Number(d.month3Revenue).toLocaleString() : '—'}</td></tr>
-                  <tr><td>Month 4 Deposits</td><td>${d.month4Revenue ? '$'+Number(d.month4Revenue).toLocaleString() : '—'}</td></tr>
-                  <tr><td class="section" colspan="2">Balances</td></tr>
-                  <tr><td>Avg Daily Balance</td><td>${d.avgDailyBalance ? '$'+Number(d.avgDailyBalance).toLocaleString() : '—'}</td></tr>
-                  <tr><td>Ending Balance</td><td>${d.endingBalance ? '$'+Number(d.endingBalance).toLocaleString() : '—'}</td></tr>
-                  <tr><td class="section" colspan="2">Activity</td></tr>
-                  <tr><td>NSF / Neg Days</td><td>${d.nsfCount ?? '—'}</td></tr>
-                  <tr><td>Avg Deposits / Mo</td><td>${d.depositsCount ?? '—'}</td></tr>
-                  <tr><td>Largest Deposit</td><td>${d.largestDeposit ? '$'+Number(d.largestDeposit).toLocaleString() : '—'}</td></tr>
-                  <tr><td class="section" colspan="2">Underwriting</td></tr>
-                  <tr><td>Credit Score</td><td>${d.creditScore ?? '—'}</td></tr>
-                  <tr><td>Time in Business</td><td>${d.timeInBusiness ? d.timeInBusiness+' mo' : '—'}</td></tr>
-                  <tr><td>Industry</td><td>${d.industry ?? '—'}</td></tr>
-                  <tr><td>Business State</td><td>${d.businessState ?? '—'}</td></tr>
-                  <tr><td>Has Other MCA</td><td>${d.hasOtherMCALoans ? 'Yes' : 'No'}</td></tr>
-                </table>
-                </body></html>`;
-    const w = window.open('', '_blank', 'width=720,height=900');
-    if (w) { w.document.write(html); w.document.close(); w.focus(); w.print(); }
+  const handleMenuAction = (id: LeadActionId) => {
+    switch (id) {
+      case 'application':
+        setSurfaceTab('application');
+        break;
+      case 'status':
+        setSurfaceTab('status');
+        break;
+      case 'lender':
+        setSurfaceTab('lender');
+        break;
+      case 'docs':
+        setSurfaceTab('docs');
+        openChildOverlay('docs');
+        break;
+      case 'comms':
+        setSurfaceTab('comms');
+        break;
+      case 'send':
+        setSurfaceTab('lender');
+        openChildOverlay('send');
+        break;
+      case 'offers':
+        setSurfaceTab('lender');
+        openChildOverlay('offers');
+        break;
+      case 'financials':
+        setSurfaceTab('lender');
+        openChildOverlay('financials');
+        break;
+      case 'sms':
+        setSurfaceTab('comms');
+        openChildOverlay('sms');
+        break;
+      case 'email':
+        setSurfaceTab('comms');
+        openChildOverlay('email');
+        break;
+      case 'call':
+        setSurfaceTab('comms');
+        void startCall();
+        break;
+      case 'followup':
+        setSurfaceTab('comms');
+        openChildOverlay('followup');
+        break;
+      case 'edit':
+        setSurfaceTab('application');
+        setNameEditKey(k => k + 1);
+        break;
+      case 'print':
+        printBankReport(lead);
+        break;
+      case 'csv':
+        downloadBankCsv(lead);
+        break;
+    }
   };
 
-  const downloadBankCsv = () => {
-    const d = ud;
-    const rows = [
-      ['Field','Value'],
-      ['Lead',lead.company||lead.name||''],
-      ['Generated',new Date().toLocaleDateString()],
-      ['Avg Monthly Revenue',d.monthlyRevenue??''],
-      ['Month 1',d.month1Revenue??''],['Month 2',d.month2Revenue??''],
-      ['Month 3',d.month3Revenue??''],['Month 4',d.month4Revenue??''],
-      ['Avg Daily Balance',d.avgDailyBalance??''],
-      ['Ending Balance',d.endingBalance??''],
-      ['NSF Count',d.nsfCount??''],
-      ['Avg Deposits/Mo',d.depositsCount??''],
-      ['Credit Score',d.creditScore??''],
-      ['Time in Business (mo)',d.timeInBusiness??''],
-      ['Industry',d.industry??''],
-      ['Business State',d.businessState??''],
-    ];
-    const csv = rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
-    const blob = new Blob([csv],{type:'text/csv'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href=url; a.download=`bank-report-${(lead.company||lead.name||'lead').replace(/\s+/g,'-').toLowerCase()}.csv`;
-    a.click(); URL.revokeObjectURL(url);
-  };
+  const handleMenuActionRef = useRef(handleMenuAction);
+  handleMenuActionRef.current = handleMenuAction;
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      if (e.origin !== window.location.origin) return;
+      const d = e.data;
+      if (!d || typeof d !== 'object' || d.type !== LEAD_ACTION_MSG) return;
+      if (typeof d.action !== 'string') return;
+      handleMenuActionRef.current(d.action as LeadActionId);
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
+
+  const deepLinkRan = useRef(false);
+  useEffect(() => {
+    if (deepLinkRan.current) return;
+    const qs = new URLSearchParams(window.location.search);
+    const tab = qs.get('tab');
+    const action = qs.get('action');
+    if (!tab && !action) return;
+    deepLinkRan.current = true;
+
+    if (tab && (SURFACE_TABS as string[]).includes(tab)) {
+      setSurfaceTab(tab as SurfaceTab);
+    } else if (action === 'send' || action === 'offers' || action === 'financials') {
+      setSurfaceTab('lender');
+    } else if (action === 'docs') {
+      setSurfaceTab('docs');
+    } else if (action === 'email' || action === 'sms' || action === 'followup' || action === 'call') {
+      setSurfaceTab('comms');
+    } else if (action === 'edit') {
+      setSurfaceTab('application');
+    }
+
+    if (action === 'send') openChildOverlay('send');
+    else if (action === 'offers') openChildOverlay('offers');
+    else if (action === 'financials') openChildOverlay('financials');
+    else if (tab === 'docs' || action === 'docs') openChildOverlay('docs');
+    else if (action === 'email') openChildOverlay('email');
+    else if (action === 'sms') openChildOverlay('sms');
+    else if (action === 'followup') openChildOverlay('followup');
+    else if (action === 'call') void startCall();
+    else if (action === 'edit') setNameEditKey(k => k + 1);
+
+    qs.delete('tab');
+    qs.delete('action');
+    const next = qs.toString();
+    router.replace(`${window.location.pathname}${next ? `?${next}` : ''}`, { scroll: false });
+    // One-shot after lead is mounted.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lead.id]);
 
   const money = (n: unknown) => {
     const v = Number(n);
@@ -1196,9 +1301,22 @@ export default function LeadWorkspaceClient({
         {/* Right: actions + prev/next */}
         <div className="flex items-center gap-2">
           {(appMsg || (surfaceTab === 'application' && missingList.length > 0 && appMissing.length > 0)) && (
-            <p className="text-[11px] text-red-600 max-w-[180px] truncate" title={appMsg || missingList.join(', ')}>
+            <p
+              className={`text-[11px] max-w-[180px] truncate ${
+                appMsg && appMsg.startsWith('Saved ') ? 'text-[#6b6b6b]' : 'text-red-600'
+              }`}
+              title={appMsg || missingList.join(', ')}
+            >
               {appMsg || `${missingList.length} field${missingList.length === 1 ? '' : 's'} missing`}
             </p>
+          )}
+          {!isModal && (
+            <LeadActionsMenu
+              onAction={handleMenuAction}
+              currentSection={surfaceTab}
+              showAppDot
+              appComplete={appComplete}
+            />
           )}
           <button
             onClick={() => setShowVault(true)}
@@ -1245,31 +1363,10 @@ export default function LeadWorkspaceClient({
         </div>
       </div>
 
-      {/* ── FIVE SECTION TABS ─────────────────────────────────────────────── */}
-      <div className="bg-white border-b border-[#e5e5e5] px-6 flex items-center gap-1">
-        {([
-          { id: 'application' as const, label: 'Application' },
-          { id: 'status' as const, label: 'Status' },
-          { id: 'lender' as const, label: 'Lender' },
-          { id: 'docs' as const, label: 'Docs' },
-          { id: 'comms' as const, label: 'Comms' },
-        ]).map(t => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => setSurfaceTab(t.id)}
-            className={`px-3 py-2.5 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${
-              surfaceTab === t.id
-                ? 'border-[#1a1a1a] text-[#1a1a1a]'
-                : 'border-transparent text-[#9b9b9b] hover:text-[#6b6b6b]'
-            }`}
-          >
-            {t.label}
-            {t.id === 'application' && (
-              <span className={`w-1.5 h-1.5 rounded-full ${appComplete ? 'bg-emerald-500' : 'bg-red-500'}`} />
-            )}
-          </button>
-        ))}
+      <div className="bg-white border-b border-[#e5e5e5] px-6 py-2">
+        <span className="text-[11px] font-semibold text-[#9b9b9b] uppercase tracking-wider">
+          {{ application: 'Application', status: 'Status', lender: 'Lender', docs: 'Docs', comms: 'Comms' }[surfaceTab]}
+        </span>
       </div>
 
       <div className="bg-[#fafafa] min-h-[calc(100vh-180px)] p-4">
@@ -1278,7 +1375,7 @@ export default function LeadWorkspaceClient({
           {surfaceTab === 'application' && (
             <div>
               <Section title="Person">
-                <Field label="Full Name"  value={lead.name}    onSave={v => saveField('name', v)} />
+                <Field label="Full Name"  value={lead.name}    onSave={v => saveField('name', v)} startEditKey={nameEditKey} />
                 <Field label="Email"      value={lead.email}   onSave={v => saveField('email', v)}  type="email" />
                 <Field label="Mobile"     value={lead.phone}   onSave={v => saveField('phone', v)}  type="tel" />
               </Section>
@@ -1408,6 +1505,7 @@ export default function LeadWorkspaceClient({
               <button
                 onClick={createApplication}
                 disabled={appBusy}
+                title="Create a signed application from this lead's details"
                 className="mt-3 px-3 py-2.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] disabled:opacity-50 transition-colors"
               >
                 {appBusy ? 'Creating…' : 'Create Application'}
@@ -1520,7 +1618,6 @@ export default function LeadWorkspaceClient({
               </Section>
 
               <Section title="Meta">
-                {campaignName ? <Field label="Campaign" value={campaignName} readOnly /> : null}
                 <Field label="Created At"  value={fmtDate(lead.created_at)}  readOnly />
                 <Field label="Updated At"  value={fmtDate(lead.updated_at)}  readOnly />
               </Section>
@@ -1547,23 +1644,6 @@ export default function LeadWorkspaceClient({
                   lastContact={lead.last_contact}
                 />
               </Section>
-
-              <div className="flex gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={printBankReport}
-                  className="flex-1 px-3 py-1.5 text-xs font-medium border border-[#e5e5e5] rounded-lg bg-white text-[#1a1a1a] hover:bg-[#f5f5f5]"
-                >
-                  Print Report
-                </button>
-                <button
-                  type="button"
-                  onClick={downloadBankCsv}
-                  className="flex-1 px-3 py-1.5 text-xs font-medium border border-[#e5e5e5] rounded-lg bg-white text-[#1a1a1a] hover:bg-[#f5f5f5]"
-                >
-                  Download CSV
-                </button>
-              </div>
             </div>
           )}
 
@@ -1587,7 +1667,7 @@ export default function LeadWorkspaceClient({
                 </div>
                 <button
                   type="button"
-                  onClick={() => setShowFinancials(true)}
+                  onClick={() => openChildOverlay('financials')}
                   className="text-xs text-[#1a1a1a] underline underline-offset-2 hover:no-underline"
                 >
                   Full report
@@ -1597,7 +1677,7 @@ export default function LeadWorkspaceClient({
               <Section title="Lenders">
                 <button
                   type="button"
-                  onClick={() => setShowSendModal(true)}
+                  onClick={() => openChildOverlay('send')}
                   className="px-3 py-2.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] transition-colors"
                 >
                   Lenders Match
@@ -1605,7 +1685,11 @@ export default function LeadWorkspaceClient({
               </Section>
 
               <Section title="Submissions">
-                {submissions.length === 0 ? (
+                {subsLoading ? (
+                  <p className="text-sm text-[#9b9b9b] py-4">Loading submissions…</p>
+                ) : subsError ? (
+                  <p className="text-sm text-red-600 py-4">Couldn&apos;t load submissions</p>
+                ) : submissions.length === 0 ? (
                   <p className="text-sm text-[#9b9b9b] py-4">No submissions yet. Use Lenders Match to send.</p>
                 ) : (
                   <div className="space-y-1.5">
@@ -1638,7 +1722,7 @@ export default function LeadWorkspaceClient({
                         </svg>
                       </button>
                       <button
-                        onClick={() => { setShowEmailModal(false); setShowOffersModal(true); }}
+                        onClick={() => openChildOverlay('offers')}
                         className="flex-1 px-3 py-1.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] transition-colors text-center"
                       >
                         Offers
@@ -1683,36 +1767,23 @@ export default function LeadWorkspaceClient({
             </div>
           )}
 
-          {surfaceTab === 'docs' && (
-            <div>
-              <button
-                type="button"
-                onClick={() => setShowDocsModal(true)}
-                className="w-full px-3 py-2.5 border border-[#e5e5e5] text-[#1a1a1a] text-xs font-medium rounded-md hover:bg-[#f5f5f5] transition-colors"
-              >
-                Open documents
-              </button>
-              <p className="text-xs text-[#9b9b9b] mt-2">Upload applications, bank statements, and other files. Mark a file as an application to parse it into the lead fields.</p>
-            </div>
-          )}
-
           {surfaceTab === 'comms' && (
             <div>
               <div className="grid grid-cols-2 gap-2 mb-3">
                 <button
-                  onClick={() => setShowTextPopup(true)}
+                  onClick={() => openChildOverlay('sms')}
                   className="px-3 py-2.5 border border-[#e5e5e5] text-[#1a1a1a] text-xs font-medium rounded-md hover:bg-[#f5f5f5] transition-colors"
                 >
                   Send SMS
                 </button>
                 <button
-                  onClick={() => { setShowOffersModal(false); setShowEmailModal(true); }}
+                  onClick={() => openChildOverlay('email')}
                   className="px-3 py-2.5 border border-[#e5e5e5] text-[#1a1a1a] text-xs font-medium rounded-md hover:bg-[#f5f5f5] transition-colors"
                 >
                   Send Email
                 </button>
                 <button
-                  onClick={() => setShowFollowUpModal(true)}
+                  onClick={() => openChildOverlay('followup')}
                   className="px-3 py-2.5 border border-[#e5e5e5] text-[#1a1a1a] text-xs font-medium rounded-md hover:bg-[#f5f5f5] transition-colors"
                 >
                   {lead.follow_up_at
@@ -1728,7 +1799,7 @@ export default function LeadWorkspaceClient({
                 </button>
                 <button
                   onClick={startCall}
-                  disabled={callBusy || !webphone.ready}
+                  disabled={callBusy || (!inFrame && !webphone.ready)}
                   className="px-3 py-2.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] disabled:opacity-50 transition-colors"
                 >
                   {callBusy ? 'Calling…' : 'Call'}
