@@ -6,6 +6,7 @@ import dynamic from 'next/dynamic';
 import {
   BACK_TO_PIPELINE_MSG,
   LEAD_DELETED_MSG,
+  LEAD_SHOWN_MSG,
   PIPELINE_LEAD_MSG,
   isInIframe,
   postOpenLead,
@@ -293,6 +294,10 @@ export default function PipelineClient({ leads, userId, compact = false, initial
       if (e.origin !== window.location.origin) return;
       const d = e.data;
       if (!d || typeof d !== 'object') return;
+      if (d.type === LEAD_SHOWN_MSG && d.id) {
+        setSelectedLeadId(d.id);
+        return;
+      }
       if (d.type === PIPELINE_LEAD_MSG && d.id && d.patch) {
         setRows(prev => prev.map(l => l.id === d.id ? { ...l, ...d.patch } : l));
         return;
@@ -547,9 +552,12 @@ export default function PipelineClient({ leads, userId, compact = false, initial
               <div
                 key={lead.id}
                 onClick={() => goTo(lead.id)}
-                className={`grid ${PIPELINE_COLS} gap-x-2 px-3 py-1.5 cursor-pointer hover:bg-[#fafafa] transition-colors border-b border-[#f5f5f5] ${
+                className={`grid ${PIPELINE_COLS} gap-x-2 px-3 py-1.5 cursor-pointer transition-colors border-b border-[#f5f5f5] ${
                   idx === filtered.length - 1 ? 'border-b-0' : ''
-                } ${selectedLeadId === lead.id ? 'bg-[#e8e8e8] shadow-[inset_3px_0_0_#1a1a1a]' : ''}`}
+                } ${selectedLeadId === lead.id
+                  ? 'bg-[#e8e8e8] hover:bg-[#e8e8e8] shadow-[inset_3px_0_0_#1a1a1a]'
+                  : 'hover:bg-[#fafafa]'
+                }`}
               >
                 {/* Added / created date */}
                 <div className="flex items-center">
@@ -970,7 +978,7 @@ export default function PipelineClient({ leads, userId, compact = false, initial
               <span className="text-xs text-[#6b6b6b] font-medium">Lead Info</span>
               <div className="flex items-center gap-3">
                 <a
-                  href={`/pipeline/${leadOverlayId}`}
+                  href={`/pipeline/${selectedLeadId || leadOverlayId}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-[#6b6b6b] hover:text-[#1a1a1a] text-xs flex items-center gap-1 transition-colors"

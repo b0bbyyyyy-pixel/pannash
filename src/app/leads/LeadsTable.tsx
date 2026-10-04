@@ -17,6 +17,7 @@ interface Lead {
   updated_at?: string | null;
   email_status?: string;
   lead_lists?: { name: string };
+  in_pipeline?: boolean;
 }
 
 interface LeadsTableProps {
@@ -126,6 +127,7 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
       }
       if (d.type === BACK_TO_PIPELINE_MSG) {
         setLeadOverlayId(null);
+        router.refresh();
       }
       if (d.type === LEAD_DELETED_MSG && d.id) {
         setLeadOverlayId(null);

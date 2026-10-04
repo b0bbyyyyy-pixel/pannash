@@ -117,7 +117,15 @@ function dispositionColor(key: string | null): string {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function LeadInfoOverlay({ leadId, onClose }: { leadId: string; onClose: () => void }) {
+function LeadInfoOverlay({
+  leadId,
+  onClose,
+  onDeleted,
+}: {
+  leadId: string;
+  onClose: () => void;
+  onDeleted?: (id: string) => void;
+}) {
   const router = useRouter();
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
@@ -126,13 +134,14 @@ function LeadInfoOverlay({ leadId, onClose }: { leadId: string; onClose: () => v
       if (!d || typeof d !== 'object') return;
       if (d.type === BACK_TO_PIPELINE_MSG) onClose();
       if (d.type === LEAD_DELETED_MSG) {
+        onDeleted?.(d.id || leadId);
         onClose();
         router.refresh();
       }
     };
     window.addEventListener('message', onMsg);
     return () => window.removeEventListener('message', onMsg);
-  }, [onClose, router]);
+  }, [onClose, onDeleted, leadId, router]);
 
   return (
     <>
@@ -194,6 +203,7 @@ export function DialerCard({
   onEmailSaved,
   onNotesSaved,
   onQuickEmail,
+  onLeadDeleted,
   className = '',
   compact = false,
 }: {
@@ -207,6 +217,7 @@ export function DialerCard({
   onEmailSaved: (email: string) => void;
   onNotesSaved?: (notes: string | null) => void;
   onQuickEmail: () => void;
+  onLeadDeleted?: (id: string) => void;
   className?: string;
   compact?: boolean;
 }) {
@@ -498,7 +509,13 @@ export function DialerCard({
       </div>
 
       {/* Full lead info overlay */}
-      {showOverlay && <LeadInfoOverlay leadId={lead.id} onClose={() => setShowOverlay(false)} />}
+      {showOverlay && (
+        <LeadInfoOverlay
+          leadId={lead.id}
+          onClose={() => setShowOverlay(false)}
+          onDeleted={onLeadDeleted}
+        />
+      )}
 
       {/* Phone (half width) + city / state / local time */}
       <div className={`flex items-center ${compact ? 'mb-3 gap-2' : 'mb-6 gap-3'}`}>
@@ -957,6 +974,7 @@ export default function DialerClient() {
               onEmailSaved={(email) => setLead((prev) => prev ? { ...prev, email } : prev)}
               onNotesSaved={(notes) => setLead((prev) => prev ? { ...prev, notes } : prev)}
               onQuickEmail={() => setShowEmailModal(true)}
+              onLeadDeleted={(id) => { void claimNext(id); }}
             />
           ) : null}
         </div>

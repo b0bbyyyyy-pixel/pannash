@@ -290,7 +290,8 @@ export default function LeadWorkspaceClient({
 }: LeadWorkspaceClientProps) {
   const router = useRouter();
   const [lead, setLead]               = useState(initialLead);
-  const [centerTab, setCenterTab]     = useState<'submissions' | 'notes' | 'updates'>('submissions');
+  const [surfaceTab, setSurfaceTab]   = useState<'application' | 'status' | 'lender' | 'docs' | 'comms'>('application');
+  const [showOwner2, setShowOwner2]   = useState(false);
   const [notes, setNotes]             = useState(initialLead.notes || '');
   const [notesSaving, setNotesSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -368,6 +369,7 @@ export default function LeadWorkspaceClient({
         }));
       }
       setAppMsg(`Saved ${json.fileName || 'application'} to Documents`);
+      setSurfaceTab('docs');
       setShowDocsModal(true);
     } catch {
       setAppMsg('Could not create application');
@@ -383,6 +385,21 @@ export default function LeadWorkspaceClient({
       .then(j => { if (j.statuses) setDbStatuses(j.statuses); })
       .catch(() => {});
   }, []);
+
+  type SubRow = { id: string; lender_name: string; status: string; created_at: string };
+  const [submissions, setSubmissions] = useState<SubRow[]>([]);
+  const loadSubmissions = useCallback(() => {
+    fetch(`/api/leads/submissions?leadId=${lead.id}`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(j => setSubmissions(Array.isArray(j.submissions) ? j.submissions : []))
+      .catch(() => {});
+  }, [lead.id]);
+  useEffect(() => { loadSubmissions(); }, [loadSubmissions]);
+  useEffect(() => { if (!showSendModal) loadSubmissions(); }, [showSendModal, loadSubmissions]);
+  useEffect(() => {
+    const u = (initialLead.underwriting_data || {}) as Record<string, unknown>;
+    if (u.owner2FirstName || u.owner2LastName || u.owner2CreditScore) setShowOwner2(true);
+  }, [initialLead.id, initialLead.underwriting_data]);
 
   // Prev/Next navigation
   const currentIdx = allLeadIds.indexOf(lead.id);
@@ -954,6 +971,93 @@ export default function LeadWorkspaceClient({
     };
   }, [ud]);
 
+  const appCheck = useMemo(() => buildFundingApplication({
+    name: lead.name,
+    email: lead.email,
+    phone: lead.phone,
+    company: lead.company,
+    value: lead.value,
+    underwriting_data: lead.underwriting_data,
+  }), [lead.name, lead.email, lead.phone, lead.company, lead.value, lead.underwriting_data]);
+  const appComplete = appCheck.missing.length === 0;
+  const missingList = appMissing.length ? appMissing : appCheck.missing;
+
+  const lenderCriteria = useMemo(() => ({
+    timeInBusiness:    derivedTIB ?? Number(ud.timeInBusiness ?? 0),
+    creditScore:       Number(ud.creditScore     ?? 0),
+    avgMonthlyRevenue: Number(ud.monthlyRevenue  ?? 0),
+    currentPositions:  Number(ud.mcaPositionCount ?? mcaPositions.length) || ((ud.hasOtherMCALoans === true || ud.hasOtherMCALoans === 'true') ? 1 : 0),
+    businessState:     String(ud.businessState   ?? ''),
+    industry:          String(ud.industry        ?? ''),
+    nsfCount:          Number(ud.nsfCount        ?? 0),
+    depositsCount:     Number(ud.depositsCount   ?? 0),
+    isSoleProp:        Boolean(ud.isSoleProp     ?? false),
+  }), [derivedTIB, ud, mcaPositions.length]);
+
+  const printBankReport = () => {
+    const d = ud;
+    const html = `<!DOCTYPE html><html><head><title>Bank Report — ${lead.company || lead.name}</title>
+                <style>body{font-family:sans-serif;padding:32px;max-width:680px;margin:auto;color:#1a1a1a}h1{font-size:18px;margin-bottom:4px}p.sub{font-size:12px;color:#6b6b6b;margin:0 0 24px}table{width:100%;border-collapse:collapse;font-size:13px}td{padding:8px 10px;border-bottom:1px solid #f0f0f0}td:first-child{color:#6b6b6b;width:55%}td:last-child{font-weight:600;text-align:right}.section{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#9b9b9b;padding:14px 10px 4px;border-bottom:2px solid #f0f0f0}@media print{body{padding:16px}}</style>
+                </head><body>
+                <h1>${lead.company || lead.name}</h1>
+                <p class="sub">Bank Statement Analysis · Generated ${new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</p>
+                <table>
+                  <tr><td class="section" colspan="2">Revenue</td></tr>
+                  <tr><td>Avg Monthly Revenue</td><td>${d.monthlyRevenue ? '$'+Number(d.monthlyRevenue).toLocaleString() : '—'}</td></tr>
+                  <tr><td>Month 1 Deposits</td><td>${d.month1Revenue ? '$'+Number(d.month1Revenue).toLocaleString() : '—'}</td></tr>
+                  <tr><td>Month 2 Deposits</td><td>${d.month2Revenue ? '$'+Number(d.month2Revenue).toLocaleString() : '—'}</td></tr>
+                  <tr><td>Month 3 Deposits</td><td>${d.month3Revenue ? '$'+Number(d.month3Revenue).toLocaleString() : '—'}</td></tr>
+                  <tr><td>Month 4 Deposits</td><td>${d.month4Revenue ? '$'+Number(d.month4Revenue).toLocaleString() : '—'}</td></tr>
+                  <tr><td class="section" colspan="2">Balances</td></tr>
+                  <tr><td>Avg Daily Balance</td><td>${d.avgDailyBalance ? '$'+Number(d.avgDailyBalance).toLocaleString() : '—'}</td></tr>
+                  <tr><td>Ending Balance</td><td>${d.endingBalance ? '$'+Number(d.endingBalance).toLocaleString() : '—'}</td></tr>
+                  <tr><td class="section" colspan="2">Activity</td></tr>
+                  <tr><td>NSF / Neg Days</td><td>${d.nsfCount ?? '—'}</td></tr>
+                  <tr><td>Avg Deposits / Mo</td><td>${d.depositsCount ?? '—'}</td></tr>
+                  <tr><td>Largest Deposit</td><td>${d.largestDeposit ? '$'+Number(d.largestDeposit).toLocaleString() : '—'}</td></tr>
+                  <tr><td class="section" colspan="2">Underwriting</td></tr>
+                  <tr><td>Credit Score</td><td>${d.creditScore ?? '—'}</td></tr>
+                  <tr><td>Time in Business</td><td>${d.timeInBusiness ? d.timeInBusiness+' mo' : '—'}</td></tr>
+                  <tr><td>Industry</td><td>${d.industry ?? '—'}</td></tr>
+                  <tr><td>Business State</td><td>${d.businessState ?? '—'}</td></tr>
+                  <tr><td>Has Other MCA</td><td>${d.hasOtherMCALoans ? 'Yes' : 'No'}</td></tr>
+                </table>
+                </body></html>`;
+    const w = window.open('', '_blank', 'width=720,height=900');
+    if (w) { w.document.write(html); w.document.close(); w.focus(); w.print(); }
+  };
+
+  const downloadBankCsv = () => {
+    const d = ud;
+    const rows = [
+      ['Field','Value'],
+      ['Lead',lead.company||lead.name||''],
+      ['Generated',new Date().toLocaleDateString()],
+      ['Avg Monthly Revenue',d.monthlyRevenue??''],
+      ['Month 1',d.month1Revenue??''],['Month 2',d.month2Revenue??''],
+      ['Month 3',d.month3Revenue??''],['Month 4',d.month4Revenue??''],
+      ['Avg Daily Balance',d.avgDailyBalance??''],
+      ['Ending Balance',d.endingBalance??''],
+      ['NSF Count',d.nsfCount??''],
+      ['Avg Deposits/Mo',d.depositsCount??''],
+      ['Credit Score',d.creditScore??''],
+      ['Time in Business (mo)',d.timeInBusiness??''],
+      ['Industry',d.industry??''],
+      ['Business State',d.businessState??''],
+    ];
+    const csv = rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv],{type:'text/csv'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href=url; a.download=`bank-report-${(lead.company||lead.name||'lead').replace(/\s+/g,'-').toLowerCase()}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+  };
+
+  const money = (n: unknown) => {
+    const v = Number(n);
+    return Number.isFinite(v) && v !== 0 ? `$${Math.round(v).toLocaleString()}` : '—';
+  };
+
   return (
     <div className="flex flex-col">
       {/* ── TOP HEADER BAR ──────────────────────────────────────────────────── */}
@@ -988,6 +1092,7 @@ export default function LeadWorkspaceClient({
                       body: JSON.stringify({ leadId: lead.id }),
                     });
                     setLead(prev => ({ ...prev, in_pipeline: true }));
+                    postLeadPatch(lead.id, { in_pipeline: true });
                     if (isModal && isInIframe()) {
                       postBackToPipeline(lead.id);
                       return;
@@ -1009,14 +1114,15 @@ export default function LeadWorkspaceClient({
             <h2 className="text-base font-bold text-[#1a1a1a]">{lead.company || lead.name}</h2>
             <span className="text-xs text-[#9b9b9b] font-mono">#{lead.id.slice(0, 8)}</span>
           </div>
-          {status && (
-            <span
-              className="px-2.5 py-0.5 rounded text-xs font-medium"
-              style={{ background: statusStyle.bg, color: statusStyle.text }}
-            >
-              {status}
-            </span>
-          )}
+          <select
+            value={status}
+            onChange={e => saveLeadStatus(e.target.value)}
+            className="px-2.5 py-0.5 rounded text-xs font-medium border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-[#1a1a1a]"
+            style={{ background: statusStyle.bg, color: statusStyle.text }}
+          >
+            <option value="">— Status —</option>
+            {dbStatuses.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+          </select>
           {campaignName && (
             <a
               href={`/leads?list=${lead.list_id}`}
@@ -1089,6 +1195,11 @@ export default function LeadWorkspaceClient({
 
         {/* Right: actions + prev/next */}
         <div className="flex items-center gap-2">
+          {(appMsg || (surfaceTab === 'application' && missingList.length > 0 && appMissing.length > 0)) && (
+            <p className="text-[11px] text-red-600 max-w-[180px] truncate" title={appMsg || missingList.join(', ')}>
+              {appMsg || `${missingList.length} field${missingList.length === 1 ? '' : 's'} missing`}
+            </p>
+          )}
           <button
             onClick={() => setShowVault(true)}
             className="p-2 rounded-md border border-[#e5e5e5] hover:bg-[#f5f5f5] text-[#9b9b9b] hover:text-[#1a1a1a] transition-colors"
@@ -1134,509 +1245,500 @@ export default function LeadWorkspaceClient({
         </div>
       </div>
 
-      {/* ── 3-PANE BODY ─────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-[340px_1fr_300px] min-h-[calc(100vh-140px)]">
-
-        {/* ── LEFT PANE: Lead Details ─────────────────────────────────────── */}
-        <div className="border-r border-[#e5e5e5] bg-white p-4">
-          {/* PERSON */}
-          <Section title="Person">
-            {/* name is a single field in DB — show split for display but save as full name */}
-            <Field label="Full Name"  value={lead.name}    onSave={v => saveField('name', v)} />
-            <Field label="Email"      value={lead.email}   onSave={v => saveField('email', v)}  type="email" />
-            <Field label="Mobile"     value={lead.phone}   onSave={v => saveField('phone', v)}  type="tel" />
-          </Section>
-
-          <Section title="Details" collapsible defaultOpen={false} resetKey={initialLead.id}>
-            <Field label="DOB"        value={str(ud.dob)}        onSave={v => saveField('dob', v)} />
-            <Field label="SSN"        value={str(ud.ssn)}        onSave={v => saveField('ssn', v)} masked />
-            <Field label="Home Address" value={str(ud.homeAddress)} onSave={v => saveField('homeAddress', v)} />
-            <Field label="City"       value={str(ud.city)}       onSave={v => saveField('city', v)} />
-            <Field label="State"      value={str(ud.state)}      onSave={v => saveField('state', v)} />
-            <Field label="ZIP"        value={str(ud.zip)}        onSave={v => saveField('zip', v)} />
-            <Field label="Country"    value={str(ud.country) ?? 'US'} onSave={v => saveField('country', v)} />
-          </Section>
-
-          {/* COMPANY */}
-          <Section title="Company" collapsible defaultOpen={false} resetKey={initialLead.id}>
-            <Field label="Legal Name"    value={lead.company}              onSave={v => saveField('company', v)} />
-            <Field label="DBA"           value={str(ud.dba)}              onSave={v => saveField('dba', v)} />
-            <Field label="Address"       value={str(ud.businessAddress)}  onSave={v => saveField('businessAddress', v)} />
-            <Field label="City"          value={str(ud.businessCity)}     onSave={v => saveField('businessCity', v)} />
-            <Field label="State"         value={str(ud.businessState)}    onSave={v => saveField('businessState', v)} />
-            <Field label="ZIP"           value={str(ud.businessZip)}      onSave={v => saveField('businessZip', v)} />
-            <Field label="Industry"      value={str(ud.industry)}         onSave={v => saveField('industry', v)} />
-            <TIBField
-              valueMonths={derivedTIB}
-              onSave={months => saveField('timeInBusiness', String(months))}
-            />
-            <Field label="Start Date"    value={str(ud.businessStartDate)} onSave={v => saveField('businessStartDate', v)} />
-            <Field label="EIN"           value={str(ud.ein)}              onSave={v => saveField('ein', v)} />
-            <Field label="Entity Type"   value={str(ud.entityType)}       onSave={v => saveField('entityType', v)} />
-            <Field label="Ownership %"   value={str(ud.ownershipPercent)} onSave={v => saveField('ownershipPercent', v)} />
-            <Field label="Business Phone" value={str(ud.businessPhone)}   onSave={v => saveField('businessPhone', v)} type="tel" />
-            <Field label="Fax"           value={str(ud.fax)}              onSave={v => saveField('fax', v)} />
-            <CheckboxField
-              label="Sole Proprietor"
-              checked={(ud as Record<string, unknown>).isSoleProp === true || (ud as Record<string, unknown>).isSoleProp === 'true'}
-              onToggle={() => saveField('isSoleProp', !((ud as Record<string, unknown>).isSoleProp === true || (ud as Record<string, unknown>).isSoleProp === 'true'))}
-            />
-          </Section>
-
-          {/* CREDIT — always visible, sits above Deal */}
-          <Section title="Credit">
-            <Field
-              label="Credit Score"
-              value={creditScore != null ? String(creditScore) : null}
-              onSave={v => saveField('creditScore', v)}
-              type="number"
-              valueStyle={{ color: creditScoreColor, fontWeight: 700 }}
-            />
-          </Section>
-
-          {/* DEAL */}
-          <Section title="Deal" collapsible defaultOpen={false} resetKey={initialLead.id}>
-            <Field label="Amount Requested"  value={lead.value != null ? String(lead.value) : str(ud.requestedAmount)} onSave={v => saveField('value', v)} />
-            <Field
-              label="Follow-up"
-              value={lead.follow_up_at ? String(lead.follow_up_at).slice(0, 10) : null}
-              onSave={v => saveField('follow_up_at', v.trim() || null)}
-              type="date"
-            />
-            <Field label="Use of Funds"      value={str(ud.purposeOfFunds)}   onSave={v => saveField('purposeOfFunds', v)} />
-            <Field label="Avg Monthly Rev"   value={str(ud.monthlyRevenue)}   onSave={v => saveField('monthlyRevenue', v)} type="number" />
-            <Field label="Avg Daily Balance" value={str(ud.avgDailyBalance)}  onSave={v => saveField('avgDailyBalance', v)} type="number" />
-            <Field label="Ending Balance"    value={str(ud.endingBalance)}    onSave={v => saveField('endingBalance', v)} type="number" />
-            <Field label="NSF Count (3mo)"   value={str(ud.nsfCount)}         onSave={v => saveField('nsfCount', v)} type="number" />
-            <Field label="Avg Deposits/Mo"   value={str(ud.depositsCount)}    onSave={v => saveField('depositsCount', v)} type="number" />
-            <CheckboxField
-              label="Has MCA Loans"
-              checked={(ud as Record<string, unknown>).hasOtherMCALoans === true || (ud as Record<string, unknown>).hasOtherMCALoans === 'true'}
-              onToggle={() => saveField('hasOtherMCALoans', !((ud as Record<string, unknown>).hasOtherMCALoans === true || (ud as Record<string, unknown>).hasOtherMCALoans === 'true'))}
-            />
-            {mcaPositions.length > 0 && mcaPositions.map((p, i) => (
-              <div key={`${p.lender}-${i}`} className="flex items-start gap-2 py-2 border-b border-[#f5f5f5]">
-                <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0 pt-0.5">
-                  {i === 0 ? 'MCA Positions' : ''}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm text-[#1a1a1a] truncate">{p.lender}</div>
-                  <div className="text-[11px] text-[#6b6b6b]">
-                    ${p.payment.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/{p.frequency}
-                    {' · '}${p.monthlyPayment.toLocaleString()}/mo
-                    {p.outstanding ? ` · $${p.outstanding.toLocaleString()} bal` : ''}
-                  </div>
-                </div>
-              </div>
-            ))}
-            {(mcaPositions.length > 0 || ud.hasOtherMCALoans === true || ud.hasOtherMCALoans === 'true') && (
-              <>
-                <Field label="# Positions" value={str(ud.mcaPositionCount ?? (mcaPositions.length || null))} onSave={v => saveField('mcaPositionCount', v)} type="number" />
-                <Field label="Total MCA / Mo" value={str(ud.otherMCAMonthlyPayment)} onSave={v => saveField('otherMCAMonthlyPayment', v)} type="number" />
-              </>
+      {/* ── FIVE SECTION TABS ─────────────────────────────────────────────── */}
+      <div className="bg-white border-b border-[#e5e5e5] px-6 flex items-center gap-1">
+        {([
+          { id: 'application' as const, label: 'Application' },
+          { id: 'status' as const, label: 'Status' },
+          { id: 'lender' as const, label: 'Lender' },
+          { id: 'docs' as const, label: 'Docs' },
+          { id: 'comms' as const, label: 'Comms' },
+        ]).map(t => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setSurfaceTab(t.id)}
+            className={`px-3 py-2.5 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${
+              surfaceTab === t.id
+                ? 'border-[#1a1a1a] text-[#1a1a1a]'
+                : 'border-transparent text-[#9b9b9b] hover:text-[#6b6b6b]'
+            }`}
+          >
+            {t.label}
+            {t.id === 'application' && (
+              <span className={`w-1.5 h-1.5 rounded-full ${appComplete ? 'bg-emerald-500' : 'bg-red-500'}`} />
             )}
-          </Section>
+          </button>
+        ))}
+      </div>
 
-          {/* OWNER 2 — collapsible, show only if any owner2 field exists */}
-          {!!(ud.owner2FirstName || ud.owner2LastName || ud.owner2CreditScore) && (
-            <Section title="Owner 2" collapsible>
-              <Field label="First Name"   value={str(ud.owner2FirstName)}       onSave={v => saveField('owner2FirstName', v)} />
-              <Field label="Last Name"    value={str(ud.owner2LastName)}        onSave={v => saveField('owner2LastName', v)} />
-              <Field label="DOB"          value={str(ud.owner2Dob)}             onSave={v => saveField('owner2Dob', v)} />
-              <Field label="Ownership %"  value={str(ud.owner2OwnershipPercent)} onSave={v => saveField('owner2OwnershipPercent', v)} />
-              <Field label="Credit Score" value={str(ud.owner2CreditScore)}     onSave={v => saveField('owner2CreditScore', v)} />
-              <Field label="SSN"          value={str(ud.owner2Ssn)}             onSave={v => saveField('owner2Ssn', v)} masked />
-              <Field label="City"         value={str(ud.owner2City)}            onSave={v => saveField('owner2City', v)} />
-              <Field label="State"        value={str(ud.owner2State)}           onSave={v => saveField('owner2State', v)} />
-              <Field label="ZIP"          value={str(ud.owner2Zip)}             onSave={v => saveField('owner2Zip', v)} />
-            </Section>
+      <div className="bg-[#fafafa] min-h-[calc(100vh-180px)] p-4">
+        <div className="max-w-[880px] mx-auto bg-white border border-[#e5e5e5] rounded-lg p-4">
+
+          {surfaceTab === 'application' && (
+            <div>
+              <Section title="Person">
+                <Field label="Full Name"  value={lead.name}    onSave={v => saveField('name', v)} />
+                <Field label="Email"      value={lead.email}   onSave={v => saveField('email', v)}  type="email" />
+                <Field label="Mobile"     value={lead.phone}   onSave={v => saveField('phone', v)}  type="tel" />
+              </Section>
+
+              <Section title="Details" collapsible defaultOpen={false} resetKey={initialLead.id}>
+                <Field label="DOB"        value={str(ud.dob)}        onSave={v => saveField('dob', v)} />
+                <Field label="SSN"        value={str(ud.ssn)}        onSave={v => saveField('ssn', v)} masked />
+                <Field label="Home Address" value={str(ud.homeAddress)} onSave={v => saveField('homeAddress', v)} />
+                <Field label="City"       value={str(ud.city)}       onSave={v => saveField('city', v)} />
+                <Field label="State"      value={str(ud.state)}      onSave={v => saveField('state', v)} />
+                <Field label="ZIP"        value={str(ud.zip)}        onSave={v => saveField('zip', v)} />
+                <Field label="Country"    value={str(ud.country) ?? 'US'} onSave={v => saveField('country', v)} />
+              </Section>
+
+              {showOwner2 ? (
+                <Section title="Owner 2" collapsible>
+                  <Field label="First Name"   value={str(ud.owner2FirstName)}       onSave={v => saveField('owner2FirstName', v)} />
+                  <Field label="Last Name"    value={str(ud.owner2LastName)}        onSave={v => saveField('owner2LastName', v)} />
+                  <Field label="DOB"          value={str(ud.owner2Dob)}             onSave={v => saveField('owner2Dob', v)} />
+                  <Field label="Ownership %"  value={str(ud.owner2OwnershipPercent)} onSave={v => saveField('owner2OwnershipPercent', v)} />
+                  <Field label="Credit Score" value={str(ud.owner2CreditScore)}     onSave={v => saveField('owner2CreditScore', v)} />
+                  <Field label="SSN"          value={str(ud.owner2Ssn)}             onSave={v => saveField('owner2Ssn', v)} masked />
+                  <Field label="City"         value={str(ud.owner2City)}            onSave={v => saveField('owner2City', v)} />
+                  <Field label="State"        value={str(ud.owner2State)}           onSave={v => saveField('owner2State', v)} />
+                  <Field label="ZIP"          value={str(ud.owner2Zip)}             onSave={v => saveField('owner2Zip', v)} />
+                </Section>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowOwner2(true)}
+                  className="mb-3 text-xs text-[#6b6b6b] hover:text-[#1a1a1a] underline underline-offset-2"
+                >
+                  Add Owner 2
+                </button>
+              )}
+
+              <Section title="Company" collapsible defaultOpen={false} resetKey={initialLead.id}>
+                <Field label="Legal Name"    value={lead.company}              onSave={v => saveField('company', v)} />
+                <Field label="DBA"           value={str(ud.dba)}              onSave={v => saveField('dba', v)} />
+                <Field label="Address"       value={str(ud.businessAddress)}  onSave={v => saveField('businessAddress', v)} />
+                <Field label="City"          value={str(ud.businessCity)}     onSave={v => saveField('businessCity', v)} />
+                <Field label="State"         value={str(ud.businessState)}    onSave={v => saveField('businessState', v)} />
+                <Field label="ZIP"           value={str(ud.businessZip)}      onSave={v => saveField('businessZip', v)} />
+                <Field label="Industry"      value={str(ud.industry)}         onSave={v => saveField('industry', v)} />
+                <TIBField
+                  valueMonths={derivedTIB}
+                  onSave={months => saveField('timeInBusiness', String(months))}
+                />
+                <Field label="Start Date"    value={str(ud.businessStartDate)} onSave={v => saveField('businessStartDate', v)} />
+                <Field label="EIN"           value={str(ud.ein)}              onSave={v => saveField('ein', v)} />
+                <Field label="Entity Type"   value={str(ud.entityType)}       onSave={v => saveField('entityType', v)} />
+                <Field label="Ownership %"   value={str(ud.ownershipPercent)} onSave={v => saveField('ownershipPercent', v)} />
+                <Field label="Business Phone" value={str(ud.businessPhone)}   onSave={v => saveField('businessPhone', v)} type="tel" />
+                <Field label="Fax"           value={str(ud.fax)}              onSave={v => saveField('fax', v)} />
+                <CheckboxField
+                  label="Sole Proprietor"
+                  checked={(ud as Record<string, unknown>).isSoleProp === true || (ud as Record<string, unknown>).isSoleProp === 'true'}
+                  onToggle={() => saveField('isSoleProp', !((ud as Record<string, unknown>).isSoleProp === true || (ud as Record<string, unknown>).isSoleProp === 'true'))}
+                />
+              </Section>
+
+              <Section title="Credit">
+                <Field
+                  label="Credit Score"
+                  value={creditScore != null ? String(creditScore) : null}
+                  onSave={v => saveField('creditScore', v)}
+                  type="number"
+                  valueStyle={{ color: creditScoreColor, fontWeight: 700 }}
+                />
+              </Section>
+
+              <Section title="Deal" collapsible defaultOpen={false} resetKey={initialLead.id}>
+                <Field label="Amount Requested"  value={lead.value != null ? String(lead.value) : str(ud.requestedAmount)} onSave={v => saveField('value', v)} />
+                <Field
+                  label="Follow-up"
+                  value={lead.follow_up_at ? String(lead.follow_up_at).slice(0, 10) : null}
+                  onSave={v => saveField('follow_up_at', v.trim() || null)}
+                  type="date"
+                />
+                <Field label="Use of Funds"      value={str(ud.purposeOfFunds)}   onSave={v => saveField('purposeOfFunds', v)} />
+                <Field label="Avg Monthly Rev"   value={str(ud.monthlyRevenue)}   onSave={v => saveField('monthlyRevenue', v)} type="number" />
+                <Field label="Avg Daily Balance" value={str(ud.avgDailyBalance)}  onSave={v => saveField('avgDailyBalance', v)} type="number" />
+                <Field label="Ending Balance"    value={str(ud.endingBalance)}    onSave={v => saveField('endingBalance', v)} type="number" />
+                <Field label="NSF Count (3mo)"   value={str(ud.nsfCount)}         onSave={v => saveField('nsfCount', v)} type="number" />
+                <Field label="Avg Deposits/Mo"   value={str(ud.depositsCount)}    onSave={v => saveField('depositsCount', v)} type="number" />
+                <CheckboxField
+                  label="Has MCA Loans"
+                  checked={(ud as Record<string, unknown>).hasOtherMCALoans === true || (ud as Record<string, unknown>).hasOtherMCALoans === 'true'}
+                  onToggle={() => saveField('hasOtherMCALoans', !((ud as Record<string, unknown>).hasOtherMCALoans === true || (ud as Record<string, unknown>).hasOtherMCALoans === 'true'))}
+                />
+                {mcaPositions.length > 0 && mcaPositions.map((p, i) => (
+                  <div key={`${p.lender}-${i}`} className="flex items-start gap-2 py-2 border-b border-[#f5f5f5]">
+                    <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0 pt-0.5">
+                      {i === 0 ? 'MCA Positions' : ''}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm text-[#1a1a1a] truncate">{p.lender}</div>
+                      <div className="text-[11px] text-[#6b6b6b]">
+                        ${p.payment.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/{p.frequency}
+                        {' · '}${p.monthlyPayment.toLocaleString()}/mo
+                        {p.outstanding ? ` · $${p.outstanding.toLocaleString()} bal` : ''}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {(mcaPositions.length > 0 || ud.hasOtherMCALoans === true || ud.hasOtherMCALoans === 'true') && (
+                  <>
+                    <Field label="# Positions" value={str(ud.mcaPositionCount ?? (mcaPositions.length || null))} onSave={v => saveField('mcaPositionCount', v)} type="number" />
+                    <Field label="Total MCA / Mo" value={str(ud.otherMCAMonthlyPayment)} onSave={v => saveField('otherMCAMonthlyPayment', v)} type="number" />
+                  </>
+                )}
+              </Section>
+
+              {!appComplete && (
+                <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-2.5 py-2">
+                  <p className="text-[11px] font-medium text-red-700">Fill these fields first:</p>
+                  <ul className="mt-1 space-y-0.5">
+                    {missingList.map(label => (
+                      <li key={label} className="text-[11px] text-red-600">· {label}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {appMsg && (
+                <p className="text-[11px] text-[#6b6b6b] mt-2">{appMsg}</p>
+              )}
+              <button
+                onClick={createApplication}
+                disabled={appBusy}
+                className="mt-3 px-3 py-2.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] disabled:opacity-50 transition-colors"
+              >
+                {appBusy ? 'Creating…' : 'Create Application'}
+              </button>
+            </div>
           )}
 
-          {/* META */}
-          <Section title="Meta">
-            {campaignName ? <Field label="Campaign" value={campaignName} readOnly /> : null}
-            <Field label="Created At"  value={fmtDate(lead.created_at)}  readOnly />
-            <Field label="Updated At"  value={fmtDate(lead.updated_at)}  readOnly />
-          </Section>
-
-          {/* Bank Report buttons */}
-          <div className="flex gap-2 pt-1 pb-3 px-1">
-            <button
-              onClick={() => {
-                const d = ud;
-                const html = `<!DOCTYPE html><html><head><title>Bank Report — ${lead.company || lead.name}</title>
-                <style>body{font-family:sans-serif;padding:32px;max-width:680px;margin:auto;color:#1a1a1a}h1{font-size:18px;margin-bottom:4px}p.sub{font-size:12px;color:#6b6b6b;margin:0 0 24px}table{width:100%;border-collapse:collapse;font-size:13px}td{padding:8px 10px;border-bottom:1px solid #f0f0f0}td:first-child{color:#6b6b6b;width:55%}td:last-child{font-weight:600;text-align:right}.section{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#9b9b9b;padding:14px 10px 4px;border-bottom:2px solid #f0f0f0}@media print{body{padding:16px}}</style>
-                </head><body>
-                <h1>${lead.company || lead.name}</h1>
-                <p class="sub">Bank Statement Analysis · Generated ${new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</p>
-                <table>
-                  <tr><td class="section" colspan="2">Revenue</td></tr>
-                  <tr><td>Avg Monthly Revenue</td><td>${d.monthlyRevenue ? '$'+Number(d.monthlyRevenue).toLocaleString() : '—'}</td></tr>
-                  <tr><td>Month 1 Deposits</td><td>${d.month1Revenue ? '$'+Number(d.month1Revenue).toLocaleString() : '—'}</td></tr>
-                  <tr><td>Month 2 Deposits</td><td>${d.month2Revenue ? '$'+Number(d.month2Revenue).toLocaleString() : '—'}</td></tr>
-                  <tr><td>Month 3 Deposits</td><td>${d.month3Revenue ? '$'+Number(d.month3Revenue).toLocaleString() : '—'}</td></tr>
-                  <tr><td>Month 4 Deposits</td><td>${d.month4Revenue ? '$'+Number(d.month4Revenue).toLocaleString() : '—'}</td></tr>
-                  <tr><td class="section" colspan="2">Balances</td></tr>
-                  <tr><td>Avg Daily Balance</td><td>${d.avgDailyBalance ? '$'+Number(d.avgDailyBalance).toLocaleString() : '—'}</td></tr>
-                  <tr><td>Ending Balance</td><td>${d.endingBalance ? '$'+Number(d.endingBalance).toLocaleString() : '—'}</td></tr>
-                  <tr><td class="section" colspan="2">Activity</td></tr>
-                  <tr><td>NSF / Neg Days</td><td>${d.nsfCount ?? '—'}</td></tr>
-                  <tr><td>Avg Deposits / Mo</td><td>${d.depositsCount ?? '—'}</td></tr>
-                  <tr><td>Largest Deposit</td><td>${d.largestDeposit ? '$'+Number(d.largestDeposit).toLocaleString() : '—'}</td></tr>
-                  <tr><td class="section" colspan="2">Underwriting</td></tr>
-                  <tr><td>Credit Score</td><td>${d.creditScore ?? '—'}</td></tr>
-                  <tr><td>Time in Business</td><td>${d.timeInBusiness ? d.timeInBusiness+' mo' : '—'}</td></tr>
-                  <tr><td>Industry</td><td>${d.industry ?? '—'}</td></tr>
-                  <tr><td>Business State</td><td>${d.businessState ?? '—'}</td></tr>
-                  <tr><td>Has Other MCA</td><td>${d.hasOtherMCALoans ? 'Yes' : 'No'}</td></tr>
-                </table>
-                </body></html>`;
-                const w = window.open('', '_blank', 'width=720,height=900');
-                if (w) { w.document.write(html); w.document.close(); w.focus(); w.print(); }
-              }}
-              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-[#e5e5e5] rounded-lg bg-white text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
-              Print Report
-            </button>
-            <button
-              onClick={() => {
-                const d = ud;
-                const rows = [
-                  ['Field','Value'],
-                  ['Lead',lead.company||lead.name||''],
-                  ['Generated',new Date().toLocaleDateString()],
-                  ['Avg Monthly Revenue',d.monthlyRevenue??''],
-                  ['Month 1',d.month1Revenue??''],['Month 2',d.month2Revenue??''],
-                  ['Month 3',d.month3Revenue??''],['Month 4',d.month4Revenue??''],
-                  ['Avg Daily Balance',d.avgDailyBalance??''],
-                  ['Ending Balance',d.endingBalance??''],
-                  ['NSF Count',d.nsfCount??''],
-                  ['Avg Deposits/Mo',d.depositsCount??''],
-                  ['Credit Score',d.creditScore??''],
-                  ['Time in Business (mo)',d.timeInBusiness??''],
-                  ['Industry',d.industry??''],
-                  ['Business State',d.businessState??''],
-                ];
-                const csv = rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
-                const blob = new Blob([csv],{type:'text/csv'});
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href=url; a.download=`bank-report-${(lead.company||lead.name||'lead').replace(/\s+/g,'-').toLowerCase()}.csv`;
-                a.click(); URL.revokeObjectURL(url);
-              }}
-              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-[#e5e5e5] rounded-lg bg-white text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-              Download CSV
-            </button>
-          </div>
-        </div>
-
-        {/* ── CENTER PANE: Submissions / Notes / Updates ──────────────────── */}
-        <div className="bg-[#fafafa] flex flex-col border-r border-[#e5e5e5]">
-          {/* Segmented control */}
-          <div className="flex-shrink-0 bg-white border-b border-[#e5e5e5] px-4 pt-4 pb-0 flex items-center gap-1">
-            {(['submissions', 'notes', 'updates'] as const).map(tab => (
-              <button
-                key={tab}
-                onClick={() => setCenterTab(tab)}
-                className={`px-4 py-2.5 text-sm font-medium capitalize border-b-2 transition-colors ${
-                  centerTab === tab
-                    ? 'border-[#1a1a1a] text-[#1a1a1a]'
-                    : 'border-transparent text-[#9b9b9b] hover:text-[#6b6b6b]'
-                }`}
-              >
-                {tab}
-              </button>
-            ))}
-          </div>
-
-          <div className="flex-1 p-4">
-            {/* SUBMISSIONS */}
-            {centerTab === 'submissions' && (
-              <div className="py-12 text-center">
-                <div className="w-12 h-12 rounded-full bg-[#f0f0f0] flex items-center justify-center mx-auto mb-3">
-                  <svg className="w-6 h-6 text-[#d4d4d4]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                  </svg>
+          {surfaceTab === 'status' && (
+            <div>
+              <Section title="Status & Ownership">
+                <div className="flex items-center gap-2 py-2 border-b border-[#f5f5f5]">
+                  <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0">Lead Status</span>
+                  <button
+                    onClick={() => setShowManageStatuses(true)}
+                    title="Manage statuses"
+                    className="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded hover:bg-[#f0f0f0] transition-colors"
+                  >
+                    <img src="/images/icons/kanban-icon.png" alt="Manage statuses" width={13} height={13} style={{ opacity: 0.55 }} />
+                  </button>
+                  <select
+                    value={lead.lead_status || ''}
+                    onChange={e => saveLeadStatus(e.target.value)}
+                    className="flex-1 min-w-0 text-sm border border-[#e5e5e5] rounded px-2 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-[#1a1a1a]"
+                  >
+                    <option value="">— Select —</option>
+                    {dbStatuses.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                  </select>
                 </div>
-                <p className="text-sm font-medium text-[#6b6b6b]">No submissions yet</p>
-                <p className="text-xs text-[#9b9b9b] mt-1">Click <strong>Send to Lender</strong> in the Actions panel to get started.</p>
-              </div>
-            )}
 
-            {/* NOTES */}
-            {centerTab === 'notes' && (
-              <div className="h-full flex flex-col gap-3">
+                {(lead.lead_status === 'Funded' || Boolean(ud.isFunded)) && (
+                  <div className="flex items-center gap-2 py-2 border-b border-[#f5f5f5]">
+                    <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0">Commission</span>
+                    <span className="flex-1 text-sm font-medium text-[#1a1a1a] tabular-nums">
+                      ${Math.round(Number(ud.commission) || 0).toLocaleString()}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const next = !ud.commissionPaid;
+                        const merged = { ...(lead.underwriting_data || {}), commissionPaid: next, isFunded: true };
+                        await fetch('/api/leads/underwriting', {
+                          method: 'PUT',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ leadId: lead.id, underwritingData: merged }),
+                        });
+                        setLead(prev => ({ ...prev, underwriting_data: merged }));
+                      }}
+                      className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors ${
+                        ud.commissionPaid
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : 'bg-[#f0f0f0] text-[#6b6b6b] hover:bg-[#e8e8e8]'
+                      }`}
+                    >
+                      {ud.commissionPaid ? 'Paid' : 'Not Paid'}
+                    </button>
+                  </div>
+                )}
+
+                <div className="flex items-start gap-2 py-2 border-b border-[#f5f5f5]">
+                  <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0 pt-1">Temperature</span>
+                  <div className="flex gap-1">
+                    {(['Hot', 'Warm', 'Cold'] as const).map(t => (
+                      <button
+                        key={t}
+                        onClick={() => saveTemperature(t)}
+                        className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                          lead.temperature === t
+                            ? t === 'Hot' ? 'bg-red-100 text-red-700' : t === 'Warm' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
+                            : 'bg-[#f5f5f5] text-[#6b6b6b] hover:bg-[#ebebeb]'
+                        }`}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-2 py-2 border-b border-[#f5f5f5]">
+                  <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0 pt-0.5">Assigned To</span>
+                  <AssignedToField value={lead.assigned_to} onSave={saveAssignedTo} />
+                </div>
+
+                <div className="flex items-start gap-2 py-2">
+                  <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0 pt-0.5">Created By</span>
+                  <span className="text-sm text-[#6b6b6b]">{userName}</span>
+                </div>
+              </Section>
+
+              <Section title="Lead">
+                <Field label="Lead ID" value={lead.id} readOnly />
+                {campaignName ? <Field label="Campaign" value={campaignName} readOnly /> : <Field label="Campaign" value={null} readOnly />}
+                <div className="flex items-center gap-2 py-2">
+                  <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0">Lookup</span>
+                  <button
+                    onClick={() => setSosOpen(o => !o)}
+                    className="px-2.5 py-1 rounded text-xs font-medium bg-[#1a1a1a] text-white hover:bg-[#333]"
+                  >
+                    SOS
+                  </button>
+                  <button
+                    onClick={() => {
+                      const q = encodeURIComponent(`"${businessName}" ${sosState} reviews`);
+                      window.open(`https://www.google.com/search?q=${q}`, '_blank', 'noopener,noreferrer');
+                    }}
+                    className="px-2.5 py-1 rounded text-xs font-medium bg-[#1a1a1a] text-white hover:bg-[#333]"
+                  >
+                    Google
+                  </button>
+                </div>
+              </Section>
+
+              <Section title="Meta">
+                {campaignName ? <Field label="Campaign" value={campaignName} readOnly /> : null}
+                <Field label="Created At"  value={fmtDate(lead.created_at)}  readOnly />
+                <Field label="Updated At"  value={fmtDate(lead.updated_at)}  readOnly />
+              </Section>
+
+              <Section title="Notes">
                 <textarea
                   value={notes}
                   onChange={e => setNotes(e.target.value)}
                   placeholder="Add notes about this lead…"
-                  className="flex-1 w-full px-3 py-2.5 text-sm border border-[#e5e5e5] rounded-lg bg-white text-[#1a1a1a] placeholder:text-[#9b9b9b] focus:outline-none focus:ring-1 focus:ring-[#1a1a1a] resize-none min-h-[240px]"
+                  className="w-full px-3 py-2.5 text-sm border border-[#e5e5e5] rounded-lg bg-white text-[#1a1a1a] placeholder:text-[#9b9b9b] focus:outline-none focus:ring-1 focus:ring-[#1a1a1a] resize-none min-h-[180px]"
                 />
                 <button
                   onClick={saveNotes}
                   disabled={notesSaving}
-                  className="self-end px-4 py-2 bg-[#1a1a1a] text-white text-sm font-medium rounded-md hover:bg-[#333] disabled:opacity-50 transition-colors"
+                  className="mt-2 px-4 py-2 bg-[#1a1a1a] text-white text-sm font-medium rounded-md hover:bg-[#333] disabled:opacity-50 transition-colors"
                 >
                   {notesSaving ? 'Saving…' : 'Save Notes'}
                 </button>
-              </div>
-            )}
+              </Section>
 
-            {/* UPDATES */}
-            {centerTab === 'updates' && (
-              <LeadUpdatesTimeline
-                createdAt={lead.created_at}
-                lastContact={lead.last_contact}
-              />
-            )}
-          </div>
-        </div>
+              <Section title="Updates">
+                <LeadUpdatesTimeline
+                  createdAt={lead.created_at}
+                  lastContact={lead.last_contact}
+                />
+              </Section>
 
-        {/* ── RIGHT PANE: Actions + Deal Tools ────────────────────────────── */}
-        <div className="bg-white p-4">
-
-          {/* ACTIONS */}
-          <Section title="Actions">
-            <div className="grid grid-cols-2 gap-2 mb-1">
-              <button
-                onClick={() => setShowSendModal(true)}
-                className="px-3 py-2.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] transition-colors text-center"
-              >
-                Send to Lender
-              </button>
-              <button
-                onClick={() => { setShowOffersModal(false); setShowEmailModal(true); }}
-                className="px-3 py-2.5 border border-[#e5e5e5] text-[#1a1a1a] text-xs font-medium rounded-md hover:bg-[#f5f5f5] transition-colors text-center"
-              >
-                Send Email
-              </button>
-              <button
-                onClick={() => setShowTextPopup(true)}
-                className="px-3 py-2.5 border border-[#e5e5e5] text-[#1a1a1a] text-xs font-medium rounded-md hover:bg-[#f5f5f5] transition-colors text-center"
-              >
-                Send SMS
-              </button>
-              <button
-                onClick={() => setShowDocsModal(true)}
-                className="px-3 py-2.5 border border-[#e5e5e5] text-[#1a1a1a] text-xs font-medium rounded-md hover:bg-[#f5f5f5] transition-colors text-center"
-              >
-                Documents
-              </button>
-            </div>
-
-            {/* Application + Financials */}
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={createApplication}
-                disabled={appBusy}
-                title="Create a signed application from this lead’s details"
-                className="px-3 py-2.5 border border-[#e5e5e5] text-[#1a1a1a] text-xs font-medium rounded-md hover:bg-[#f5f5f5] disabled:opacity-50 transition-colors text-center"
-              >
-                {appBusy ? 'Creating…' : 'Application'}
-              </button>
-              <button
-                onClick={() => setShowFinancials(true)}
-                className="px-3 py-2.5 border border-[#e5e5e5] text-[#1a1a1a] text-xs font-medium rounded-md hover:bg-[#f5f5f5] transition-colors text-center"
-              >
-                Financials
-              </button>
-            </div>
-            {appMissing.length > 0 && (
-              <div className="mt-1.5 rounded-md border border-red-200 bg-red-50 px-2.5 py-2">
-                <p className="text-[11px] font-medium text-red-700">Fill these fields first:</p>
-                <ul className="mt-1 space-y-0.5">
-                  {appMissing.map(label => (
-                    <li key={label} className="text-[11px] text-red-600">· {label}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {appMsg && appMissing.length === 0 && (
-              <p className="text-[11px] text-[#6b6b6b] mt-1.5">{appMsg}</p>
-            )}
-
-            <div className="mt-2">
-              <button
-                onClick={() => setShowFollowUpModal(true)}
-                className="w-full px-3 py-2.5 border border-[#e5e5e5] text-[#1a1a1a] text-xs font-medium rounded-md hover:bg-[#f5f5f5] transition-colors"
-              >
-                {lead.follow_up_at
-                  ? `Follow-up · ${(() => {
-                      const raw = String(lead.follow_up_at).slice(0, 10);
-                      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
-                      const d = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(raw);
-                      if (Number.isNaN(d.getTime())) return 'Set';
-                      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-                    })()}`
-                  : 'Follow-up'}
-                {lead.follow_up_auto_text ? ' · auto-text' : ''}
-              </button>
-            </div>
-
-            {/* Call — in-app WebRTC (headset) */}
-            <div className="mt-2">
-              <button
-                onClick={startCall}
-                disabled={callBusy || !webphone.ready}
-                className="w-full px-3 py-2.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] disabled:opacity-50 transition-colors"
-              >
-                {callBusy ? 'Calling…' : 'Call'}
-              </button>
-              {callMsg && (
-                <p className="text-[11px] text-[#6b6b6b] mt-1.5">{callMsg}</p>
-              )}
-              <CallHistoryPanel key={callSeq} leadId={lead.id} />
-            </div>
-          </Section>
-
-          {/* STATUS & OWNERSHIP */}
-          <Section title="Status & Ownership">
-            {/* Lead Status dropdown */}
-            <div className="flex items-center gap-2 py-2 border-b border-[#f5f5f5]">
-              <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0">Lead Status</span>
-              {/* Kanban icon — manage statuses */}
-              <button
-                onClick={() => setShowManageStatuses(true)}
-                title="Manage statuses"
-                className="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded hover:bg-[#f0f0f0] transition-colors"
-              >
-                <img src="/images/icons/kanban-icon.png" alt="Manage statuses" width={13} height={13} style={{ opacity: 0.55 }} />
-              </button>
-              <select
-                value={lead.lead_status || ''}
-                onChange={e => saveLeadStatus(e.target.value)}
-                className="flex-1 min-w-0 text-sm border border-[#e5e5e5] rounded px-2 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-[#1a1a1a]"
-              >
-                <option value="">— Select —</option>
-                {dbStatuses.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
-              </select>
-            </div>
-
-            {(lead.lead_status === 'Funded' || Boolean(ud.isFunded)) && (
-              <div className="flex items-center gap-2 py-2 border-b border-[#f5f5f5]">
-                <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0">Commission</span>
-                <span className="flex-1 text-sm font-medium text-[#1a1a1a] tabular-nums">
-                  ${Math.round(Number(ud.commission) || 0).toLocaleString()}
-                </span>
+              <div className="flex gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={async () => {
-                    const next = !ud.commissionPaid;
-                    const merged = { ...(lead.underwriting_data || {}), commissionPaid: next, isFunded: true };
-                    await fetch('/api/leads/underwriting', {
-                      method: 'PUT',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ leadId: lead.id, underwritingData: merged }),
-                    });
-                    setLead(prev => ({ ...prev, underwriting_data: merged }));
-                  }}
-                  className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors ${
-                    ud.commissionPaid
-                      ? 'bg-emerald-100 text-emerald-800'
-                      : 'bg-[#f0f0f0] text-[#6b6b6b] hover:bg-[#e8e8e8]'
-                  }`}
+                  onClick={printBankReport}
+                  className="flex-1 px-3 py-1.5 text-xs font-medium border border-[#e5e5e5] rounded-lg bg-white text-[#1a1a1a] hover:bg-[#f5f5f5]"
                 >
-                  {ud.commissionPaid ? 'Paid' : 'Not Paid'}
+                  Print Report
+                </button>
+                <button
+                  type="button"
+                  onClick={downloadBankCsv}
+                  className="flex-1 px-3 py-1.5 text-xs font-medium border border-[#e5e5e5] rounded-lg bg-white text-[#1a1a1a] hover:bg-[#f5f5f5]"
+                >
+                  Download CSV
                 </button>
               </div>
-            )}
-
-            {/* Temperature pills */}
-            <div className="flex items-start gap-2 py-2 border-b border-[#f5f5f5]">
-              <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0 pt-1">Temperature</span>
-              <div className="flex gap-1">
-                {(['Hot', 'Warm', 'Cold'] as const).map(t => (
-                  <button
-                    key={t}
-                    onClick={() => saveTemperature(t)}
-                    className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                      lead.temperature === t
-                        ? t === 'Hot' ? 'bg-red-100 text-red-700' : t === 'Warm' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
-                        : 'bg-[#f5f5f5] text-[#6b6b6b] hover:bg-[#ebebeb]'
-                    }`}
-                  >
-                    {t}
-                  </button>
-                ))}
-              </div>
             </div>
+          )}
 
-            {/* Assigned To */}
-            <div className="flex items-start gap-2 py-2 border-b border-[#f5f5f5]">
-              <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0 pt-0.5">Assigned To</span>
-              <AssignedToField value={lead.assigned_to} onSave={saveAssignedTo} />
-            </div>
-
-            {/* Created By (read-only) */}
-            <div className="flex items-start gap-2 py-2">
-              <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0 pt-0.5">Created By</span>
-              <span className="text-sm text-[#6b6b6b]">{userName}</span>
-            </div>
-          </Section>
-
-          {/* PROJECTED OFFER BUTTON + OFFERS BUTTON */}
-          {(() => {
-            const po = projectedOffer;
-            const rsColor = !po ? '#9b9b9b' : po.riskScore >= 70 ? '#15803d' : po.riskScore >= 50 ? '#a16207' : '#b91c1c';
-            return (
-              <div className="relative">
-                <div className="flex items-center gap-2 mb-1">
-                  <button
-                    onClick={() => setShowProjectedOffer(v => !v)}
-                    className="flex-1 px-3 py-1.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] transition-colors flex items-center justify-between gap-1.5"
-                  >
-                    <span>Projected Offer</span>
-                    <svg className={`w-3 h-3 transition-transform ${showProjectedOffer ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
-                  <button
-                    onClick={() => { setShowEmailModal(false); setShowOffersModal(true); }}
-                    className="flex-1 px-3 py-1.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] transition-colors text-center"
-                  >
-                    Offers
-                  </button>
+          {surfaceTab === 'lender' && (
+            <div>
+              <Section title="Financials">
+                <div className="grid grid-cols-2 gap-2 mb-3">
+                  {[
+                    ['Monthly revenue', money(ud.monthlyRevenue)],
+                    ['Avg daily balance', money(ud.avgDailyBalance)],
+                    ['Positions', String(lenderCriteria.currentPositions || '—')],
+                    ['Time in biz', derivedTIB != null ? `${Math.floor(derivedTIB / 12)}y ${derivedTIB % 12}m` : '—'],
+                    ['Requested', money(lead.value ?? ud.requestedAmount)],
+                    ['Credit score', ud.creditScore != null ? String(ud.creditScore) : '—'],
+                  ].map(([label, val]) => (
+                    <div key={label} className="border border-[#f0f0f0] rounded-md px-2.5 py-2">
+                      <p className="text-[10px] text-[#9b9b9b] uppercase tracking-wide">{label}</p>
+                      <p className="text-sm font-medium text-[#1a1a1a] mt-0.5">{val}</p>
+                    </div>
+                  ))}
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setShowFinancials(true)}
+                  className="text-xs text-[#1a1a1a] underline underline-offset-2 hover:no-underline"
+                >
+                  Full report
+                </button>
+              </Section>
 
-                {showProjectedOffer && (
-                  <div className="mt-2 bg-white border border-[#e5e5e5] rounded-xl overflow-hidden shadow-sm">
-                    {!po ? (
-                      <p className="text-xs text-[#9b9b9b] text-center py-3 px-4">Enter Avg Monthly Revenue to generate a projection.</p>
-                    ) : (
-                      <div className="divide-y divide-[#f0f0f0]">
-                        <div className="flex justify-between items-center px-4 py-2.5">
-                          <span className="text-xs text-[#9b9b9b]">Max Approved</span>
-                          <span className="text-sm font-bold text-[#1a1a1a]">${po.maxApproved.toLocaleString()}</span>
-                        </div>
-                        <div className="flex justify-between items-center px-4 py-2.5">
-                          <span className="text-xs text-[#9b9b9b]">Factor Rate</span>
-                          <span className="text-sm font-semibold text-[#1a1a1a]">{po.factorRate.toFixed(2)}x</span>
-                        </div>
-                        <div className="flex justify-between items-center px-4 py-2.5">
-                          <span className="text-xs text-[#9b9b9b]">Risk Score</span>
-                          <span className="text-sm font-semibold" style={{ color: rsColor }}>{po.riskScore} / 100</span>
-                        </div>
-                        <div className="flex justify-between items-center px-4 py-2.5">
-                          <span className="text-xs text-[#9b9b9b]">Est. Weekly Payback</span>
-                          <span className="text-sm font-semibold text-[#1a1a1a]">${po.weeklyPayback.toLocaleString()}</span>
-                        </div>
-                        <div className="flex justify-between items-center px-4 py-2.5">
-                          <span className="text-xs text-[#9b9b9b]">Holdback %</span>
-                          <span className="text-sm font-semibold text-[#1a1a1a]">{po.holdback}%</span>
-                        </div>
-                        <div className="px-4 py-2 bg-[#fafafa]">
-                          <p className="text-[10px] text-[#9b9b9b]">Projection only — based on lead financials.</p>
-                        </div>
+              <Section title="Lenders">
+                <button
+                  type="button"
+                  onClick={() => setShowSendModal(true)}
+                  className="px-3 py-2.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] transition-colors"
+                >
+                  Lenders Match
+                </button>
+              </Section>
+
+              <Section title="Submissions">
+                {submissions.length === 0 ? (
+                  <p className="text-sm text-[#9b9b9b] py-4">No submissions yet. Use Lenders Match to send.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {submissions.map(s => (
+                      <div key={s.id} className="flex items-center justify-between border border-[#efefef] rounded-md px-2.5 py-1.5 text-xs">
+                        <span className="font-medium text-[#1a1a1a] truncate">{s.lender_name}</span>
+                        <span className="text-[#6b6b6b] flex-shrink-0 ml-2">
+                          {s.status}
+                          {s.created_at ? ` · ${new Date(s.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Section>
+
+              {(() => {
+                const po = projectedOffer;
+                const rsColor = !po ? '#9b9b9b' : po.riskScore >= 70 ? '#15803d' : po.riskScore >= 50 ? '#a16207' : '#b91c1c';
+                return (
+                  <div className="relative mt-2">
+                    <div className="flex items-center gap-2 mb-1">
+                      <button
+                        onClick={() => setShowProjectedOffer(v => !v)}
+                        className="flex-1 px-3 py-1.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] transition-colors flex items-center justify-between gap-1.5"
+                      >
+                        <span>Projected Offer</span>
+                        <svg className={`w-3 h-3 transition-transform ${showProjectedOffer ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => { setShowEmailModal(false); setShowOffersModal(true); }}
+                        className="flex-1 px-3 py-1.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] transition-colors text-center"
+                      >
+                        Offers
+                      </button>
+                    </div>
+                    {showProjectedOffer && (
+                      <div className="mt-2 bg-white border border-[#e5e5e5] rounded-xl overflow-hidden shadow-sm">
+                        {!po ? (
+                          <p className="text-xs text-[#9b9b9b] text-center py-3 px-4">Enter Avg Monthly Revenue to generate a projection.</p>
+                        ) : (
+                          <div className="divide-y divide-[#f0f0f0]">
+                            <div className="flex justify-between items-center px-4 py-2.5">
+                              <span className="text-xs text-[#9b9b9b]">Max Approved</span>
+                              <span className="text-sm font-bold text-[#1a1a1a]">${po.maxApproved.toLocaleString()}</span>
+                            </div>
+                            <div className="flex justify-between items-center px-4 py-2.5">
+                              <span className="text-xs text-[#9b9b9b]">Factor Rate</span>
+                              <span className="text-sm font-semibold text-[#1a1a1a]">{po.factorRate.toFixed(2)}x</span>
+                            </div>
+                            <div className="flex justify-between items-center px-4 py-2.5">
+                              <span className="text-xs text-[#9b9b9b]">Risk Score</span>
+                              <span className="text-sm font-semibold" style={{ color: rsColor }}>{po.riskScore} / 100</span>
+                            </div>
+                            <div className="flex justify-between items-center px-4 py-2.5">
+                              <span className="text-xs text-[#9b9b9b]">Est. Weekly Payback</span>
+                              <span className="text-sm font-semibold text-[#1a1a1a]">${po.weeklyPayback.toLocaleString()}</span>
+                            </div>
+                            <div className="flex justify-between items-center px-4 py-2.5">
+                              <span className="text-xs text-[#9b9b9b]">Holdback %</span>
+                              <span className="text-sm font-semibold text-[#1a1a1a]">{po.holdback}%</span>
+                            </div>
+                            <div className="px-4 py-2 bg-[#fafafa]">
+                              <p className="text-[10px] text-[#9b9b9b]">Projection only — based on lead financials.</p>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
-                )}
+                );
+              })()}
+            </div>
+          )}
+
+          {surfaceTab === 'docs' && (
+            <div>
+              <button
+                type="button"
+                onClick={() => setShowDocsModal(true)}
+                className="w-full px-3 py-2.5 border border-[#e5e5e5] text-[#1a1a1a] text-xs font-medium rounded-md hover:bg-[#f5f5f5] transition-colors"
+              >
+                Open documents
+              </button>
+              <p className="text-xs text-[#9b9b9b] mt-2">Upload applications, bank statements, and other files. Mark a file as an application to parse it into the lead fields.</p>
+            </div>
+          )}
+
+          {surfaceTab === 'comms' && (
+            <div>
+              <div className="grid grid-cols-2 gap-2 mb-3">
+                <button
+                  onClick={() => setShowTextPopup(true)}
+                  className="px-3 py-2.5 border border-[#e5e5e5] text-[#1a1a1a] text-xs font-medium rounded-md hover:bg-[#f5f5f5] transition-colors"
+                >
+                  Send SMS
+                </button>
+                <button
+                  onClick={() => { setShowOffersModal(false); setShowEmailModal(true); }}
+                  className="px-3 py-2.5 border border-[#e5e5e5] text-[#1a1a1a] text-xs font-medium rounded-md hover:bg-[#f5f5f5] transition-colors"
+                >
+                  Send Email
+                </button>
+                <button
+                  onClick={() => setShowFollowUpModal(true)}
+                  className="px-3 py-2.5 border border-[#e5e5e5] text-[#1a1a1a] text-xs font-medium rounded-md hover:bg-[#f5f5f5] transition-colors"
+                >
+                  {lead.follow_up_at
+                    ? `Follow-up · ${(() => {
+                        const raw = String(lead.follow_up_at).slice(0, 10);
+                        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+                        const d = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(raw);
+                        if (Number.isNaN(d.getTime())) return 'Set';
+                        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                      })()}`
+                    : 'Follow-up'}
+                  {lead.follow_up_auto_text ? ' · auto-text' : ''}
+                </button>
+                <button
+                  onClick={startCall}
+                  disabled={callBusy || !webphone.ready}
+                  className="px-3 py-2.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] disabled:opacity-50 transition-colors"
+                >
+                  {callBusy ? 'Calling…' : 'Call'}
+                </button>
               </div>
-            );
-          })()}
+              <Field label="Phone" value={lead.phone} onSave={v => saveField('phone', v)} type="tel" />
+              {callMsg && <p className="text-[11px] text-[#6b6b6b] mt-1.5">{callMsg}</p>}
+              <CallHistoryPanel key={callSeq} leadId={lead.id} />
+            </div>
+          )}
         </div>
       </div>
 
@@ -1746,17 +1848,7 @@ export default function LeadWorkspaceClient({
           leadValue={lead.value ?? null}
           leadStatus={lead.lead_status || undefined}
           userName={userName}
-          criteria={{
-            timeInBusiness:    derivedTIB ?? Number(ud.timeInBusiness ?? 0),
-            creditScore:       Number(ud.creditScore     ?? 0),
-            avgMonthlyRevenue: Number(ud.monthlyRevenue  ?? 0),
-            currentPositions:  Number(ud.mcaPositionCount ?? mcaPositions.length) || ((ud.hasOtherMCALoans === true || ud.hasOtherMCALoans === 'true') ? 1 : 0),
-            businessState:     String(ud.businessState   ?? ''),
-            industry:          String(ud.industry        ?? ''),
-            nsfCount:          Number(ud.nsfCount        ?? 0),
-            depositsCount:     Number(ud.depositsCount   ?? 0),
-            isSoleProp:        Boolean(ud.isSoleProp     ?? false),
-          }}
+          criteria={lenderCriteria}
           onClose={() => setShowSendModal(false)}
         />
       )}
