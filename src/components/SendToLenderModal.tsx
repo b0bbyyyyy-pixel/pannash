@@ -191,7 +191,6 @@ export default function SendToLenderModal({
   const [templateId, setTemplateId]               = useState('');
   const [note, setNote]                           = useState('');
 
-  const [search, setSearch]           = useState('');
   const [lenderFilter, setLenderFilter] = useState<'All' | 'Recent'>('All');
   const [sending, setSending]         = useState(false);
   const [sendResult, setSendResult]   = useState<{ sent: number; failed: number } | null>(null);
@@ -291,7 +290,6 @@ export default function SendToLenderModal({
   const filteredLenders = lenders
     .filter(l => {
       if (!showInactive && l.is_active === false) return false;
-      if (search && !l.name.toLowerCase().includes(search.toLowerCase())) return false;
       if (lenderFilter === 'Recent' && !recentLenderNames.has(l.name)) return false;
       return true;
     })
@@ -428,9 +426,8 @@ export default function SendToLenderModal({
           onClick={embedded ? undefined : e => e.stopPropagation()}
         >
 
-          {/* ── Top header bar ──────────────────────────────────────────── */}
+          {!embedded && (
           <div className="flex items-center gap-3 px-5 py-3 border-b border-[#ebebeb] flex-shrink-0 bg-white">
-            {/* Icon */}
             <div className="w-9 h-9 rounded-xl bg-indigo-100 flex items-center justify-center flex-shrink-0">
               <svg className="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
@@ -446,7 +443,6 @@ export default function SendToLenderModal({
               </p>
             </div>
 
-            {/* Pills */}
             <div className="flex items-center gap-2 ml-auto flex-shrink-0">
               {valueStr && (
                 <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold border border-emerald-200">
@@ -471,7 +467,7 @@ export default function SendToLenderModal({
                 </svg>
                 Manage Lenders
               </button>
-              {!embedded && onClose && (
+              {onClose && (
                 <button onClick={onClose} className="ml-2 flex items-center gap-1 px-3 py-1.5 rounded-lg border border-[#e5e5e5] text-xs text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors">
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -481,6 +477,7 @@ export default function SendToLenderModal({
               )}
             </div>
           </div>
+          )}
 
           {/* ── Two-pane body ────────────────────────────────────────────── */}
           <div className="flex flex-1 overflow-hidden">
@@ -489,51 +486,51 @@ export default function SendToLenderModal({
             <div className={`${embedded ? 'flex-1 min-w-[260px]' : 'w-[580px] flex-shrink-0'} border-r border-[#ebebeb] flex flex-col overflow-hidden bg-white`}>
               <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
 
-                {/* Submit header */}
                 <div className="flex items-center gap-2.5">
                   <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center flex-shrink-0">
                     <svg className="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
                     </svg>
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-sm font-bold text-[#1a1a1a]">Submit Application</p>
                     <p className="text-[11px] text-[#9b9b9b]">Choose lenders, attach documents and send</p>
                   </div>
+                  {embedded && (
+                    <button
+                      type="button"
+                      onClick={() => setShowLenderSettings(true)}
+                      className="ml-auto flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-lg border border-[#e5e5e5] text-[#6b6b6b] hover:bg-[#f5f5f5] hover:text-[#1a1a1a] transition-colors"
+                      title="Manage lenders"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                    </button>
+                  )}
                 </div>
 
                 {/* SELECT LENDERS */}
                 <div>
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center justify-between mb-2 gap-2">
                     <div className="flex items-center gap-1.5">
                       <svg className="w-3.5 h-3.5 text-[#6b6b6b]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
                       </svg>
                       <span className="text-[11px] font-bold text-[#1a1a1a] uppercase tracking-wider">Select Lenders</span>
                     </div>
-                    <button onClick={selectAllLenders} className="text-[11px] text-indigo-600 hover:text-indigo-800 font-medium">
-                      {selectedLenderIds.size === filteredLenders.length && filteredLenders.length > 0 ? 'Deselect all' : 'Select all'}
-                    </button>
-                  </div>
-
-                  {/* Search + filter tabs */}
-                  <div className="flex gap-2 mb-2">
-                    <div className="relative flex-1">
-                      <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-[#9b9b9b]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                      </svg>
-                      <input
-                        type="text" placeholder="Search..." value={search}
-                        onChange={e => setSearch(e.target.value)}
-                        className="w-full pl-7 pr-3 py-1.5 text-xs border border-[#e5e5e5] rounded-lg bg-[#fafafa] focus:outline-none focus:ring-1 focus:ring-indigo-400 focus:bg-white"
-                      />
-                    </div>
-                    {(['All', 'Recent'] as const).map(f => (
-                      <button key={f} onClick={() => setLenderFilter(f)}
-                        className={`px-3 py-1.5 text-xs rounded-lg font-medium transition-colors ${lenderFilter === f ? 'bg-indigo-600 text-white' : 'bg-[#f5f5f5] text-[#6b6b6b] hover:bg-[#ebebeb]'}`}>
-                        {f}
+                    <div className="flex items-center gap-2">
+                      {(['All', 'Recent'] as const).map(f => (
+                        <button key={f} onClick={() => setLenderFilter(f)}
+                          className={`px-2 py-1 text-[11px] font-medium transition-colors ${lenderFilter === f ? 'text-indigo-600' : 'text-[#9b9b9b] hover:text-[#6b6b6b]'}`}>
+                          {f}
+                        </button>
+                      ))}
+                      <button onClick={selectAllLenders} className="text-[11px] text-indigo-600 hover:text-indigo-800 font-medium">
+                        {selectedLenderIds.size === filteredLenders.length && filteredLenders.length > 0 ? 'Deselect all' : 'Select all'}
                       </button>
-                    ))}
+                    </div>
                   </div>
 
                   {/* Show inactive toggle */}
@@ -553,8 +550,8 @@ export default function SendToLenderModal({
                   {criteria && qualifiedCount !== null && (
                     <div className="flex items-center gap-1.5 mb-2">
                       <span className="text-[10px] text-[#9b9b9b]">Based on lead data:</span>
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-500 text-white">{qualifiedCount} Qualify</span>
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-500 text-white">{notQualifiedCount} No</span>
+                      <span className="text-[10px] font-semibold text-green-600">{qualifiedCount} Qualify</span>
+                      <span className="text-[10px] font-semibold text-red-600">{notQualifiedCount} No</span>
                     </div>
                   )}
 
