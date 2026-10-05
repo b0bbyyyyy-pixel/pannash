@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { postLeadPatch } from '@/lib/pipeline/iframeMessages';
 
 function emailPortalTarget(): HTMLElement | null {
   if (typeof document === 'undefined') return null;
@@ -116,10 +117,13 @@ function replacePlaceholdersWithExamples(text: string): string {
 // ── Modal ─────────────────────────────────────────────────────────────────────
 export default function ScheduleEmailModal({ lead: initialLead, onClose }: ScheduleEmailModalProps) {
   const [lead, setLead] = useState(initialLead);
+  const [emailDraft, setEmailDraft] = useState(initialLead.email || '');
+  const [emailSaving, setEmailSaving] = useState(false);
   const [portalEl, setPortalEl] = useState<HTMLElement | null>(null);
   useEffect(() => { setPortalEl(emailPortalTarget()); }, []);
   useEffect(() => {
     setLead(initialLead);
+    if (initialLead.email) setEmailDraft(initialLead.email);
     if (initialLead.email && initialLead.underwriting_data) return;
     fetch(`/api/leads/${initialLead.id}`, { credentials: 'include' })
       .then(r => r.json())
@@ -134,6 +138,7 @@ export default function ScheduleEmailModal({ lead: initialLead, onClose }: Sched
           company: prev.company || next.company || null,
           underwriting_data: prev.underwriting_data || next.underwriting_data || null,
         }));
+        setEmailDraft(prev => prev.trim() ? prev : (next.email || prev));
       })
       .catch(() => {});
   }, [initialLead]);
@@ -300,11 +305,47 @@ export default function ScheduleEmailModal({ lead: initialLead, onClose }: Sched
     }
   };
 
+  const persistEmail = async (): Promise<string | null> => {
+    const email = emailDraft.trim();
+    if (!email) {
+      setSendError('Add an email address first.');
+      return null;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setSendError('Enter a valid email address.');
+      return null;
+    }
+    if (email === (lead.email || '').trim()) return email;
+    setEmailSaving(true);
+    setSendError('');
+    try {
+      const res = await fetch('/api/leads/update-crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ leadId: lead.id, field: 'email', value: email }),
+      });
+      if (!res.ok) {
+        setSendError('Could not save email on the lead.');
+        return null;
+      }
+      setLead(prev => ({ ...prev, email }));
+      postLeadPatch(lead.id, { email });
+      return email;
+    } catch {
+      setSendError('Could not save email on the lead.');
+      return null;
+    } finally {
+      setEmailSaving(false);
+    }
+  };
+
   // ── Send now ──────────────────────────────────────────────────────────────
   const sendNow = async () => {
     const tpl = templates.find(t => t.id === selectedId);
     if (!tpl) return;
-    if (!lead.email) { setSendError('This lead has no email address.'); return; }
+    const to = await persistEmail();
+    if (!to) return;
     setSending(true);
     setSendError('');
     setSuccessMsg('');
@@ -339,6 +380,7 @@ export default function ScheduleEmailModal({ lead: initialLead, onClose }: Sched
   const scheduleEmail = async () => {
     if (!selectedId) return;
     if (!scheduledDate) { alert('Please select a date.'); return; }
+    if (!await persistEmail()) return;
     setScheduling(true);
     setSendError('');
     setSuccessMsg('');
@@ -382,8 +424,24 @@ export default function ScheduleEmailModal({ lead: initialLead, onClose }: Sched
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#e5e5e5] flex-shrink-0">
           <div>
             <h2 className="text-base font-bold text-[#1a1a1a]">Schedule Email</h2>
-            <p className="text-xs text-[#9b9b9b] mt-0.5">
-              {lead.company || lead.name} · {lead.email || 'No email'}
+            <p className="text-xs text-[#9b9b9b] mt-0.5 flex items-center gap-1 min-w-0">
+              <span className="truncate">{lead.company || lead.name}</span>
+              <span>·</span>
+              <input
+                type="text"
+                inputMode="email"
+                autoComplete="email"
+                value={emailDraft}
+                onChange={e => setEmailDraft(e.target.value)}
+                onBlur={() => {
+                  if (!emailDraft.trim() || emailDraft.trim() === (lead.email || '').trim()) return;
+                  void persistEmail();
+                }}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void persistEmail(); } }}
+                placeholder="add email"
+                className="appearance-none bg-transparent border-none rounded-none shadow-none ring-0 outline-none p-0 text-xs text-[#9b9b9b] placeholder:text-[#c4c4c4] focus:outline-none focus:ring-0 min-w-[8rem] flex-1"
+              />
+              {emailSaving && <span className="shrink-0">saving…</span>}
             </p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-md text-[#9b9b9b] hover:text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors">
@@ -674,7 +732,7 @@ export default function ScheduleEmailModal({ lead: initialLead, onClose }: Sched
             {/* Send Now */}
             <button
               onClick={sendNow}
-              disabled={!selectedId || sending || scheduling || !lead.email}
+              disabled={!selectedId || sending || scheduling || emailSaving || !emailDraft.trim()}
               className={`w-full py-3 text-white rounded-lg text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 mb-2 ${
                 successMsg.startsWith('Sent') ? 'bg-[#15803d] hover:bg-[#166534]' : 'bg-[#22c55e] hover:bg-[#16a34a]'
               }`}
@@ -780,7 +838,7 @@ export default function ScheduleEmailModal({ lead: initialLead, onClose }: Sched
               </button>
               <button
                 onClick={() => scheduleEmail()}
-                disabled={!selectedId || !scheduledDate || sending || scheduling}
+                disabled={!selectedId || !scheduledDate || sending || scheduling || emailSaving || !emailDraft.trim()}
                 className="flex-1 py-2.5 bg-[#5a7fc7] text-white rounded-lg text-sm font-semibold hover:bg-[#4a6fb7] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 {scheduling ? 'Scheduling…' : 'Schedule Email'}
