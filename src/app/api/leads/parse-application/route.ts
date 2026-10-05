@@ -85,10 +85,11 @@ MCA positions: scan ACH withdrawals / debits for merchant-cash-advance or factor
 IOU, Yellowstone, ClearFund, Fox Business, BFS, Strategic, etc.) and any recurring daily or weekly
 debit of similar amount that is clearly a loan/advance remittance. List EACH distinct funder as its own position.
 
-Funding date: for each funder, look for a large incoming ACH credit / wire / deposit from that same
-funder (loan proceeds, advance, funding, MCA deposit). If that credit's transaction date is printed
-on this statement, set fundedDate to it as YYYY-MM-DD. If you only see remittance debits and no
-funding credit, omit fundedDate — do not guess from the first debit.
+Funding credit: for each funder, look for a large incoming ACH credit / wire / deposit from that same
+funder (loan proceeds, advance, funding, MCA deposit). If that credit is printed on this statement:
+- set fundedDate to the transaction date as YYYY-MM-DD
+- set fundedAmount to the credit amount (digits only) — this is the original wire / advance, NOT the daily remittance
+If you only see remittance debits and no funding credit, omit fundedDate and fundedAmount — do not guess.
 
 JSON schema (all optional, only include what is present or can be reasonably inferred):
 {
@@ -118,7 +119,8 @@ JSON schema (all optional, only include what is present or can be reasonably inf
       "frequency": "daily",
       "monthlyPayment": 3885,
       "outstanding": 0,
-      "fundedDate": "2026-03-12"
+      "fundedDate": "2026-03-12",
+      "fundedAmount": 25000
     }
   ]
 }
@@ -126,6 +128,7 @@ JSON schema (all optional, only include what is present or can be reasonably inf
 frequency must be "daily", "weekly", or "monthly".
 monthlyPayment = payment * 21 if daily, * 4.33 if weekly, * 1 if monthly.
 fundedDate is only the date of an incoming funding credit printed on the statement.
+fundedAmount is only the dollar amount of that same incoming credit (the original wire), never the payment/debit amount.
 If no MCA / advance remittances are found, omit mcaPositions and set hasOtherMCALoans to false.`;
 
 // ── Detect bank statement ──────────────────────────────────────────────────────

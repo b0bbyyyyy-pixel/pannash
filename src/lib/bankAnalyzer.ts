@@ -105,6 +105,8 @@ export type McaPosition = {
   outstanding?: number;
   /** Funding / advance date from a bank-statement credit, YYYY-MM-DD when known */
   fundedDate?: string;
+  /** Original wire / advance amount credited by the funder */
+  fundedAmount?: number;
 };
 
 export function normalizeMcaFundedDate(raw: unknown): string | undefined {
@@ -135,6 +137,11 @@ export function formatMcaFundedDate(raw?: string): string {
     }
   }
   return raw;
+}
+
+export function formatMcaFundedAmount(n?: number): string {
+  if (n == null || !Number.isFinite(n) || n <= 0) return '';
+  return '$' + Math.round(n).toLocaleString();
 }
 
 export function coerceNumber(v: unknown): number | null {
@@ -312,6 +319,9 @@ export function parseMcaPositions(raw: unknown): McaPosition[] {
     if (!lender && payment <= 0) continue;
     const outstanding = coerceNumber(r.outstanding);
     const fundedDate = normalizeMcaFundedDate(r.fundedDate ?? r.fundingDate ?? r.fundedAt ?? r.dateFunded);
+    const fundedAmount = coerceNumber(
+      r.fundedAmount ?? r.fundingAmount ?? r.advanceAmount ?? r.originalAdvance ?? r.originalAmount ?? r.wireAmount ?? r.originalWire,
+    );
     out.push({
       lender: lender || 'Unknown funder',
       payment,
@@ -319,6 +329,7 @@ export function parseMcaPositions(raw: unknown): McaPosition[] {
       monthlyPayment,
       ...(outstanding != null ? { outstanding } : {}),
       ...(fundedDate ? { fundedDate } : {}),
+      ...(fundedAmount != null && fundedAmount > 0 ? { fundedAmount } : {}),
     });
   }
   return out;
@@ -337,6 +348,7 @@ export function mergeMcaPositions(...lists: Array<McaPosition[] | unknown>): Mca
       byKey.set(key, {
         ...prev,
         fundedDate: prev.fundedDate || p.fundedDate,
+        fundedAmount: prev.fundedAmount ?? p.fundedAmount,
         outstanding: prev.outstanding ?? p.outstanding,
       });
     }

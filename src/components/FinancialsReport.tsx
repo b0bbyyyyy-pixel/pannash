@@ -263,10 +263,17 @@ export default function FinancialsReport({
                 </tr>
               </thead>
               <tbody>
-                {mcaPositions.map((p, i) => (
+                {mcaPositions.map((p, i) => {
+                  const fundedAmt = p.fundedAmount && p.fundedAmount > 0 ? fmtMoney(p.fundedAmount) : '';
+                  const fundedDate = formatMcaFundedDate(p.fundedDate);
+                  return (
                   <tr key={`${p.lender}-${i}`} className="border-t border-[#f0f0f0]">
                     <td className="px-3 py-2 font-medium text-[#1a1a1a]">{p.lender}</td>
-                    <td className="px-3 py-2 text-[#6b6b6b] whitespace-nowrap">{formatMcaFundedDate(p.fundedDate) || '—'}</td>
+                    <td className={`px-3 py-2 whitespace-nowrap ${numCell}`}>
+                      {fundedAmt ? <div className="text-[#1a1a1a]">{fundedAmt}</div> : null}
+                      {fundedDate ? <div className="text-[10px] text-[#9b9b9b]">{fundedDate}</div> : null}
+                      {!fundedAmt && !fundedDate ? <span className="text-[#6b6b6b]">—</span> : null}
+                    </td>
                     <td className={`px-3 py-2 text-[#1a1a1a] ${numCell}`}>
                       ${p.payment.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
@@ -274,9 +281,13 @@ export default function FinancialsReport({
                     <td className={`px-3 py-2 text-[#1a1a1a] ${numCell}`}>{fmtMoney(p.monthlyPayment)}</td>
                     <td className={`px-3 py-2 text-[#6b6b6b] ${numCell}`}>{p.outstanding ? fmtMoney(p.outstanding) : '--'}</td>
                   </tr>
-                ))}
+                  );
+                })}
                 <tr className="border-t border-[#e5e5e5] bg-[#fafafa]">
-                  <td className="px-3 py-2 font-semibold text-[#1a1a1a]" colSpan={4}>Total</td>
+                  <td className="px-3 py-2 font-semibold text-[#1a1a1a]">Total</td>
+                  <td className={`px-3 py-2 font-semibold text-[#1a1a1a] ${numCell}`}>{fmtMoney(mcaPositions.reduce((s, p) => s + (p.fundedAmount || 0), 0))}</td>
+                  <td className="px-3 py-2" />
+                  <td className="px-3 py-2" />
                   <td className={`px-3 py-2 font-semibold text-[#1a1a1a] ${numCell}`}>{fmtMoney(mcaMonthly)}</td>
                   <td className="px-3 py-2" />
                 </tr>

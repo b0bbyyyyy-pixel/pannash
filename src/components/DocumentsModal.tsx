@@ -15,6 +15,7 @@ import {
   parseMcaPositions,
   mergeMcaPositions,
   formatMcaFundedDate,
+  formatMcaFundedAmount,
   coerceNumber,
   statementMonthFromFields,
   mergeStatementMonths,
@@ -174,8 +175,10 @@ function formatReviewValue(key: string, value: string): string {
     if (!positions.length) return value;
     return positions.map(p => {
       const pay = p.payment.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const amount = formatMcaFundedAmount(p.fundedAmount);
       const funded = formatMcaFundedDate(p.fundedDate);
-      return `${p.lender}  $${pay}/${p.frequency}  ($${p.monthlyPayment.toLocaleString()}/mo)${funded ? `  funded ${funded}` : ''}`;
+      const wire = [amount, funded].filter(Boolean).join(' ');
+      return `${p.lender}  $${pay}/${p.frequency}  ($${p.monthlyPayment.toLocaleString()}/mo)${wire ? `  funded ${wire}` : ''}`;
     }).join('\n');
   }
   return value;

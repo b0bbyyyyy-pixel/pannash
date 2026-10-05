@@ -1654,7 +1654,8 @@ export default function LeadWorkspaceClient({
                         ${p.payment.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/{p.frequency}
                         {' · '}${p.monthlyPayment.toLocaleString()}/mo
                         {p.outstanding ? ` · $${p.outstanding.toLocaleString()} bal` : ''}
-                        {p.fundedDate ? ` · funded ${formatMcaFundedDate(p.fundedDate)}` : ''}
+                        {p.fundedAmount ? ` · funded $${Math.round(p.fundedAmount).toLocaleString()}` : ''}
+                        {p.fundedDate ? ` · ${formatMcaFundedDate(p.fundedDate)}` : ''}
                       </div>
                     </div>
                   </div>
