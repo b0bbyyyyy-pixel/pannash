@@ -6,6 +6,8 @@ export type PingKind = 'chat' | 'alert' | 'calendar' | 'needs_human' | 'docs' | 
 
 export type PingSettings = {
   enabled: boolean;
+  /** Docs-received / lead-activity texts. Off unless explicitly enabled. */
+  activity: boolean;
   phone: string;
 };
 
@@ -24,16 +26,28 @@ export async function getPingSettings(
   userId: string,
 ): Promise<PingSettings> {
   let enabled = false;
+  let activity = false;
   let phone = '';
 
   try {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('user_settings')
-      .select('casper_ping_enabled, casper_ping_phone')
+      .select('casper_ping_enabled, casper_ping_phone, casper_ping_activity')
       .eq('user_id', userId)
       .maybeSingle();
-    enabled = !!data?.casper_ping_enabled;
-    phone = String(data?.casper_ping_phone || '').trim();
+    if (error && /casper_ping_activity/i.test(error.message || '')) {
+      const fallback = await supabase
+        .from('user_settings')
+        .select('casper_ping_enabled, casper_ping_phone')
+        .eq('user_id', userId)
+        .maybeSingle();
+      enabled = !!fallback.data?.casper_ping_enabled;
+      phone = String(fallback.data?.casper_ping_phone || '').trim();
+    } else {
+      enabled = !!data?.casper_ping_enabled;
+      activity = !!data?.casper_ping_activity;
+      phone = String(data?.casper_ping_phone || '').trim();
+    }
   } catch {
     // columns not added yet
   }
@@ -51,7 +65,7 @@ export async function getPingSettings(
     }
   }
 
-  return { enabled, phone };
+  return { enabled, activity, phone };
 }
 
 export async function findUserByPingPhone(

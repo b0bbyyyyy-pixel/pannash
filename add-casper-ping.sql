@@ -3,7 +3,8 @@
 
 ALTER TABLE user_settings
   ADD COLUMN IF NOT EXISTS casper_ping_enabled BOOLEAN DEFAULT FALSE,
-  ADD COLUMN IF NOT EXISTS casper_ping_phone TEXT;
+  ADD COLUMN IF NOT EXISTS casper_ping_phone TEXT,
+  ADD COLUMN IF NOT EXISTS casper_ping_activity BOOLEAN DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS casper_ping_messages (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -48,6 +48,7 @@ export async function PATCH(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const phone = typeof body.phone === 'string' ? body.phone.trim() : undefined;
   const enabled = typeof body.enabled === 'boolean' ? body.enabled : undefined;
+  const activity = typeof body.activity === 'boolean' ? body.activity : undefined;
 
   const { data: existing } = await supabase
     .from('user_settings')
@@ -57,11 +58,19 @@ export async function PATCH(req: NextRequest) {
 
   const payload: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (enabled !== undefined) payload.casper_ping_enabled = enabled;
+  if (activity !== undefined) payload.casper_ping_activity = activity;
   if (phone !== undefined) payload.casper_ping_phone = phone || null;
 
-  const { error } = existing
-    ? await supabase.from('user_settings').update(payload).eq('user_id', user.id)
-    : await supabase.from('user_settings').insert({ user_id: user.id, ...payload });
+  const write = existing
+    ? (row: Record<string, unknown>) => supabase.from('user_settings').update(row).eq('user_id', user.id)
+    : (row: Record<string, unknown>) => supabase.from('user_settings').insert({ user_id: user.id, ...row });
+
+  let { error } = await write(payload);
+  if (error && activity !== undefined && /casper_ping_activity/i.test(error.message || '')) {
+    const retry = { ...payload };
+    delete retry.casper_ping_activity;
+    ({ error } = await write(retry));
+  }
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 

@@ -1,6 +1,6 @@
 import { logCasperRun, upsertCasperLeadState } from '@/lib/casper/runs';
 import type { CasperPhase } from '@/lib/casper/defaults';
-import { sendCasperPing } from '@/lib/casper/ping';
+import { getPingSettings, sendCasperPing } from '@/lib/casper/ping';
 
 export type DocKind = 'application' | 'bank' | 'other';
 
@@ -105,13 +105,16 @@ export async function onCasperDocsReceived(
     },
   });
 
-  await sendCasperPing(supabase, {
-    userId: args.userId,
-    kind: 'docs',
-    body: kind === 'application'
-      ? `Casper: ${lead.name || 'A lead'} sent the funding application. Auto-replies are off.`
-      : `Casper: ${lead.name || 'A lead'} sent bank statements. Auto-replies are off.`,
-  });
+  const ping = await getPingSettings(supabase, args.userId);
+  if (ping.activity) {
+    await sendCasperPing(supabase, {
+      userId: args.userId,
+      kind: 'docs',
+      body: kind === 'application'
+        ? `Casper: ${lead.name || 'A lead'} sent the funding application. Auto-replies are off.`
+        : `Casper: ${lead.name || 'A lead'} sent bank statements. Auto-replies are off.`,
+    });
+  }
 
   return { phase, runId, kind };
 }
