@@ -35,7 +35,10 @@ export async function GET() {
 
     let count = 0;
     for (const row of data ?? []) {
-      if (isHiddenInboxThread(byId.get(row.lead_id), row.last_message_preview)) continue;
+      const preview = row.last_message_preview;
+      if (isHiddenInboxThread(byId.get(row.lead_id), preview)) continue;
+      // STOP / DNC already skipped. Don't badge the tab for outbound-only leftover unread.
+      if (!row.last_inbound_at && row.last_direction !== 'inbound') continue;
       count += Number(row.unread_count) || 0;
     }
 

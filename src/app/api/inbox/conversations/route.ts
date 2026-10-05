@@ -48,25 +48,24 @@ export async function GET(req: NextRequest) {
       }
       list = (hits ?? []).filter(isInboxLead).slice(0, LIMIT);
     } else {
-      // Main inbox = people who texted back. Drip outbound never creates a row here.
+      // Main inbox = people who texted back (including replies that never got last_inbound_at).
       let convs: Record<string, unknown>[] = [];
       try {
         const { data, error } = await supabase
           .from('inbox_conversations')
           .select('*')
           .eq('user_id', user.id)
-          .not('last_inbound_at', 'is', null)
-          .order('last_inbound_at', { ascending: false })
-          .limit(LIMIT);
+          .or('last_inbound_at.not.is.null,last_direction.eq.inbound')
+          .order('last_message_at', { ascending: false, nullsFirst: false })
+          .limit(80);
         if (error) {
-          // last_inbound_at column not added yet (add-sms-drip.sql) — replies only via last_direction
           const { data: fallback } = await supabase
             .from('inbox_conversations')
             .select('*')
             .eq('user_id', user.id)
             .eq('last_direction', 'inbound')
             .order('last_message_at', { ascending: false, nullsFirst: false })
-            .limit(LIMIT);
+            .limit(80);
           convs = fallback ?? [];
         } else {
           convs = data ?? [];
@@ -78,9 +77,16 @@ export async function GET(req: NextRequest) {
       convs = convs.filter(c => {
         const preview = String(c.last_message_preview ?? '');
         const inbound = c.last_inbound_at || c.last_direction === 'inbound';
-        if (inbound && isSmsStopBody(preview)) return false;
+        if (!inbound) return false;
+        if (isSmsStopBody(preview)) return false;
         return true;
       });
+      convs.sort((a, b) => {
+        const aT = String(a.last_inbound_at || a.last_message_at || '');
+        const bT = String(b.last_inbound_at || b.last_message_at || '');
+        return bT > aT ? 1 : bT < aT ? -1 : 0;
+      });
+      convs = convs.slice(0, LIMIT);
 
       const convLeadIds = convs.map(c => String(c.lead_id)).filter(Boolean);
       if (convLeadIds.length) {
@@ -91,34 +97,6 @@ export async function GET(req: NextRequest) {
           .in('id', convLeadIds);
         const byId = new Map((convLeads ?? []).map(l => [l.id, l]));
         list = convLeadIds.map(id => byId.get(id)).filter(Boolean) as Record<string, unknown>[];
-      }
-
-      // Until replies fill the rail, pad with pipeline leads (drip outbound never adds a row)
-      if (list.length < LIMIT) {
-        const have = new Set(list.map(l => String(l.id)));
-        const { data: extras, error } = await supabase
-          .from('leads')
-          .select(LEAD_COLS)
-          .eq('user_id', user.id)
-          .not('phone', 'is', null)
-          .not('phone', 'eq', '')
-          .or('in_pipeline.eq.true,and(month_key.not.is.null,list_id.is.null)')
-          .order('last_contact', { ascending: false, nullsFirst: false })
-          .limit(LIMIT);
-
-        if (error) {
-          console.error('[inbox/conversations] leads query error:', error.message);
-          if (!list.length) {
-            return NextResponse.json({ leads: [], phoneConnection: null, dbError: error.message });
-          }
-        }
-
-        for (const lead of extras ?? []) {
-          if (have.has(lead.id)) continue;
-          list.push(lead);
-          have.add(lead.id);
-          if (list.length >= LIMIT) break;
-        }
       }
     }
 
@@ -186,13 +164,13 @@ export async function GET(req: NextRequest) {
       lead_status: (optOutMap[String(lead.id)] ? 'DNC' : lead.lead_status) ?? null,
     })).filter(lead => {
       if (q || (pinLeadId && lead.id === pinLeadId)) return true;
-      const conv = lead.conversation as { last_message_preview?: string | null; last_inbound_at?: string | null; last_direction?: string | null } | null;
+      const conv = lead.conversation as { last_message_preview?: string | null; last_inbound_at?: string | null; last_direction?: string | null; last_message_at?: string | null } | null;
       const preview = conv?.last_message_preview ?? '';
       const hasInbound = !!(conv?.last_inbound_at || conv?.last_direction === 'inbound');
       if (hasInbound && isSmsStopBody(preview)) return false;
-      const dnc = !!(lead.sms_opt_out) || String(lead.lead_status ?? '') === 'DNC';
-      if (dnc && !(hasInbound && !isSmsStopBody(preview))) return false;
-      return true;
+      const dnc = !!(lead.sms_opt_out) || String(lead.lead_status ?? '').toUpperCase() === 'DNC';
+      if (dnc) return false;
+      return hasInbound;
     });
 
     merged.sort((a, b) => {
@@ -200,16 +178,14 @@ export async function GET(req: NextRequest) {
         if (a.id === pinLeadId) return -1;
         if (b.id === pinLeadId) return 1;
       }
-      // Replies always stack above pipeline padding. Drip outbound is ignored.
-      type Conv = { last_inbound_at?: string | null } | null;
-      const aIn = (a.conversation as Conv)?.last_inbound_at ?? null;
-      const bIn = (b.conversation as Conv)?.last_inbound_at ?? null;
-      if (aIn && bIn) return bIn > aIn ? 1 : -1;
-      if (aIn) return -1;
-      if (bIn) return 1;
-      const aTime = (a.last_contact as string | null) ?? '0';
-      const bTime = (b.last_contact as string | null) ?? '0';
-      return bTime > aTime ? 1 : -1;
+      type Conv = { last_inbound_at?: string | null; last_message_at?: string | null } | null;
+      const t = (row: Record<string, unknown>) => {
+        const c = row.conversation as Conv;
+        return c?.last_inbound_at || c?.last_message_at || (row.last_contact as string | null) || '0';
+      };
+      const aT = t(a);
+      const bT = t(b);
+      return bT > aT ? 1 : bT < aT ? -1 : 0;
     });
 
     let phoneConn = null;

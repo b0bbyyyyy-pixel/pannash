@@ -522,7 +522,7 @@ export default function InboxClient({
 
   // ── Poll for lead list updates every 30s ───────────────────────────────────
   useEffect(() => {
-    const id = setInterval(loadLeads, 30000);
+    const id = setInterval(loadLeads, 5000);
     return () => clearInterval(id);
   }, [loadLeads]);
 

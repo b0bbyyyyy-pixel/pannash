@@ -1,7 +1,7 @@
 import { after, NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { toE164 } from '@/lib/dialer/e164';
-import { promoteCampaignLeadOnReply } from '@/lib/inbox/promoteCampaignReply';
+import { promoteCampaignLeadOnReply, stampInboxInbound } from '@/lib/inbox/promoteCampaignReply';
 import { runCasperInboundSms } from '@/lib/casper/reply';
 import { notifyUserOfInboundSms } from '@/lib/mobile/notifyInbound';
 import { saveInboundMms } from '@/lib/inbox/saveInboundMms';
@@ -166,6 +166,14 @@ export async function POST(req: NextRequest) {
       try { await promoteCampaignLeadOnReply(supabase, lead.id); } catch { /* ignore */ }
       try { await markOutboundReadAfterReply(supabase, lead.id); } catch { /* ignore */ }
     }
+    try {
+      await stampInboxInbound(supabase, {
+        userId: ownerId,
+        leadId: lead.id,
+        preview: storedBody,
+        stopped,
+      });
+    } catch { /* ignore */ }
 
     // Fallback write if the SQL function isn't installed yet
     if (rpcOk) {
