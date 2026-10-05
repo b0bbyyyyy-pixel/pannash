@@ -1,4 +1,5 @@
 import { requestedAmountFromMonthlyRevenue } from '@/lib/bankAnalyzer';
+import { sanitizeUnderwritingStrings } from '@/lib/normalizeParsedFields';
 
 export const APPLICATION_BROKER = {
   name: 'Robert Gulinello',
@@ -124,7 +125,7 @@ export function buildFundingApplication(lead: ApplicationLeadInput): {
   missing: string[];
   populatedRequested: number | null;
 } {
-  const ud = (lead.underwriting_data || {}) as Record<string, unknown>;
+  const ud = sanitizeUnderwritingStrings((lead.underwriting_data || {}) as Record<string, unknown>);
 
   const monthly = num(ud.monthlyRevenue);
   const existingRequested = num(lead.value) ?? num(ud.requestedAmount);

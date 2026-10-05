@@ -306,7 +306,7 @@ import {
   mergeStatementMonths,
 } from '@/lib/bankAnalyzer';
 import { inferFromLegalName } from '@/lib/businessName';
-import { normalizeParsedFields } from '@/lib/normalizeParsedFields';
+import { normalizeParsedFields, monthsInBusinessFromStartDate, sanitizeUnderwritingStrings } from '@/lib/normalizeParsedFields';
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function LeadWorkspaceClient({
   lead: initialLead,
@@ -567,16 +567,6 @@ export default function LeadWorkspaceClient({
     'value', 'lead_source', 'last_contact', 'offers', 'follow_up_at',
   ]);
 
-  // ── Field save helper ────────────────────────────────────────────────────────
-  /** Calculate months between a date string and today */
-  const calcTIBMonths = (dateStr: string): number | null => {
-    if (!dateStr) return null;
-    const start = new Date(dateStr);
-    if (isNaN(start.getTime())) return null;
-    const now = new Date();
-    return Math.max(0, (now.getFullYear() - start.getFullYear()) * 12 + (now.getMonth() - start.getMonth()));
-  };
-
   const saveField = useCallback(async (field: string, value: unknown) => {
     if (DIRECT_FIELDS.has(field)) {
       const res = await fetch('/api/leads/update-crm', {
@@ -593,7 +583,7 @@ export default function LeadWorkspaceClient({
 
       // Auto-calculate Time in Business when Start Date is saved
       if (field === 'businessStartDate') {
-        const months = calcTIBMonths(String(value ?? ''));
+        const months = monthsInBusinessFromStartDate(value);
         if (months !== null) updatedUd.timeInBusiness = months;
       }
 
@@ -756,6 +746,8 @@ export default function LeadWorkspaceClient({
       if (k in mappedBank || BANK_KEYS.has(k)) continue;
       leftover[k] = v;
     }
+    const tib = monthsInBusinessFromStartDate(leftover.businessStartDate || currentUd.businessStartDate);
+    if (tib != null) leftover.timeInBusiness = String(tib);
 
     if (Object.keys(mappedBank).length || Object.keys(leftover).length) {
       if (mappedBank.mcaPositions && currentUd.mcaPositions) {
@@ -897,20 +889,17 @@ export default function LeadWorkspaceClient({
     d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
 
   // ── Derive display values from underwriting_data JSONB ──────────────────────
-  const ud = (lead.underwriting_data || {}) as Record<string, unknown>;
+  const ud = sanitizeUnderwritingStrings((lead.underwriting_data || {}) as Record<string, unknown>);
   const creditScore = (ud.creditScore != null ? Number(ud.creditScore) : null);
   /** Safely extract a string from unknown JSON value */
   const str = (v: unknown): string | null => (v != null ? String(v) : null);
   const mcaPositions = parseMcaPositions(ud.mcaPositions);
 
-  // Auto-derive TIB from businessStartDate if timeInBusiness is not set
   const derivedTIB: number | null = (() => {
-    if (ud.timeInBusiness != null && ud.timeInBusiness !== '') return Number(ud.timeInBusiness);
-    if (!ud.businessStartDate) return null;
-    const start = new Date(String(ud.businessStartDate));
-    if (isNaN(start.getTime())) return null;
-    const now = new Date();
-    return Math.max(0, (now.getFullYear() - start.getFullYear()) * 12 + (now.getMonth() - start.getMonth()));
+    if (ud.timeInBusiness != null && ud.timeInBusiness !== '' && Number(ud.timeInBusiness) > 0) {
+      return Number(ud.timeInBusiness);
+    }
+    return monthsInBusinessFromStartDate(ud.businessStartDate);
   })();
 
   const creditScoreColor =

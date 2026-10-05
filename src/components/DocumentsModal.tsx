@@ -375,7 +375,7 @@ export default function DocumentsModal({
       }
 
       attachStatementMonths(mergedFields, months);
-      const reviewFields = enrichParsedBusinessFields(mergedFields);
+      const reviewFields = enrichParsedBusinessFields(normalizeParsedFields(mergedFields));
 
       if (Object.keys(reviewFields).length > 0) {
         setParsedFields(reviewFields);
@@ -448,7 +448,7 @@ export default function DocumentsModal({
         }
 
         attachStatementMonths(mergedFields, months);
-        const reviewFields = enrichParsedBusinessFields(mergedFields);
+        const reviewFields = enrichParsedBusinessFields(normalizeParsedFields(mergedFields));
         const bankFiles = pendingBankSnapFiles.current;
         setPendingFiles([]);
         setUploadProgress({});
@@ -598,7 +598,7 @@ export default function DocumentsModal({
       } catch { /* skip */ }
     }
     attachStatementMonths(merged, months);
-    const reviewFields = enrichParsedBusinessFields(merged);
+    const reviewFields = enrichParsedBusinessFields(normalizeParsedFields(merged));
 
     setAnalyzing(false);
     if (anySuccess) {

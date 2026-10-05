@@ -37,6 +37,8 @@ Use EXACTLY these keys (map common labels onto them):
 
 Do not skip ein, entityType, purposeOfFunds, requestedAmount, monthlyRevenue, ownershipPercent, homeAddress, ssn, or dob when they appear anywhere.
 
+Do not glue neighboring fields together. If the text has "Auto salesUse of funds: Working capital", industry is "Auto sales" and purposeOfFunds is "Working capital". If the text has "2024-12-04EIN: 12-3456789", businessStartDate is "2024-12-04" and ein is "12-3456789".
+
 JSON schema (all fields optional, only include fields that have a value):
 {
   "name": "Owner full name",
@@ -198,12 +200,22 @@ async function extractPdfjsContent(buffer: Buffer): Promise<{ text: string; form
       const page = await pdf.getPage(n);
       const content = await page.getTextContent();
       let prevY: number | null = null;
+      let prevEndX: number | null = null;
       for (const item of content.items) {
         if (!('str' in item)) continue;
+        const str = (item as { str: string }).str;
+        const x = (item as { transform: number[] }).transform[4];
         const y = (item as { transform: number[] }).transform[5];
-        if (prevY !== null && Math.abs(y - prevY) > 2) full += '\n';
-        full += (item as { str: string }).str + ' ';
+        const width = 'width' in item ? Number((item as { width: number }).width) || 0 : 0;
+        if (prevY !== null && Math.abs(y - prevY) > 2) {
+          full += '\n';
+          prevEndX = null;
+        } else if (prevEndX != null && x - prevEndX > 1.5) {
+          full += ' ';
+        }
+        full += str;
         prevY = y;
+        prevEndX = x + width;
       }
       full += '\n\n';
       try {
@@ -417,6 +429,11 @@ export async function POST(request: Request) {
   } else if (!isImage) {
     textContent = buffer.toString('utf-8').replace(/[^\x20-\x7E\n\r\t]/g, ' ');
   }
+
+  textContent = textContent.replace(
+    /([a-z0-9])(?=(?:Use of funds|Use of proceeds|Purpose of funds|EIN\s*:|FEIN\s*:|SSN\s*:|Entity type))/gi,
+    '$1 ',
+  );
 
   // ── Step 2: Detect document type (caller can force app vs statement) ──────
   const forcedType = String(formData.get('documentType') ?? '').toLowerCase().trim();

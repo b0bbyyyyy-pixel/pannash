@@ -1,5 +1,5 @@
 import { inferFromLegalName } from '@/lib/businessName';
-import { normalizeParsedFields } from '@/lib/normalizeParsedFields';
+import { monthsInBusinessFromStartDate, normalizeParsedFields } from '@/lib/normalizeParsedFields';
 import {
   compactMetricsForStorage,
   mapAnalyzerMetricsToUnderwritingFields,
@@ -103,6 +103,8 @@ export async function applyParsedFieldsToLead(
     if (k in mappedBank || BANK_KEYS.has(k)) continue;
     leftover[k] = v;
   }
+  const tib = monthsInBusinessFromStartDate(leftover.businessStartDate || currentUd.businessStartDate);
+  if (tib != null) leftover.timeInBusiness = String(tib);
 
   if (Object.keys(mappedBank).length || Object.keys(leftover).length) {
     if (mappedBank.mcaPositions && currentUd.mcaPositions) {
