@@ -1,5 +1,6 @@
 import { requestedAmountFromMonthlyRevenue } from '@/lib/bankAnalyzer';
 import { sanitizeUnderwritingStrings } from '@/lib/normalizeParsedFields';
+import { inferFromLegalName } from '@/lib/businessName';
 
 export const APPLICATION_BROKER = {
   name: 'Robert Gulinello',
@@ -68,6 +69,12 @@ function num(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function avgNums(values: unknown[]): number | null {
+  const nums = values.map(num).filter((n): n is number => n != null && n > 0);
+  if (!nums.length) return null;
+  return nums.reduce((a, b) => a + b, 0) / nums.length;
+}
+
 function money(n: number): string {
   return `$${Math.round(n).toLocaleString('en-US')}`;
 }
@@ -88,7 +95,7 @@ function composeAddress(street: string, city: string, state: string, zip: string
 
 function formatFormDate(raw: string): string {
   if (!raw) return '';
-  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const iso = raw.match(/(\d{4})-(\d{2})-(\d{2})/);
   if (iso) return `${iso[2]}/${iso[3]}/${iso[1]}`;
   const d = new Date(raw);
   if (Number.isNaN(d.getTime())) return raw;
@@ -127,13 +134,19 @@ export function buildFundingApplication(lead: ApplicationLeadInput): {
 } {
   const ud = sanitizeUnderwritingStrings((lead.underwriting_data || {}) as Record<string, unknown>);
 
-  const monthly = num(ud.monthlyRevenue);
+  const monthlyRev = num(ud.monthlyRevenue);
+  const monthly = monthlyRev != null && monthlyRev > 0
+    ? monthlyRev
+    : avgNums([ud.month1Revenue, ud.month2Revenue, ud.month3Revenue, ud.month4Revenue]);
   const existingRequested = num(lead.value) ?? num(ud.requestedAmount);
   const populatedRequested = existingRequested == null ? requestedAmountFromMonthlyRevenue(monthly) : null;
   const requested = existingRequested ?? populatedRequested;
+  const inferredEntity = inferFromLegalName(str(lead.company)).entityType;
   const entityType = isFilled(ud.entityType)
     ? str(ud.entityType)
-    : (ud.isSoleProp === true || ud.isSoleProp === 'true' ? 'Sole Proprietor' : '');
+    : (ud.isSoleProp === true || ud.isSoleProp === 'true'
+      ? 'Sole Proprietor'
+      : (inferredEntity || ''));
 
   const owner2Name = [str(ud.owner2FirstName), str(ud.owner2LastName)].filter(Boolean).join(' ');
   const hasOwner2 = isFilled(owner2Name) || isFilled(ud.owner2Ssn) || isFilled(ud.owner2Dob);

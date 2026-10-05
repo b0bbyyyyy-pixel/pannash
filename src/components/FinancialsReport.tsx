@@ -1,6 +1,6 @@
 'use client';
 import React from 'react';
-import { parseMcaPositions, parseStatementMonths, averagesFromMonths, formatMcaFundedDate } from '@/lib/bankAnalyzer';
+import { parseMcaPositions, parseStatementMonths, averagesFromMonths, formatMcaFundedDate, mergeStatementMonths, statementMonthsFromUd, coerceNumber, type StatementMonth } from '@/lib/bankAnalyzer';
 
 export type BankSnap = {
   analyzedAt?: string;
@@ -45,92 +45,62 @@ function acctLabel(raw: unknown): string {
   return digits ? `…${digits}` : '--';
 }
 
+function monthFromSummary(row: Record<string, unknown>, acctFallback = ''): StatementMonth {
+  const totalDeposits = coerceNumber(row.true_deposits ?? row.total_deposits ?? row.revenue);
+  const ending = coerceNumber(row.ending_balance ?? row.endBal);
+  const acct = String(row.account ?? row.accountNumber ?? acctFallback).replace(/\D/g, '').slice(-4);
+  return {
+    month: String(row.month ?? ''),
+    ...(acct ? { accountNumber: acct } : {}),
+    ...(totalDeposits != null ? { totalDeposits } : {}),
+    ...(ending != null ? { endingBalance: ending } : {}),
+    ...(coerceNumber(row.deposit_count ?? row.depCount) != null ? { depositCount: coerceNumber(row.deposit_count ?? row.depCount)! } : {}),
+    ...(coerceNumber(row.negative_days ?? row.neg) != null ? { negativeDays: coerceNumber(row.negative_days ?? row.neg)! } : {}),
+    ...(coerceNumber(row.nsf_count ?? row.nsf) != null ? { nsfCount: coerceNumber(row.nsf_count ?? row.nsf)! } : {}),
+    ...(coerceNumber(row.avg_daily_balance) != null ? { avgDailyBalance: coerceNumber(row.avg_daily_balance)! } : {}),
+  };
+}
+
 function buildMonthRows(snap: BankSnap | undefined, ud: Record<string, unknown>): MonthRow[] {
-  const fromUd = parseStatementMonths(ud.statementMonths);
-  if (fromUd.length) {
-    return fromUd.map(m => ({
-      month: m.month,
-      acct: acctLabel(m.accountNumber),
-      revenue: m.totalDeposits ?? 0,
-      deposits: m.totalDeposits ?? 0,
-      endBal: m.endingBalance ?? 0,
-      depCount: m.depositCount ?? 0,
-      neg: m.negativeDays ?? 0,
-      nsf: m.nsfCount ?? 0,
+  const extra: StatementMonth[] = [];
+  const perFile = snap?.per_file ?? [];
+  for (const pf of perFile) {
+    const ms = (pf.metrics?.monthly_summary as Array<Record<string, unknown>>) ?? [];
+    const mr = (pf.metrics?.monthly_revenue as Array<{ month?: string; amount?: number }>) ?? [];
+    const fallback = pf.filename.replace(/\D/g, '').slice(-4);
+    for (const row of ms) {
+      const month = String(row.month ?? '');
+      const rev = mr.find(r => r.month === month);
+      extra.push(monthFromSummary({
+        ...row,
+        true_deposits: rev?.amount ?? row.true_deposits ?? row.total_deposits,
+        account: row.account ?? fallback,
+      }, fallback));
+    }
+  }
+  const m = snap?.displayMetrics;
+  const summary = (m?.monthly_summary as Array<Record<string, unknown>> | undefined) ?? [];
+  const mr = (m?.monthly_revenue as Array<{ month?: string; amount?: number }>) ?? [];
+  for (const row of summary) {
+    const month = String(row.month ?? '');
+    const rev = mr.find(r => r.month === month);
+    extra.push(monthFromSummary({
+      ...row,
+      true_deposits: rev?.amount ?? row.true_deposits ?? row.total_deposits,
     }));
   }
 
-  const rows: MonthRow[] = [];
-  if (!snap) return rows;
-
-  const perFile = snap.per_file ?? [];
-  const m = snap.displayMetrics;
-  const summary = (m?.monthly_summary as Array<Record<string, unknown>> | undefined) ?? [];
-
-  // Parsed snapshot already has one row per submitted month — prefer that over analyzer per_file.
-  if (summary.length > 0 && !perFile.length) {
-    const mr = (m?.monthly_revenue as Array<{ month?: string; amount?: number }>) ?? [];
-    for (const row of summary) {
-      const month = String(row.month ?? '');
-      const revEntry = mr.find((r) => r.month === month);
-      rows.push({
-        month,
-        acct: acctLabel(row.account ?? row.accountNumber),
-        revenue: Number(revEntry?.amount ?? row.true_deposits ?? row.total_deposits ?? 0),
-        deposits: Number(row.total_deposits ?? row.true_deposits ?? 0),
-        endBal: Number(row.ending_balance ?? 0),
-        depCount: Number(row.deposit_count ?? 0),
-        neg: Number(row.negative_days ?? 0),
-        nsf: Number(row.nsf_count ?? 0),
-      });
-    }
-    return rows;
-  }
-
-  if (perFile.length > 0) {
-    for (const pf of perFile) {
-      const base = pf.filename.replace(/\.[^.]+$/, '');
-      const label = base.length >= 4 ? '...' + base.slice(-4) : base;
-      const pm = pf.metrics;
-      const ms = (pm.monthly_summary as Array<Record<string, unknown>>) ?? [];
-      const mr = (pm.monthly_revenue as Array<{ month?: string; amount?: number }>) ?? [];
-      for (const row of ms) {
-        const month = String(row.month ?? '');
-        const revEntry = mr.find((r) => r.month === month);
-        rows.push({
-          month,
-          acct: acctLabel(row.account) !== '--' ? acctLabel(row.account) : label,
-          revenue: Number(revEntry?.amount ?? 0),
-          deposits: Number(row.total_deposits ?? row.true_deposits ?? 0),
-          endBal: Number(row.ending_balance ?? 0),
-          depCount: Number(row.deposit_count ?? 0),
-          neg: Number(row.negative_days ?? 0),
-          nsf: Number(row.nsf_count ?? 0),
-        });
-      }
-    }
-    return rows;
-  }
-
-  if (m) {
-    const ms = (m.monthly_summary as Array<Record<string, unknown>>) ?? [];
-    const mr = (m.monthly_revenue as Array<{ month?: string; amount?: number }>) ?? [];
-    for (const row of ms) {
-      const month = String(row.month ?? '');
-      const revEntry = mr.find((r) => r.month === month);
-      rows.push({
-        month,
-        acct: acctLabel(row.account ?? row.accountNumber),
-        revenue: Number(revEntry?.amount ?? 0),
-        deposits: Number(row.total_deposits ?? row.true_deposits ?? 0),
-        endBal: Number(row.ending_balance ?? 0),
-        depCount: Number(row.deposit_count ?? 0),
-        neg: Number(row.negative_days ?? 0),
-        nsf: Number(row.nsf_count ?? 0),
-      });
-    }
-  }
-  return rows;
+  const merged = mergeStatementMonths(statementMonthsFromUd(ud), extra);
+  return merged.map(row => ({
+    month: row.month,
+    acct: acctLabel(row.accountNumber),
+    revenue: row.totalDeposits ?? 0,
+    deposits: row.totalDeposits ?? 0,
+    endBal: row.endingBalance ?? 0,
+    depCount: row.depositCount ?? 0,
+    neg: row.negativeDays ?? 0,
+    nsf: row.nsfCount ?? 0,
+  }));
 }
 
 export function getFinancialsMeta(snap: BankSnap | undefined, ud: Record<string, unknown>) {

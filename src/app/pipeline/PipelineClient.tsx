@@ -500,6 +500,14 @@ export default function PipelineClient({ leads, userId, compact = false, initial
     setLeadOverlayExtra(extra);
     setLeadOverlayId(id);
     setOverlayKey(k => k + 1);
+    const opened = rows.find(l => l.id === id);
+    if (opened) {
+      setLeadMenuState({
+        section: (extra?.tab as LeadActionId) || 'application',
+        appComplete: rowAppComplete(opened),
+        lendersComplete: rowLendersComplete(opened),
+      });
+    }
   };
 
   const startRowCall = (lead: Lead) => {
@@ -584,6 +592,7 @@ export default function PipelineClient({ leads, userId, compact = false, initial
   const closeLeadOverlay = useCallback(() => {
     setLeadOverlayId(null);
     setLeadOverlayExtra(undefined);
+    setLeadMenuState(null);
     router.refresh();
   }, [router]);
 
@@ -1141,7 +1150,9 @@ export default function PipelineClient({ leads, userId, compact = false, initial
       )}
 
       {/* ── LEAD OVERLAY — never nest this iframe when Pipeline is already in one ── */}
-      {leadOverlayId && !embedded && (
+      {leadOverlayId && !embedded && (() => {
+        const overlayLeadForMenu = rows.find(r => r.id === leadOverlayId) ?? null;
+        return (
         <>
           {/* Backdrop */}
           <div
@@ -1175,8 +1186,8 @@ export default function PipelineClient({ leads, userId, compact = false, initial
                 }}
                 currentSection={leadMenuState?.section}
                 showAppDot
-                appComplete={leadMenuState?.appComplete ?? false}
-                lendersComplete={leadMenuState?.lendersComplete ?? false}
+                appComplete={Boolean(leadMenuState?.appComplete) || (overlayLeadForMenu ? rowAppComplete(overlayLeadForMenu) : false)}
+                lendersComplete={Boolean(leadMenuState?.lendersComplete) || (overlayLeadForMenu ? rowLendersComplete(overlayLeadForMenu) : false)}
               />
               <div className="flex items-center gap-3">
                 <a
@@ -1212,7 +1223,8 @@ export default function PipelineClient({ leads, userId, compact = false, initial
             />
           </div>
         </>
-      )}
+        );
+      })()}
 
       {rowSmsLead && (
         <QuickTextPopup

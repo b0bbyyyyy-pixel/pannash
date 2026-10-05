@@ -20,6 +20,7 @@ const CallHistoryPanel     = dynamic(() => import('@/components/CallHistoryPanel
 const ManageStatusesModal  = dynamic(() => import('@/components/ManageStatusesModal'), { ssr: false });
 const QuickTextPopup       = dynamic(() => import('@/components/QuickTextPopup'), { ssr: false });
 const FollowUpModal        = dynamic(() => import('@/components/FollowUpModal'), { ssr: false });
+const FinancialsModal      = dynamic(() => import('@/components/FinancialsModal'), { ssr: false });
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface Lead {
@@ -291,7 +292,7 @@ function Section({ title, children, collapsible = false, defaultOpen = true, res
   );
 }
 
-import FinancialsReport, { getFinancialsMeta, type BankSnap } from '@/components/FinancialsReport';
+import { getFinancialsMeta, type BankSnap } from '@/components/FinancialsReport';
 import {
   mapAnalyzerMetricsToUnderwritingFields,
   mapParsedBankFieldsToUd,
@@ -890,6 +891,8 @@ export default function LeadWorkspaceClient({
 
   // ── Derive display values from underwriting_data JSONB ──────────────────────
   const ud = sanitizeUnderwritingStrings((lead.underwriting_data || {}) as Record<string, unknown>);
+  const bankSnap = (ud.bankStatementAnalysis as BankSnap) ?? undefined;
+  const finMeta = getFinancialsMeta(bankSnap, ud);
   const creditScore = (ud.creditScore != null ? Number(ud.creditScore) : null);
   /** Safely extract a string from unknown JSON value */
   const str = (v: unknown): string | null => (v != null ? String(v) : null);
@@ -911,7 +914,7 @@ export default function LeadWorkspaceClient({
 
   // ── Projected Offer calculation (mirrors UnderwritingSuite logic) ────────────
   const [showProjectedOffer, setShowProjectedOffer] = useState(false);
-  const [showFullFinancials, setShowFullFinancials] = useState(true);
+  const [showFullFinancials, setShowFullFinancials] = useState(false);
 
   const projectedOffer = useMemo(() => {
     const rev      = Number(ud.monthlyRevenue  ?? 0);
@@ -1056,8 +1059,8 @@ export default function LeadWorkspaceClient({
     phone: lead.phone,
     company: lead.company,
     value: lead.value,
-    underwriting_data: lead.underwriting_data,
-  }), [lead.name, lead.email, lead.phone, lead.company, lead.value, lead.underwriting_data]);
+    underwriting_data: ud,
+  }), [lead.name, lead.email, lead.phone, lead.company, lead.value, ud]);
   const appComplete = appCheck.missing.length === 0;
   const missingList = appMissing.length ? appMissing : appCheck.missing;
   const lendersComplete = useMemo(() => {
@@ -1391,8 +1394,6 @@ export default function LeadWorkspaceClient({
       <div className={surfaceTab === 'lender' ? 'flex-1 min-h-0 overflow-hidden bg-white' : 'bg-[#fafafa] min-h-[calc(100vh-180px)] p-4'}>
         {surfaceTab === 'lender' ? (
           (() => {
-            const bankSnap = (ud.bankStatementAnalysis as BankSnap) ?? undefined;
-            const finMeta = getFinancialsMeta(bankSnap, ud);
             const flagOn = (v: unknown) => v === true || v === 'true';
             const snapFlags = (
               [
@@ -1460,7 +1461,7 @@ export default function LeadWorkspaceClient({
                 <div>
                   <button
                     type="button"
-                    onClick={() => setShowFullFinancials(v => !v)}
+                    onClick={() => setShowFullFinancials(true)}
                     className="w-full flex items-center justify-between gap-3 bg-white border border-[#ececec] rounded-xl px-3 py-2"
                   >
                     <span className="text-sm text-[#1a1a1a]">
@@ -1470,23 +1471,8 @@ export default function LeadWorkspaceClient({
                         {finMeta.analyzedAt ? ` · ${finMeta.analyzedAt}` : ''}
                       </span>
                     </span>
-                    <svg className={`w-3.5 h-3.5 text-[#9b9b9b] flex-shrink-0 transition-transform ${showFullFinancials ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
+                    <span className="text-[11px] text-[#6b6b6b] flex-shrink-0">Expand</span>
                   </button>
-                  {showFullFinancials && (
-                    <div className="mt-2 bg-white border border-[#ececec] rounded-xl px-2.5 py-3 min-w-0 overflow-hidden">
-                      <FinancialsReport
-                        snap={bankSnap}
-                        ud={ud}
-                        leadName={lead.name}
-                        leadCompany={lead.company}
-                        derivedTIB={derivedTIB}
-                        onSaveField={(k, v) => saveField(k, v)}
-                        variant="inline"
-                      />
-                    </div>
-                  )}
                 </div>
               )}
 
@@ -1910,6 +1896,18 @@ export default function LeadWorkspaceClient({
           onCloseOffersModal={() => setShowOffersModal(false)}
         />
       </div>
+
+      {showFullFinancials && (
+        <FinancialsModal
+          snap={bankSnap}
+          ud={ud}
+          leadName={lead.name}
+          leadCompany={lead.company}
+          derivedTIB={derivedTIB}
+          onSaveField={(k, v) => saveField(k, v)}
+          onClose={() => setShowFullFinancials(false)}
+        />
+      )}
 
       {/* ── DOCUMENTS MODAL ──────────────────────────────────────────────── */}
       {showDocsModal && (

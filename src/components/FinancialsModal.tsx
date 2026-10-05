@@ -1,5 +1,6 @@
 'use client';
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import FinancialsReport, { type BankSnap, type FinancialsReportProps } from '@/components/FinancialsReport';
 
 export type { BankSnap };
@@ -7,6 +8,15 @@ export type { BankSnap };
 type Props = FinancialsReportProps & {
   onClose: () => void;
 };
+
+function portalTarget(): HTMLElement | null {
+  if (typeof document === 'undefined') return null;
+  try {
+    const topDoc = window.top?.document;
+    if (topDoc?.body) return topDoc.body;
+  } catch { /* cross-origin */ }
+  return document.body;
+}
 
 export default function FinancialsModal({
   snap,
@@ -21,11 +31,13 @@ export default function FinancialsModal({
   const analyzedStr = snap?.analyzedAt
     ? new Date(snap.analyzedAt).toLocaleDateString('en-US')
     : '';
+  const [portalEl, setPortalEl] = useState<HTMLElement | null>(null);
+  useEffect(() => { setPortalEl(portalTarget()); }, []);
 
-  return (
-    <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4" onClick={onClose}>
+  const ui = (
+    <div className="fixed inset-0 bg-black/50 z-[200] flex items-center justify-center p-4" onClick={onClose}>
       <div
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden"
         onClick={(e) => { e.stopPropagation(); }}
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#f0f0f0] flex-shrink-0">
@@ -57,4 +69,7 @@ export default function FinancialsModal({
       </div>
     </div>
   );
+
+  if (!portalEl) return ui;
+  return createPortal(ui, portalEl);
 }

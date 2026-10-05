@@ -49,7 +49,6 @@ export default function FollowUpModal({
   const [timerId, setTimerId] = useState<FollowUpTimerId>('3_days');
   const [customDate, setCustomDate] = useState('');
   const [customTime, setCustomTime] = useState('10:00');
-  const [autoText, setAutoText] = useState(false);
   const [smsBody, setSmsBody] = useState(DEFAULT_FOLLOW_UP_SMS);
   const [tpls, setTpls] = useState<SavedTpl[]>([]);
   const [tplId, setTplId] = useState('');
@@ -71,7 +70,6 @@ export default function FollowUpModal({
         setCustomDate(localDateKey(d));
         setCustomTime(localTimeHm(d));
       }
-      setAutoText(!!auto);
       if (body) setSmsBody(body);
     };
     if (currentDueAt !== undefined) {
@@ -117,8 +115,8 @@ export default function FollowUpModal({
           timerId,
           customDate,
           customTime,
-          autoText,
-          smsBody: autoText ? smsBody : '',
+          autoText: true,
+          smsBody,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -216,54 +214,34 @@ export default function FollowUpModal({
           </p>
         )}
 
-        <div className="flex items-center justify-between py-2 border-t border-[#f0f0f0]">
-          <div>
-            <p className="text-sm font-medium text-[#1a1a1a]">Auto-text when timer ends</p>
-            <p className="text-[11px] text-[#9b9b9b]">Sends the message below at the due time</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setAutoText(v => !v)}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-              autoText ? 'bg-[#1a1a1a]' : 'bg-gray-300'
-            }`}
-          >
-            <span
-              className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${
-                autoText ? 'translate-x-6' : 'translate-x-1'
-              }`}
-            />
-          </button>
+        <div className="py-2 border-t border-[#f0f0f0]">
+          <p className="text-sm font-medium text-[#1a1a1a]">Auto-text when timer ends</p>
+          <p className="text-[11px] text-[#9b9b9b] mb-2">Sends this message at the due time</p>
+          {tpls.length > 0 && (
+            <select
+              value={tplId}
+              onChange={e => {
+                setTplId(e.target.value);
+                const t = tpls.find(x => x.id === e.target.value);
+                if (t) setSmsBody(t.body);
+              }}
+              className="w-full px-2.5 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-[#1a1a1a]"
+            >
+              <option value="">Text template…</option>
+              {tpls.map(t => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+          )}
+          <textarea
+            value={smsBody}
+            onChange={e => setSmsBody(e.target.value)}
+            rows={4}
+            placeholder="Message to send when the timer ends"
+            className="mt-2 w-full px-2.5 py-2 text-sm border border-[#e5e5e5] rounded-md resize-none focus:outline-none focus:ring-1 focus:ring-[#1a1a1a]"
+          />
+          <p className="text-[10px] text-[#9b9b9b] mt-1">{smsBody.length} characters · {'{first_name}'} {'{company}'}</p>
         </div>
-
-        {autoText && (
-          <div className="mt-2 space-y-2">
-            {tpls.length > 0 && (
-              <select
-                value={tplId}
-                onChange={e => {
-                  setTplId(e.target.value);
-                  const t = tpls.find(x => x.id === e.target.value);
-                  if (t) setSmsBody(t.body);
-                }}
-                className="w-full px-2.5 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-[#1a1a1a]"
-              >
-                <option value="">Text template…</option>
-                {tpls.map(t => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </select>
-            )}
-            <textarea
-              value={smsBody}
-              onChange={e => setSmsBody(e.target.value)}
-              rows={4}
-              placeholder="Message to send when the timer ends"
-              className="w-full px-2.5 py-2 text-sm border border-[#e5e5e5] rounded-md resize-none focus:outline-none focus:ring-1 focus:ring-[#1a1a1a]"
-            />
-            <p className="text-[10px] text-[#9b9b9b]">{smsBody.length} characters · {'{first_name}'} {'{company}'}</p>
-          </div>
-        )}
 
         {error && <p className="text-[11px] text-red-600 mt-3">{error}</p>}
 
