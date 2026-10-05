@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { getAIClient, GROK_MODEL, GROK_VISION_MODEL } from '@/lib/ai';
-import { fieldsFromLabeledText, mergeParsedFieldMaps, normalizeParsedFields } from '@/lib/normalizeParsedFields';
+import { explodeFormLabels, fieldsFromLabeledText, mergeParsedFieldMaps, normalizeParsedFields } from '@/lib/normalizeParsedFields';
 
 export const runtime     = 'nodejs';
 export const maxDuration = 120;
@@ -430,7 +430,7 @@ export async function POST(request: Request) {
     textContent = buffer.toString('utf-8').replace(/[^\x20-\x7E\n\r\t]/g, ' ');
   }
 
-  textContent = textContent.replace(
+  textContent = explodeFormLabels(textContent).replace(
     /([a-z0-9])(?=(?:Use of funds|Use of proceeds|Purpose of funds|EIN\s*:|FEIN\s*:|SSN\s*:|Entity type))/gi,
     '$1 ',
   );

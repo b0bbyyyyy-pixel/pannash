@@ -10,10 +10,12 @@ const LABEL_TO_KEY: { key: string; needles: string[]; owner2?: boolean }[] = [
   { key: 'ssn', needles: ['ssn', 'socialsecuritynumber', 'socialsecurity', 'ssnumber'] },
   { key: 'dob', needles: ['dob', 'dateofbirth', 'birthdate', 'birth'] },
   { key: 'homeAddress', needles: ['homeaddress', 'homestreet', 'residentialaddress', 'residenceaddress', 'owneraddress', 'ownerhomeaddress'] },
-  { key: 'city', needles: ['homecity', 'ownercity', 'residentialcity'] },
-  { key: 'state', needles: ['homestate', 'ownerstate', 'residentialstate'] },
-  { key: 'zip', needles: ['homezip', 'homezipcode', 'ownerzip', 'residentialzip'] },
+  { key: 'city', needles: ['homecity', 'ownercity', 'residentialcity', 'city'] },
+  { key: 'state', needles: ['homestate', 'ownerstate', 'residentialstate', 'state'] },
+  { key: 'zip', needles: ['homezip', 'homezipcode', 'ownerzip', 'residentialzip', 'zip', 'zipcode'] },
   { key: 'name', needles: ['ownername', 'ownersname', 'fullname', 'applicantname', 'principalname'] },
+  { key: 'firstName', needles: ['firstname'] },
+  { key: 'lastName', needles: ['lastname'] },
   { key: 'email', needles: ['emailaddress', 'owneremail', 'applicantemail'] },
   { key: 'phone', needles: ['mobilephone', 'cellphone', 'cell', 'ownerphone', 'mobile'] },
   { key: 'company', needles: ['legalname', 'legalbusinessname', 'businessname', 'companyname'] },
@@ -22,7 +24,7 @@ const LABEL_TO_KEY: { key: string; needles: string[]; owner2?: boolean }[] = [
   { key: 'businessCity', needles: ['businesscity', 'companycity'] },
   { key: 'businessState', needles: ['businessstate', 'companystate'] },
   { key: 'businessZip', needles: ['businesszip', 'companyzip'] },
-  { key: 'industry', needles: ['industry', 'naics', 'businesstype'] },
+  { key: 'industry', needles: ['industrytype', 'industry', 'naics', 'businesstype'] },
   { key: 'businessStartDate', needles: ['businessstartdate', 'datestarted', 'startdate', 'inceptiondate', 'dateestablished'] },
   { key: 'businessPhone', needles: ['businessphone', 'companyphone', 'workphone'] },
   { key: 'creditScore', needles: ['creditscore', 'fico', 'ficoscore'] },
@@ -88,15 +90,118 @@ const EMBEDDED_LABELS: { key: string; phrases: string[] }[] = [
   { key: 'purposeOfFunds', phrases: ['use of funds', 'use of proceeds', 'purpose of funds', 'purpose of loan'] },
   { key: 'requestedAmount', phrases: ['amount requested', 'requested amount', 'funding amount'] },
   { key: 'monthlyRevenue', phrases: ['avg monthly revenue', 'average monthly revenue', 'monthly revenue'] },
-  { key: 'ownershipPercent', phrases: ['ownership percent', 'ownership %', 'percent owned', 'ownership'] },
+  { key: 'ownershipPercent', phrases: ['ownership percentage', 'ownership percent', 'ownership %', 'percent owned', 'ownership'] },
   { key: 'entityType', phrases: ['entity type', 'type of entity', 'business structure'] },
   { key: 'homeAddress', phrases: ['home address', 'residential address'] },
   { key: 'businessStartDate', phrases: ['start date', 'date started', 'date established'] },
   { key: 'ein', phrases: ['federal tax id', 'fein', 'ein'] },
   { key: 'ssn', phrases: ['social security number', 'social security', 'ssn'] },
   { key: 'dob', phrases: ['date of birth', 'birth date', 'dob'] },
-  { key: 'industry', phrases: ['industry'] },
+  { key: 'industry', phrases: ['industry type', 'industry'] },
+  { key: 'state', phrases: ['state'] },
+  { key: 'city', phrases: ['city'] },
+  { key: 'zip', phrases: ['zip code', 'zip'] },
 ];
+
+/** Printed application labels, longest first so "Business Phone" wins over "Phone". */
+const FORM_LABELS = [
+  'legal business name', 'ownership percentage', 'social security number',
+  'amount requested', 'date of birth', 'business phone', 'street address',
+  'home address', 'industry type', 'use of funds', 'use of proceeds',
+  'cell phone', 'first name', 'last name', 'credit score', 'start date',
+  'federal tax id', 'business information', "first owner's information",
+  "owner's information", 'second owner', 'online application',
+  'email address', 'mobile phone', 'full name',
+  'ssn', 'ein', 'dba', 'fax', 'zip', 'state', 'city', 'email', 'phone',
+  'industry', 'dob',
+];
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+export function explodeFormLabels(text: string): string {
+  if (!text) return '';
+  const alt = [...FORM_LABELS].sort((a, b) => b.length - a.length).map(escapeRegex).join('|');
+  return text.replace(new RegExp(`(${alt})\\s*:`, 'gi'), '\n$1:');
+}
+
+type FormSection = 'header' | 'business' | 'owner' | 'owner2';
+
+function detectSection(label: string, current: FormSection): FormSection {
+  const n = compact(label);
+  if (n.includes('businessinformation') || n === 'business') return 'business';
+  if (n.includes('secondowner') || n.includes('owner2')) return 'owner2';
+  if (n.includes('firstowner') || n.includes('ownerinformation') || n.includes('ownersinformation')) return 'owner';
+  return current;
+}
+
+function formKeyFor(label: string, section: FormSection): string | 'skip' | null {
+  const n = compact(label);
+  if (!n) return null;
+  if (n.includes('businessinformation') || n.includes('ownerinformation') || n.includes('onlineapplication') || n === 'specialist') {
+    return 'skip';
+  }
+
+  const ownerish = section === 'owner' || section === 'owner2';
+  const prefix = section === 'owner2' ? 'owner2' : '';
+
+  if (n === 'state' || n === 'st') {
+    if (section === 'header') return 'skip';
+    return ownerish ? (prefix ? 'owner2State' : 'state') : 'businessState';
+  }
+  if (n === 'city') {
+    if (section === 'header') return 'skip';
+    return ownerish ? (prefix ? 'owner2City' : 'city') : 'businessCity';
+  }
+  if (n === 'zip' || n === 'zipcode') {
+    if (section === 'header') return 'skip';
+    return ownerish ? (prefix ? 'owner2Zip' : 'zip') : 'businessZip';
+  }
+  if (n === 'streetaddress' || n === 'address') {
+    if (section === 'header') return 'skip';
+    return ownerish ? (prefix ? 'owner2HomeAddress' : 'homeAddress') : 'businessAddress';
+  }
+  if (n === 'phone' || n === 'phonenumber') {
+    if (section === 'header') return 'skip';
+    return ownerish ? 'phone' : 'businessPhone';
+  }
+  if (n === 'email' || n === 'emailaddress') {
+    if (section === 'header') return 'skip';
+    return ownerish ? (prefix ? 'owner2Email' : 'email') : 'email';
+  }
+  if (n === 'fax') return section === 'header' ? 'skip' : 'fax';
+
+  return canonicalFromLabel(label);
+}
+
+function splitAddressBlob(value: string): { street: string; city: string; state: string; zip: string } {
+  const exploded = explodeFormLabels(value);
+  let street = '';
+  let city = '';
+  let state = '';
+  let zip = '';
+  for (const rawLine of exploded.split('\n')) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const m = line.match(/^(state|city|zip(?:\s*code)?)\s*:\s*(.*)$/i);
+    if (m) {
+      const k = m[1].toLowerCase().replace(/\s/g, '');
+      const v = m[2].trim();
+      if (k.startsWith('zip')) zip = v;
+      else if (k === 'city') city = v;
+      else state = v;
+      continue;
+    }
+    const rest = line.replace(/^(home\s*address|street\s*address)\s*:\s*/i, '').trim();
+    if (rest) street = street ? `${street} ${rest}` : rest;
+  }
+  const zipFrom = `${city} ${street} ${zip}`.match(/\b(\d{5}(?:-\d{4})?)\b/);
+  if (!zip && zipFrom) zip = zipFrom[1];
+  street = street.replace(/\b\d{5}(?:-\d{4})?\b/g, '').replace(/\s+/g, ' ').trim();
+  city = city.replace(/\b\d{5}(?:-\d{4})?\b/g, '').trim();
+  return { street, city, state, zip };
+}
 
 function compact(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -210,17 +315,34 @@ function applyTib(out: Record<string, string>) {
   if (tib != null) out.timeInBusiness = String(tib);
 }
 
-/** Map "Label: value" lines (AcroForm dumps, OCR) onto canonical keys. */
+/** Map "Label: value" lines (AcroForm dumps, OCR, ABF application PDFs) onto canonical keys. */
 export function fieldsFromLabeledText(text: string): Record<string, string> {
   const out: Record<string, string> = {};
   if (!text.trim()) return out;
-  for (const line of text.split(/\n+/)) {
-    const m = line.match(/^(.{1,80}?)\s*[:#]\s*(.+)$/);
+  const exploded = explodeFormLabels(text);
+  let section: FormSection = 'header';
+  for (const rawLine of exploded.split('\n')) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const header = line.match(/^(business information|first owner'?s information|owner'?s information|second owner(?:'?s information)?)\b/i);
+    if (header) {
+      section = detectSection(header[1], section);
+      continue;
+    }
+    const m = line.match(/^(.{1,80}?)\s*:\s*(.*)$/);
     if (!m) continue;
+    const label = m[1].trim();
     const value = cleanValue(m[2]);
-    if (!value) continue;
-    const key = canonicalFromLabel(m[1]);
-    if (key) setIfEmpty(out, key, value);
+    const n = compact(label);
+    if (n.includes('homeaddress') || n === 'firstname' || n === 'lastname' || n === 'ssn' || n === 'dateofbirth' || n === 'cellphone' || n.includes('ownership')) {
+      if (section === 'header' || section === 'business') section = 'owner';
+    } else if (n.includes('legalbusinessname') || n === 'streetaddress' || n.includes('industry') || n.includes('useoffunds') || n === 'ein' || n === 'startdate') {
+      if (section === 'header') section = 'business';
+    }
+    section = detectSection(label, section);
+    const key = formKeyFor(label, section);
+    if (!key || key === 'skip' || !value) continue;
+    setIfEmpty(out, key, value);
   }
   return out;
 }
@@ -255,6 +377,23 @@ export function normalizeParsedFields(fields: Record<string, string>): Record<st
   if (out.owner2SSN && !out.owner2Ssn) out.owner2Ssn = out.owner2SSN;
 
   applyDateKeys(out);
+
+  const glued = (v?: string) => !!v && /(?:state|city|zip)\s*:/i.test(v);
+  if (out.homeAddress) {
+    const parts = splitAddressBlob(out.homeAddress);
+    if (parts.street) out.homeAddress = parts.street;
+    if (parts.city && (!out.city || glued(out.city))) out.city = parts.city;
+    if (parts.state && (!out.state || glued(out.state))) out.state = parts.state;
+    if (parts.zip && (!out.zip || glued(out.zip))) out.zip = parts.zip;
+  }
+  if (out.businessAddress) {
+    const parts = splitAddressBlob(out.businessAddress);
+    if (parts.street) out.businessAddress = parts.street;
+    if (parts.city && (!out.businessCity || glued(out.businessCity))) out.businessCity = parts.city;
+    if (parts.state && (!out.businessState || glued(out.businessState))) out.businessState = parts.state;
+    if (parts.zip && (!out.businessZip || glued(out.businessZip))) out.businessZip = parts.zip;
+  }
+
   applyTib(out);
   return out;
 }
