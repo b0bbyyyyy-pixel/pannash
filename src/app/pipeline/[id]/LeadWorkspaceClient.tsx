@@ -306,6 +306,7 @@ import {
   mergeStatementMonths,
 } from '@/lib/bankAnalyzer';
 import { inferFromLegalName } from '@/lib/businessName';
+import { normalizeParsedFields } from '@/lib/normalizeParsedFields';
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function LeadWorkspaceClient({
   lead: initialLead,
@@ -664,17 +665,47 @@ export default function LeadWorkspaceClient({
     } catch { /* silent */ }
   }, [saveBankAnalysis]);
 
+  const refreshLeadFromServer = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/leads/${lead.id}`, { credentials: 'include' });
+      if (!res.ok) return;
+      const json = await res.json();
+      const next = json.lead as Partial<Lead> | undefined;
+      if (!next) return;
+      setLead(prev => ({
+        ...prev,
+        ...(next.name != null ? { name: next.name } : {}),
+        ...(next.email != null ? { email: next.email } : {}),
+        ...(next.phone !== undefined ? { phone: next.phone } : {}),
+        ...(next.company !== undefined ? { company: next.company } : {}),
+        ...(next.underwriting_data ? { underwriting_data: next.underwriting_data } : {}),
+      }));
+      postLeadPatch(lead.id, {
+        ...(next.name != null ? { name: next.name } : {}),
+        ...(next.email != null ? { email: next.email } : {}),
+        ...(next.phone !== undefined ? { phone: next.phone } : {}),
+        ...(next.company !== undefined ? { company: next.company } : {}),
+        ...(next.underwriting_data ? { underwriting_data: next.underwriting_data } : {}),
+      });
+    } catch { /* keep local state */ }
+  }, [lead.id]);
+
   // ── Apply parsed application fields ─────────────────────────────────────────
   const applyParsedApp = async (
     fields: Record<string, string>,
     selected: Set<string>
   ) => {
+    const normalized = normalizeParsedFields(fields);
+    const selectedNorm = new Set(selected);
+    for (const k of selected) {
+      for (const nk of Object.keys(normalizeParsedFields({ [k]: fields[k] || '' }))) selectedNorm.add(nk);
+    }
     const DIRECT = new Set(['company', 'name', 'email', 'phone', 'notes', 'stage', 'value']);
     const directUpdates: Record<string, string> = {};
     const udUpdates: Record<string, string>     = {};
 
-    for (const [k, v] of Object.entries(fields)) {
-      if (!selected.has(k) || !v) continue;
+    for (const [k, v] of Object.entries(normalized)) {
+      if (!selectedNorm.has(k) || !v) continue;
       if (DIRECT.has(k)) directUpdates[k] = v;
       else                udUpdates[k]     = v;
     }
@@ -1899,6 +1930,7 @@ export default function LeadWorkspaceClient({
           leadCompany={lead.company}
           onApplyParsed={applyParsedApp}
           onAnalyze={analyzeBankAttachment}
+          onApplied={() => { void refreshLeadFromServer(); }}
           onClose={() => setShowDocsModal(false)}
         />
       )}

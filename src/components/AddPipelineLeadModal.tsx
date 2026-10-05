@@ -3,6 +3,7 @@
 import { useState, useRef, DragEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { parseLeadPasteText } from '@/lib/parse-lead-paste';
+import { normalizeParsedFields } from '@/lib/normalizeParsedFields';
 import {
   compactMetricsForStorage,
   mapAnalyzerMetricsToUnderwritingFields,
@@ -47,20 +48,26 @@ const UW_KEYS = new Set([
   'openingBalance','endingBalance','totalDeposits','totalWithdrawals',
   'nsfCount','depositCount','largestDeposit','bankName','accountNumber',
   'statementMonth','month1Revenue','month2Revenue','month3Revenue','month4Revenue',
-  'owner2FirstName','owner2LastName','owner2Ownership','owner2DOB','owner2SSN',
+  'owner2FirstName','owner2LastName','owner2Ownership','owner2OwnershipPercent',
+  'owner2DOB','owner2Dob','owner2SSN','owner2Ssn',
 ]);
 
 /** Split extracted fields into lead columns and underwriting_data */
 function splitExtracted(raw: Record<string, unknown>): { leadFields: Partial<Fields>; uw: Record<string, string> } {
-  const leadFields: Partial<Fields> = {};
-  const uw: Record<string, string> = {};
+  const asStrings: Record<string, string> = {};
   for (const [k, v] of Object.entries(raw)) {
     const val = String(v ?? '').trim();
     if (!val || val === 'null' || val === 'undefined') continue;
+    asStrings[k] = val;
+  }
+  const normalized = normalizeParsedFields(asStrings);
+  const leadFields: Partial<Fields> = {};
+  const uw: Record<string, string> = {};
+  for (const [k, v] of Object.entries(normalized)) {
     if (k in LEAD_FIELD_MAP) {
-      leadFields[LEAD_FIELD_MAP[k]] = val;
+      leadFields[LEAD_FIELD_MAP[k]] = v;
     } else if (UW_KEYS.has(k)) {
-      uw[k] = val;
+      uw[k] = v;
     }
   }
   return { leadFields, uw };

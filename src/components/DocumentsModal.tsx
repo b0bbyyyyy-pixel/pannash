@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback, DragEvent } from 'react';
 import { createPortal } from 'react-dom';
 import DocumentVault from '@/components/DocumentVault';
 import { enrichParsedBusinessFields } from '@/lib/businessName';
+import { normalizeParsedFields } from '@/lib/normalizeParsedFields';
 import {
   analyzeBankAttachmentForLead,
   analyzeBankFilesForLead,
@@ -41,6 +42,8 @@ interface DocumentsModalProps {
   onAnalyze?: (attachment: Attachment) => void;
   /** Application parse — used by row Parse application and Application upload */
   onApplyParsed?: (fields: Record<string, string>, selected: Set<string>) => Promise<void>;
+  /** Refresh the open lead after apply / bank analyze writes underwriting_data. */
+  onApplied?: () => void;
   onClose: () => void;
 }
 
@@ -133,7 +136,8 @@ const SUM_PARSE_KEYS = new Set(['nsfCount', 'negativeDays']);
 const LAST_WINS_PARSE = new Set(['endingBalance', 'statementMonth']);
 
 function mergeParseFields(into: Record<string, string>, incoming: Record<string, string>) {
-  for (const [k, v] of Object.entries(incoming)) {
+  const src = normalizeParsedFields(incoming);
+  for (const [k, v] of Object.entries(src)) {
     if (!v) continue;
     if (k === 'mcaPositions') {
       const combined = mergeMcaPositions(into[k], v);
@@ -148,6 +152,9 @@ function mergeParseFields(into: Record<string, string>, incoming: Record<string,
       continue;
     }
     if (LAST_WINS_PARSE.has(k) || !into[k]) into[k] = v;
+  }
+  if (!into.monthlyRevenue && (src.totalDeposits || incoming.totalDeposits)) {
+    into.monthlyRevenue = src.totalDeposits || incoming.totalDeposits;
   }
 }
 
@@ -180,7 +187,7 @@ const MAX_FILES     = 10;
 
 // ── Main Modal ────────────────────────────────────────────────────────────────
 export default function DocumentsModal({
-  leadId, leadName, leadCompany, onAnalyze, onApplyParsed, onClose,
+  leadId, leadName, leadCompany, onAnalyze, onApplyParsed, onApplied, onClose,
 }: DocumentsModalProps) {
   const [attachments, setAttachments]   = useState<Attachment[]>([]);
   const [loading, setLoading]           = useState(true);
@@ -212,7 +219,7 @@ export default function DocumentsModal({
   const [reExtracting, setReExtracting] = useState<string | null>(null);
   const [analyzingId, setAnalyzingId]     = useState<string | null>(null);
   const [showVaultPick, setShowVaultPick] = useState(false);
-  const [uploadKind, setUploadKind]       = useState<'save' | 'application' | 'bank' | 'fullpack'>('save');
+  const [uploadKind, setUploadKind]       = useState<'save' | 'application' | 'bank' | 'fullpack'>('fullpack');
   const [uploadStatus, setUploadStatus]   = useState<string | null>(null);
   const pendingBankSnapFiles = useRef<File[]>([]);
 
@@ -251,7 +258,7 @@ export default function DocumentsModal({
     setParseStep('upload');
     setParsedFields({});
     setParsedSelected(new Set());
-    setUploadKind('save');
+    setUploadKind('fullpack');
     setUploadStatus(null);
     pendingBankSnapFiles.current = [];
   }, [uploading]);
@@ -391,6 +398,7 @@ export default function DocumentsModal({
         for (const att of newAttachments) {
           await analyzeOne(att);
         }
+        onApplied?.();
         setUploadStatus('Applied to lead');
         setPendingFiles([]);
         setUploadProgress({});
@@ -485,6 +493,7 @@ export default function DocumentsModal({
         setUploadStatus(pendingBankSnapFiles.current.length === 1 ? 'Analyzing bank statements…' : `Analyzing ${pendingBankSnapFiles.current.length} statements…`);
         await analyzeBankFilesForLead(leadId, pendingBankSnapFiles.current);
       }
+      onApplied?.();
       setUploadStatus('Applied to lead');
       setParseStep('upload');
       setPendingFiles([]);
@@ -529,7 +538,9 @@ export default function DocumentsModal({
     try {
       const { ok, json } = await parseAttachment(a);
       if (ok) {
-        const extractedFields = enrichParsedBusinessFields({ ...(json.fields ?? {}) } as Record<string, string>);
+        const extractedFields = enrichParsedBusinessFields(
+          normalizeParsedFields({ ...(json.fields ?? {}) } as Record<string, string>),
+        );
         const row = statementMonthFromFields(extractedFields);
         if (row) attachStatementMonths(extractedFields, [row]);
         setParsedFields(extractedFields);

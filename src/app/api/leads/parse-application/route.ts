@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { getAIClient, GROK_MODEL, GROK_VISION_MODEL } from '@/lib/ai';
+import { fieldsFromLabeledText, mergeParsedFieldMaps, normalizeParsedFields } from '@/lib/normalizeParsedFields';
 
 export const runtime     = 'nodejs';
 export const maxDuration = 120;
@@ -19,9 +20,24 @@ function getPdfParse() {
 
 // ── Prompts ────────────────────────────────────────────────────────────────────
 const APP_PROMPT = `You are a data extraction specialist for business funding applications.
-Extract ALL available fields from the provided document and return ONLY a raw JSON object — no markdown fences.
+Extract ALL filled values from the document, including PDF form fields listed as "Label: value".
+Return ONLY a raw JSON object — no markdown fences.
 
-JSON schema (all fields optional, only include fields clearly present):
+Use EXACTLY these keys (map common labels onto them):
+- Federal Tax ID / FEIN / Tax ID / EIN → "ein"
+- Entity type / LLC / Corp / Sole Prop / S-Corp / C-Corp / Partnership / Business structure → "entityType"
+- Use of funds / Use of proceeds / Purpose of loan → "purposeOfFunds"
+- Amount requested / Funding amount / Loan amount → "requestedAmount" (digits only)
+- Avg monthly revenue / monthly sales / gross monthly → "monthlyRevenue" (digits only)
+- Ownership % / percent owned → "ownershipPercent" (number, e.g. 100)
+- Home / residential address (NOT business) → "homeAddress"
+- SSN / Social Security → "ssn" (include even if masked)
+- DOB / Date of birth / Birth date → "dob"
+- Legal business name → "company"
+
+Do not skip ein, entityType, purposeOfFunds, requestedAmount, monthlyRevenue, ownershipPercent, homeAddress, ssn, or dob when they appear anywhere.
+
+JSON schema (all fields optional, only include fields that have a value):
 {
   "name": "Owner full name",
   "email": "Owner email",
@@ -52,9 +68,9 @@ JSON schema (all fields optional, only include fields clearly present):
   "purposeOfFunds": "Use of funds",
   "owner2FirstName": "Second owner first name",
   "owner2LastName": "Second owner last name",
-  "owner2Ownership": "Second owner ownership %",
-  "owner2DOB": "Second owner DOB",
-  "owner2SSN": "Second owner SSN"
+  "owner2OwnershipPercent": "Second owner ownership %",
+  "owner2Dob": "Second owner DOB",
+  "owner2Ssn": "Second owner SSN"
 }`;
 
 const BANK_PROMPT = `You are a financial analyst extracting data from a business bank statement for MCA underwriting.
@@ -132,7 +148,15 @@ async function loadPdfjs() {
   return pdfjs;
 }
 
-async function extractPdfTextPdfjs(buffer: Buffer): Promise<string> {
+function formValueText(raw: unknown): string {
+  if (raw == null) return '';
+  const s = Array.isArray(raw) ? raw.filter(Boolean).join(', ') : String(raw);
+  const t = s.trim();
+  if (!t || /^(off|false|null|undefined)$/i.test(t)) return '';
+  return t;
+}
+
+async function extractPdfjsContent(buffer: Buffer): Promise<{ text: string; formLines: string[] }> {
   try {
     const pdfjs = await loadPdfjs();
     const pdf = await pdfjs.getDocument({
@@ -141,6 +165,32 @@ async function extractPdfTextPdfjs(buffer: Buffer): Promise<string> {
       disableFontFace: true,
     }).promise;
     let full = '';
+    const formLines: string[] = [];
+    const seen = new Set<string>();
+
+    const pushForm = (label: string, value: unknown) => {
+      const text = formValueText(value);
+      if (!text) return;
+      const name = String(label || '').replace(/[_\-]+/g, ' ').trim() || 'Field';
+      const key = `${name.toLowerCase()}:${text}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      formLines.push(`${name}: ${text}`);
+    };
+
+    try {
+      const objects = await (pdf as { getFieldObjects?: () => Promise<Record<string, unknown>> }).getFieldObjects?.();
+      if (objects && typeof objects === 'object') {
+        for (const [name, arr] of Object.entries(objects)) {
+          const list = Array.isArray(arr) ? arr : [];
+          for (const item of list) {
+            if (!item || typeof item !== 'object') continue;
+            pushForm(name, (item as { value?: unknown }).value);
+          }
+        }
+      }
+    } catch { /* no AcroForm catalog */ }
+
     for (let n = 1; n <= pdf.numPages; n++) {
       const page = await pdf.getPage(n);
       const content = await page.getTextContent();
@@ -153,11 +203,23 @@ async function extractPdfTextPdfjs(buffer: Buffer): Promise<string> {
         prevY = y;
       }
       full += '\n\n';
+      try {
+        const annotations = await page.getAnnotations();
+        for (const ann of annotations) {
+          if (!ann || typeof ann !== 'object') continue;
+          const a = ann as { fieldType?: string; fieldName?: string; fieldValue?: unknown; alternativeText?: string };
+          if (!a.fieldType) continue;
+          pushForm(a.fieldName || a.alternativeText || '', a.fieldValue);
+        }
+      } catch { /* page has no widgets */ }
     }
-    return full.replace(/\s+/g, ' ').trim();
+    return {
+      text: full.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim(),
+      formLines,
+    };
   } catch (e) {
-    console.warn('[parse-application] pdfjs text failed:', e instanceof Error ? e.message : e);
-    return '';
+    console.warn('[parse-application] pdfjs extract failed:', e instanceof Error ? e.message : e);
+    return { text: '', formLines: [] };
   }
 }
 
@@ -216,7 +278,7 @@ async function extractWithTextAI(text: string, prompt: string): Promise<Record<s
       max_tokens: 4000,
       messages: [
         { role: 'system', content: prompt + '\n\nReturn ONLY raw JSON, no markdown.' },
-        { role: 'user', content: `DOCUMENT TEXT:\n\n${text.slice(0, 18000)}` },
+        { role: 'user', content: `DOCUMENT TEXT:\n\n${text.slice(0, 28000)}` },
       ],
     });
     const raw = completion.choices[0]?.message?.content?.trim() ?? '{}';
@@ -328,23 +390,22 @@ export async function POST(request: Request) {
     textContent = buffer.toString('utf-8');
 
   } else if (isPdf) {
-    // Try pdf-parse v1 (handles text-layer PDFs including filled forms)
     try {
       const parsed = await getPdfParse()(buffer);
-      textContent = (parsed.text ?? '').replace(/\s+/g, ' ').trim();
+      textContent = (parsed.text ?? '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
       console.log(`[parse-application] pdf-parse: ${textContent.length} chars`);
     } catch (e) {
       console.warn('[parse-application] pdf-parse failed:', e instanceof Error ? e.message : e);
     }
 
-    // If sparse, also pull raw strings (catches OCR-layer scanned PDFs)
-    if (textContent.length < 400) {
-      const pdfjsText = await extractPdfTextPdfjs(buffer);
-      console.log(`[parse-application] pdfjs text: ${pdfjsText.length} chars`);
-      if (pdfjsText.length > textContent.length) textContent = pdfjsText;
+    const pdfjs = await extractPdfjsContent(buffer);
+    console.log(`[parse-application] pdfjs text: ${pdfjs.text.length} chars, form fields: ${pdfjs.formLines.length}`);
+    if (pdfjs.text.length > textContent.length) textContent = pdfjs.text;
+    if (pdfjs.formLines.length) {
+      textContent = `FILLED FORM FIELDS:\n${pdfjs.formLines.join('\n')}\n\nDOCUMENT TEXT:\n${textContent}`;
     }
 
-    if (textContent.length < 200) {
+    if (textContent.replace(/\s/g, '').length < 200) {
       const raw = extractRawStringsFromPdf(buffer);
       console.log(`[parse-application] raw binary strings: ${raw.length} chars`);
       if (raw.length > textContent.length) textContent += '\n' + raw;
@@ -376,6 +437,10 @@ export async function POST(request: Request) {
   } else if (isPdf && textContent.replace(/\s/g, '').length > 20) {
     fields = await extractWithTextAI(textContent, prompt);
   }
+
+  const fromLabels = fieldsFromLabeledText(textContent);
+  fields = mergeParsedFieldMaps(fromLabels, fields);
+  fields = normalizeParsedFields(fields);
 
   console.log(`[parse-application] Extracted ${Object.keys(fields).length} field(s):`, Object.keys(fields));
 
