@@ -24,6 +24,7 @@ import {
 } from '@/lib/pipeline/iframeMessages';
 import LeadActionsMenu, { type LeadActionId } from '@/components/LeadActionsMenu';
 import dynamic from 'next/dynamic';
+import { isCampaignInboxLead } from '@/lib/inbox/promoteCampaignReply';
 
 const DocumentsModal = dynamic(() => import('@/components/DocumentsModal'), { ssr: false });
 const ScheduleEmailModal = dynamic(() => import('@/components/ScheduleEmailModal'), { ssr: false });
@@ -46,6 +47,7 @@ interface InboxLead {
   phone: string;
   stage: string | null;
   lead_status: string | null;
+  in_pipeline?: boolean | null;
   month_key: string | null;
   last_contact: string | null;
   created_at?: string | null;
@@ -215,12 +217,17 @@ export default function InboxClient({
   const [listPickerData, setListPickerData] = useState<{ lists: LeadList[]; countMap: Record<string, number> } | null>(null);
   const [loadingListPicker, setLoadingListPicker] = useState(false);
   const [activeListName, setActiveListName] = useState<string | null>(null);
+  const [activeListId, setActiveListId] = useState<string | null>(null);
   const [loadingListLeads, setLoadingListLeads] = useState(false);
   const [pickerAnchor, setPickerAnchor] = useState<{ top: number; left: number } | null>(null);
   const listPickerRef = useRef<HTMLDivElement>(null);
   const listPickerBtnRef = useRef<HTMLButtonElement>(null);
 
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(initialLeadId);
+  const activeListNameRef = useRef<string | null>(null);
+  const selectedLeadIdRef = useRef<string | null>(initialLeadId);
+  useEffect(() => { activeListNameRef.current = activeListName; }, [activeListName]);
+  useEffect(() => { selectedLeadIdRef.current = selectedLeadId; }, [selectedLeadId]);
   const [messages, setMessages] = useState<InboxMessage[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
@@ -381,7 +388,21 @@ export default function InboxClient({
         return;
       }
       if (d.type === PIPELINE_LEAD_MSG && d.id && d.patch) {
-        setLeads(prev => prev.map(l => l.id === d.id ? { ...l, ...d.patch } as InboxLead : l));
+        const patch = d.patch as Partial<InboxLead>;
+        const statusTouched = Object.prototype.hasOwnProperty.call(patch, 'lead_status')
+          || Object.prototype.hasOwnProperty.call(patch, 'in_pipeline');
+        if (statusTouched && activeListNameRef.current && !isCampaignInboxLead({
+          in_pipeline: patch.in_pipeline,
+          lead_status: patch.lead_status,
+        })) {
+          setLeads(prev => prev.filter(l => l.id !== d.id));
+          if (selectedLeadIdRef.current === d.id) {
+            setActiveListName(null);
+            setActiveListId(null);
+          }
+          return;
+        }
+        setLeads(prev => prev.map(l => l.id === d.id ? { ...l, ...patch } as InboxLead : l));
       }
     };
     window.addEventListener('message', onMsg);
@@ -415,6 +436,11 @@ export default function InboxClient({
         return next;
       });
       setConversationId(data.conversationId ?? null);
+
+      if (activeListNameRef.current && next.some(m => m.direction === 'inbound')) {
+        setActiveListName(null);
+        setActiveListId(null);
+      }
 
       // Update unread in local state
       setLeads(prev => prev.map(l =>
@@ -562,6 +588,7 @@ export default function InboxClient({
     setShowListPicker(false);
     setLoadingListLeads(true);
     setActiveListName(list.name);
+    setActiveListId(list.id);
     try {
       // Use the inbox lead-lists route to get leads with phones from this list
       const res = await fetch(`/api/inbox/lead-lists?listId=${list.id}`);
@@ -578,6 +605,7 @@ export default function InboxClient({
         phone: l.phone ?? '',
         stage: l.stage ?? null,
         lead_status: (l.sms_opt_out ? 'DNC' : l.lead_status) ?? null,
+        in_pipeline: l.in_pipeline ?? false,
         month_key: null,
         last_contact: l.last_contact ?? null,
         created_at: l.created_at ?? null,
@@ -868,7 +896,7 @@ export default function InboxClient({
                   data={listPickerData}
                   loading={loadingListPicker}
                   onSelect={loadListLeads}
-                  onClear={activeListName ? () => { setActiveListName(null); setShowListPicker(false); loadLeads(); } : undefined}
+                  onClear={activeListName ? () => { setActiveListName(null); setActiveListId(null); setShowListPicker(false); loadLeads(); } : undefined}
                   onClose={() => setShowListPicker(false)}
                 />
               )}

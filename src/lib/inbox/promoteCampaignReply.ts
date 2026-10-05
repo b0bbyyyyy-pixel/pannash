@@ -2,6 +2,44 @@
 
 const PROMOTE_FROM = new Set(['', 'New Lead', 'Prospect', 'Contacted', 'Callback Scheduled', 'Revisit']);
 
+/** Campaign text threads only keep New Lead / unworked contacts. */
+export function isCampaignInboxLead(l: {
+  in_pipeline?: boolean | null;
+  lead_status?: string | null;
+}): boolean {
+  if (l.in_pipeline === true) return false;
+  const status = String(l.lead_status ?? '').trim();
+  if (!status || status === 'New Lead') return true;
+  return false;
+}
+
+export function isProspectStatus(status: unknown): boolean {
+  return String(status ?? '').trim().toLowerCase() === 'prospect';
+}
+
+/** Stop remaining drip / campaign queue once a lead is a Prospect (or otherwise in pipeline). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function stopCampaignDripForLead(supabase: any, leadId: string) {
+  try {
+    await supabase
+      .from('sms_drip_sends')
+      .update({ sms_status: 'replied', error: 'Moved to pipeline' })
+      .eq('lead_id', leadId)
+      .in('sms_status', ['queued', 'scheduled', 'sending']);
+  } catch {
+    // Drip tables not created yet
+  }
+  try {
+    await supabase
+      .from('campaign_leads')
+      .update({ status: 'replied', replied_at: new Date().toISOString() })
+      .eq('lead_id', leadId)
+      .in('status', ['queued', 'pending', 'sending', 'scheduled', 'active', 'sent']);
+  } catch {
+    // Optional table
+  }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function promoteCampaignLeadOnReply(supabase: any, leadId: string) {
   const { data: lead } = await supabase
@@ -22,6 +60,7 @@ export async function promoteCampaignLeadOnReply(supabase: any, leadId: string) 
   if (!status || PROMOTE_FROM.has(status)) patch.lead_status = 'Prospect';
 
   await supabase.from('leads').update(patch).eq('id', leadId);
+  await stopCampaignDripForLead(supabase, leadId);
 }
 
 /** Make sure a real (non-STOP) reply appears on the main Inbox rail. */

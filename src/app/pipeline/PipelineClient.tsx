@@ -584,6 +584,7 @@ export default function PipelineClient({ leads, userId, compact = false, initial
     });
     const patch = {
       lead_status: val,
+      ...(val && val !== 'New Lead' && val.toUpperCase() !== 'DNC' ? { in_pipeline: true } : {}),
       ...(underwritingData ? { underwriting_data: underwritingData } : {}),
     };
     setRows(prev => prev.map(l => l.id === lead.id ? { ...l, ...patch } : l));

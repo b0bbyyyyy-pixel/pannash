@@ -862,6 +862,7 @@ export default function LeadWorkspaceClient({
     }));
     postLeadPatch(lead.id, {
       lead_status: val,
+      ...(val && val !== 'New Lead' && val.toUpperCase() !== 'DNC' ? { in_pipeline: true } : {}),
       ...(underwritingData ? { underwriting_data: underwritingData } : {}),
     });
   };

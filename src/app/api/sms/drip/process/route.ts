@@ -7,6 +7,7 @@ import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
 import { finishDripAttempt } from '@/lib/smsDrip/failsafe';
 import { zoneForLocation, isInSendWindow, nextWindowStart } from '@/lib/smsDrip/timezones';
 import { toE164 } from '@/lib/dialer/e164';
+import { isCampaignInboxLead } from '@/lib/inbox/promoteCampaignReply';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -344,7 +345,7 @@ export async function POST() {
 
         const { data: nextLead } = await supabase
           .from('leads')
-          .select('id, name, company, phone, sms_opt_out, underwriting_data')
+          .select('id, name, company, phone, sms_opt_out, underwriting_data, in_pipeline, lead_status')
           .eq('id', claimedSend.lead_id)
           .single();
 
@@ -363,6 +364,12 @@ export async function POST() {
         if (nextLead.sms_opt_out) {
           await failSend('skipped_dnc', 'Opted out');
           results.push({ jobId: job.id, leadId: nextLead.id, status: 'skipped_dnc' });
+          await releaseJobNow(supabase, job.id);
+          continue;
+        }
+        if (!isCampaignInboxLead(nextLead)) {
+          await failSend('replied', 'Moved to pipeline');
+          results.push({ jobId: job.id, leadId: nextLead.id, status: 'replied' });
           await releaseJobNow(supabase, job.id);
           continue;
         }
@@ -501,12 +508,18 @@ export async function POST() {
 
           const { data: nextLead } = await supabase
             .from('leads')
-            .select('id, name, company, phone, sms_opt_out, underwriting_data')
+            .select('id, name, company, phone, sms_opt_out, underwriting_data, in_pipeline, lead_status')
             .eq('id', next.lead_id)
             .single();
           if (!nextLead || nextLead.sms_opt_out) {
             await supabase.from('sms_drip_sends')
               .update({ sms_status: 'skipped_dnc', error: nextLead ? 'Opted out' : 'Lead deleted', scheduled_for: null })
+              .eq('id', next.id);
+            continue;
+          }
+          if (!isCampaignInboxLead(nextLead)) {
+            await supabase.from('sms_drip_sends')
+              .update({ sms_status: 'replied', error: 'Moved to pipeline', scheduled_for: null })
               .eq('id', next.id);
             continue;
           }

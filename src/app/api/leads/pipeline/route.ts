@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
+import { isCampaignInboxLead, stopCampaignDripForLead } from '@/lib/inbox/promoteCampaignReply';
 
 // PATCH /api/leads/pipeline
 // Body: { leadId: string } — sets in_pipeline = true
@@ -42,7 +43,13 @@ export async function PATCH(req: NextRequest) {
       }
 
       const patch: Record<string, unknown> = { [field]: value };
-      if (field === 'lead_status') patch.last_contact = new Date().toISOString();
+      if (field === 'lead_status') {
+        patch.last_contact = new Date().toISOString();
+        const status = String(value ?? '').trim();
+        if (status && status !== 'New Lead' && status.toUpperCase() !== 'DNC') {
+          patch.in_pipeline = true;
+        }
+      }
 
       const { error } = await supabase
         .from('leads')
@@ -53,6 +60,16 @@ export async function PATCH(req: NextRequest) {
       if (error) {
         console.error('[pipeline PATCH field]', error);
         return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+
+      if (field === 'lead_status' || field === 'in_pipeline') {
+        const status = field === 'lead_status' ? String(value ?? '').trim() : '';
+        if (!isCampaignInboxLead({
+          in_pipeline: field === 'in_pipeline' ? !!value : patch.in_pipeline === true,
+          lead_status: status || undefined,
+        })) {
+          await stopCampaignDripForLead(supabase, leadId);
+        }
       }
 
       return NextResponse.json({ success: true });
@@ -86,6 +103,13 @@ export async function PATCH(req: NextRequest) {
     if (error) {
       console.error('[pipeline PATCH]', error);
       return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    if (!isCampaignInboxLead({
+      in_pipeline: true,
+      lead_status: String(updatePayload.lead_status ?? existing?.lead_status ?? ''),
+    })) {
+      await stopCampaignDripForLead(supabase, leadId);
     }
 
     return NextResponse.json({ success: true });

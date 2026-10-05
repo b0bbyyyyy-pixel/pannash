@@ -3,6 +3,7 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { toE164 } from '@/lib/dialer/e164';
 import { normalizeState } from '@/lib/smsDrip/timezones';
+import { isCampaignInboxLead } from '@/lib/inbox/promoteCampaignReply';
 
 export const dynamic = 'force-dynamic';
 
@@ -118,7 +119,7 @@ export async function POST(req: NextRequest) {
     // Load the list's leads in list order
     const { data: leads, error: leadsErr } = await supabase
       .from('leads')
-      .select('id, phone, sms_opt_out, sms_sent_at, underwriting_data')
+      .select('id, phone, sms_opt_out, sms_sent_at, underwriting_data, in_pipeline, lead_status')
       .eq('user_id', user.id)
       .eq('list_id', listId)
       .order('created_at', { ascending: false });
@@ -148,6 +149,7 @@ export async function POST(req: NextRequest) {
       let error: string | null = null;
       if (!e164) { status = 'skipped_dnc'; error = 'No valid phone'; }
       else if (l.sms_opt_out) { status = 'skipped_dnc'; error = 'Opted out'; }
+      else if (!isCampaignInboxLead(l)) { status = 'replied'; error = 'Moved to pipeline'; }
       else if (!includeAlreadyTexted && l.sms_sent_at) { status = 'skipped_dnc'; error = 'Already texted'; }
       else if (!includeAlreadyTexted && alreadyLead.has(l.id)) { status = 'skipped_dup'; error = 'Already sent in a prior drip'; }
       else if (!includeAlreadyTexted && digits.length === 10 && alreadyPhone.has(digits)) { status = 'skipped_dup'; error = 'Number already texted'; }

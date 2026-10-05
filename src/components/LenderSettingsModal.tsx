@@ -1,6 +1,7 @@
 'use client';
 import React, { useState, useEffect, useCallback } from 'react';
 import { TIER_LABELS, LenderTier } from '@/data/lenders';
+import { printLenderList } from '@/lib/lenders/printLenderList';
 
 export interface LenderRecord {
   id: string;
@@ -352,13 +353,13 @@ export default function LenderSettingsModal({ onClose, onRefresh }: Props) {
           {/* Left panel — lender list */}
           <div className={`flex flex-col border-r border-gray-200 overflow-hidden ${isEditing ? 'w-1/2' : 'w-full'}`}>
             {/* Toolbar */}
-            <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2 bg-gray-50">
+            <div className="px-4 py-3 border-b border-gray-100 flex flex-wrap items-center gap-2 bg-gray-50">
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search lenders..."
-                className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-slate-500"
+                className="w-40 shrink-0 px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-slate-500"
               />
               <select
                 value={filterTier}
@@ -394,6 +395,14 @@ export default function LenderSettingsModal({ onClose, onRefresh }: Props) {
                 title="Delete all lenders and restore original defaults"
               >
                 {resetting ? 'Resetting…' : '↺ Reset All'}
+              </button>
+              <button
+                onClick={() => printLenderList(lenders)}
+                disabled={!lenders.length}
+                className="px-3 py-1.5 text-xs font-medium bg-white text-slate-800 border border-slate-300 rounded-md hover:bg-slate-50 transition-colors disabled:opacity-50"
+                title="Print a PDF of every lender, tier, and requirements"
+              >
+                Print Lender List
               </button>
             </div>
 
