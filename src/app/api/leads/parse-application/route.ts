@@ -179,13 +179,16 @@ async function extractPdfjsContent(buffer: Buffer): Promise<{ text: string; form
     };
 
     try {
-      const objects = await (pdf as { getFieldObjects?: () => Promise<Record<string, unknown>> }).getFieldObjects?.();
-      if (objects && typeof objects === 'object') {
-        for (const [name, arr] of Object.entries(objects)) {
+      const objects = await pdf.getFieldObjects();
+      if (objects) {
+        const entries = objects instanceof Map
+          ? [...objects.entries()]
+          : Object.entries(objects as Record<string, unknown>);
+        for (const [name, arr] of entries) {
           const list = Array.isArray(arr) ? arr : [];
           for (const item of list) {
             if (!item || typeof item !== 'object') continue;
-            pushForm(name, (item as { value?: unknown }).value);
+            pushForm(String(name), (item as { value?: unknown }).value);
           }
         }
       }
