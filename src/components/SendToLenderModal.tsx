@@ -79,7 +79,11 @@ interface SendToLenderModalProps {
   leadStatus?: string | null;
   userName?: string;
   criteria?: LeadCriteria;
-  onClose: () => void;
+  onClose?: () => void;
+  /** Render in-page (Lenders tab) instead of a full-screen overlay */
+  embedded?: boolean;
+  onSent?: () => void;
+  onOpenOffers?: () => void;
 }
 
 // ── Matching helpers (mirrors LenderMatchPanel logic) ──────────────────────────
@@ -174,7 +178,7 @@ function fmtDateShort(iso: string) {
 
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function SendToLenderModal({
-  leadId, leadName, leadCompany, leadValue, leadStatus, userName, criteria, onClose,
+  leadId, leadName, leadCompany, leadValue, leadStatus, userName, criteria, onClose, embedded, onSent, onOpenOffers,
 }: SendToLenderModalProps) {
   // ── State ──────────────────────────────────────────────────────────────────
   const [lenders, setLenders]               = useState<Lender[]>([]);
@@ -349,6 +353,7 @@ export default function SendToLenderModal({
       if (res.ok) {
         setSendResult({ sent: json.sent, failed: json.failed });
         await loadAll(); // refresh submission history
+        onSent?.();
         setSelectedLenderIds(new Set());
         setNote('');
         setTemplateId('');
@@ -414,8 +419,14 @@ export default function SendToLenderModal({
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <>
-      <div className="fixed inset-0 bg-black/40 z-50 flex items-stretch" onClick={onClose}>
-        <div className="ml-auto w-full max-w-[1300px] bg-white flex flex-col h-full shadow-2xl" onClick={e => e.stopPropagation()}>
+      <div
+        className={embedded ? 'flex flex-col h-full min-h-0' : 'fixed inset-0 bg-black/40 z-50 flex items-stretch'}
+        onClick={embedded ? undefined : onClose}
+      >
+        <div
+          className={embedded ? 'flex flex-col h-full min-h-0 bg-white' : 'ml-auto w-full max-w-[1300px] bg-white flex flex-col h-full shadow-2xl'}
+          onClick={embedded ? undefined : e => e.stopPropagation()}
+        >
 
           {/* ── Top header bar ──────────────────────────────────────────── */}
           <div className="flex items-center gap-3 px-5 py-3 border-b border-[#ebebeb] flex-shrink-0 bg-white">
@@ -460,12 +471,14 @@ export default function SendToLenderModal({
                 </svg>
                 Manage Lenders
               </button>
-              <button onClick={onClose} className="ml-2 flex items-center gap-1 px-3 py-1.5 rounded-lg border border-[#e5e5e5] text-xs text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors">
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-                Close
-              </button>
+              {!embedded && onClose && (
+                <button onClick={onClose} className="ml-2 flex items-center gap-1 px-3 py-1.5 rounded-lg border border-[#e5e5e5] text-xs text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                  Close
+                </button>
+              )}
             </div>
           </div>
 
@@ -473,7 +486,7 @@ export default function SendToLenderModal({
           <div className="flex flex-1 overflow-hidden">
 
             {/* ── LEFT PANEL ─────────────────────────────────────────────── */}
-            <div className="w-[580px] flex-shrink-0 border-r border-[#ebebeb] flex flex-col overflow-hidden bg-white">
+            <div className={`${embedded ? 'flex-1 min-w-[260px]' : 'w-[580px] flex-shrink-0'} border-r border-[#ebebeb] flex flex-col overflow-hidden bg-white`}>
               <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
 
                 {/* Submit header */}
@@ -576,12 +589,25 @@ export default function SendToLenderModal({
                           <div
                             key={l.id}
                             onClick={() => isActive && toggleLender(l.id)}
-                            className={`flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors ${!isActive ? 'opacity-40' : 'cursor-pointer'} ${selectedLenderIds.has(l.id) ? 'bg-indigo-50 border border-indigo-100' : 'hover:bg-[#fafafa] border border-transparent'}`}
+                            className={`flex items-start gap-2 px-2 py-1.5 rounded-lg transition-colors ${!isActive ? 'opacity-40' : 'cursor-pointer'} ${selectedLenderIds.has(l.id) ? 'bg-indigo-50 border border-indigo-100' : 'hover:bg-[#fafafa] border border-transparent'}`}
                           >
-                            {/* Lender info */}
-                            <div className="flex-1 min-w-0">
+                            <div
+                              className={`mt-0.5 flex-shrink-0 w-4 h-4 rounded-full border-2 flex items-center justify-center transition-colors ${
+                                !isActive
+                                  ? 'border-gray-200 bg-gray-100 cursor-not-allowed'
+                                  : selectedLenderIds.has(l.id)
+                                    ? 'border-indigo-600 bg-indigo-600'
+                                    : 'border-[#d4d4d4] bg-white'
+                              }`}
+                            >
+                              {selectedLenderIds.has(l.id) && (
+                                <svg className="w-2 h-2 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                </svg>
+                              )}
+                            </div>
+                            <div className="min-w-0">
                               <div className="flex items-center gap-1.5 flex-wrap">
-                                {/* Tier badge */}
                                 <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border leading-none ${tc.bg} ${tc.text} ${tc.border}`}>
                                   {tc.label}
                                 </span>
@@ -602,23 +628,6 @@ export default function SendToLenderModal({
                                     <span key={i} className="text-[10px] text-red-400 leading-tight">· {r.label}</span>
                                   ))}
                                 </div>
-                              )}
-                            </div>
-
-                            {/* Circular checkbox on the right */}
-                            <div
-                              className={`flex-shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
-                                !isActive
-                                  ? 'border-gray-200 bg-gray-100 cursor-not-allowed'
-                                  : selectedLenderIds.has(l.id)
-                                    ? 'border-indigo-600 bg-indigo-600'
-                                    : 'border-[#d4d4d4] bg-white'
-                              }`}
-                            >
-                              {selectedLenderIds.has(l.id) && (
-                                <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                                </svg>
                               )}
                             </div>
                           </div>
@@ -749,17 +758,26 @@ export default function SendToLenderModal({
             </div>
 
             {/* ── RIGHT PANEL: Submission History ──────────────────────── */}
-            <div className="flex-1 flex flex-col overflow-hidden bg-[#fafafa]">
+            <div className={`${embedded ? 'w-[240px] flex-shrink-0' : 'flex-1'} flex flex-col overflow-hidden bg-[#fafafa]`}>
               {/* History header */}
-              <div className="flex-shrink-0 px-6 py-4 bg-white border-b border-[#ebebeb]">
-                <div className="flex items-center justify-between mb-2">
+              <div className={`flex-shrink-0 ${embedded ? 'px-3 py-3' : 'px-6 py-4'} bg-white border-b border-[#ebebeb]`}>
+                <div className="flex items-center justify-between mb-2 gap-2">
                   <p className="text-sm font-bold text-[#1a1a1a]">
                     Submission History
                     <span className="ml-2 text-[#9b9b9b] font-normal">({submissions.length})</span>
                   </p>
+                  {onOpenOffers && (
+                    <button
+                      type="button"
+                      onClick={onOpenOffers}
+                      className="px-2.5 py-1 bg-[#1a1a1a] text-white text-[11px] font-medium rounded-md hover:bg-[#333] transition-colors flex-shrink-0"
+                    >
+                      Offers
+                    </button>
+                  )}
                 </div>
                 {submissions.length > 0 && (
-                  <div className="flex items-center gap-4 text-xs text-[#6b6b6b]">
+                  <div className="flex items-center flex-wrap gap-x-3 gap-y-1 text-xs text-[#6b6b6b]">
                     <span><strong className="text-[#1a1a1a]">{submissions.length}</strong> Total</span>
                     <span>·</span>
                     <span><strong className="text-[#1a1a1a]">{totalLendersSubmitted}</strong> Lenders</span>
@@ -775,7 +793,7 @@ export default function SendToLenderModal({
               </div>
 
               {/* History list */}
-              <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+              <div className={`flex-1 overflow-y-auto ${embedded ? 'px-3 py-3' : 'px-6 py-4'} space-y-4`}>
                 {Object.keys(groupedSubs).length === 0 ? (
                   <div className="py-16 text-center">
                     <div className="w-12 h-12 rounded-full bg-[#f0f0f0] flex items-center justify-center mx-auto mb-3">

@@ -4,7 +4,7 @@ import {
   mapAnalyzerMetricsToUnderwritingFields,
   mapParsedBankFieldsToUd,
   mergeStatementMonths,
-  parseMcaPositions,
+  mergeMcaPositions,
   parseStatementMonths,
   requestedAmountFromMonthlyRevenue,
   seedBankAnalysisFromParsed,
@@ -100,12 +100,7 @@ export async function applyParsedFieldsToLead(
 
   if (Object.keys(mappedBank).length || Object.keys(leftover).length) {
     if (mappedBank.mcaPositions && currentUd.mcaPositions) {
-      const byKey = new Map<string, ReturnType<typeof parseMcaPositions>[number]>();
-      for (const p of [...parseMcaPositions(currentUd.mcaPositions), ...parseMcaPositions(mappedBank.mcaPositions)]) {
-        const key = p.lender.toLowerCase();
-        if (!byKey.has(key)) byKey.set(key, p);
-      }
-      const combined = [...byKey.values()];
+      const combined = mergeMcaPositions(currentUd.mcaPositions, mappedBank.mcaPositions);
       mappedBank.mcaPositions = combined;
       mappedBank.mcaPositionCount = combined.length;
       mappedBank.hasOtherMCALoans = combined.length > 0;

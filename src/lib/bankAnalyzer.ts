@@ -103,7 +103,39 @@ export type McaPosition = {
   frequency: 'daily' | 'weekly' | 'monthly';
   monthlyPayment: number;
   outstanding?: number;
+  /** Funding / advance date from a bank-statement credit, YYYY-MM-DD when known */
+  fundedDate?: string;
 };
+
+export function normalizeMcaFundedDate(raw: unknown): string | undefined {
+  const s = String(raw ?? '').trim();
+  if (!s || s === 'null' || s === 'undefined') return undefined;
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const mdY = s.match(/^(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})$/);
+  if (mdY) {
+    const y = mdY[3].length === 2 ? `20${mdY[3]}` : mdY[3];
+    return `${y}-${mdY[1].padStart(2, '0')}-${mdY[2].padStart(2, '0')}`;
+  }
+  const parsed = Date.parse(s);
+  if (!Number.isNaN(parsed)) {
+    const d = new Date(parsed);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  return s;
+}
+
+export function formatMcaFundedDate(raw?: string): string {
+  if (!raw) return '';
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) {
+    const d = new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+    if (!Number.isNaN(d.getTime())) {
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+  }
+  return raw;
+}
 
 export function coerceNumber(v: unknown): number | null {
   if (v == null || v === '') return null;
@@ -279,15 +311,37 @@ export function parseMcaPositions(raw: unknown): McaPosition[] {
     const monthlyPayment = monthlyMcaPayment({ ...r, payment, frequency });
     if (!lender && payment <= 0) continue;
     const outstanding = coerceNumber(r.outstanding);
+    const fundedDate = normalizeMcaFundedDate(r.fundedDate ?? r.fundingDate ?? r.fundedAt ?? r.dateFunded);
     out.push({
       lender: lender || 'Unknown funder',
       payment,
       frequency,
       monthlyPayment,
       ...(outstanding != null ? { outstanding } : {}),
+      ...(fundedDate ? { fundedDate } : {}),
     });
   }
   return out;
+}
+
+export function mergeMcaPositions(...lists: Array<McaPosition[] | unknown>): McaPosition[] {
+  const byKey = new Map<string, McaPosition>();
+  for (const list of lists) {
+    for (const p of parseMcaPositions(list)) {
+      const key = p.lender.toLowerCase();
+      const prev = byKey.get(key);
+      if (!prev) {
+        byKey.set(key, p);
+        continue;
+      }
+      byKey.set(key, {
+        ...prev,
+        fundedDate: prev.fundedDate || p.fundedDate,
+        outstanding: prev.outstanding ?? p.outstanding,
+      });
+    }
+  }
+  return [...byKey.values()];
 }
 
 /** Map parsed bank-statement fields onto underwriting JSON. */

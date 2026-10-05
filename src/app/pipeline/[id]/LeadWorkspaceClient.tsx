@@ -192,9 +192,9 @@ function Field({
 
 function SnapRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-start gap-2 py-2 border-b border-[#f5f5f5] last:border-b-0">
-      <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0 pt-0.5">{label}</span>
-      <span className="text-sm text-[#1a1a1a]">{value}</span>
+    <div className="flex items-start justify-between gap-3 py-1.5 border-b border-[#f5f5f5] last:border-b-0">
+      <span className="text-xs text-[#9b9b9b] min-w-0 pt-0.5">{label}</span>
+      <span className="text-sm text-[#1a1a1a] text-right break-words min-w-0">{value}</span>
     </div>
   );
 }
@@ -291,13 +291,14 @@ function Section({ title, children, collapsible = false, defaultOpen = true, res
   );
 }
 
-import FinancialsModal, { type BankSnap } from '@/components/FinancialsModal';
-import FinancialsReport, { getFinancialsMeta } from '@/components/FinancialsReport';
+import FinancialsReport, { getFinancialsMeta, type BankSnap } from '@/components/FinancialsReport';
 import {
   mapAnalyzerMetricsToUnderwritingFields,
   mapParsedBankFieldsToUd,
   requestedAmountFromMonthlyRevenue,
   parseMcaPositions,
+  mergeMcaPositions,
+  formatMcaFundedDate,
   parseStatementMonths,
   seedBankAnalysisFromParsed,
   statementMonthFromFields,
@@ -332,16 +333,12 @@ export default function LeadWorkspaceClient({
   const [showFollowUpModal, setShowFollowUpModal] = useState(false);
   const [showDocsModal, setShowDocsModal]       = useState(false);
   const [showVault, setShowVault]               = useState(false);
-  const [showSendModal, setShowSendModal]       = useState(false);
-  const [showFinancials, setShowFinancials]     = useState(false);
   const [showManageStatuses, setShowManageStatuses] = useState(false);
   const [showOffersModal, setShowOffersModal] = useState(false);
   const [dbStatuses, setDbStatuses]           = useState<DBStatus[]>([]);
 
   const closeChildOverlays = useCallback(() => {
-    setShowSendModal(false);
     setShowOffersModal(false);
-    setShowFinancials(false);
     setShowDocsModal(false);
     setShowTextPopup(false);
     setShowEmailModal(false);
@@ -350,9 +347,8 @@ export default function LeadWorkspaceClient({
 
   const openChildOverlay = useCallback((which: ChildOverlay) => {
     closeChildOverlays();
-    if (which === 'send') setShowSendModal(true);
+    if (which === 'send' || which === 'financials') setSurfaceTab('lender');
     else if (which === 'offers') setShowOffersModal(true);
-    else if (which === 'financials') setShowFinancials(true);
     else if (which === 'docs') setShowDocsModal(true);
     else if (which === 'sms') setShowTextPopup(true);
     else if (which === 'email') setShowEmailModal(true);
@@ -447,11 +443,7 @@ export default function LeadWorkspaceClient({
 
   type SubRow = { id: string; lender_name: string; status: string; created_at: string };
   const [submissions, setSubmissions] = useState<SubRow[]>([]);
-  const [subsLoading, setSubsLoading] = useState(true);
-  const [subsError, setSubsError] = useState(false);
   const loadSubmissions = useCallback(() => {
-    setSubsLoading(true);
-    setSubsError(false);
     fetch(`/api/leads/submissions?leadId=${lead.id}`, { credentials: 'include' })
       .then(async r => {
         if (!r.ok) throw new Error('fail');
@@ -459,15 +451,12 @@ export default function LeadWorkspaceClient({
         setSubmissions(Array.isArray(j.submissions) ? j.submissions : []);
       })
       .catch(() => {
-        setSubsError(true);
         setSubmissions([]);
-      })
-      .finally(() => setSubsLoading(false));
+      });
   }, [lead.id]);
   useEffect(() => {
-    if (showSendModal) return;
     loadSubmissions();
-  }, [showSendModal, loadSubmissions]);
+  }, [loadSubmissions]);
   useEffect(() => {
     const u = (initialLead.underwriting_data || {}) as Record<string, unknown>;
     if (u.owner2FirstName || u.owner2LastName || u.owner2CreditScore) setShowOwner2(true);
@@ -739,12 +728,7 @@ export default function LeadWorkspaceClient({
 
     if (Object.keys(mappedBank).length || Object.keys(leftover).length) {
       if (mappedBank.mcaPositions && currentUd.mcaPositions) {
-        const byKey = new Map<string, ReturnType<typeof parseMcaPositions>[number]>();
-        for (const p of [...parseMcaPositions(currentUd.mcaPositions), ...parseMcaPositions(mappedBank.mcaPositions)]) {
-          const key = p.lender.toLowerCase();
-          if (!byKey.has(key)) byKey.set(key, p);
-        }
-        const combined = [...byKey.values()];
+        const combined = mergeMcaPositions(currentUd.mcaPositions, mappedBank.mcaPositions);
         mappedBank.mcaPositions = combined;
         mappedBank.mcaPositionCount = combined.length;
         mappedBank.hasOtherMCALoans = combined.length > 0;
@@ -907,7 +891,7 @@ export default function LeadWorkspaceClient({
 
   // ── Projected Offer calculation (mirrors UnderwritingSuite logic) ────────────
   const [showProjectedOffer, setShowProjectedOffer] = useState(false);
-  const [showFullFinancials, setShowFullFinancials] = useState(false);
+  const [showFullFinancials, setShowFullFinancials] = useState(true);
 
   const projectedOffer = useMemo(() => {
     const rev      = Number(ud.monthlyRevenue  ?? 0);
@@ -1098,15 +1082,12 @@ export default function LeadWorkspaceClient({
         setSurfaceTab('comms');
         break;
       case 'send':
+      case 'financials':
         setSurfaceTab('lender');
-        openChildOverlay('send');
         break;
       case 'offers':
         setSurfaceTab('lender');
         openChildOverlay('offers');
-        break;
-      case 'financials':
-        setSurfaceTab('lender');
         break;
       case 'sms':
         setSurfaceTab('comms');
@@ -1160,8 +1141,7 @@ export default function LeadWorkspaceClient({
       setSurfaceTab('application');
     }
 
-    if (action === 'send') openChildOverlay('send');
-    else if (action === 'offers') openChildOverlay('offers');
+    if (action === 'offers') openChildOverlay('offers');
     else if (tab === 'docs' || action === 'docs') openChildOverlay('docs');
     else if (action === 'email') openChildOverlay('email');
     else if (action === 'sms') openChildOverlay('sms');
@@ -1182,7 +1162,7 @@ export default function LeadWorkspaceClient({
   };
 
   return (
-    <div className="flex flex-col">
+    <div className={`flex flex-col ${surfaceTab === 'lender' ? 'h-screen overflow-hidden' : ''}`}>
       {/* ── TOP HEADER BAR ──────────────────────────────────────────────────── */}
       <div className="bg-white border-b border-[#e5e5e5] px-6 py-3 flex items-center justify-between flex-shrink-0">
         {/* Left: back + title */}
@@ -1388,7 +1368,7 @@ export default function LeadWorkspaceClient({
         </span>
       </div>
 
-      <div className="bg-[#fafafa] min-h-[calc(100vh-180px)] p-4">
+      <div className={surfaceTab === 'lender' ? 'flex-1 min-h-0 overflow-hidden bg-white' : 'bg-[#fafafa] min-h-[calc(100vh-180px)] p-4'}>
         {surfaceTab === 'lender' ? (
           (() => {
             const bankSnap = (ud.bankStatementAnalysis as BankSnap) ?? undefined;
@@ -1419,171 +1399,137 @@ export default function LeadWorkspaceClient({
             const po = projectedOffer;
             const rsColor = !po ? '#9b9b9b' : po.riskScore >= 70 ? '#15803d' : po.riskScore >= 50 ? '#a16207' : '#b91c1c';
             return (
-          <div className="max-w-[1040px] mx-auto px-8 py-6 flex flex-col gap-6">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-[11px] font-semibold text-[#9b9b9b] uppercase tracking-wider">Lenders</span>
-              <button
-                type="button"
-                onClick={() => openChildOverlay('send')}
-                className="px-3 py-2.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] transition-colors"
-              >
-                Lenders Match
-              </button>
-            </div>
-
-            <div className="bg-white border border-[#ececec] rounded-xl px-4 py-3">
-              <p className="text-[11px] font-semibold text-[#9b9b9b] uppercase tracking-wider mb-1">Deal Snapshot</p>
-              <div className="grid grid-cols-1 md:grid-cols-2 md:gap-x-8">
-                <div>
-                  <SnapRow label="Requested" value={money(lead.value ?? ud.requestedAmount)} />
-                  <SnapRow label="Avg monthly revenue" value={money(ud.monthlyRevenue)} />
-                  <SnapRow label="Avg daily balance" value={money(ud.avgDailyBalance)} />
-                  <SnapRow label="Ending balance" value={money(ud.endingBalance)} />
-                  <SnapRow label="Deposits / mo" value={snapCount(ud.depositsCount)} />
-                  <SnapRow label="NSFs (3 mo)" value={snapCount(ud.nsfCount)} />
-                </div>
-                <div>
-                  <SnapRow label="MCA positions" value={mcaPosVal} />
-                  <SnapRow label="Time in business" value={tibVal} />
-                  <SnapRow label="Credit score" value={ud.creditScore != null && ud.creditScore !== '' ? String(ud.creditScore) : '—'} />
-                  <SnapRow label="Industry" value={str(ud.industry) || '—'} />
-                  <SnapRow label="State" value={str(ud.businessState) || '—'} />
-                  <SnapRow label="Use of funds" value={str(ud.purposeOfFunds) || '—'} />
-                </div>
+          <div className="flex h-full min-h-0 overflow-hidden">
+            <aside className="w-[300px] flex-shrink-0 min-w-0 overflow-x-hidden overflow-y-auto border-r border-[#e5e5e5] bg-[#fafafa] px-3 py-3 space-y-3">
+              <div className="bg-white border border-[#ececec] rounded-xl px-3 py-2.5">
+                <p className="text-[11px] font-semibold text-[#9b9b9b] uppercase tracking-wider mb-1">Deal Snapshot</p>
+                <SnapRow label="Requested" value={money(lead.value ?? ud.requestedAmount)} />
+                <SnapRow label="Avg monthly revenue" value={money(ud.monthlyRevenue)} />
+                <SnapRow label="Avg daily balance" value={money(ud.avgDailyBalance)} />
+                <SnapRow label="Ending balance" value={money(ud.endingBalance)} />
+                <SnapRow label="Deposits / mo" value={snapCount(ud.depositsCount)} />
+                <SnapRow label="NSFs (3 mo)" value={snapCount(ud.nsfCount)} />
+                <SnapRow label="MCA positions" value={mcaPosVal} />
+                <SnapRow label="Time in business" value={tibVal} />
+                <SnapRow label="Credit score" value={ud.creditScore != null && ud.creditScore !== '' ? String(ud.creditScore) : '—'} />
+                <SnapRow label="Industry" value={str(ud.industry) || '—'} />
+                <SnapRow label="State" value={str(ud.businessState) || '—'} />
+                <SnapRow label="Use of funds" value={str(ud.purposeOfFunds) || '—'} />
+                {snapFlags.length > 0 && (
+                  <p className="mt-2 text-[11px] text-[#6b6b6b]">
+                    {snapFlags.map((f, i) => (
+                      <span key={f}>{i > 0 ? ' · ' : ''}{f}</span>
+                    ))}
+                  </p>
+                )}
               </div>
-              {snapFlags.length > 0 && (
-                <p className="mt-2 text-[11px] text-[#6b6b6b]">
-                  {snapFlags.map((f, i) => (
-                    <span key={f}>{i > 0 ? ' · ' : ''}{f}</span>
-                  ))}
-                </p>
-              )}
-            </div>
 
-            {!finMeta.hasParsed ? (
-              <p className="text-sm text-[#9b9b9b]">
-                No bank statements parsed yet
-                {' '}
-                <button
-                  type="button"
-                  onClick={() => openChildOverlay('docs')}
-                  className="text-[#1a1a1a] underline underline-offset-2 hover:no-underline"
-                >
-                  Open documents
-                </button>
-              </p>
-            ) : (
+              {!finMeta.hasParsed ? (
+                <p className="text-xs text-[#9b9b9b] px-1">
+                  No bank statements parsed yet
+                  {' '}
+                  <button
+                    type="button"
+                    onClick={() => openChildOverlay('docs')}
+                    className="text-[#1a1a1a] underline underline-offset-2 hover:no-underline"
+                  >
+                    Open documents
+                  </button>
+                </p>
+              ) : (
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setShowFullFinancials(v => !v)}
+                    className="w-full flex items-center justify-between gap-3 bg-white border border-[#ececec] rounded-xl px-3 py-2"
+                  >
+                    <span className="text-sm text-[#1a1a1a]">
+                      Full financials
+                      <span className="text-[#9b9b9b]">
+                        {' · '}{finMeta.monthCount} mo
+                        {finMeta.analyzedAt ? ` · ${finMeta.analyzedAt}` : ''}
+                      </span>
+                    </span>
+                    <svg className={`w-3.5 h-3.5 text-[#9b9b9b] flex-shrink-0 transition-transform ${showFullFinancials ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  {showFullFinancials && (
+                    <div className="mt-2 bg-white border border-[#ececec] rounded-xl px-2.5 py-3 min-w-0 overflow-hidden">
+                      <FinancialsReport
+                        snap={bankSnap}
+                        ud={ud}
+                        leadName={lead.name}
+                        leadCompany={lead.company}
+                        derivedTIB={derivedTIB}
+                        onSaveField={(k, v) => saveField(k, v)}
+                        variant="inline"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div>
                 <button
                   type="button"
-                  onClick={() => setShowFullFinancials(v => !v)}
-                  className="w-full flex items-center justify-between gap-3 bg-white border border-[#ececec] rounded-xl px-4 py-2"
-                >
-                  <span className="text-sm text-[#1a1a1a]">
-                    Full financials
-                    <span className="text-[#9b9b9b]">
-                      {' · '}{finMeta.monthCount} months parsed
-                      {finMeta.analyzedAt ? ` · ${finMeta.analyzedAt}` : ''}
-                    </span>
-                  </span>
-                  <svg className={`w-3.5 h-3.5 text-[#9b9b9b] flex-shrink-0 transition-transform ${showFullFinancials ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
-                {showFullFinancials && (
-                  <div className="mt-3 bg-white border border-[#ececec] rounded-xl px-4 py-4">
-                    <FinancialsReport
-                      snap={bankSnap}
-                      ud={ud}
-                      leadName={lead.name}
-                      leadCompany={lead.company}
-                      derivedTIB={derivedTIB}
-                      onSaveField={(k, v) => saveField(k, v)}
-                      variant="inline"
-                    />
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className="bg-white border border-[#ececec] rounded-xl px-4 py-3">
-              <p className="text-[11px] font-semibold text-[#9b9b9b] uppercase tracking-wider mb-2">
-                Submissions · {submissions.length}
-              </p>
-              {subsLoading ? (
-                <p className="text-sm text-[#9b9b9b]">Loading submissions…</p>
-              ) : subsError ? (
-                <p className="text-sm text-red-600">Couldn&apos;t load submissions</p>
-              ) : submissions.length === 0 ? (
-                <p className="text-sm text-[#9b9b9b]">No submissions yet. Use Lenders Match to send.</p>
-              ) : (
-                <div className="space-y-1.5">
-                  {submissions.map(s => (
-                    <div key={s.id} className="flex items-center justify-between border border-[#efefef] rounded-md px-2.5 py-1.5 text-xs">
-                      <span className="font-medium text-[#1a1a1a] truncate">{s.lender_name}</span>
-                      <span className="text-[#6b6b6b] flex-shrink-0 ml-2">
-                        {s.status}
-                        {s.created_at ? ` · ${new Date(s.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div>
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
                   onClick={() => setShowProjectedOffer(v => !v)}
-                  className="px-3 py-2.5 border border-[#e5e5e5] text-[#1a1a1a] text-xs font-medium rounded-md hover:bg-[#f5f5f5] transition-colors flex items-center justify-between gap-1.5"
+                  className="w-full px-3 py-2 border border-[#e5e5e5] bg-white text-[#1a1a1a] text-xs font-medium rounded-md hover:bg-[#f5f5f5] transition-colors flex items-center justify-between gap-1.5"
                 >
                   <span>Projected Offer</span>
                   <svg className={`w-3 h-3 transition-transform ${showProjectedOffer ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                   </svg>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => openChildOverlay('offers')}
-                  className="px-3 py-2.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] transition-colors text-center"
-                >
-                  Offers
-                </button>
+                {showProjectedOffer && (
+                  <div className="mt-2 bg-white border border-[#ececec] rounded-xl overflow-hidden">
+                    {!po ? (
+                      <p className="text-xs text-[#9b9b9b] text-center py-3 px-3">Enter Avg Monthly Revenue to generate a projection.</p>
+                    ) : (
+                      <div className="divide-y divide-[#f0f0f0]">
+                        <div className="flex justify-between items-center px-3 py-2">
+                          <span className="text-xs text-[#9b9b9b]">Max Approved</span>
+                          <span className="text-sm font-bold text-[#1a1a1a]">${po.maxApproved.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between items-center px-3 py-2">
+                          <span className="text-xs text-[#9b9b9b]">Factor Rate</span>
+                          <span className="text-sm font-semibold text-[#1a1a1a]">{po.factorRate.toFixed(2)}x</span>
+                        </div>
+                        <div className="flex justify-between items-center px-3 py-2">
+                          <span className="text-xs text-[#9b9b9b]">Risk Score</span>
+                          <span className="text-sm font-semibold" style={{ color: rsColor }}>{po.riskScore} / 100</span>
+                        </div>
+                        <div className="flex justify-between items-center px-3 py-2">
+                          <span className="text-xs text-[#9b9b9b]">Est. Weekly Payback</span>
+                          <span className="text-sm font-semibold text-[#1a1a1a]">${po.weeklyPayback.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between items-center px-3 py-2">
+                          <span className="text-xs text-[#9b9b9b]">Holdback %</span>
+                          <span className="text-sm font-semibold text-[#1a1a1a]">{po.holdback}%</span>
+                        </div>
+                        <div className="px-3 py-2 bg-[#fafafa]">
+                          <p className="text-[10px] text-[#9b9b9b]">Projection only — based on lead financials.</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-              {showProjectedOffer && (
-                <div className="mt-3 bg-white border border-[#ececec] rounded-xl overflow-hidden">
-                  {!po ? (
-                    <p className="text-xs text-[#9b9b9b] text-center py-3 px-4">Enter Avg Monthly Revenue to generate a projection.</p>
-                  ) : (
-                    <div className="divide-y divide-[#f0f0f0]">
-                      <div className="flex justify-between items-center px-4 py-2.5">
-                        <span className="text-xs text-[#9b9b9b]">Max Approved</span>
-                        <span className="text-sm font-bold text-[#1a1a1a]">${po.maxApproved.toLocaleString()}</span>
-                      </div>
-                      <div className="flex justify-between items-center px-4 py-2.5">
-                        <span className="text-xs text-[#9b9b9b]">Factor Rate</span>
-                        <span className="text-sm font-semibold text-[#1a1a1a]">{po.factorRate.toFixed(2)}x</span>
-                      </div>
-                      <div className="flex justify-between items-center px-4 py-2.5">
-                        <span className="text-xs text-[#9b9b9b]">Risk Score</span>
-                        <span className="text-sm font-semibold" style={{ color: rsColor }}>{po.riskScore} / 100</span>
-                      </div>
-                      <div className="flex justify-between items-center px-4 py-2.5">
-                        <span className="text-xs text-[#9b9b9b]">Est. Weekly Payback</span>
-                        <span className="text-sm font-semibold text-[#1a1a1a]">${po.weeklyPayback.toLocaleString()}</span>
-                      </div>
-                      <div className="flex justify-between items-center px-4 py-2.5">
-                        <span className="text-xs text-[#9b9b9b]">Holdback %</span>
-                        <span className="text-sm font-semibold text-[#1a1a1a]">{po.holdback}%</span>
-                      </div>
-                      <div className="px-4 py-2 bg-[#fafafa]">
-                        <p className="text-[10px] text-[#9b9b9b]">Projection only — based on lead financials.</p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
+            </aside>
+
+            <div className="flex-1 min-w-0 min-h-0">
+              <SendToLenderModal
+                embedded
+                leadId={lead.id}
+                leadName={lead.name}
+                leadCompany={lead.company}
+                leadValue={lead.value ?? null}
+                leadStatus={lead.lead_status || undefined}
+                userName={userName}
+                criteria={lenderCriteria}
+                onSent={loadSubmissions}
+                onOpenOffers={() => openChildOverlay('offers')}
+              />
             </div>
           </div>
             );
@@ -1702,6 +1648,7 @@ export default function LeadWorkspaceClient({
                         ${p.payment.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/{p.frequency}
                         {' · '}${p.monthlyPayment.toLocaleString()}/mo
                         {p.outstanding ? ` · $${p.outstanding.toLocaleString()} bal` : ''}
+                        {p.fundedDate ? ` · funded ${formatMcaFundedDate(p.fundedDate)}` : ''}
                       </div>
                     </div>
                   </div>
@@ -2013,33 +1960,6 @@ export default function LeadWorkspaceClient({
             setLead(prev => ({ ...prev, ...patch }));
             postLeadPatch(lead.id, patch);
           }}
-        />
-      )}
-
-      {/* ── SEND TO LENDER MODAL ─────────────────────────────────────────── */}
-      {showSendModal && (
-        <SendToLenderModal
-          leadId={lead.id}
-          leadName={lead.name}
-          leadCompany={lead.company}
-          leadValue={lead.value ?? null}
-          leadStatus={lead.lead_status || undefined}
-          userName={userName}
-          criteria={lenderCriteria}
-          onClose={() => setShowSendModal(false)}
-        />
-      )}
-
-      {/* ── FINANCIALS MODAL ─────────────────────────────────────────────── */}
-      {showFinancials && (
-        <FinancialsModal
-          snap={(ud.bankStatementAnalysis as BankSnap) ?? undefined}
-          ud={ud}
-          leadName={lead.name}
-          leadCompany={lead.company}
-          derivedTIB={derivedTIB}
-          onSaveField={(k, v) => saveField(k, v)}
-          onClose={() => setShowFinancials(false)}
         />
       )}
 

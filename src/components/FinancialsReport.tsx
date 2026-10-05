@@ -1,6 +1,6 @@
 'use client';
 import React from 'react';
-import { parseMcaPositions, parseStatementMonths, averagesFromMonths } from '@/lib/bankAnalyzer';
+import { parseMcaPositions, parseStatementMonths, averagesFromMonths, formatMcaFundedDate } from '@/lib/bankAnalyzer';
 
 export type BankSnap = {
   analyzedAt?: string;
@@ -210,11 +210,11 @@ export default function FinancialsReport({
   const numCell = inline ? 'tabular-nums' : '';
 
   return (
-    <div className="space-y-6">
+    <div className={`${inline ? 'space-y-4 min-w-0' : 'space-y-6'}`}>
       {rows.length > 0 && (
         <div>
           <h3 className="text-[10px] font-bold uppercase tracking-widest text-[#9b9b9b] mb-3">Monthly Breakdown</h3>
-          <div className="border border-[#e5e5e5] rounded-xl overflow-hidden">
+          <div className="border border-[#e5e5e5] rounded-xl overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="bg-[#f5f5f5] text-[#6b6b6b] font-semibold uppercase tracking-wide text-[10px]">
@@ -255,19 +255,13 @@ export default function FinancialsReport({
       <div>
         <h3 className="text-[10px] font-bold uppercase tracking-widest text-[#9b9b9b] mb-3">Summary</h3>
         {inline ? (
-          <div className="bg-[#fafafa] border border-[#ececec] rounded-xl p-4">
-            <div className="grid grid-cols-1 md:grid-cols-2">
-              {[0, 1].map(col => (
-                <div key={col} className={col === 0 ? 'md:pr-4' : 'md:pl-4'}>
-                  {statPairs.filter((_, i) => i % 2 === col).map(([lbl, val]) => (
-                    <div key={lbl} className="flex items-start gap-2 py-2 border-b border-[#f5f5f5] last:border-b-0">
-                      <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0 pt-0.5">{lbl}</span>
-                      <span className="text-sm text-[#1a1a1a] tabular-nums">{val}</span>
-                    </div>
-                  ))}
-                </div>
-              ))}
-            </div>
+          <div className="bg-[#fafafa] border border-[#ececec] rounded-xl px-3 py-2">
+            {statPairs.map(([lbl, val]) => (
+              <div key={lbl} className="flex items-start justify-between gap-3 py-1.5 border-b border-[#f5f5f5] last:border-b-0">
+                <span className="text-xs text-[#9b9b9b] min-w-0">{lbl}</span>
+                <span className="text-sm text-[#1a1a1a] tabular-nums text-right flex-shrink-0">{val}</span>
+              </div>
+            ))}
           </div>
         ) : (
           <div className="bg-[#1a1a1a] rounded-xl p-5">
@@ -286,11 +280,12 @@ export default function FinancialsReport({
       {mcaPositions.length > 0 && (
         <div>
           <h3 className="text-[10px] font-bold uppercase tracking-widest text-[#9b9b9b] mb-3">MCA Positions</h3>
-          <div className="border border-[#e5e5e5] rounded-xl overflow-hidden">
+          <div className="border border-[#e5e5e5] rounded-xl overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="bg-[#f5f5f5] text-[#6b6b6b] font-semibold uppercase tracking-wide text-[10px]">
                   <th className="px-3 py-2 text-left">Funder</th>
+                  <th className="px-3 py-2 text-left">Funded</th>
                   <th className="px-3 py-2 text-left">Payment</th>
                   <th className="px-3 py-2 text-left">Frequency</th>
                   <th className="px-3 py-2 text-left">Monthly</th>
@@ -301,6 +296,7 @@ export default function FinancialsReport({
                 {mcaPositions.map((p, i) => (
                   <tr key={`${p.lender}-${i}`} className="border-t border-[#f0f0f0]">
                     <td className="px-3 py-2 font-medium text-[#1a1a1a]">{p.lender}</td>
+                    <td className="px-3 py-2 text-[#6b6b6b] whitespace-nowrap">{formatMcaFundedDate(p.fundedDate) || '—'}</td>
                     <td className={`px-3 py-2 text-[#1a1a1a] ${numCell}`}>
                       ${p.payment.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
@@ -310,7 +306,7 @@ export default function FinancialsReport({
                   </tr>
                 ))}
                 <tr className="border-t border-[#e5e5e5] bg-[#fafafa]">
-                  <td className="px-3 py-2 font-semibold text-[#1a1a1a]" colSpan={3}>Total</td>
+                  <td className="px-3 py-2 font-semibold text-[#1a1a1a]" colSpan={4}>Total</td>
                   <td className={`px-3 py-2 font-semibold text-[#1a1a1a] ${numCell}`}>{fmtMoney(mcaMonthly)}</td>
                   <td className="px-3 py-2" />
                 </tr>
@@ -322,7 +318,7 @@ export default function FinancialsReport({
 
       <div>
         <h3 className="text-[10px] font-bold uppercase tracking-widest text-[#9b9b9b] mb-3">Flags</h3>
-        <div className="grid grid-cols-2 gap-2 border border-[#e5e5e5] rounded-xl p-4">
+        <div className={`grid gap-2 border border-[#e5e5e5] rounded-xl ${inline ? 'grid-cols-1 p-3' : 'grid-cols-2 p-4'}`}>
           {CHECKBOXES.map(([field, label]) => (
             <label key={field} className="flex items-center gap-2.5 text-sm text-[#1a1a1a] cursor-pointer select-none">
               <input

@@ -12,6 +12,8 @@ import {
 } from '@/lib/leadDocActions';
 import {
   parseMcaPositions,
+  mergeMcaPositions,
+  formatMcaFundedDate,
   coerceNumber,
   statementMonthFromFields,
   mergeStatementMonths,
@@ -134,13 +136,9 @@ function mergeParseFields(into: Record<string, string>, incoming: Record<string,
   for (const [k, v] of Object.entries(incoming)) {
     if (!v) continue;
     if (k === 'mcaPositions') {
-      const byKey = new Map<string, ReturnType<typeof parseMcaPositions>[number]>();
-      for (const p of [...parseMcaPositions(into[k]), ...parseMcaPositions(v)]) {
-        const key = p.lender.toLowerCase();
-        if (!byKey.has(key)) byKey.set(key, p);
-      }
-      if (byKey.size) {
-        into.mcaPositions = JSON.stringify([...byKey.values()]);
+      const combined = mergeMcaPositions(into[k], v);
+      if (combined.length) {
+        into.mcaPositions = JSON.stringify(combined);
         into.hasOtherMCALoans = 'true';
       }
       continue;
@@ -169,7 +167,8 @@ function formatReviewValue(key: string, value: string): string {
     if (!positions.length) return value;
     return positions.map(p => {
       const pay = p.payment.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      return `${p.lender}  $${pay}/${p.frequency}  ($${p.monthlyPayment.toLocaleString()}/mo)`;
+      const funded = formatMcaFundedDate(p.fundedDate);
+      return `${p.lender}  $${pay}/${p.frequency}  ($${p.monthlyPayment.toLocaleString()}/mo)${funded ? `  funded ${funded}` : ''}`;
     }).join('\n');
   }
   return value;
