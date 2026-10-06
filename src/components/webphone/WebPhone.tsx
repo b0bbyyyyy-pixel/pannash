@@ -223,10 +223,22 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   const showLeadCardRef = useRef(false);
   showLeadCardRef.current = showLeadCard;
   const ringbackRef = useRef<ReturnType<typeof createRingback> | null>(null);
+  const ringWaitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const stopRingback = useCallback(() => {
+    if (ringWaitRef.current) {
+      clearTimeout(ringWaitRef.current);
+      ringWaitRef.current = null;
+    }
     ringbackRef.current?.stop();
     ringbackRef.current = null;
+  }, []);
+
+  const startRingback = useCallback(() => {
+    if (ringbackRef.current) return;
+    const rb = createRingback();
+    ringbackRef.current = rb;
+    void rb.start();
   }, []);
 
   // Re-render every second while a call is live (for the timer)
@@ -249,6 +261,12 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
 
   const wireCall = useCallback((call: Call) => {
     callRef.current = call;
+    call.on('ringing', (hasEarlyMedia?: boolean) => {
+      setStatus('ringing');
+      // Carrier is already playing ringback — don't stack a second tone.
+      if (hasEarlyMedia) stopRingback();
+      else startRingback();
+    });
     call.on('accept', () => {
       stopRingback();
       setStatus('in-call');
@@ -258,7 +276,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     call.on('cancel', () => { incomingRef.current = null; setIncomingFrom(null); resetCallState(); });
     call.on('reject', resetCallState);
     call.on('error', (e: Error) => { setError(voiceErrorMessage(e)); resetCallState(); });
-  }, [resetCallState, stopRingback]);
+  }, [resetCallState, stopRingback, startRingback]);
 
   // ── Device init (runs once after login) ─────────────────────────────────────
   useEffect(() => {
@@ -355,6 +373,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
         });
 
         await device.register();
+        try { device.audio?.outgoing(false); } catch { /* older SDK */ }
       } catch (e) {
         console.warn('[WebPhone] init failed:', e);
       }
@@ -406,9 +425,9 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     }
 
     stopRingback();
-    const rb = createRingback();
-    ringbackRef.current = rb;
-    void rb.start();
+    ringWaitRef.current = setTimeout(() => {
+      if (callRef.current) startRingback();
+    }, 900);
 
     try {
       // `phone` not `To` — Twilio's own `To` on Client calls is client:agent, not the PSTN number.
@@ -417,7 +436,6 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
         rtcConstraints: { audio: true },
       });
       wireCall(call);
-      call.on('ringing', () => setStatus('ringing'));
     } catch (e) {
       const msg = voiceErrorMessage(e);
       setError(msg);
@@ -428,7 +446,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
       }
       throw new Error(msg);
     }
-  }, [wireCall, resetCallState, stopRingback]);
+  }, [wireCall, resetCallState, stopRingback, startRingback]);
 
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
