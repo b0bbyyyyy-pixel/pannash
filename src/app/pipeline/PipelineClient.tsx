@@ -703,8 +703,7 @@ export default function PipelineClient({ leads, userId, compact = false, initial
             return (
               <div
                 key={lead.id}
-                onClick={() => goTo(lead.id)}
-                className={`grid ${PIPELINE_COLS} gap-x-2 px-3 py-1.5 cursor-pointer transition-colors border-b border-[#f5f5f5] ${
+                className={`grid ${PIPELINE_COLS} gap-x-2 px-3 py-1.5 transition-colors border-b border-[#f5f5f5] ${
                   idx === filtered.length - 1 ? 'border-b-0' : ''
                 } ${selectedLeadId === lead.id
                   ? 'bg-[#e8e8e8] hover:bg-[#e8e8e8] shadow-[inset_3px_0_0_#1a1a1a]'
