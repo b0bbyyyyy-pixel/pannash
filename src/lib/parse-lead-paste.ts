@@ -138,7 +138,7 @@ function normalizePhone(raw: string): string {
 }
 
 const PHONE_CANDIDATE =
-  /(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})|(?:\d{3}[-.\s]\d{3}[-.\s]\d{4})/g;
+  /(?:\+?\d{1,3}[-. ]?)?(?:\(?\d{3}\)?[-. ]?\d{3}[-. ]?\d{4})|(?:\d{3}[-. ]\d{3}[-. ]\d{4})/g;
 
 const COMPANY_HINTS = /\b(inc|llc|l\.l\.c|corp|ltd|co\.|company|group|solutions|services|llp|associates|enterprises|ventures|holdings|partners|consulting|industries|construction|contracting|management|properties|realty|agency|studio|studios|supply|equipment|transport|logistics|medical|dental|legal|law|auto|home|national|international)\b/i;
 
@@ -311,9 +311,15 @@ export function parseLeadPasteText(raw: string): ParsedLeadPaste {
   }
 
   // Single-line: comma or tab–separated (like a pasted spreadsheet row)
-  // Also handles multi-line where each line is a single tab-separated chunk
+  // Google Sheets copy is tab-separated and may contain commas inside cells
+  // (e.g. "Cpsstatements.com, INC." or "401 Tuscarawas St W, Ste 100").
+  const splitRowCells = (line: string): string[] => {
+    if (line.includes('\t')) return line.split('\t').map((c) => c.trim()).filter(Boolean);
+    return line.split(/[,|]/).map((c) => c.trim()).filter(Boolean);
+  };
+
   const flatRow = lines.length === 1
-    ? lines[0].split(/[,\t|]/).map((c) => c.trim()).filter(Boolean)
+    ? splitRowCells(lines[0])
     : lines.length <= 3 && lines.every(l => l.split(/\t/).length > 2)
       ? lines.flatMap(l => l.split(/\t/).map(c => c.trim())).filter(Boolean)
       : null;
@@ -413,6 +419,7 @@ export function parseLeadPasteText(raw: string): ParsedLeadPaste {
 
   for (const tok of allTokens) {
     const t = tok.trim();
+    if (/^(null|none|n\/a)$/i.test(t)) continue;
 
     // SSN: 046-82-4092 (XXX-XX-XXXX)
     if (!result.ssn && /^\d{3}-\d{2}-\d{4}$/.test(t)) {
@@ -445,23 +452,45 @@ export function parseLeadPasteText(raw: string): ParsedLeadPaste {
       result.state = t;
       continue;
     }
-    // Revenue / amount: decimal number like 44350.00 or 44350
+    // Revenue / amount: decimal number like 44350.00 or 44350 — not a 10-digit phone
     if (!result.monthlyRevenue && /^\d{4,}(\.\d{1,2})?$/.test(t) && parseFloat(t) >= 1000) {
-      result.monthlyRevenue = String(Math.round(parseFloat(t)));
+      const digits = t.replace(/\D/g, '');
+      if (digits.length !== 10 && digits.length !== 11) {
+        result.monthlyRevenue = String(Math.round(parseFloat(t)));
+        continue;
+      }
+    }
+    // Industry: title-case phrase (e.g. Billing Services) or all-caps, not a status
+    const STATUS_WORDS = /^(DECLINED|APPROVED|PENDING|FUNDED|CLOSED|OPEN|ACTIVE|INACTIVE|RESTRICTED|YES|NO|NONE|NULL|IN UNDERWRITING)$/i;
+    if (!result.industry && /^[A-Z][a-z]+(\s[A-Z][a-z]+)+$/.test(t) && !STATUS_WORDS.test(t) && t !== result.name && t !== result.city) {
+      result.industry = t.trim();
       continue;
     }
-    // Industry: all-caps word(s), 3+ chars, not a status keyword
-    const STATUS_WORDS = /^(DECLINED|APPROVED|PENDING|FUNDED|CLOSED|OPEN|ACTIVE|INACTIVE|RESTRICTED|YES|NO)$/i;
     if (!result.industry && /^[A-Z][A-Z\s]+$/.test(t) && t.length >= 3 && !STATUS_WORDS.test(t) && t !== result.state) {
       result.industry = t.trim();
       continue;
     }
-    // City: capitalized word(s), not a name already captured, not company or state
-    if (!result.city && /^[A-Z][a-z]+(\s[A-Z][a-z]+)*$/.test(t) && t !== result.name && t !== result.company && !US_STATE_ABBR.test(t) && t.split(' ').length <= 3) {
-      // Only set city if we already have state (increases confidence)
-      if (result.state) {
-        result.city = t;
-        continue;
+  }
+
+  if (!result.city && result.state) {
+    const nameParts = new Set((result.name || '').toLowerCase().split(/\s+/).filter(Boolean));
+    const skipCity = /^(none|null|n\/a|yes|no|in underwriting)$/i;
+    const stateIdx = allTokens.findIndex(tok => tok.trim() === result.state);
+    const neighbor = stateIdx > 0 ? allTokens[stateIdx - 1].trim() : '';
+    const cityish = (t: string) =>
+      /^[A-Z][a-z]+(\s[A-Z][a-z]+)*$/.test(t)
+      && t.split(' ').length <= 3
+      && t !== result.name
+      && t !== result.company
+      && t !== result.industry
+      && !skipCity.test(t)
+      && !nameParts.has(t.toLowerCase());
+    if (neighbor && cityish(neighbor)) {
+      result.city = neighbor;
+    } else {
+      for (const tok of allTokens) {
+        const t = tok.trim();
+        if (cityish(t)) { result.city = t; break; }
       }
     }
   }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { isSmsStopBody } from '@/lib/leads/dnc';
+import { inboxActivityMs, sortInboxLeads } from '@/lib/inbox/sortInboxLeads';
 
 const LEAD_COLS = 'id, name, company, phone, stage, month_key, last_contact, created_at, notes, in_pipeline, lead_status, list_id';
 const LIMIT = 40;
@@ -82,9 +83,9 @@ export async function GET(req: NextRequest) {
         return true;
       });
       convs.sort((a, b) => {
-        const aT = String(a.last_inbound_at || a.last_message_at || '');
-        const bT = String(b.last_inbound_at || b.last_message_at || '');
-        return bT > aT ? 1 : bT < aT ? -1 : 0;
+        const aT = inboxActivityMs({ conversation: a });
+        const bT = inboxActivityMs({ conversation: b });
+        return bT - aT;
       });
       convs = convs.slice(0, LIMIT);
 
@@ -173,20 +174,7 @@ export async function GET(req: NextRequest) {
       return hasInbound;
     });
 
-    merged.sort((a, b) => {
-      if (pinLeadId) {
-        if (a.id === pinLeadId) return -1;
-        if (b.id === pinLeadId) return 1;
-      }
-      type Conv = { last_inbound_at?: string | null; last_message_at?: string | null } | null;
-      const t = (row: Record<string, unknown>) => {
-        const c = row.conversation as Conv;
-        return c?.last_inbound_at || c?.last_message_at || (row.last_contact as string | null) || '0';
-      };
-      const aT = t(a);
-      const bT = t(b);
-      return bT > aT ? 1 : bT < aT ? -1 : 0;
-    });
+    const mergedSorted = sortInboxLeads(merged, pinLeadId);
 
     let phoneConn = null;
     try {
@@ -200,7 +188,7 @@ export async function GET(req: NextRequest) {
       // No connection table or no row — fine
     }
 
-    return NextResponse.json({ leads: merged, phoneConnection: phoneConn });
+    return NextResponse.json({ leads: mergedSorted, phoneConnection: phoneConn });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     console.error('[inbox/conversations] unexpected error:', err);

@@ -25,6 +25,7 @@ import {
 import LeadActionsMenu, { type LeadActionId } from '@/components/LeadActionsMenu';
 import dynamic from 'next/dynamic';
 import { isCampaignInboxLead } from '@/lib/inbox/promoteCampaignReply';
+import { sortInboxLeads } from '@/lib/inbox/sortInboxLeads';
 
 const DocumentsModal = dynamic(() => import('@/components/DocumentsModal'), { ssr: false });
 const ScheduleEmailModal = dynamic(() => import('@/components/ScheduleEmailModal'), { ssr: false });
@@ -57,6 +58,7 @@ interface InboxLead {
   conversation: {
     id: string;
     last_message_at: string | null;
+    last_inbound_at?: string | null;
     last_message_preview: string | null;
     last_direction: string | null;
     unread_count: number;
@@ -335,7 +337,7 @@ export default function InboxClient({
         return;
       }
       const data = await res.json();
-      setLeads(data.leads ?? []);
+      setLeads(sortInboxLeads(data.leads ?? []));
       setPhoneConn(data.phoneConnection ?? null);
       if (data.dbError || data.setupRequired) setDbSetupRequired(true);
     } catch {
@@ -402,7 +404,7 @@ export default function InboxClient({
           }
           return;
         }
-        setLeads(prev => prev.map(l => l.id === d.id ? { ...l, ...patch } as InboxLead : l));
+        setLeads(prev => sortInboxLeads(prev.map(l => l.id === d.id ? { ...l, ...patch } as InboxLead : l)));
       }
     };
     window.addEventListener('message', onMsg);
@@ -442,12 +444,28 @@ export default function InboxClient({
         setActiveListId(null);
       }
 
-      // Update unread in local state
-      setLeads(prev => prev.map(l =>
-        l.id === leadId && l.conversation
-          ? { ...l, conversation: { ...l.conversation, unread_count: 0 } }
-          : l
-      ));
+      const last = next[next.length - 1];
+      setLeads(prev => sortInboxLeads(prev.map(l => {
+        if (l.id !== leadId) return l;
+        const prevAt = Date.parse(l.conversation?.last_message_at ?? '') || 0;
+        const nextAt = last ? Date.parse(last.created_at) || 0 : 0;
+        const bump = !!(last && nextAt >= prevAt);
+        return {
+          ...l,
+          conversation: {
+            id: l.conversation?.id ?? data.conversationId ?? '',
+            last_message_at: bump ? last.created_at : (l.conversation?.last_message_at ?? null),
+            last_inbound_at: last?.direction === 'inbound'
+              ? last.created_at
+              : l.conversation?.last_inbound_at,
+            last_message_preview: bump
+              ? ((last.body || '').slice(0, 100) || l.conversation?.last_message_preview || null)
+              : (l.conversation?.last_message_preview ?? null),
+            last_direction: bump ? last.direction : (l.conversation?.last_direction ?? null),
+            unread_count: 0,
+          },
+        };
+      })));
     } finally {
       if (!opts?.quiet) setLoadingMsgs(false);
     }
@@ -545,6 +563,56 @@ export default function InboxClient({
 
     return () => { supabase.removeChannel(channel); };
   }, [conversationId]);
+
+  // Any inbound/outbound on any thread — jump that lead to the top of the rail.
+  useEffect(() => {
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+    const channel = supabase
+      .channel('inbox_rail')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'inbox_conversations' },
+        (payload) => {
+          const row = payload.new as {
+            id?: string;
+            lead_id?: string;
+            last_message_at?: string | null;
+            last_inbound_at?: string | null;
+            last_message_preview?: string | null;
+            last_direction?: string | null;
+            unread_count?: number;
+          } | null;
+          if (!row?.lead_id) return;
+          const leadId = row.lead_id;
+          setLeads(prev => {
+            if (!prev.some(l => l.id === leadId)) {
+              void loadLeads();
+              return prev;
+            }
+            return sortInboxLeads(prev.map(l =>
+              l.id === leadId
+                ? {
+                    ...l,
+                    conversation: {
+                      id: row.id ?? l.conversation?.id ?? '',
+                      last_message_at: row.last_message_at ?? l.conversation?.last_message_at ?? null,
+                      last_inbound_at: row.last_inbound_at ?? l.conversation?.last_inbound_at,
+                      last_message_preview: row.last_message_preview ?? l.conversation?.last_message_preview ?? null,
+                      last_direction: row.last_direction ?? l.conversation?.last_direction ?? null,
+                      unread_count: row.unread_count ?? l.conversation?.unread_count ?? 0,
+                    },
+                  }
+                : l
+            ));
+          });
+        }
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [loadLeads]);
 
   // ── Poll for lead list updates every 30s ───────────────────────────────────
   useEffect(() => {
@@ -661,7 +729,7 @@ export default function InboxClient({
         );
         // Update conversation preview in lead list
         const preview = body.length > 100 ? body.slice(0, 97) + '…' : body;
-        setLeads(prev => prev.map(l =>
+        setLeads(prev => sortInboxLeads(prev.map(l =>
           l.id === selectedLeadId
             ? {
                 ...l,
@@ -674,7 +742,7 @@ export default function InboxClient({
                 },
               }
             : l
-        ));
+        )));
 
         if (data.error) setSendError(data.error);
         if (data.message?.id && selectedLeadId) {

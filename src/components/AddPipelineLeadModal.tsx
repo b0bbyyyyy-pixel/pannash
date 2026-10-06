@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, DragEvent } from 'react';
+import { useState, useRef, DragEvent, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { parseLeadPasteText } from '@/lib/parse-lead-paste';
 import { normalizeParsedFields } from '@/lib/normalizeParsedFields';
@@ -14,7 +14,7 @@ import {
   type StatementMonth,
 } from '@/lib/bankAnalyzer';
 
-type Method = 'choose' | 'manual' | 'paste' | 'upload' | 'fullpack';
+type Method = 'choose' | 'manual' | 'paste' | 'sheet' | 'upload' | 'fullpack';
 type DocKind = 'application' | 'bank_statement';
 
 interface Fields {
@@ -108,11 +108,40 @@ function fmtSize(b: number) {
   return `${(b / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function ChooseOption({
+  label,
+  onClick,
+  children,
+  wide,
+}: {
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+  wide?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`${wide ? 'col-span-2' : ''} flex items-center gap-2.5 px-3 py-2 rounded-lg border border-[#e5e5e5] hover:border-[#1a1a1a] hover:bg-[#fafafa] transition-all text-left group`}
+    >
+      <div className="w-7 h-7 rounded-lg bg-[#f5f5f5] group-hover:bg-[#ebebeb] flex items-center justify-center flex-shrink-0 transition-colors">
+        {children}
+      </div>
+      <p className="text-[13px] font-semibold text-[#1a1a1a] min-w-0 truncate">{label}</p>
+      <svg className="w-3.5 h-3.5 text-[#d4d4d4] group-hover:text-[#6b6b6b] ml-auto flex-shrink-0 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+      </svg>
+    </button>
+  );
+}
+
 export default function AddPipelineLeadModal({ onClose }: Props) {
   const router = useRouter();
   const [method, setMethod] = useState<Method>('choose');
   const [fields, setFields] = useState<Fields>(EMPTY);
   const [quickPaste, setQuickPaste] = useState('');
+  const [sheetPaste, setSheetPaste] = useState('');
   const [parseNote, setParseNote] = useState('');
 
   // Upload state
@@ -178,6 +207,47 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
         : 'Could not detect fields — try "Name: / Email:" labels or separate lines.'
     );
     setMethod('manual');
+  };
+
+  const applyExtracted = (extracted: Record<string, unknown>, note: string) => {
+    const { leadFields, uw } = splitExtracted(extracted);
+    setPasteUW(uw);
+    setFields(prev => ({
+      ...prev,
+      name:    leadFields.name    || prev.name,
+      email:   leadFields.email   || prev.email,
+      phone:   leadFields.phone   || prev.phone,
+      company: leadFields.company || prev.company,
+      notes:   leadFields.notes   || prev.notes,
+    }));
+    const total = Object.keys(leadFields).length + Object.keys(uw).length;
+    setParseNote(
+      total > 0
+        ? note.replace('{n}', String(total))
+        : 'Limited data extracted — please review and fill in any missing fields.'
+    );
+    setMethod('manual');
+  };
+
+  const parseSheet = async () => {
+    if (!sheetPaste.trim()) return;
+    setParsing(true);
+    setError('');
+    try {
+      const res = await fetch('/api/leads/parse-sheet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ text: sheetPaste }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || 'Parse failed');
+      applyExtracted(json.fields ?? {}, 'Google Sheet parsed — auto-filled {n} fields.');
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Parse failed');
+    } finally {
+      setParsing(false);
+    }
   };
 
   // ── Upload + parse ─────────────────────────────────────────────────────────
@@ -489,6 +559,8 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
                 setAppFile(null);
                 setBankFiles([]);
                 setParseStatus('');
+                setSheetPaste('');
+                setParseNote('');
               }}
                 className="text-[#9b9b9b] hover:text-[#1a1a1a] mr-1">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -517,70 +589,32 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
 
           {/* ── METHOD CHOOSER ─────────────────────────────────────────── */}
           {method === 'choose' && (
-            <div className="space-y-3">
-              {/* Manual */}
-              <button onClick={() => setMethod('manual')}
-                className="w-full flex items-center gap-4 p-4 rounded-xl border border-[#e5e5e5] hover:border-[#1a1a1a] hover:bg-[#fafafa] transition-all text-left group">
-                <div className="w-10 h-10 rounded-xl bg-[#f5f5f5] group-hover:bg-[#ebebeb] flex items-center justify-center flex-shrink-0 transition-colors">
-                  <svg className="w-5 h-5 text-[#6b6b6b]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                  </svg>
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-[#1a1a1a]">Enter manually</p>
-                </div>
-                <svg className="w-4 h-4 text-[#d4d4d4] group-hover:text-[#6b6b6b] ml-auto flex-shrink-0 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            <div className="grid grid-cols-2 gap-2">
+              <ChooseOption label="Enter manually" onClick={() => setMethod('manual')}>
+                <svg className="w-3.5 h-3.5 text-[#6b6b6b]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                 </svg>
-              </button>
-
-              {/* Quick paste */}
-              <button onClick={() => setMethod('paste')}
-                className="w-full flex items-center gap-4 p-4 rounded-xl border border-[#e5e5e5] hover:border-[#1a1a1a] hover:bg-[#fafafa] transition-all text-left group">
-                <div className="w-10 h-10 rounded-xl bg-[#f5f5f5] group-hover:bg-[#ebebeb] flex items-center justify-center flex-shrink-0 transition-colors">
-                  <svg className="w-5 h-5 text-[#6b6b6b]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                  </svg>
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-[#1a1a1a]">Quick paste</p>
-                </div>
-                <svg className="w-4 h-4 text-[#d4d4d4] group-hover:text-[#6b6b6b] ml-auto flex-shrink-0 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </ChooseOption>
+              <ChooseOption label="Quick paste" onClick={() => setMethod('paste')}>
+                <svg className="w-3.5 h-3.5 text-[#6b6b6b]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                 </svg>
-              </button>
-
-              {/* Upload App */}
-              <button onClick={() => setMethod('upload')}
-                className="w-full flex items-center gap-4 p-4 rounded-xl border border-[#e5e5e5] hover:border-[#1a1a1a] hover:bg-[#fafafa] transition-all text-left group">
-                <div className="w-10 h-10 rounded-xl bg-[#f5f5f5] group-hover:bg-[#ebebeb] flex items-center justify-center flex-shrink-0 transition-colors">
-                  <svg className="w-5 h-5 text-[#6b6b6b]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                  </svg>
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-[#1a1a1a]">Upload application</p>
-                </div>
-                <svg className="w-4 h-4 text-[#d4d4d4] group-hover:text-[#6b6b6b] ml-auto flex-shrink-0 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </ChooseOption>
+              <ChooseOption label="Upload application" onClick={() => setMethod('upload')}>
+                <svg className="w-3.5 h-3.5 text-[#6b6b6b]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
                 </svg>
-              </button>
-
-              {/* Full pack */}
-              <button onClick={() => setMethod('fullpack')}
-                className="w-full flex items-center gap-4 p-4 rounded-xl border border-[#e5e5e5] hover:border-[#1a1a1a] hover:bg-[#fafafa] transition-all text-left group">
-                <div className="w-10 h-10 rounded-xl bg-[#f5f5f5] group-hover:bg-[#ebebeb] flex items-center justify-center flex-shrink-0 transition-colors">
-                  <svg className="w-5 h-5 text-[#6b6b6b]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                  </svg>
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-[#1a1a1a]">Add full pack</p>
-                </div>
-                <svg className="w-4 h-4 text-[#d4d4d4] group-hover:text-[#6b6b6b] ml-auto flex-shrink-0 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </ChooseOption>
+              <ChooseOption label="Add full pack" onClick={() => setMethod('fullpack')}>
+                <svg className="w-3.5 h-3.5 text-[#6b6b6b]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
                 </svg>
-              </button>
+              </ChooseOption>
+              <ChooseOption wide label="Parse from Google Sheet" onClick={() => setMethod('sheet')}>
+                <svg className="w-3.5 h-3.5 text-[#6b6b6b]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18M10 6v12M3 6h18v12H3V6z" />
+                </svg>
+              </ChooseOption>
             </div>
           )}
 
@@ -655,6 +689,22 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
                 autoFocus
                 rows={7}
                 placeholder={`Paste anything here, e.g:\n\nJohn Smith\nAcme Corp\njohn@acme.com\n(555) 123-4567`}
+                className="w-full px-3.5 py-3 border border-[#e5e5e5] rounded-xl text-sm font-mono text-[#1a1a1a] bg-[#fafafa] placeholder:text-[#b0b0b0] focus:outline-none focus:ring-2 focus:ring-[#1a1a1a]/10 focus:border-[#1a1a1a] resize-none"
+              />
+            </div>
+          )}
+
+          {method === 'sheet' && !parseNote && (
+            <div className="space-y-4">
+              <p className="text-xs text-[#9b9b9b]">
+                Copy a row from Google Sheets and paste it here. AI will map company, owner, SSN, EIN, address, dates, and revenue.
+              </p>
+              <textarea
+                value={sheetPaste}
+                onChange={e => setSheetPaste(e.target.value)}
+                autoFocus
+                rows={7}
+                placeholder={`Paste a Google Sheets row, e.g:\n\n2026-10-05 11:45:22\tAcme LLC\tJane Smith\t123 Main St\t5551234567\tCanton\tOH\t44702\tJane\tSmith\t123-45-6789\t1980-01-15\t50000.00\tRetail\t2010-06-01\t12-3456789`}
                 className="w-full px-3.5 py-3 border border-[#e5e5e5] rounded-xl text-sm font-mono text-[#1a1a1a] bg-[#fafafa] placeholder:text-[#b0b0b0] focus:outline-none focus:ring-2 focus:ring-[#1a1a1a]/10 focus:border-[#1a1a1a] resize-none"
               />
             </div>
@@ -812,6 +862,21 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
               <button onClick={applyPaste} disabled={!quickPaste.trim()}
                 className="flex-1 py-2.5 bg-[#1a1a1a] text-white rounded-xl text-sm font-semibold hover:bg-[#333] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
                 Parse & Fill Fields →
+              </button>
+            </>
+          )}
+
+          {method === 'sheet' && !parseNote && (
+            <>
+              <button type="button" onClick={onClose}
+                className="px-4 py-2.5 border border-[#e5e5e5] rounded-xl text-sm text-[#6b6b6b] hover:bg-[#f5f5f5] transition-colors">
+                Cancel
+              </button>
+              <button type="button" onClick={parseSheet} disabled={!sheetPaste.trim() || parsing}
+                className="flex-1 py-2.5 bg-[#1a1a1a] text-white rounded-xl text-sm font-semibold hover:bg-[#333] disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2">
+                {parsing
+                  ? <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Parsing…</>
+                  : 'Parse Google Sheet →'}
               </button>
             </>
           )}
