@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
+import { maybeMarkDocsIn } from '@/lib/leads/markDocsIn';
 
 // GET: Fetch attachments for a lead (optionally filtered by column field)
 export async function GET(request: Request) {
@@ -118,25 +119,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Failed to save attachment' }, { status: 500 });
   }
 
-  // ── Auto-trigger: advance lead status to "Docs In" if still in early stage ──
-  const earlyStages = new Set([
-    'New Lead', 'Contacted', 'Callback Scheduled', 'Revisit', 'App Out',
-    'Application Acknowledgement', 'Docs Requested', 'Missing Docs/info', '',
-  ]);
-  const { data: leadRow } = await supabase
-    .from('leads')
-    .select('lead_status, stage')
-    .eq('id', leadId)
-    .eq('user_id', user.id)
-    .single();
-  const current = leadRow?.lead_status || leadRow?.stage || '';
-  if (earlyStages.has(current)) {
-    await supabase
-      .from('leads')
-      .update({ lead_status: 'Docs In' })
-      .eq('id', leadId)
-      .eq('user_id', user.id);
-  }
+  const docsIn = await maybeMarkDocsIn(supabase, { leadId, userId: user.id });
 
   try {
     const { onCasperDocsReceived } = await import('@/lib/casper/docs');
@@ -152,7 +135,7 @@ export async function POST(request: Request) {
     console.error('[attachments] casper docs hook', casperErr);
   }
 
-  return NextResponse.json({ attachment });
+  return NextResponse.json({ attachment, docsIn });
 }
 
 // PUT: Rename an attachment

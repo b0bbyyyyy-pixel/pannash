@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { mobileClient, unauthorized } from '@/lib/mobile/session';
 import { getTwilioCreds } from '@/lib/telephony/twilio';
 import { downloadTwilioMedia, type MediaItem } from '@/lib/inbox/saveInboundMms';
+import { maybeMarkDocsIn } from '@/lib/leads/markDocsIn';
 
 export const dynamic = 'force-dynamic';
 
@@ -76,20 +77,7 @@ export async function POST(
     return NextResponse.json({ error: 'Could not save to Documents' }, { status: 500 });
   }
 
-  const earlyStages = new Set([
-    'New Lead', 'Contacted', 'Callback Scheduled', 'Revisit', 'App Out',
-    'Application Acknowledgement', 'Docs Requested', 'Missing Docs/info', '',
-  ]);
-  const { data: leadRow } = await supabase
-    .from('leads')
-    .select('lead_status, stage')
-    .eq('id', lead.id)
-    .eq('user_id', user.id)
-    .maybeSingle();
-  const current = leadRow?.lead_status || leadRow?.stage || '';
-  if (earlyStages.has(current)) {
-    await supabase.from('leads').update({ lead_status: 'Docs In' }).eq('id', lead.id).eq('user_id', user.id);
-  }
+  const docsIn = await maybeMarkDocsIn(supabase, { leadId: lead.id, userId: user.id });
 
   const savedAt = new Date().toISOString();
   items[index] = { ...item, savedAt };

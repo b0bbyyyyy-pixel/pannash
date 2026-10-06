@@ -11,6 +11,7 @@ import {
   applyParsedFieldsToLead,
   splitFullPackFiles,
 } from '@/lib/leadDocActions';
+import { postLeadPatch } from '@/lib/pipeline/iframeMessages';
 import {
   parseMcaPositions,
   mergeMcaPositions,
@@ -325,6 +326,7 @@ export default function DocumentsModal({
     setUploadProgress({ ...progress });
 
     const newAttachments: Attachment[] = [];
+    let markedDocsIn = false;
     const packSplit = uploadKind === 'fullpack' ? splitFullPackFiles(pendingFiles.map(f => ({ name: f.name, file: f }))) : null;
     const bankNameSet = new Set((packSplit?.banks ?? []).map(b => b.name));
     pendingBankSnapFiles.current = packSplit ? packSplit.banks.map(b => b.file) : [];
@@ -340,8 +342,9 @@ export default function DocumentsModal({
       try {
         const res = await fetch('/api/attachments', { method: 'POST', body: fd, credentials: 'include' });
         if (res.ok) {
-          const { attachment } = await res.json();
+          const { attachment, docsIn } = await res.json();
           newAttachments.push(attachment);
+          if (docsIn) markedDocsIn = true;
           setUploadProgress(p => ({ ...p, [file.name]: 'done' }));
         } else {
           setUploadProgress(p => ({ ...p, [file.name]: 'error' }));
@@ -352,6 +355,7 @@ export default function DocumentsModal({
     }
 
     setAttachments(prev => [...newAttachments, ...prev]);
+    if (markedDocsIn) postLeadPatch(leadId, { lead_status: 'Docs In', in_pipeline: true });
 
     if (uploadKind === 'application' && newAttachments.length > 0) {
       setUploading(false);
