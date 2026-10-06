@@ -14,6 +14,7 @@ import {
   createContext, useContext, useCallback, useEffect, useRef, useState,
 } from 'react';
 import type { Call, Device } from '@twilio/voice-sdk';
+import { createRingback, voiceErrorMessage } from '@/lib/telephony/ringback';
 import { usePathname, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { BACK_TO_PIPELINE_MSG, CALL_MSG, LEAD_DELETED_MSG, LEAD_STATE_MSG, postLeadActionToFrame } from '@/lib/pipeline/iframeMessages';
@@ -221,6 +222,12 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   const initStarted = useRef(false);
   const showLeadCardRef = useRef(false);
   showLeadCardRef.current = showLeadCard;
+  const ringbackRef = useRef<ReturnType<typeof createRingback> | null>(null);
+
+  const stopRingback = useCallback(() => {
+    ringbackRef.current?.stop();
+    ringbackRef.current = null;
+  }, []);
 
   // Re-render every second while a call is live (for the timer)
   useEffect(() => {
@@ -230,6 +237,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   }, [callStartedAt]);
 
   const resetCallState = useCallback(() => {
+    stopRingback();
     callRef.current = null;
     setActiveNumber(null);
     setActiveName(null);
@@ -237,15 +245,20 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     setShowKeypad(false);
     setCallStartedAt(null);
     setStatus(deviceRef.current ? 'ready' : 'offline');
-  }, []);
+  }, [stopRingback]);
 
   const wireCall = useCallback((call: Call) => {
     callRef.current = call;
-    call.on('accept', () => { setStatus('in-call'); setCallStartedAt(Date.now()); });
+    call.on('accept', () => {
+      stopRingback();
+      setStatus('in-call');
+      setCallStartedAt(Date.now());
+    });
     call.on('disconnect', resetCallState);
     call.on('cancel', () => { incomingRef.current = null; setIncomingFrom(null); resetCallState(); });
-    call.on('error', (e: Error) => { setError(e.message); resetCallState(); });
-  }, [resetCallState]);
+    call.on('reject', resetCallState);
+    call.on('error', (e: Error) => { setError(voiceErrorMessage(e)); resetCallState(); });
+  }, [resetCallState, stopRingback]);
 
   // ── Device init (runs once after login) ─────────────────────────────────────
   useEffect(() => {
@@ -278,14 +291,16 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
         const { Device } = await import('@twilio/voice-sdk');
         const device = new Device(token, {
           logLevel: 'error',
-          // Prefer Opus, fall back to PCMU
           codecPreferences: ['opus', 'pcmu'] as Call.Codec[],
+          closeProtection: true,
+          dscp: true,
+          edge: 'roaming',
         });
         deviceRef.current = device;
 
         device.on('registered', () => setStatus('ready'));
         device.on('unregistered', () => setStatus('offline'));
-        device.on('error', (e: Error) => setError(e.message));
+        device.on('error', (e: Error) => setError(voiceErrorMessage(e)));
 
         device.on('tokenWillExpire', async () => {
           try {
@@ -366,11 +381,54 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     setActiveName(meta?.name ?? null);
     setMatchedLead(meta?.leadId ? { id: meta.leadId, name: meta.name || e164, company: meta.company } : null);
     setStatus('connecting');
-    // Use `phone` not `To` — Twilio's own `To` on Client calls is client:agent, not the PSTN number.
-    const call = await device.connect({ params: { phone: e164 } });
-    wireCall(call);
-    call.on('ringing', () => setStatus('ringing'));
-  }, [wireCall]);
+
+    try {
+      if (navigator.mediaDevices?.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(t => t.stop());
+      }
+    } catch {
+      const msg = 'Microphone access is required to place calls.';
+      setError(msg);
+      resetCallState();
+      throw new Error(msg);
+    }
+
+    try {
+      if (device.state !== 'registered') {
+        await device.register();
+      }
+    } catch (e) {
+      const msg = voiceErrorMessage(e);
+      setError(msg);
+      resetCallState();
+      throw new Error(msg);
+    }
+
+    stopRingback();
+    const rb = createRingback();
+    ringbackRef.current = rb;
+    void rb.start();
+
+    try {
+      // `phone` not `To` — Twilio's own `To` on Client calls is client:agent, not the PSTN number.
+      const call = await device.connect({
+        params: { phone: e164 },
+        rtcConstraints: { audio: true },
+      });
+      wireCall(call);
+      call.on('ringing', () => setStatus('ringing'));
+    } catch (e) {
+      const msg = voiceErrorMessage(e);
+      setError(msg);
+      resetCallState();
+      const dev = deviceRef.current;
+      if (dev && (dev.state === 'unregistered' || dev.state === 'destroyed')) {
+        try { await dev.register(); } catch { /* next dial will retry */ }
+      }
+      throw new Error(msg);
+    }
+  }, [wireCall, resetCallState, stopRingback]);
 
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
@@ -385,9 +443,10 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   }, [connect]);
 
   const hangup = useCallback(() => {
+    stopRingback();
     callRef.current?.disconnect();
     deviceRef.current?.disconnectAll();
-  }, []);
+  }, [stopRingback]);
 
   const toggleMute = useCallback(() => {
     const call = callRef.current;
