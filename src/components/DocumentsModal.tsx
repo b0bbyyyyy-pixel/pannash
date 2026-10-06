@@ -49,16 +49,6 @@ interface DocumentsModalProps {
   onClose: () => void;
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-function docsPortalTarget(): HTMLElement | null {
-  if (typeof document === 'undefined') return null;
-  try {
-    const topDoc = window.top?.document;
-    if (topDoc?.body) return topDoc.body;
-  } catch { /* cross-origin */ }
-  return document.body;
-}
-
 function fmtSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -234,8 +224,6 @@ export default function DocumentsModal({
     ?? ((a: Attachment) => analyzeBankAttachmentForLead(leadId, a));
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [portalEl, setPortalEl] = useState<HTMLElement | null>(null);
-  useEffect(() => { setPortalEl(docsPortalTarget()); }, []);
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
   const fetchDocs = useCallback(async () => {
@@ -665,7 +653,11 @@ export default function DocumentsModal({
                 </p>
               </div>
             </div>
-            <button onClick={onClose} className="p-1.5 rounded-lg text-[#9b9b9b] hover:text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors">
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1.5 rounded-lg text-[#9b9b9b] hover:text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors"
+            >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
@@ -1154,6 +1146,9 @@ export default function DocumentsModal({
     </>
   );
 
-  if (!portalEl) return null;
-  return createPortal(ui, portalEl);
+  if (typeof document === 'undefined') return null;
+  // Same document as this React tree. Portaling into window.top from an iframe
+  // (lead workspace) puts nodes in a different document than the React root,
+  // so close/upload clicks never reach the handlers.
+  return createPortal(ui, document.body);
 }
