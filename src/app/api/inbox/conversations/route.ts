@@ -3,8 +3,9 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { isSmsStopBody } from '@/lib/leads/dnc';
 import { inboxActivityMs, sortInboxLeads } from '@/lib/inbox/sortInboxLeads';
+import { countAttachmentsByLead } from '@/lib/leads/attachmentCounts';
 
-const LEAD_COLS = 'id, name, company, phone, stage, month_key, last_contact, created_at, notes, in_pipeline, lead_status, list_id';
+const LEAD_COLS = 'id, name, company, phone, email, value, stage, month_key, last_contact, created_at, notes, in_pipeline, lead_status, list_id, underwriting_data';
 const LIMIT = 40;
 
 function escapeIlike(s: string) {
@@ -155,6 +156,8 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    const docCountByLead = ids.length ? await countAttachmentsByLead(supabase, ids) : {};
+
     const merged: Record<string, unknown>[] = list.map(lead => ({
       ...lead,
       id: lead.id,
@@ -163,6 +166,7 @@ export async function GET(req: NextRequest) {
       casper_enabled: casperMap[String(lead.id)] ?? null,
       conversation: convMap[String(lead.id)] ?? null,
       lead_status: (optOutMap[String(lead.id)] ? 'DNC' : lead.lead_status) ?? null,
+      doc_count: docCountByLead[String(lead.id)] ?? 0,
     })).filter(lead => {
       if (q || (pinLeadId && lead.id === pinLeadId)) return true;
       const conv = lead.conversation as { last_message_preview?: string | null; last_inbound_at?: string | null; last_direction?: string | null; last_message_at?: string | null } | null;

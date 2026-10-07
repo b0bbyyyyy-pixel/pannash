@@ -26,6 +26,7 @@ import LeadActionsMenu, { type LeadActionId } from '@/components/LeadActionsMenu
 import dynamic from 'next/dynamic';
 import { isCampaignInboxLead } from '@/lib/inbox/promoteCampaignReply';
 import { sortInboxLeads } from '@/lib/inbox/sortInboxLeads';
+import { applyLeadStateMsg, resolveMenuDots, type LeadMenuState } from '@/lib/leads/menuComplete';
 
 const DocumentsModal = dynamic(() => import('@/components/DocumentsModal'), { ssr: false });
 const ScheduleEmailModal = dynamic(() => import('@/components/ScheduleEmailModal'), { ssr: false });
@@ -46,6 +47,10 @@ interface InboxLead {
   name: string;
   company: string | null;
   phone: string;
+  email?: string | null;
+  value?: number | string | null;
+  underwriting_data?: Record<string, unknown> | null;
+  doc_count?: number;
   stage: string | null;
   lead_status: string | null;
   in_pipeline?: boolean | null;
@@ -260,7 +265,7 @@ export default function InboxClient({
   const [pipelineFrameSrc, setPipelineFrameSrc] = useState('/pipeline?modal=1');
   const pipelineFrameRef = useRef<HTMLIFrameElement>(null);
   const leadOverlayFrameRef = useRef<HTMLIFrameElement>(null);
-  const [leadMenuState, setLeadMenuState] = useState<{ section: LeadActionId; appComplete: boolean; lendersComplete: boolean; docsComplete: boolean; offersComplete: boolean } | null>(null);
+  const [leadMenuState, setLeadMenuState] = useState<LeadMenuState | null>(null);
   const [pipelineLeadId, setPipelineLeadId] = useState<string | null>(null);
   const [pipelineShowingLead, setPipelineShowingLead] = useState(false);
 
@@ -270,6 +275,11 @@ export default function InboxClient({
   const composerRef = useRef<HTMLTextAreaElement>(null);
 
   const selectedLead = leads.find(l => l.id === selectedLeadId) ?? null;
+  const selectedDots = resolveMenuDots(leadMenuState, selectedLead);
+  const overlayLeadForMenu = leads.find(l => l.id === leadOverlayId) ?? selectedLead;
+  const overlayDots = resolveMenuDots(leadMenuState, overlayLeadForMenu, leadOverlayId);
+  const pipelineLeadForMenu = leads.find(l => l.id === pipelineLeadId) ?? null;
+  const pipelineDots = resolveMenuDots(leadMenuState, pipelineLeadForMenu, pipelineLeadId);
   const leadCasperOn = selectedLead
     ? casperEffectiveForLead(casperOn, selectedLead.casper_enabled)
     : false;
@@ -367,7 +377,7 @@ export default function InboxClient({
         return;
       }
       if (d.type === LEAD_STATE_MSG && typeof d.section === 'string') {
-        setLeadMenuState({ section: d.section as LeadActionId, appComplete: !!d.appComplete, lendersComplete: !!d.lendersComplete, docsComplete: !!d.docsComplete, offersComplete: !!d.offersComplete });
+        setLeadMenuState(prev => applyLeadStateMsg(prev, d));
         return;
       }
       if (d.type === BACK_TO_PIPELINE_MSG) {
@@ -1096,10 +1106,10 @@ export default function InboxClient({
                     onAction={handleInboxLeadAction}
                     hiddenItems={['sms']}
                     showAppDot
-                    appComplete={leadMenuState?.appComplete ?? false}
-                    lendersComplete={leadMenuState?.lendersComplete ?? false}
-                    docsComplete={leadMenuState?.docsComplete ?? false}
-                    offersComplete={leadMenuState?.offersComplete ?? false}
+                    appComplete={selectedDots.appComplete}
+                    lendersComplete={selectedDots.lendersComplete}
+                    docsComplete={selectedDots.docsComplete}
+                    offersComplete={selectedDots.offersComplete}
                   />
                   <button
                     type="button"
@@ -1556,12 +1566,12 @@ export default function InboxClient({
                     }
                     postLeadActionToFrame(pipelineFrameRef.current, id);
                   }}
-                  currentSection={leadMenuState?.section}
+                  currentSection={leadMenuState?.id && pipelineLeadId && leadMenuState.id !== pipelineLeadId ? undefined : leadMenuState?.section}
                   showAppDot
-                  appComplete={leadMenuState?.appComplete ?? false}
-                  lendersComplete={leadMenuState?.lendersComplete ?? false}
-                  docsComplete={leadMenuState?.docsComplete ?? false}
-                  offersComplete={leadMenuState?.offersComplete ?? false}
+                  appComplete={pipelineDots.appComplete}
+                  lendersComplete={pipelineDots.lendersComplete}
+                  docsComplete={pipelineDots.docsComplete}
+                  offersComplete={pipelineDots.offersComplete}
                 />
               ) : (
                 <span className="text-xs text-[#6b6b6b] font-medium">Pipeline</span>
@@ -1660,12 +1670,12 @@ export default function InboxClient({
                 }
                 postLeadActionToFrame(leadOverlayFrameRef.current, id);
               }}
-              currentSection={leadMenuState?.section}
+              currentSection={leadMenuState?.id && leadOverlayId && leadMenuState.id !== leadOverlayId ? undefined : leadMenuState?.section}
               showAppDot
-              appComplete={leadMenuState?.appComplete ?? false}
-              lendersComplete={leadMenuState?.lendersComplete ?? false}
-              docsComplete={leadMenuState?.docsComplete ?? false}
-              offersComplete={leadMenuState?.offersComplete ?? false}
+              appComplete={overlayDots.appComplete}
+              lendersComplete={overlayDots.lendersComplete}
+              docsComplete={overlayDots.docsComplete}
+              offersComplete={overlayDots.offersComplete}
             />
             <div className="flex items-center gap-3">
               <a

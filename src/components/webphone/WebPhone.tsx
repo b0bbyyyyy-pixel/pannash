@@ -18,7 +18,8 @@ import { createRingback, voiceErrorMessage } from '@/lib/telephony/ringback';
 import { usePathname, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { BACK_TO_PIPELINE_MSG, CALL_MSG, LEAD_DELETED_MSG, LEAD_STATE_MSG, postLeadActionToFrame } from '@/lib/pipeline/iframeMessages';
-import LeadActionsMenu, { type LeadActionId } from '@/components/LeadActionsMenu';
+import LeadActionsMenu from '@/components/LeadActionsMenu';
+import { applyLeadStateMsg, type LeadMenuState } from '@/lib/leads/menuComplete';
 
 const DocumentsModal = dynamic(() => import('@/components/DocumentsModal'), { ssr: false });
 const ScheduleEmailModal = dynamic(() => import('@/components/ScheduleEmailModal'), { ssr: false });
@@ -94,7 +95,7 @@ function LeadCardOverlay({
 }) {
   const router = useRouter();
   const frameRef = useRef<HTMLIFrameElement>(null);
-  const [leadMenuState, setLeadMenuState] = useState<{ section: LeadActionId; appComplete: boolean; lendersComplete: boolean; docsComplete: boolean; offersComplete: boolean } | null>(null);
+  const [leadMenuState, setLeadMenuState] = useState<LeadMenuState | null>(null);
   const [showDocs, setShowDocs] = useState(false);
   const [showEmail, setShowEmail] = useState(false);
   const [showFollowUp, setShowFollowUp] = useState(false);
@@ -104,7 +105,7 @@ function LeadCardOverlay({
       const d = e.data;
       if (!d || typeof d !== 'object') return;
       if (d.type === LEAD_STATE_MSG && typeof d.section === 'string') {
-        setLeadMenuState({ section: d.section as LeadActionId, appComplete: !!d.appComplete, lendersComplete: !!d.lendersComplete, docsComplete: !!d.docsComplete, offersComplete: !!d.offersComplete });
+        setLeadMenuState(prev => applyLeadStateMsg(prev, d));
         return;
       }
       if (d.type === BACK_TO_PIPELINE_MSG) onClose();

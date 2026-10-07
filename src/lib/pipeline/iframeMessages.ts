@@ -55,6 +55,7 @@ export type LeadActionMsg = {
 
 export type LeadStateMsg = {
   type: typeof LEAD_STATE_MSG;
+  id?: string;
   section: string;
   appComplete: boolean;
   lendersComplete?: boolean;
@@ -113,10 +114,11 @@ export function postLeadState(
   section: string,
   appComplete: boolean,
   lendersComplete = false,
-  extra?: { docsComplete?: boolean; offersComplete?: boolean },
+  extra?: { id?: string; docsComplete?: boolean; offersComplete?: boolean },
 ) {
   postToParent({
     type: LEAD_STATE_MSG,
+    id: extra?.id,
     section,
     appComplete,
     lendersComplete,

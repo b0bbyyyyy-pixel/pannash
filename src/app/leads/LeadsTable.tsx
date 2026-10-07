@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation';
 import BulkDeleteButton from './BulkDeleteButton';
 import { BACK_TO_PIPELINE_MSG, LEAD_DELETED_MSG, LEAD_STATE_MSG, PIPELINE_LEAD_MSG, postLeadActionToFrame } from '@/lib/pipeline/iframeMessages';
 import dynamic from 'next/dynamic';
-import LeadActionsMenu, { type LeadActionId } from '@/components/LeadActionsMenu';
+import LeadActionsMenu from '@/components/LeadActionsMenu';
+import { applyLeadStateMsg, type LeadMenuState } from '@/lib/leads/menuComplete';
 
 const DocumentsModal = dynamic(() => import('@/components/DocumentsModal'), { ssr: false });
 const ScheduleEmailModal = dynamic(() => import('@/components/ScheduleEmailModal'), { ssr: false });
@@ -85,7 +86,7 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
   const [leadOverlayId, setLeadOverlayId] = useState<string | null>(null);
   const [rows, setRows] = useState(leads);
   const leadFrameRef = useRef<HTMLIFrameElement>(null);
-  const [leadMenuState, setLeadMenuState] = useState<{ section: LeadActionId; appComplete: boolean; lendersComplete: boolean; docsComplete: boolean; offersComplete: boolean } | null>(null);
+  const [leadMenuState, setLeadMenuState] = useState<LeadMenuState | null>(null);
   const [docsLead, setDocsLead] = useState<{ id: string; name: string; company?: string } | null>(null);
   const [emailLead, setEmailLead] = useState<Lead | null>(null);
   const [followLead, setFollowLead] = useState<Lead | null>(null);
@@ -137,7 +138,7 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
         setRows(prev => prev.map(l => l.id === d.id ? { ...l, ...d.patch } : l));
       }
       if (d.type === LEAD_STATE_MSG && typeof d.section === 'string') {
-        setLeadMenuState({ section: d.section as LeadActionId, appComplete: !!d.appComplete, lendersComplete: !!d.lendersComplete, docsComplete: !!d.docsComplete, offersComplete: !!d.offersComplete });
+        setLeadMenuState(prev => applyLeadStateMsg(prev, d));
       }
       if (d.type === BACK_TO_PIPELINE_MSG) {
         setLeadOverlayId(null);

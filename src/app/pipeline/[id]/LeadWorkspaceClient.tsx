@@ -70,6 +70,7 @@ interface LeadWorkspaceClientProps {
   /** modal `from` query so Prev/Next keeps the same chrome */
   fromSource?: string | null;
   campaignName?: string | null;
+  initialDocCount?: number;
 }
 
 // ── Status helpers (dynamic) ───────────────────────────────────────────────────
@@ -320,6 +321,7 @@ export default function LeadWorkspaceClient({
   hidePipelineNav = false,
   fromSource = null,
   campaignName = null,
+  initialDocCount = 0,
 }: LeadWorkspaceClientProps) {
   const router = useRouter();
   const [lead, setLead]               = useState(initialLead);
@@ -337,7 +339,7 @@ export default function LeadWorkspaceClient({
   const [showDocsModal, setShowDocsModal]       = useState(false);
   const [showVault, setShowVault]               = useState(false);
   const [showManageStatuses, setShowManageStatuses] = useState(false);
-  const [docCount, setDocCount]               = useState(0);
+  const [docCount, setDocCount]               = useState(initialDocCount);
   const [dbStatuses, setDbStatuses]           = useState<DBStatus[]>([]);
 
   const closeChildOverlays = useCallback(() => {
@@ -450,11 +452,9 @@ export default function LeadWorkspaceClient({
       .then(async r => {
         if (!r.ok) throw new Error('fail');
         const j = await r.json();
-        setSubmissions(Array.isArray(j.submissions) ? j.submissions : []);
+        if (Array.isArray(j.submissions)) setSubmissions(j.submissions);
       })
-      .catch(() => {
-        setSubmissions([]);
-      });
+      .catch(() => {});
   }, [lead.id]);
   useEffect(() => {
     loadSubmissions();
@@ -462,8 +462,10 @@ export default function LeadWorkspaceClient({
 
   const loadDocCount = useCallback(() => {
     fetch(`/api/attachments?leadId=${lead.id}`, { credentials: 'include' })
-      .then(r => r.json())
-      .then(j => setDocCount(Array.isArray(j.attachments) ? j.attachments.length : 0))
+      .then(r => (r.ok ? r.json() : Promise.reject(r)))
+      .then(j => {
+        if (Array.isArray(j.attachments)) setDocCount(j.attachments.length);
+      })
       .catch(() => {});
   }, [lead.id]);
   useEffect(() => { loadDocCount(); }, [loadDocCount]);
@@ -1091,8 +1093,13 @@ export default function LeadWorkspaceClient({
   }, [ud.actualOffers, submissions, lead.lead_status]);
 
   useEffect(() => {
-    postLeadState(surfaceTab, appComplete, lendersComplete, { docsComplete, offersComplete });
-  }, [surfaceTab, appComplete, lendersComplete, docsComplete, offersComplete]);
+    postLeadState(surfaceTab, appComplete, lendersComplete, {
+      id: lead.id,
+      docsComplete,
+      offersComplete,
+    });
+    postLeadPatch(lead.id, { doc_count: docCount });
+  }, [lead.id, surfaceTab, appComplete, lendersComplete, docsComplete, offersComplete, docCount]);
 
   const lenderCriteria = useMemo(() => ({
     timeInBusiness:    derivedTIB ?? Number(ud.timeInBusiness ?? 0),

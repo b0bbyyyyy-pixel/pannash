@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { notFound } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import LeadWorkspaceClient from './LeadWorkspaceClient';
+import { countAttachmentsForLead } from '@/lib/leads/attachmentCounts';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -51,6 +52,8 @@ export default async function PipelineLeadPage({
     notFound();
   }
 
+  const initialDocCount = await countAttachmentsForLead(supabase, id);
+
   // Fetch all pipeline lead IDs for prev/next navigation (in created_at order)
   const { data: pipelineLeads } = await supabase
     .from('leads')
@@ -89,6 +92,7 @@ export default async function PipelineLeadPage({
             hidePipelineNav={hidePipelineNav}
             fromSource={sp.from ?? null}
             campaignName={campaignName}
+            initialDocCount={initialDocCount}
           />
         </div>
       </div>
@@ -107,6 +111,7 @@ export default async function PipelineLeadPage({
             userId={user.id}
             userName={userName}
             campaignName={campaignName}
+            initialDocCount={initialDocCount}
           />
         </div>
       </main>

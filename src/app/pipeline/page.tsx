@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import PipelineClient from './PipelineClient';
 import { isSmsStopBody } from '@/lib/leads/dnc';
+import { countAttachmentsByLead } from '@/lib/leads/attachmentCounts';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -150,17 +151,9 @@ export default async function PipelinePage({
   }
 
   const pipelineIds = [...leadMap.keys()];
-  const docCountByLead: Record<string, number> = {};
-  if (pipelineIds.length) {
-    const { data: attRows } = await supabase
-      .from('lead_attachments')
-      .select('lead_id')
-      .in('lead_id', pipelineIds);
-    for (const row of attRows ?? []) {
-      const id = String((row as { lead_id: string }).lead_id);
-      docCountByLead[id] = (docCountByLead[id] ?? 0) + 1;
-    }
-  }
+  const docCountByLead = pipelineIds.length
+    ? await countAttachmentsByLead(supabase, pipelineIds.map(String))
+    : {};
 
   const leadsWithText = [...leadMap.values()].map(l => {
     const t = lastTextByLead[String(l.id)];
