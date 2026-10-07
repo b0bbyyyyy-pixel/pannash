@@ -115,22 +115,18 @@ export function pickFilled(ai: string | null | undefined, heur: string | null | 
   return a || h;
 }
 
-export function mergeSheetLead<T extends Record<string, unknown>>(
-  ai: T,
-  cells: unknown[],
-): T {
+export function mergeSheetLead<T>(ai: T, cells: unknown[]): T {
+  const src = ai as Record<string, unknown>;
   const h = extractSheetLead(cells);
-  const name = pickFilled(ai.name as string | null, h.name);
-  const company = pickFilled(ai.company as string | null, h.company);
   return {
-    ...ai,
-    name: name ?? ai.name ?? null,
-    email: pickFilled(ai.email as string | null, h.email) ?? ai.email ?? null,
-    phone: pickFilled(ai.phone as string | null, h.phone) ?? ai.phone ?? null,
-    company: company ?? ai.company ?? null,
-    industry: pickFilled(ai.industry as string | null, h.industry) ?? ai.industry ?? null,
-    address: pickFilled(ai.address as string | null, h.address) ?? ai.address ?? null,
-  };
+    ...(ai as object),
+    name: pickFilled(src.name as string | null, h.name),
+    email: pickFilled(src.email as string | null, h.email),
+    phone: pickFilled(src.phone as string | null, h.phone),
+    company: pickFilled(src.company as string | null, h.company),
+    industry: pickFilled(src.industry as string | null, h.industry),
+    address: pickFilled(src.address as string | null, h.address),
+  } as T;
 }
 
 const HEADER_LABELS = new Set([

@@ -1510,7 +1510,7 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
           const obj: Record<string, string> = {};
           row.forEach((val, col) => { obj[headers[col] || `col${col}`] = String(val || '').trim(); });
           const mapped = mergeSheetLead(smartColumnMapper(obj) as ParsedLead, row);
-          return { ...mapped, name: mapped.name || '', email: mapped.email || '', sheetRow: i + 2 };
+          return { ...mapped, name: mapped.name || '', email: mapped.email || '', sheetRow: i + 2 } as ParsedLead;
         });
       } else {
         leads = sheetRows.map((row, i) => {
@@ -1518,7 +1518,7 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
             positionalColumnMapper(row.map(v => String(v || '').trim())) as ParsedLead,
             row,
           );
-          return { ...mapped, name: mapped.name || '', email: mapped.email || '', sheetRow: i + 1 };
+          return { ...mapped, name: mapped.name || '', email: mapped.email || '', sheetRow: i + 1 } as ParsedLead;
         });
       }
 
