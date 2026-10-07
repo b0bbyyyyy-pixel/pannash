@@ -1485,6 +1485,38 @@ export default function UnderwritingSuite({
     setEditOfferUrl('');
   };
 
+  const moneyTxt = (n: number) =>
+    Number.isFinite(n) && n !== 0 ? `$${Math.round(n).toLocaleString()}` : '—';
+  const numTxt = (n: unknown) => {
+    if (n == null || n === '') return '—';
+    const v = Number(n);
+    return Number.isFinite(v) ? String(v) : '—';
+  };
+  const creditTxt = (() => {
+    const raw = data.creditScore;
+    if (raw == null || raw === '' || Number(raw) === 0) return '—';
+    const v = Number(raw);
+    return Number.isFinite(v) ? String(Math.round(v)) : '—';
+  })();
+  const headerStats = (
+    <p className="min-w-0 flex-1 text-[11px] leading-5 text-[#9b9b9b]">
+      {([
+        ['Avg monthly revenue', moneyTxt(avgMonthlyRevenue)],
+        ['Avg daily balance', moneyTxt(avgDailyBalance)],
+        ['Ending balance', moneyTxt(endingBalance)],
+        ['Deposits / mo', numTxt(data.depositsCount)],
+        ['NSFs (3 mo)', numTxt(data.nsfCount)],
+        ['Credit score', creditTxt],
+      ] as [string, string][]).map(([label, val], i) => (
+        <span key={label}>
+          {i > 0 ? <span className="text-[#d4d4d4]"> · </span> : null}
+          {label}{' '}
+          <span className="text-[#1a1a1a] tabular-nums">{val}</span>
+        </span>
+      ))}
+    </p>
+  );
+
   return (
     <>
     <div className={inline ? (offersOnly ? "w-full" : "contents") : "fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"}>
@@ -1799,9 +1831,12 @@ export default function UnderwritingSuite({
           }>
             {/* Modal header — only shown when rendered as an overlay */}
             {offersAsModal && !offersOnly && (
-              <div className="sticky top-0 flex items-center justify-between px-6 py-4 bg-white border-b border-gray-200 z-10">
-                <h2 className="text-base font-bold text-gray-900">Actual Offers Received</h2>
-                <div className="flex items-center gap-2">
+              <div className="sticky top-0 flex items-start justify-between gap-3 px-6 py-4 bg-white border-b border-gray-200 z-10">
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-base font-bold text-gray-900 mb-1">Actual Offers Received</h2>
+                  {headerStats}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
                   <button
                     onClick={() => setShowPitchModal(true)}
                     className="px-3 py-1.5 bg-white hover:bg-gray-50 text-gray-800 border border-gray-300 rounded-md text-sm font-medium transition-colors"
@@ -1819,11 +1854,16 @@ export default function UnderwritingSuite({
             {/* Inner wrapper adds padding when in modal mode */}
             <div className={offersAsModal ? 'p-6' : ''}>
             {/* Normal sidebar header — only shown when NOT in modal mode */}
-            {(!offersAsModal || offersOnly) && <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900">Actual Offers Received</h2>
+            {(!offersAsModal || offersOnly) && <div className="flex items-start justify-between gap-3 mb-4">
+              <div className="min-w-0 flex-1">
+                {!offersOnly && (
+                  <h2 className="text-lg font-semibold text-gray-900 mb-1">Actual Offers Received</h2>
+                )}
+                {headerStats}
+              </div>
               <button
                 onClick={() => setShowPitchModal(true)}
-                className="px-3 py-1.5 bg-white hover:bg-gray-50 text-gray-800 border border-gray-300 rounded-md text-sm font-medium transition-colors"
+                className="shrink-0 px-3 py-1.5 bg-white hover:bg-gray-50 text-gray-800 border border-gray-300 rounded-md text-sm font-medium transition-colors"
               >
                 Pitch
               </button>
