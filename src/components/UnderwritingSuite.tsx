@@ -1493,10 +1493,8 @@ export default function UnderwritingSuite({
     return Number.isFinite(v) ? String(v) : '—';
   };
   const creditTxt = (() => {
-    const raw = data.creditScore;
-    if (raw == null || raw === '' || Number(raw) === 0) return '—';
-    const v = Number(raw);
-    return Number.isFinite(v) ? String(Math.round(v)) : '—';
+    const v = Number(data.creditScore);
+    return Number.isFinite(v) && v !== 0 ? String(Math.round(v)) : '—';
   })();
   const headerStats = (
     <p className="min-w-0 flex-1 text-[11px] leading-5 text-[#9b9b9b]">
