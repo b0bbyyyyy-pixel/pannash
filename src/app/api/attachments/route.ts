@@ -164,6 +164,73 @@ export async function PUT(request: Request) {
   return NextResponse.json({ attachment: data });
 }
 
+// PATCH: Replace file bytes (crop / rotate save)
+export async function PATCH(request: Request) {
+  const cookieStore = await cookies();
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { cookies: { get(n: string) { return cookieStore.get(n)?.value; }, set() {}, remove() {} } }
+  );
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const formData = await request.formData();
+  const id = String(formData.get('id') || '');
+  const file = formData.get('file');
+  if (!id || !(file instanceof File)) {
+    return NextResponse.json({ error: 'Missing id or file' }, { status: 400 });
+  }
+
+  const { data: attachment, error: fetchError } = await supabase
+    .from('lead_attachments')
+    .select('*')
+    .eq('id', id)
+    .eq('user_id', user.id)
+    .single();
+
+  if (fetchError || !attachment) {
+    return NextResponse.json({ error: 'Attachment not found' }, { status: 404 });
+  }
+
+  const timestamp = Date.now();
+  const sanitized = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+  const newPath = `${user.id}/${attachment.lead_id}/${attachment.column_field}/${timestamp}_${sanitized}`;
+  const buf = await file.arrayBuffer();
+  const { error: uploadError } = await supabase.storage
+    .from('lead-attachments')
+    .upload(newPath, buf, { contentType: file.type || 'image/jpeg', upsert: false });
+
+  if (uploadError) {
+    console.error('Error replacing attachment:', uploadError);
+    return NextResponse.json({ error: 'Failed to upload replacement' }, { status: 500 });
+  }
+
+  const { data: updated, error: dbError } = await supabase
+    .from('lead_attachments')
+    .update({
+      file_path: newPath,
+      file_name: file.name,
+      file_size: file.size,
+      file_type: file.type || 'image/jpeg',
+    })
+    .eq('id', id)
+    .eq('user_id', user.id)
+    .select()
+    .single();
+
+  if (dbError || !updated) {
+    await supabase.storage.from('lead-attachments').remove([newPath]);
+    return NextResponse.json({ error: 'Failed to update attachment' }, { status: 500 });
+  }
+
+  if (attachment.file_path && attachment.file_path !== newPath) {
+    await supabase.storage.from('lead-attachments').remove([attachment.file_path]);
+  }
+
+  return NextResponse.json({ attachment: updated });
+}
+
 // DELETE: Remove an attachment
 export async function DELETE(request: Request) {
   const { searchParams } = new URL(request.url);

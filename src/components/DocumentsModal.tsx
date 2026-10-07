@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback, DragEvent } from 'react';
 import { createPortal } from 'react-dom';
 import DocumentVault from '@/components/DocumentVault';
+import AttachmentEditModal from '@/components/AttachmentEditModal';
 import { enrichParsedBusinessFields } from '@/lib/businessName';
 import { normalizeParsedFields } from '@/lib/normalizeParsedFields';
 import {
@@ -215,6 +216,7 @@ export default function DocumentsModal({
   const [showVaultPick, setShowVaultPick] = useState(false);
   const [uploadKind, setUploadKind]       = useState<'save' | 'application' | 'bank' | 'fullpack'>('fullpack');
   const [uploadStatus, setUploadStatus]   = useState<string | null>(null);
+  const [editingDoc, setEditingDoc]       = useState<Attachment | null>(null);
   const pendingBankSnapFiles = useRef<File[]>([]);
 
   const applyParsed = onApplyParsed
@@ -765,7 +767,11 @@ export default function DocumentsModal({
                             <button onClick={() => setRenamingId(null)} className="text-xs text-[#9b9b9b] hover:text-[#1a1a1a]">Cancel</button>
                           </div>
                         ) : (
-                          <p className="text-sm font-semibold text-[#1a1a1a] truncate leading-tight">
+                          <p
+                            className="text-sm font-semibold text-[#1a1a1a] truncate leading-tight cursor-text hover:text-[#5a7fc7]"
+                            title="Click to rename"
+                            onClick={() => startRename(a)}
+                          >
                             {a.file_name}
                             {a.column_field === 'bank_statements' && (
                               <span className="ml-2 align-middle text-[10px] font-semibold uppercase tracking-wider text-[#6b6b6b] bg-[#f0f0f0] px-1.5 py-0.5 rounded">Statement</span>
@@ -807,6 +813,18 @@ export default function DocumentsModal({
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                           </svg>
                         </button>
+                        {((a.file_type || '').includes('image') || (a.file_type || '').includes('pdf') || /\.(jpe?g|png|webp|gif|pdf)$/i.test(a.file_name)) && (
+                          <button
+                            type="button"
+                            onClick={() => setEditingDoc(a)}
+                            title="Crop / rotate"
+                            className="p-1.5 rounded-lg text-violet-500 hover:bg-violet-50 transition-colors"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 3v14a1 1 0 001 1h14M3 6h14a1 1 0 011 1v14" />
+                            </svg>
+                          </button>
+                        )}
                         <button onClick={() => startRename(a)} title="Rename" className="p-1.5 rounded-lg text-blue-400 hover:bg-blue-50 transition-colors">
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -1132,6 +1150,17 @@ export default function DocumentsModal({
             )}
           </div>
         </div>
+      )}
+
+      {editingDoc && (
+        <AttachmentEditModal
+          attachment={editingDoc}
+          onSaved={next => {
+            setAttachments(prev => prev.map(x => x.id === next.id ? { ...x, ...next } : x));
+            setEditingDoc(null);
+          }}
+          onClose={() => setEditingDoc(null)}
+        />
       )}
 
       {showVaultPick && (
