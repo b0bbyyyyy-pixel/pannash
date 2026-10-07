@@ -2,9 +2,7 @@ import type { Metadata } from "next";
 import { Barlow, Crimson_Text, Dancing_Script, Inter, Roboto_Mono } from "next/font/google";
 import "./globals.css";
 import WebPhoneProvider from "@/components/webphone/WebPhone";
-import SmsDripProcessor from "@/components/SmsDripProcessor";
-import FollowUpProcessor from "@/components/FollowUpProcessor";
-import TabUnreadBadge from "@/components/TabUnreadBadge";
+import SyncProvider from "@/lib/sync/SyncProvider";
 
 /** Load fonts via next/font (self-hosted) so a blocked Google Fonts @import can’t nuke the whole CSS bundle. */
 const barlow = Barlow({
@@ -51,10 +49,9 @@ export default function RootLayout({
       <body
         className={`${barlow.variable} ${crimsonText.variable} ${dancingScript.variable} ${inter.variable} ${robotoMono.variable} font-sans antialiased`}
       >
-        <SmsDripProcessor />
-        <FollowUpProcessor />
-        <TabUnreadBadge />
-        <WebPhoneProvider>{children}</WebPhoneProvider>
+        <SyncProvider>
+          <WebPhoneProvider>{children}</WebPhoneProvider>
+        </SyncProvider>
       </body>
     </html>
   );

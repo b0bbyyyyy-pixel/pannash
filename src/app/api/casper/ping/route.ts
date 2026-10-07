@@ -17,13 +17,13 @@ async function client() {
   );
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const supabase = await client();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const settings = await getPingSettings(supabase, user.id);
-  if (settings.phone) {
+  if (settings.phone && req.nextUrl.searchParams.get('recover') === '1') {
     try { await recoverPingRepliesFromInbox(supabase, user.id, settings.phone); } catch { /* ignore */ }
   }
   const { data: messages, error } = await supabase

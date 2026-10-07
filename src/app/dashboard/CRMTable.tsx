@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { getPhoneLocation, PhoneLocationInfo } from '@/lib/phoneLocation';
 import { parseLeadPasteText } from '@/lib/parse-lead-paste';
 import dynamic from 'next/dynamic';
+import { kickSyncWorker } from '@/lib/sync/kick';
 
 const UnderwritingSuite = dynamic(() => import('@/components/UnderwritingSuite'), { ssr: false });
 
@@ -688,6 +689,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         router.refresh();
       } else {
         console.log('Text scheduled successfully');
+        kickSyncWorker();
       }
     } catch (error) {
       console.error('Error scheduling text:', error);

@@ -27,6 +27,8 @@ import dynamic from 'next/dynamic';
 import { isCampaignInboxLead } from '@/lib/inbox/promoteCampaignReply';
 import { sortInboxLeads } from '@/lib/inbox/sortInboxLeads';
 import { applyLeadStateMsg, resolveMenuDots, type LeadMenuState } from '@/lib/leads/menuComplete';
+import { useSync } from '@/lib/sync/SyncProvider';
+import { usePolling } from '@/lib/sync/usePolling';
 
 const DocumentsModal = dynamic(() => import('@/components/DocumentsModal'), { ssr: false });
 const ScheduleEmailModal = dynamic(() => import('@/components/ScheduleEmailModal'), { ssr: false });
@@ -237,6 +239,9 @@ export default function InboxClient({
   useEffect(() => { selectedLeadIdRef.current = selectedLeadId; }, [selectedLeadId]);
   const [messages, setMessages] = useState<InboxMessage[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const messagesRef = useRef<InboxMessage[]>([]);
+  const conversationIdRef = useRef<string | null>(null);
+  const reloadedMissingRef = useRef(new Set<string>());
   const [loadingMsgs, setLoadingMsgs] = useState(false);
 
   const [search, setSearch] = useState('');
@@ -333,6 +338,7 @@ export default function InboxClient({
       .catch(() => {});
   }, []);
 
+  const initialConvsRef = useRef(true);
   const loadLeads = useCallback(async () => {
     // A campaign list is open — don't overwrite it with the replies-only inbox
     if (activeListNameRef.current && !debouncedSearch.trim()) return;
@@ -340,6 +346,7 @@ export default function InboxClient({
       const params = new URLSearchParams();
       if (initialLeadId) params.set('leadId', initialLeadId);
       if (debouncedSearch.trim()) params.set('q', debouncedSearch.trim());
+      if (initialConvsRef.current) params.set('initial', '1');
       const qs = params.toString() ? `?${params}` : '';
       const res = await fetch(`/api/inbox/conversations${qs}`);
       if (!res.ok) {
@@ -350,7 +357,9 @@ export default function InboxClient({
       // Campaign opened while this inbox fetch was in flight
       if (activeListNameRef.current && !debouncedSearch.trim()) return;
       setLeads(sortInboxLeads(data.leads ?? []));
-      setPhoneConn(data.phoneConnection ?? null);
+      if (data.phoneConnection) setPhoneConn(data.phoneConnection);
+      else if (initialConvsRef.current) setPhoneConn(null);
+      initialConvsRef.current = false;
       if (data.dbError || data.setupRequired) setDbSetupRequired(true);
     } catch {
       // Network error — show nothing rather than crash
@@ -421,34 +430,60 @@ export default function InboxClient({
   }, [pipelineLeadId, leadOverlayId, router]);
 
   // ── Load messages on lead select ────────────────────────────────────────────
-  const loadMessages = useCallback(async (leadId: string, opts?: { quiet?: boolean }) => {
+  const loadMessages = useCallback(async (leadId: string, opts?: { quiet?: boolean; since?: string; conversationId?: string | null }) => {
     if (!opts?.quiet) {
       setLoadingMsgs(true);
       setMessages([]);
       setSendError(null);
     }
     try {
-      const res = await fetch(`/api/inbox/messages?leadId=${leadId}`);
+      const params = new URLSearchParams({ leadId });
+      if (opts?.since) {
+        params.set('since', opts.since);
+        if (opts.conversationId) params.set('conversationId', opts.conversationId);
+      }
+      const res = await fetch(`/api/inbox/messages?${params}`);
       if (!res.ok) return;
       const data = await res.json();
-      const next: InboxMessage[] = data.messages ?? [];
-      setMessages(prev => {
+      const incoming: InboxMessage[] = data.messages ?? [];
+      let merged: InboxMessage[];
+      if (opts?.since) {
+        const prev = messagesRef.current;
+        const map = new Map(prev.map(m => [m.id, m]));
+        const outboundBodies = new Set(
+          incoming.filter(m => m.direction === 'outbound').map(m => m.body),
+        );
+        for (const [id, m] of [...map.entries()]) {
+          if (id.startsWith('opt_') && outboundBodies.has(m.body)) map.delete(id);
+        }
+        for (const m of incoming) {
+          const cur = map.get(m.id);
+          map.set(m.id, cur ? { ...cur, ...m } : m);
+        }
+        merged = [...map.values()].sort((a, b) => {
+          const t = a.created_at.localeCompare(b.created_at);
+          return t || a.id.localeCompare(b.id);
+        });
+      } else {
+        const prev = messagesRef.current;
+        merged = incoming;
         if (
-          prev.length === next.length &&
+          prev.length === incoming.length &&
           prev.every((m, i) =>
-            m.id === next[i].id &&
-            m.status === next[i].status &&
-            m.body === next[i].body &&
-            m.error_message === next[i].error_message
+            m.id === incoming[i].id &&
+            m.status === incoming[i].status &&
+            m.body === incoming[i].body &&
+            m.error_message === incoming[i].error_message
           )
         ) {
-          return prev;
+          merged = prev;
         }
-        return next;
-      });
-      setConversationId(data.conversationId ?? null);
+      }
+      messagesRef.current = merged;
+      setMessages(merged);
+      if (data.conversationId) setConversationId(data.conversationId);
 
-      const last = next[next.length - 1];
+      const last = merged[merged.length - 1];
       setLeads(prev => sortInboxLeads(prev.map(l => {
         if (l.id !== leadId) return l;
         const prevAt = Date.parse(l.conversation?.last_message_at ?? '') || 0;
@@ -466,7 +501,7 @@ export default function InboxClient({
               ? ((last.body || '').slice(0, 100) || l.conversation?.last_message_preview || null)
               : (l.conversation?.last_message_preview ?? null),
             last_direction: bump ? last.direction : (l.conversation?.last_direction ?? null),
-            unread_count: 0,
+            unread_count: opts?.since ? (l.conversation?.unread_count ?? 0) : 0,
           },
         };
       })));
@@ -484,12 +519,98 @@ export default function InboxClient({
     lastScrolledMsgIdRef.current = null;
   }, [selectedLeadId, loadMessages]);
 
-  // Replies arrive via Twilio webhook — poll so they show without a refresh.
+  const { pulse, registerOpenLead } = useSync();
+  useEffect(() => { conversationIdRef.current = conversationId; }, [conversationId]);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+
   useEffect(() => {
+    registerOpenLead('inbox', selectedLeadId);
+    return () => registerOpenLead('inbox', null);
+  }, [selectedLeadId, registerOpenLead]);
+
+  const threadSig = pulse?.threads.find(t => t.leadId === selectedLeadId)?.sig ?? '';
+  const lastThreadSigRef = useRef('');
+  useEffect(() => {
+    lastThreadSigRef.current = '';
+  }, [selectedLeadId]);
+  useEffect(() => {
+    if (!selectedLeadId || !threadSig || threadSig === lastThreadSigRef.current) return;
+    lastThreadSigRef.current = threadSig;
+    const lastAt = messagesRef.current[messagesRef.current.length - 1]?.created_at;
+    if (!lastAt) {
+      void loadMessages(selectedLeadId, { quiet: true });
+      return;
+    }
+    void loadMessages(selectedLeadId, {
+      quiet: true,
+      since: lastAt,
+      conversationId: conversationIdRef.current,
+    });
+  }, [threadSig, selectedLeadId, loadMessages]);
+
+  const casperPoll = useCallback(() => {
     if (!selectedLeadId) return;
-    const id = window.setInterval(() => { loadMessages(selectedLeadId, { quiet: true }); }, casperWaiting ? 2000 : 4000);
-    return () => window.clearInterval(id);
-  }, [selectedLeadId, loadMessages, casperWaiting]);
+    const lastAt = messagesRef.current[messagesRef.current.length - 1]?.created_at;
+    if (lastAt) {
+      void loadMessages(selectedLeadId, { quiet: true, since: lastAt, conversationId: conversationIdRef.current });
+    } else {
+      void loadMessages(selectedLeadId, { quiet: true });
+    }
+  }, [selectedLeadId, loadMessages]);
+  usePolling(casperPoll, 5000, !!(selectedLeadId && casperWaiting));
+
+  const markedReadRef = useRef('');
+  useEffect(() => {
+    if (!selectedLeadId || !pulse?.inboxChanged?.length) return;
+    const row = pulse.inboxChanged.find(r => r.lead_id === selectedLeadId);
+    if (!row || !(Number(row.unread_count) > 0)) return;
+    const key = `${selectedLeadId}:${row.last_message_at ?? ''}`;
+    if (markedReadRef.current === key) return;
+    markedReadRef.current = key;
+    fetch('/api/inbox/read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ leadId: selectedLeadId }),
+    }).catch(() => {});
+    setLeads(prev => prev.map(l =>
+      l.id === selectedLeadId && l.conversation
+        ? { ...l, conversation: { ...l.conversation, unread_count: 0 } }
+        : l
+    ));
+  }, [pulse, selectedLeadId]);
+
+  useEffect(() => {
+    const rows = pulse?.inboxChanged;
+    if (!rows?.length) return;
+    setLeads(prev => {
+      let missing = false;
+      const byId = new Map(rows.map(r => [r.lead_id, r]));
+      const next = prev.map(l => {
+        const row = byId.get(l.id);
+        if (!row) return l;
+        return {
+          ...l,
+          conversation: {
+            id: l.conversation?.id ?? '',
+            last_message_at: row.last_message_at ?? l.conversation?.last_message_at ?? null,
+            last_inbound_at: row.last_inbound_at ?? l.conversation?.last_inbound_at,
+            last_message_preview: row.last_message_preview ?? l.conversation?.last_message_preview ?? null,
+            last_direction: row.last_direction ?? l.conversation?.last_direction ?? null,
+            unread_count: selectedLeadId === l.id ? 0 : (row.unread_count ?? l.conversation?.unread_count ?? 0),
+          },
+        };
+      });
+      for (const row of rows) {
+        if (prev.some(l => l.id === row.lead_id)) continue;
+        const key = `${row.lead_id}:${row.last_message_at ?? ''}`;
+        if (reloadedMissingRef.current.has(key)) continue;
+        reloadedMissingRef.current.add(key);
+        missing = true;
+      }
+      if (missing && !activeListNameRef.current) void loadLeads();
+      return sortInboxLeads(next);
+    });
+  }, [pulse, loadLeads, selectedLeadId]);
 
   // If the inbound webhook timed out, kick Casper from the open thread.
   useEffect(() => {
@@ -618,11 +739,7 @@ export default function InboxClient({
     return () => { supabase.removeChannel(channel); };
   }, [loadLeads]);
 
-  // ── Poll for lead list updates every 30s ───────────────────────────────────
-  useEffect(() => {
-    const id = setInterval(loadLeads, 5000);
-    return () => clearInterval(id);
-  }, [loadLeads]);
+  usePolling(loadLeads, 120_000, true, false);
 
   // ── List picker: open + fetch ───────────────────────────────────────────────
   const openListPicker = async () => {
@@ -731,10 +848,13 @@ export default function InboxClient({
       const data = await res.json();
 
       if (data.message) {
-        // Replace optimistic with real message
-        setMessages(prev =>
-          prev.map(m => m.id === optimistic.id ? { ...optimistic, ...data.message } : m)
-        );
+        setMessages(prev => {
+          const realId = data.message.id as string | undefined;
+          if (realId && prev.some(m => m.id === realId)) {
+            return prev.filter(m => m.id !== optimistic.id);
+          }
+          return prev.map(m => m.id === optimistic.id ? { ...optimistic, ...data.message } : m);
+        });
         // Update conversation preview in lead list
         const preview = body.length > 100 ? body.slice(0, 97) + '…' : body;
         setLeads(prev => sortInboxLeads(prev.map(l =>

@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useCallback, useMemo } from 'react';
+import { usePolling } from '@/lib/sync/usePolling';
 import { useRouter } from 'next/navigation';
 
 interface DripJobSummary {
@@ -41,24 +42,21 @@ export default function CampaignTable({ campaigns, onRename, onDelete }: Props) 
   const inputRef = useRef<HTMLInputElement>(null);
   const [dripJobs, setDripJobs] = useState<Map<string, DripJobSummary>>(new Map());
 
-  // Live drip counters on campaign rows
-  useEffect(() => {
-    let stop = false;
-    const load = async () => {
-      try {
-        const res = await fetch('/api/sms/drip');
-        if (!res.ok) return;
-        const data = await res.json();
-        if (stop) return;
-        const map = new Map<string, DripJobSummary>();
-        for (const j of (data.jobs ?? []) as DripJobSummary[]) map.set(j.list_id, j);
-        setDripJobs(map);
-      } catch { /* retry next poll */ }
-    };
-    load();
-    const t = setInterval(load, 15000);
-    return () => { stop = true; clearInterval(t); };
+  const loadDripJobs = useCallback(async () => {
+    try {
+      const res = await fetch('/api/sms/drip');
+      if (!res.ok) return;
+      const data = await res.json();
+      const map = new Map<string, DripJobSummary>();
+      for (const j of (data.jobs ?? []) as DripJobSummary[]) map.set(j.list_id, j);
+      setDripJobs(map);
+    } catch { /* retry next poll */ }
   }, []);
+  const anyDripActive = useMemo(
+    () => [...dripJobs.values()].some(j => j.status === 'active'),
+    [dripJobs],
+  );
+  usePolling(loadDripJobs, anyDripActive ? 15_000 : 30_000);
 
   const startEdit = (e: React.MouseEvent, campaign: Campaign) => {
     e.stopPropagation();

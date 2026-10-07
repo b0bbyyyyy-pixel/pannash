@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { usePolling } from '@/lib/sync/usePolling';
 import {
   DEFAULT_CASPER_CAPABILITIES,
   DEFAULT_CASPER_SYSTEM_PROMPT,
@@ -278,8 +279,9 @@ export function PingPanel() {
   const catchingUp = useRef(false);
   const lastCatchUpId = useRef<string | null>(null);
 
-  const load = useCallback(async (silent = false) => {
-    const res = await fetch('/api/casper/ping', { cache: 'no-store' });
+  const load = useCallback(async (silent = false, recover = false) => {
+    const qs = recover ? '?recover=1' : '';
+    const res = await fetch(`/api/casper/ping${qs}`, { cache: 'no-store' });
     const d = await res.json();
     setMessages(Array.isArray(d.messages) ? d.messages : []);
     setSetupRequired(!!d.setupRequired);
@@ -293,12 +295,10 @@ export function PingPanel() {
     return d as { messages?: PingMsg[] };
   }, []);
 
-  useEffect(() => { load(false); }, [load]);
+  useEffect(() => { load(false, true); }, [load]);
 
-  useEffect(() => {
-    const id = setInterval(() => { load(true); }, 4000);
-    return () => clearInterval(id);
-  }, [load]);
+  const pollPing = useCallback(() => { load(true); }, [load]);
+  usePolling(pollPing, 15_000, true, false);
 
   useEffect(() => {
     const last = messages[messages.length - 1];

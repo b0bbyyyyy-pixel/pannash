@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { usePolling } from '@/lib/sync/usePolling';
+import { kickSyncWorker } from '@/lib/sync/kick';
 import { useRouter } from 'next/navigation';
 import RunSmsModal, { type ExistingDripJob } from '@/components/RunSmsModal';
 import QuickTextPopup from '@/components/QuickTextPopup';
@@ -173,12 +175,7 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
     } catch { /* poll again next tick */ }
   }, [listId]);
 
-  // Poll drip status every 10s; countdown re-renders every second while active
-  useEffect(() => {
-    refreshDrip();
-    const poll = setInterval(refreshDrip, 10000);
-    return () => clearInterval(poll);
-  }, [refreshDrip]);
+  usePolling(refreshDrip, dripJob?.status === 'active' ? 10_000 : 30_000);
 
   useEffect(() => {
     if (dripJob?.status !== 'active') return;
@@ -203,6 +200,7 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ jobId: dripJob.id, action }),
       });
+      if (action === 'resume') kickSyncWorker();
       await refreshDrip();
     } finally {
       setDripBusy(false);

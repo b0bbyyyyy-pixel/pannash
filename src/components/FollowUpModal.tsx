@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { kickSyncWorker } from '@/lib/sync/kick';
 import { createPortal } from 'react-dom';
 import {
   DEFAULT_FOLLOW_UP_SMS,
@@ -124,6 +125,7 @@ export default function FollowUpModal({
         setError(data.error || 'Could not save follow-up');
         return;
       }
+      kickSyncWorker();
       onSaved?.({
         follow_up_at: data.follow_up_at,
         follow_up_due_at: data.follow_up_due_at,

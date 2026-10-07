@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { outboundSmsReceipt } from '@/lib/inbox/smsReceipt';
+import { useSync } from '@/lib/sync/SyncProvider';
 
 interface Msg {
   id: string;
@@ -56,18 +57,45 @@ export default function QuickTextPopup({
   const [savingTpl, setSavingTpl] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const { pulse, registerOpenLead } = useSync();
+  const conversationIdRef = useRef<string | null>(null);
+  const messagesRef = useRef<Msg[]>([]);
 
   const campaignHold =
     !!lead.list_id &&
     lead.in_pipeline === false &&
     (!lead.lead_status || lead.lead_status === 'New Lead');
 
-  const load = useCallback(async (quiet = false) => {
+  const load = useCallback(async (quiet = false, since?: string) => {
     if (!quiet) setLoading(true);
     try {
-      const res = await fetch(`/api/inbox/messages?leadId=${lead.id}`);
+      const params = new URLSearchParams({ leadId: lead.id });
+      if (since) {
+        params.set('since', since);
+        if (conversationIdRef.current) params.set('conversationId', conversationIdRef.current);
+      }
+      const res = await fetch(`/api/inbox/messages?${params}`);
       const data = await res.json();
-      setMessages(data.messages ?? []);
+      if (data.conversationId) conversationIdRef.current = data.conversationId;
+      const incoming: Msg[] = data.messages ?? [];
+      if (since) {
+        setMessages(prev => {
+          const map = new Map(prev.map(m => [m.id, m]));
+          const outboundBodies = new Set(
+            incoming.filter(m => m.direction === 'outbound').map(m => m.body),
+          );
+          for (const [id, m] of [...map.entries()]) {
+            if (id.startsWith('opt_') && outboundBodies.has(m.body)) map.delete(id);
+          }
+          for (const m of incoming) {
+            const cur = map.get(m.id);
+            map.set(m.id, cur ? { ...cur, ...m } : m);
+          }
+          return [...map.values()].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+        });
+      } else {
+        setMessages(incoming);
+      }
     } catch {
       /* keep existing */
     } finally {
@@ -78,9 +106,38 @@ export default function QuickTextPopup({
   useEffect(() => { void load(); }, [load]);
 
   useEffect(() => {
-    const t = window.setInterval(() => { void load(true); }, 4000);
-    return () => window.clearInterval(t);
-  }, [load]);
+    registerOpenLead(`quicktext:${lead.id}`, lead.id);
+    return () => registerOpenLead(`quicktext:${lead.id}`, null);
+  }, [lead.id, registerOpenLead]);
+
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+
+  const threadSig = pulse?.threads.find(t => t.leadId === lead.id)?.sig ?? '';
+  const lastSigRef = useRef('');
+  useEffect(() => {
+    if (!threadSig || threadSig === lastSigRef.current) return;
+    lastSigRef.current = threadSig;
+    const lastAt = messagesRef.current[messagesRef.current.length - 1]?.created_at;
+    if (!lastAt) {
+      void load(true);
+      return;
+    }
+    void load(true, lastAt);
+  }, [threadSig, load]);
+
+  const markedReadRef = useRef('');
+  useEffect(() => {
+    const row = pulse?.inboxChanged?.find(r => r.lead_id === lead.id);
+    if (!row || !(Number(row.unread_count) > 0)) return;
+    const key = `${lead.id}:${row.last_message_at ?? ''}`;
+    if (markedReadRef.current === key) return;
+    markedReadRef.current = key;
+    fetch('/api/inbox/read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ leadId: lead.id }),
+    }).catch(() => {});
+  }, [pulse, lead.id]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -172,7 +229,13 @@ export default function QuickTextPopup({
       });
       const data = await res.json();
       if (data.message) {
-        setMessages(prev => prev.map(m => m.id === optimistic.id ? { ...optimistic, ...data.message } : m));
+        setMessages(prev => {
+          const realId = data.message.id as string | undefined;
+          if (realId && prev.some(m => m.id === realId)) {
+            return prev.filter(m => m.id !== optimistic.id);
+          }
+          return prev.map(m => m.id === optimistic.id ? { ...optimistic, ...data.message } : m);
+        });
         if (data.error) setError(data.error);
       } else {
         setError(data.error || 'Could not send');

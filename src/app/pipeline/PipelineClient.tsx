@@ -775,8 +775,8 @@ export default function PipelineClient({ leads, userId, compact = false, initial
 
                 {/* Activity */}
                 <div className="flex flex-col justify-center items-end text-right">
-                  <span className="text-[11px] font-medium text-[#1a1a1a] leading-tight">{relativeTime(activityDate)}</span>
-                  <span className="text-[10px] text-[#9b9b9b] leading-tight">{absDate(activityDate)}</span>
+                  <span suppressHydrationWarning className="text-[11px] font-medium text-[#1a1a1a] leading-tight">{relativeTime(activityDate)}</span>
+                  <span suppressHydrationWarning className="text-[10px] text-[#9b9b9b] leading-tight">{absDate(activityDate)}</span>
                 </div>
 
                 <div className="flex items-center justify-center" onClick={e => e.stopPropagation()}>

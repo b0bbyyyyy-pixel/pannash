@@ -1,0 +1,601 @@
+import { getTwilioCreds } from '@/lib/telephony/twilio';
+import { sendTwilioSms } from '@/lib/telephony/sms';
+import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
+import { finishDripAttempt } from '@/lib/smsDrip/failsafe';
+import { zoneForLocation, isInSendWindow, nextWindowStart } from '@/lib/smsDrip/timezones';
+import { toE164 } from '@/lib/dialer/e164';
+import { isCampaignInboxLead } from '@/lib/inbox/promoteCampaignReply';
+
+interface DripJob {
+  id: string;
+  user_id: string;
+  list_id: string;
+  status: string;
+  templates: string[];
+  pace_min_seconds: number;
+  pace_max_seconds: number;
+  window_hours: number;
+  quiet_start: string;
+  quiet_end: string;
+  send_days: number[];
+  skip_states: string[];
+  include_already_texted?: boolean;
+  total_count: number;
+  sent_count: number;
+  next_send_at: string | null;
+}
+
+interface DripSend {
+  id: string;
+  lead_id: string;
+  position: number;
+  phone: string | null;
+  sms_status: string;
+  scheduled_for: string | null;
+}
+
+function last10(raw: string | null | undefined) {
+  return String(raw ?? '').replace(/\D/g, '').slice(-10);
+}
+
+function renderTemplate(tpl: string, lead: {
+  name?: string | null; company?: string | null;
+  underwriting_data?: Record<string, unknown> | null;
+}): string {
+  const ud = (lead.underwriting_data ?? {}) as Record<string, unknown>;
+  const firstName = (lead.name ?? '').trim().split(/\s+/)[0] ?? '';
+  const city = String(ud.businessCity ?? ud.city ?? '').trim();
+  const state = String(ud.businessState ?? ud.state ?? '').trim();
+  return tpl
+    .replace(/\{first_name\}/gi, firstName)
+    .replace(/\{company\}/gi, (lead.company ?? '').trim())
+    .replace(/\{city\}/gi, city)
+    .replace(/\{state\}/gi, state)
+    .replace(/ {2,}/g, ' ')
+    .trim();
+}
+
+/** Random pace delay in ms. 0–0 sends immediately. Window stretch/jitter only for human (30s+) pace. */
+function nextDelayMs(job: DripJob): number {
+  const minS = Math.max(0, Number(job.pace_min_seconds) || 0);
+  const maxS = Math.max(minS, Number(job.pace_max_seconds) || 0);
+  if (maxS <= 0) return 0;
+  let delay = (minS + Math.random() * (maxS - minS)) * 1000;
+  if (minS >= 30) {
+    const target = (Number(job.window_hours) * 3600 * 1000) / Math.max(1, job.total_count);
+    if (target > maxS * 1000) {
+      delay = target * (0.8 + Math.random() * 0.4);
+    }
+    delay += Math.random() * 12000;
+  }
+  return Math.round(delay);
+}
+
+function paceCapMs(job: DripJob) {
+  return (Math.max(Number(job.pace_max_seconds) || 0, 30) + 20) * 1000;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function releaseJobNow(supabase: any, jobId: string) {
+  const ts = new Date().toISOString();
+  await supabase.from('sms_drip_jobs').update({ next_send_at: ts, updated_at: ts }).eq('id', jobId);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function alreadyTexted(supabase: any, userId: string, leadId: string, phone: string | null, exceptSendId: string, includeAlreadyTexted?: boolean) {
+  const { data: byLead } = await supabase
+    .from('sms_drip_sends')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('lead_id', leadId)
+    .in('sms_status', ['sent', 'sending'])
+    .neq('id', exceptSendId)
+    .limit(1);
+  if (byLead?.length) return 'Already sent to this lead';
+
+  const digits = last10(phone);
+  const e164 = toE164(phone ?? '');
+  if (digits.length === 10) {
+    const { data: byPhone } = await supabase
+      .from('sms_drip_sends')
+      .select('id, phone')
+      .eq('user_id', userId)
+      .in('sms_status', ['sent', 'sending'])
+      .neq('id', exceptSendId)
+      .limit(300);
+    if ((byPhone ?? []).some((r: { phone?: string | null }) => {
+      const other = last10(r.phone);
+      return other === digits || (e164 && toE164(r.phone ?? '') === e164);
+    })) {
+      return 'Already sent to this number';
+    }
+  }
+
+  if (!includeAlreadyTexted) {
+    const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    const { data: inbox } = await supabase
+      .from('inbox_messages')
+      .select('id')
+      .eq('lead_id', leadId)
+      .eq('direction', 'outbound')
+      .in('status', ['queued', 'sent', 'delivered'])
+      .gte('created_at', since)
+      .limit(1);
+    if (inbox?.length) return 'Already texted this lead today';
+  }
+
+  return null;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function leaseJob(supabase: any, job: DripJob, userId: string, now: Date) {
+  if (job.next_send_at && new Date(job.next_send_at) > now) return false;
+  const leaseUntil = new Date(now.getTime() + 90_000).toISOString();
+  const q = supabase
+    .from('sms_drip_jobs')
+    .update({ next_send_at: leaseUntil, updated_at: now.toISOString() })
+    .eq('id', job.id)
+    .eq('user_id', userId)
+    .eq('status', 'active');
+  const { data } = job.next_send_at
+    ? await q.lte('next_send_at', now.toISOString()).select('id').maybeSingle()
+    : await q.is('next_send_at', null).select('id').maybeSingle();
+  return !!data;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function claimSendRow(supabase: any, send: DripSend, jobId: string, leaseUntil: string) {
+  const { data: asSending, error } = await supabase
+    .from('sms_drip_sends')
+    .update({ sms_status: 'sending', scheduled_for: leaseUntil, error: null })
+    .eq('id', send.id)
+    .eq('job_id', jobId)
+    .in('sms_status', ['queued', 'scheduled'])
+    .select('id')
+    .maybeSingle();
+  if (asSending) return true;
+  if (!error) return false;
+
+  // 'sending' not in the CHECK constraint yet — claim via scheduled + token
+  const token = `claim:${crypto.randomUUID()}`;
+  if (send.sms_status === 'queued') {
+    const { data } = await supabase
+      .from('sms_drip_sends')
+      .update({ sms_status: 'scheduled', scheduled_for: leaseUntil, error: token })
+      .eq('id', send.id)
+      .eq('job_id', jobId)
+      .eq('sms_status', 'queued')
+      .select('id')
+      .maybeSingle();
+    return !!data;
+  }
+  const { data } = await supabase
+    .from('sms_drip_sends')
+    .update({ error: token, scheduled_for: leaseUntil })
+    .eq('id', send.id)
+    .eq('job_id', jobId)
+    .eq('sms_status', 'scheduled')
+    .is('error', null)
+    .select('id')
+    .maybeSingle();
+  return !!data;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function loadCandidates(supabase: any, jobId: string, nowIso: string) {
+  const { data: dueScheduled } = await supabase
+    .from('sms_drip_sends')
+    .select('id, lead_id, position, phone, sms_status, scheduled_for')
+    .eq('job_id', jobId)
+    .eq('sms_status', 'scheduled')
+    .lte('scheduled_for', nowIso)
+    .order('scheduled_for', { ascending: true })
+    .limit(5);
+
+  const { data: queued } = await supabase
+    .from('sms_drip_sends')
+    .select('id, lead_id, position, phone, sms_status, scheduled_for')
+    .eq('job_id', jobId)
+    .eq('sms_status', 'queued')
+    .order('position', { ascending: true })
+    .limit(25);
+
+  return [...(dueScheduled ?? []), ...(queued ?? [])] as DripSend[];
+}
+
+export type DripProcessResult = {
+  processed: number;
+  results: Record<string, unknown>[];
+  setupRequired?: boolean;
+};
+
+// Advance every active drip job by at most one send (plus 0-pace extras).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function processTick(supabase: any, user: { id: string; email?: string | null }): Promise<DripProcessResult> {
+  try {
+    const { data: jobs, error: jobsErr } = await supabase
+      .from('sms_drip_jobs')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('status', 'active');
+
+    if (jobsErr) return { processed: 0, results: [], setupRequired: true };
+    if (!jobs?.length) return { processed: 0, results: [] };
+
+    const results: Record<string, unknown>[] = [];
+
+    for (const job of jobs as DripJob[]) {
+      let send: DripSend | null = null;
+      let lead: {
+        id: string; name?: string | null; company?: string | null;
+        phone?: string | null; sms_opt_out?: boolean | null;
+        underwriting_data?: Record<string, unknown> | null;
+      } | null = null;
+
+      // Skip out-of-window / dead leads in this tick instead of parking the whole drip.
+      for (let attempt = 0; attempt < 20; attempt++) {
+        let claimedSend: DripSend | null = null;
+        const tickNow = new Date();
+        const tickIso = tickNow.toISOString();
+
+        const { data: rpc, error: rpcErr } = await supabase.rpc('claim_drip_job_send', { p_job_id: job.id });
+        if (!rpcErr && rpc && typeof rpc === 'object') {
+          const payload = rpc as { job_claimed?: boolean; send?: { id: string; lead_id: string; position: number; phone: string | null } | null };
+          if (!payload.job_claimed) {
+            const { data: live } = await supabase
+              .from('sms_drip_jobs')
+              .select('next_send_at')
+              .eq('id', job.id)
+              .maybeSingle();
+            const waitMs = live?.next_send_at ? new Date(live.next_send_at).getTime() - Date.now() : 0;
+            if (waitMs > paceCapMs(job)) {
+              const { data: queued } = await supabase
+                .from('sms_drip_sends')
+                .select('id')
+                .eq('job_id', job.id)
+                .eq('sms_status', 'queued')
+                .limit(1);
+              if (queued?.length) {
+                await releaseJobNow(supabase, job.id);
+                continue;
+              }
+            }
+            if (attempt === 0) results.push({ jobId: job.id, waited: true });
+            break;
+          }
+          if (payload.send?.id) {
+            claimedSend = {
+              id: payload.send.id,
+              lead_id: payload.send.lead_id,
+              position: payload.send.position,
+              phone: payload.send.phone,
+              sms_status: 'sending',
+              scheduled_for: null,
+            };
+          }
+        } else {
+          const jobClaimed = await leaseJob(supabase, job, user.id, tickNow);
+          if (!jobClaimed) {
+            const waitMs = job.next_send_at ? new Date(job.next_send_at).getTime() - Date.now() : 0;
+            if (waitMs > paceCapMs(job)) {
+              const { data: queued } = await supabase
+                .from('sms_drip_sends')
+                .select('id')
+                .eq('job_id', job.id)
+                .eq('sms_status', 'queued')
+                .limit(1);
+              if (queued?.length) {
+                await releaseJobNow(supabase, job.id);
+                continue;
+              }
+            }
+            if (attempt === 0) results.push({ jobId: job.id, waited: true });
+            break;
+          }
+          const leaseUntil = new Date(tickNow.getTime() + 90_000).toISOString();
+          for (const row of await loadCandidates(supabase, job.id, tickIso)) {
+            if (await claimSendRow(supabase, row, job.id, leaseUntil)) {
+              claimedSend = row;
+              break;
+            }
+          }
+        }
+
+        if (!claimedSend) {
+          const { data: remaining } = await supabase
+            .from('sms_drip_sends')
+            .select('sms_status, scheduled_for')
+            .eq('job_id', job.id)
+            .in('sms_status', ['queued', 'scheduled', 'sending']);
+
+          if (!remaining?.length) {
+            await supabase.from('sms_drip_jobs')
+              .update({ status: 'completed', updated_at: new Date().toISOString() })
+              .eq('id', job.id);
+            results.push({ jobId: job.id, completed: true });
+          } else {
+            const queuedLeft = remaining.some((r: { sms_status: string }) => r.sms_status === 'queued' || r.sms_status === 'sending');
+            if (queuedLeft) {
+              await releaseJobNow(supabase, job.id);
+            } else {
+              const nextDue = remaining
+                .map((r: { scheduled_for: string | null }) => r.scheduled_for)
+                .filter(Boolean)
+                .sort()[0];
+              if (nextDue) {
+                await supabase.from('sms_drip_jobs')
+                  .update({ next_send_at: nextDue })
+                  .eq('id', job.id);
+              }
+              results.push({ jobId: job.id, waitingForWindow: true, nextDue: nextDue ?? null });
+            }
+          }
+          break;
+        }
+
+        const { data: nextLead } = await supabase
+          .from('leads')
+          .select('id, name, company, phone, sms_opt_out, underwriting_data, in_pipeline, lead_status')
+          .eq('id', claimedSend.lead_id)
+          .single();
+
+        const failSend = async (status: string, error: string) => {
+          await supabase.from('sms_drip_sends')
+            .update({ sms_status: status, error, scheduled_for: null })
+            .eq('id', claimedSend!.id);
+        };
+
+        if (!nextLead) {
+          await failSend('skipped_dnc', 'Lead deleted');
+          results.push({ jobId: job.id, leadId: claimedSend.lead_id, status: 'skipped_dnc' });
+          await releaseJobNow(supabase, job.id);
+          continue;
+        }
+        if (nextLead.sms_opt_out) {
+          await failSend('skipped_dnc', 'Opted out');
+          results.push({ jobId: job.id, leadId: nextLead.id, status: 'skipped_dnc' });
+          await releaseJobNow(supabase, job.id);
+          continue;
+        }
+        if (!isCampaignInboxLead(nextLead)) {
+          await failSend('replied', 'Moved to pipeline');
+          results.push({ jobId: job.id, leadId: nextLead.id, status: 'replied' });
+          await releaseJobNow(supabase, job.id);
+          continue;
+        }
+
+        const dup = await alreadyTexted(supabase, user.id, nextLead.id, claimedSend.phone ?? nextLead.phone, claimedSend.id, job.include_already_texted);
+        if (dup) {
+          await failSend('skipped_dup', dup);
+          results.push({ jobId: job.id, leadId: nextLead.id, status: 'skipped_dup', reason: dup });
+          await releaseJobNow(supabase, job.id);
+          continue;
+        }
+
+        const ud = (nextLead.underwriting_data ?? {}) as Record<string, unknown>;
+        const state = String(ud.businessState ?? ud.state ?? '').trim();
+        const city = String(ud.businessCity ?? ud.city ?? '').trim();
+        const tz = zoneForLocation(city, state) ?? 'America/New_York';
+        const days = job.send_days?.length ? job.send_days : [1, 2, 3, 4, 5, 6];
+
+        if (!isInSendWindow(tz, job.quiet_start, job.quiet_end, days, tickNow)) {
+          const opensAt = nextWindowStart(tz, job.quiet_start, days, tickNow);
+          await supabase.from('sms_drip_sends')
+            .update({ sms_status: 'scheduled', scheduled_for: opensAt.toISOString(), error: null })
+            .eq('id', claimedSend.id);
+          await releaseJobNow(supabase, job.id);
+          results.push({ jobId: job.id, deferredForWindow: true, nextDue: opensAt.toISOString() });
+          continue;
+        }
+
+        send = claimedSend;
+        lead = nextLead;
+        break;
+      }
+
+      if (!send || !lead) continue;
+
+      const tplIndex = Math.floor(Math.random() * Math.max(1, job.templates.length));
+      const body = renderTemplate(job.templates[tplIndex] ?? '', lead);
+      if (!body) {
+        const { paused } = await finishDripAttempt(supabase, {
+          jobId: job.id, sendId: send.id, status: 'failed',
+          error: 'Template rendered empty', templateIndex: tplIndex, email: user.email,
+        });
+        results.push({ jobId: job.id, leadId: lead.id, status: 'failed', paused });
+        if (!paused) await releaseJobNow(supabase, job.id);
+        continue;
+      }
+
+      const creds = await getTwilioCreds(supabase, user.id);
+      if (!creds) {
+        await supabase.from('sms_drip_sends')
+          .update({ sms_status: 'queued', scheduled_for: null, error: null })
+          .eq('id', send.id);
+        await supabase.from('sms_drip_jobs').update({ status: 'paused' }).eq('id', job.id);
+        results.push({ jobId: job.id, error: 'No Twilio connection — drip paused' });
+        continue;
+      }
+
+      // Last look before Twilio — another tab may have just recorded a send
+      const dupAgain = await alreadyTexted(supabase, user.id, lead.id, send.phone ?? lead.phone ?? null, send.id, job.include_already_texted);
+      if (dupAgain) {
+        await supabase.from('sms_drip_sends')
+          .update({ sms_status: 'skipped_dup', error: dupAgain, scheduled_for: null })
+          .eq('id', send.id);
+        await releaseJobNow(supabase, job.id);
+        results.push({ jobId: job.id, leadId: lead.id, status: 'skipped_dup', reason: dupAgain });
+        continue;
+      }
+
+      let sid: string | null = null;
+      let sendStatus: 'sent' | 'failed' = 'sent';
+      let sendError: string | null = null;
+      try {
+        const sent = await sendTwilioSms(creds, send.phone ?? lead.phone ?? '', body);
+        sid = sent.sid;
+        if (sent.status === 'failed') { sendStatus = 'failed'; sendError = sent.error ?? 'Send failed'; }
+      } catch (e) {
+        sendStatus = 'failed';
+        sendError = e instanceof Error ? e.message : 'Send failed';
+      }
+
+      const sentAt = new Date().toISOString();
+
+      await recordOutboundInboxSms(supabase, {
+        userId: user.id,
+        leadId: lead.id,
+        toPhone: send.phone ?? lead.phone,
+        body,
+        twilioSid: sid,
+        status: sendStatus === 'failed' ? 'failed' : 'sent',
+        errorMessage: sendError,
+        sentBy: 'system',
+        bumpLastMessageAt: false,
+      });
+
+      const { paused } = await finishDripAttempt(supabase, {
+        jobId: job.id,
+        sendId: send.id,
+        status: sendStatus,
+        error: sendError,
+        twilioSid: sid,
+        templateIndex: tplIndex,
+        email: user.email,
+      });
+
+      if (sendStatus === 'sent') {
+        await supabase.from('leads')
+          .update({ sms_sent_at: sentAt, last_contact: sentAt })
+          .eq('id', lead.id);
+      }
+
+      let sentTally = sendStatus === 'sent' ? 1 : 0;
+      const delay = nextDelayMs(job);
+      if (!paused) {
+        await supabase.from('sms_drip_jobs').update({
+          sent_count: job.sent_count + sentTally,
+          next_send_at: new Date(Date.now() + delay).toISOString(),
+          updated_at: sentAt,
+        }).eq('id', job.id);
+      }
+
+      results.push({ jobId: job.id, leadId: lead.id, status: sendStatus, nextInMs: paused ? null : delay, paused });
+      if (paused) continue;
+
+      // 0-second pace: keep sending in this tick (still one claim per lead)
+      if (delay === 0 && sendStatus === 'sent') {
+        for (let extra = 0; extra < 11; extra++) {
+          const leaseUntil = new Date(Date.now() + 90_000).toISOString();
+          let next: DripSend | null = null;
+          for (const c of await loadCandidates(supabase, job.id, new Date().toISOString())) {
+            if (await claimSendRow(supabase, c, job.id, leaseUntil)) {
+              next = c;
+              break;
+            }
+          }
+          if (!next) break;
+
+          const { data: nextLead } = await supabase
+            .from('leads')
+            .select('id, name, company, phone, sms_opt_out, underwriting_data, in_pipeline, lead_status')
+            .eq('id', next.lead_id)
+            .single();
+          if (!nextLead || nextLead.sms_opt_out) {
+            await supabase.from('sms_drip_sends')
+              .update({ sms_status: 'skipped_dnc', error: nextLead ? 'Opted out' : 'Lead deleted', scheduled_for: null })
+              .eq('id', next.id);
+            continue;
+          }
+          if (!isCampaignInboxLead(nextLead)) {
+            await supabase.from('sms_drip_sends')
+              .update({ sms_status: 'replied', error: 'Moved to pipeline', scheduled_for: null })
+              .eq('id', next.id);
+            continue;
+          }
+          const again = await alreadyTexted(supabase, user.id, nextLead.id, next.phone ?? nextLead.phone, next.id, job.include_already_texted);
+          if (again) {
+            await supabase.from('sms_drip_sends')
+              .update({ sms_status: 'skipped_dup', error: again, scheduled_for: null })
+              .eq('id', next.id);
+            continue;
+          }
+          const extraUd = (nextLead.underwriting_data ?? {}) as Record<string, unknown>;
+          const extraTz = zoneForLocation(
+            String(extraUd.businessCity ?? extraUd.city ?? '').trim(),
+            String(extraUd.businessState ?? extraUd.state ?? '').trim(),
+          ) ?? 'America/New_York';
+          const extraDays = job.send_days?.length ? job.send_days : [1, 2, 3, 4, 5, 6];
+          if (!isInSendWindow(extraTz, job.quiet_start, job.quiet_end, extraDays, new Date())) {
+            const opensAt = nextWindowStart(extraTz, job.quiet_start, extraDays, new Date());
+            await supabase.from('sms_drip_sends')
+              .update({ sms_status: 'scheduled', scheduled_for: opensAt.toISOString(), error: null })
+              .eq('id', next.id);
+            continue;
+          }
+          const extraIdx = Math.floor(Math.random() * Math.max(1, job.templates.length));
+          const extraBody = renderTemplate(job.templates[extraIdx] ?? '', nextLead);
+          if (!extraBody) {
+            const emptyPause = await finishDripAttempt(supabase, {
+              jobId: job.id, sendId: next.id, status: 'failed',
+              error: 'Template rendered empty', templateIndex: extraIdx, email: user.email,
+            });
+            results.push({ jobId: job.id, leadId: nextLead.id, status: 'failed', paused: emptyPause.paused });
+            if (emptyPause.paused) break;
+            continue;
+          }
+          let extraSid: string | null = null;
+          let extraStatus: 'sent' | 'failed' = 'sent';
+          let extraErr: string | null = null;
+          try {
+            const extraSent = await sendTwilioSms(creds, next.phone ?? nextLead.phone ?? '', extraBody);
+            extraSid = extraSent.sid;
+            if (extraSent.status === 'failed') { extraStatus = 'failed'; extraErr = extraSent.error ?? 'Send failed'; }
+          } catch (e) {
+            extraStatus = 'failed';
+            extraErr = e instanceof Error ? e.message : 'Send failed';
+          }
+          const extraAt = new Date().toISOString();
+          await recordOutboundInboxSms(supabase, {
+            userId: user.id,
+            leadId: nextLead.id,
+            toPhone: next.phone ?? nextLead.phone,
+            body: extraBody,
+            twilioSid: extraSid,
+            status: extraStatus === 'failed' ? 'failed' : 'sent',
+            errorMessage: extraErr,
+            sentBy: 'system',
+            bumpLastMessageAt: false,
+          });
+          const extraPause = await finishDripAttempt(supabase, {
+            jobId: job.id,
+            sendId: next.id,
+            status: extraStatus,
+            error: extraErr,
+            twilioSid: extraSid,
+            templateIndex: extraIdx,
+            email: user.email,
+          });
+          if (extraStatus === 'sent') {
+            sentTally += 1;
+            await supabase.from('leads').update({ sms_sent_at: extraAt, last_contact: extraAt }).eq('id', nextLead.id);
+          }
+          if (!extraPause.paused) {
+            await supabase.from('sms_drip_jobs').update({
+              sent_count: job.sent_count + sentTally,
+              next_send_at: extraAt,
+              updated_at: extraAt,
+            }).eq('id', job.id);
+          }
+          results.push({ jobId: job.id, leadId: nextLead.id, status: extraStatus, nextInMs: 0, paused: extraPause.paused });
+          if (extraStatus !== 'sent' || extraPause.paused) break;
+        }
+      }
+    }
+
+    return { processed: results.length, results };
+  } catch (err) {
+    console.error('[sms/drip/process]', err);
+    throw err;
+  }
+}

@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { JotPad, type JotPadHandle } from '@/components/JotPad';
 import { PING_BEFORE_OPTIONS, buildPingSchedule, offsetsFromEvent } from '@/lib/casper/calendarPingSchedule';
+import { usePolling } from '@/lib/sync/usePolling';
+import { kickSyncWorker } from '@/lib/sync/kick';
 
 interface LeadTimer {
   leadId: string;
@@ -234,13 +236,10 @@ export default function CalendarClient() {
       .catch(() => {});
   }, [monthKey]);
 
-  useEffect(() => {
-    const id = setInterval(() => {
-      fetch('/api/calendar/alerts', { method: 'POST' }).catch(() => {});
-    }, 60000);
+  const fireAlerts = useCallback(() => {
     fetch('/api/calendar/alerts', { method: 'POST' }).catch(() => {});
-    return () => clearInterval(id);
   }, []);
+  usePolling(fireAlerts, 60_000);
 
   useEffect(() => {
     if (!selectedDate) return;
@@ -428,6 +427,7 @@ export default function CalendarClient() {
           const d = await res.json();
           setEvents(prev => prev.map(e => e.id === editingEvent.id ? d.event : e));
           setShowForm(false); setEditingEvent(null); setForm(blankForm());
+          if (payload.alertEnabled) kickSyncWorker();
         } else {
           const err = await res.json().catch(() => ({}));
           setSaveError(err.error || 'Save failed');
@@ -441,6 +441,7 @@ export default function CalendarClient() {
           const d = await res.json();
           setEvents(prev => [...prev, d.event]);
           setShowForm(false); setEditingEvent(null); setForm(blankForm());
+          if (payload.alertEnabled) kickSyncWorker();
         } else {
           const err = await res.json().catch(() => ({}));
           setSaveError(err.error || 'Save failed — run add-calendar.sql / add-calendar-planner.sql in Supabase.');

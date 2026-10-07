@@ -311,8 +311,8 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
 
               {/* ACTIVITY */}
               <div className="flex flex-col justify-center">
-                <span className="text-[11px] font-medium text-[#1a1a1a] leading-tight">{relativeTime(activityDate)}</span>
-                <span className="text-[10px] text-[#9b9b9b] leading-tight">{absDate(activityDate)}</span>
+                <span suppressHydrationWarning className="text-[11px] font-medium text-[#1a1a1a] leading-tight">{relativeTime(activityDate)}</span>
+                <span suppressHydrationWarning className="text-[10px] text-[#9b9b9b] leading-tight">{absDate(activityDate)}</span>
               </div>
 
               {/* Actions */}

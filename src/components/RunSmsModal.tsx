@@ -5,6 +5,7 @@
  * Drip setup modal. Matches existing Gostwrk dialogs (NewCampaignModal styling).
  */
 import { useState, useEffect, useRef } from 'react';
+import { kickSyncWorker } from '@/lib/sync/kick';
 import { ALL_STATES } from '@/lib/smsDrip/timezones';
 
 const PACE_PRESETS = [
@@ -135,6 +136,7 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
         setError(data.error || 'Could not save drip');
         return;
       }
+      kickSyncWorker();
     }
     setSaving(false);
     setSavedMsg(ok ? 'Saved' : 'Saved on this device');
@@ -235,6 +237,7 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
           });
       const data = await res.json();
       if (!res.ok) { setError(data.error || (existingJob ? 'Could not resume drip' : 'Could not start drip')); return; }
+      kickSyncWorker();
       onStarted();
       onClose();
     } catch {

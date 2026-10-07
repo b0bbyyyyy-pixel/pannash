@@ -82,25 +82,31 @@ export async function POST(req: NextRequest) {
       .maybeSingle();
 
     const leadIdForCreds = updated?.[0]?.lead_id ?? queueItem?.lead_id ?? null;
-    let recoveredBody = await recoverOutboundSmsBody(supabase, messageSid, body || queueItem?.sms_body);
+    const needsBody =
+      !(updated?.length) ||
+      updated.some(row => isPlaceholderSmsBody(row.body));
+    let recoveredBody: string | null = null;
+    if (needsBody) {
+      recoveredBody = await recoverOutboundSmsBody(supabase, messageSid, body || queueItem?.sms_body);
 
-    if (!recoveredBody && (leadIdForCreds || updated?.length)) {
-      let userId: string | null = null;
-      if (leadIdForCreds) {
-        const { data: lead } = await supabase
-          .from('leads')
-          .select('user_id')
-          .eq('id', leadIdForCreds)
-          .maybeSingle();
-        userId = lead?.user_id ?? null;
-      }
-      if (userId) {
-        const creds = await getTwilioCreds(supabase, userId);
-        if (creds) {
-          try {
-            recoveredBody = await fetchTwilioSmsBody(creds, messageSid);
-          } catch (err) {
-            console.warn('[SMS Status] Twilio body fetch failed', messageSid, err);
+      if (!recoveredBody && (leadIdForCreds || updated?.length)) {
+        let userId: string | null = null;
+        if (leadIdForCreds) {
+          const { data: lead } = await supabase
+            .from('leads')
+            .select('user_id')
+            .eq('id', leadIdForCreds)
+            .maybeSingle();
+          userId = lead?.user_id ?? null;
+        }
+        if (userId) {
+          const creds = await getTwilioCreds(supabase, userId);
+          if (creds) {
+            try {
+              recoveredBody = await fetchTwilioSmsBody(creds, messageSid);
+            } catch (err) {
+              console.warn('[SMS Status] Twilio body fetch failed', messageSid, err);
+            }
           }
         }
       }

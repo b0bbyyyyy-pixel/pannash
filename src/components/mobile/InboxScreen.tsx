@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { usePolling } from '@/lib/sync/usePolling';
 import { useRouter } from 'next/navigation';
 import FullCrmLink from '@/components/mobile/FullCrmLink';
 import { enableAlerts } from '@/components/mobile/MobilePush';
@@ -66,16 +67,14 @@ export default function InboxScreen() {
     return () => { ctrl.abort(); clearTimeout(t); };
   }, [q]);
 
-  useEffect(() => {
-    const id = setInterval(() => {
-      if (q.trim() || compose) return;
-      fetch('/api/m/threads')
-        .then(r => r.json())
-        .then(d => { if (d.threads) setThreads(d.threads); })
-        .catch(() => {});
-    }, 8000);
-    return () => clearInterval(id);
+  const pollThreads = useCallback(() => {
+    if (q.trim() || compose) return;
+    fetch('/api/m/threads')
+      .then(r => r.json())
+      .then(d => { if (d.threads) setThreads(d.threads); })
+      .catch(() => {});
   }, [q, compose]);
+  usePolling(pollThreads, 8000, true, false);
 
   return (
     <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-white">

@@ -6,6 +6,8 @@ import FullCrmLink from '@/components/mobile/FullCrmLink';
 import InboundPhoto from '@/components/mobile/InboundPhoto';
 import { dayStamp, initial } from '@/components/mobile/format';
 import { outboundSmsReceipt } from '@/lib/inbox/smsReceipt';
+import { useSync } from '@/lib/sync/SyncProvider';
+import { usePolling } from '@/lib/sync/usePolling';
 
 type MediaItem = { sid?: string; path?: string; type: string; savedAt?: string | null };
 
@@ -86,10 +88,22 @@ export default function ThreadScreen() {
     });
   }, [load]);
 
+  const { pulse, registerOpenLead } = useSync();
   useEffect(() => {
-    const id = setInterval(() => { if (!sending) load(); }, 4000);
-    return () => clearInterval(id);
-  }, [load, sending]);
+    registerOpenLead('mobile-thread', threadId);
+    return () => registerOpenLead('mobile-thread', null);
+  }, [threadId, registerOpenLead]);
+
+  const threadSig = pulse?.threads.find(t => t.leadId === threadId)?.sig ?? '';
+  const lastSigRef = useRef('');
+  useEffect(() => {
+    if (!threadSig || threadSig === lastSigRef.current || sending) return;
+    lastSigRef.current = threadSig;
+    void load();
+  }, [threadSig, load, sending]);
+
+  const pollThread = useCallback(() => { if (!sending) void load(); }, [sending, load]);
+  usePolling(pollThread, 8000, !pulse, false);
 
   useEffect(() => {
     if (!stick.current) return;
@@ -121,11 +135,16 @@ export default function ThreadScreen() {
       });
       const data = await res.json();
       const saved: Msg | undefined = data.message;
-      setMessages(prev => prev.map(m => {
-        if (m.id !== temp.id) return m;
-        if (!saved) return { ...m, pending: false, status: 'failed', error_message: data.error || 'Not sent' };
-        return { ...saved, pending: false };
-      }));
+      setMessages(prev => {
+        if (saved?.id && prev.some(m => m.id === saved.id)) {
+          return prev.filter(m => m.id !== temp.id);
+        }
+        return prev.map(m => {
+          if (m.id !== temp.id) return m;
+          if (!saved) return { ...m, pending: false, status: 'failed', error_message: data.error || 'Not sent' };
+          return { ...saved, pending: false };
+        });
+      });
     } catch {
       setMessages(prev => prev.map(m => m.id === temp.id
         ? { ...m, pending: false, status: 'failed', error_message: 'Not sent' }
