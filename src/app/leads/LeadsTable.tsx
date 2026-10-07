@@ -85,7 +85,7 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
   const [leadOverlayId, setLeadOverlayId] = useState<string | null>(null);
   const [rows, setRows] = useState(leads);
   const leadFrameRef = useRef<HTMLIFrameElement>(null);
-  const [leadMenuState, setLeadMenuState] = useState<{ section: LeadActionId; appComplete: boolean; lendersComplete: boolean } | null>(null);
+  const [leadMenuState, setLeadMenuState] = useState<{ section: LeadActionId; appComplete: boolean; lendersComplete: boolean; docsComplete: boolean; offersComplete: boolean } | null>(null);
   const [docsLead, setDocsLead] = useState<{ id: string; name: string; company?: string } | null>(null);
   const [emailLead, setEmailLead] = useState<Lead | null>(null);
   const [followLead, setFollowLead] = useState<Lead | null>(null);
@@ -137,7 +137,7 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
         setRows(prev => prev.map(l => l.id === d.id ? { ...l, ...d.patch } : l));
       }
       if (d.type === LEAD_STATE_MSG && typeof d.section === 'string') {
-        setLeadMenuState({ section: d.section as LeadActionId, appComplete: !!d.appComplete, lendersComplete: !!d.lendersComplete });
+        setLeadMenuState({ section: d.section as LeadActionId, appComplete: !!d.appComplete, lendersComplete: !!d.lendersComplete, docsComplete: !!d.docsComplete, offersComplete: !!d.offersComplete });
       }
       if (d.type === BACK_TO_PIPELINE_MSG) {
         setLeadOverlayId(null);
@@ -504,6 +504,8 @@ export default function LeadsTable({ leads, deleteLead, deleteMultipleLeads, sea
                 showAppDot
                 appComplete={leadMenuState?.appComplete ?? false}
                 lendersComplete={leadMenuState?.lendersComplete ?? false}
+                docsComplete={leadMenuState?.docsComplete ?? false}
+                offersComplete={leadMenuState?.offersComplete ?? false}
               />
               <div className="flex items-center gap-3">
                 <a

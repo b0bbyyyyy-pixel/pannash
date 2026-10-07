@@ -260,7 +260,7 @@ export default function InboxClient({
   const [pipelineFrameSrc, setPipelineFrameSrc] = useState('/pipeline?modal=1');
   const pipelineFrameRef = useRef<HTMLIFrameElement>(null);
   const leadOverlayFrameRef = useRef<HTMLIFrameElement>(null);
-  const [leadMenuState, setLeadMenuState] = useState<{ section: LeadActionId; appComplete: boolean; lendersComplete: boolean } | null>(null);
+  const [leadMenuState, setLeadMenuState] = useState<{ section: LeadActionId; appComplete: boolean; lendersComplete: boolean; docsComplete: boolean; offersComplete: boolean } | null>(null);
   const [pipelineLeadId, setPipelineLeadId] = useState<string | null>(null);
   const [pipelineShowingLead, setPipelineShowingLead] = useState(false);
 
@@ -367,7 +367,7 @@ export default function InboxClient({
         return;
       }
       if (d.type === LEAD_STATE_MSG && typeof d.section === 'string') {
-        setLeadMenuState({ section: d.section as LeadActionId, appComplete: !!d.appComplete, lendersComplete: !!d.lendersComplete });
+        setLeadMenuState({ section: d.section as LeadActionId, appComplete: !!d.appComplete, lendersComplete: !!d.lendersComplete, docsComplete: !!d.docsComplete, offersComplete: !!d.offersComplete });
         return;
       }
       if (d.type === BACK_TO_PIPELINE_MSG) {
@@ -874,7 +874,7 @@ export default function InboxClient({
         openInboxLead({ tab: 'lender', action: 'send' });
         break;
       case 'offers':
-        openInboxLead({ tab: 'lender', action: 'offers' });
+        openInboxLead({ tab: 'offers' });
         break;
       case 'financials':
         openInboxLead({ tab: 'lender' });
@@ -1098,6 +1098,8 @@ export default function InboxClient({
                     showAppDot
                     appComplete={leadMenuState?.appComplete ?? false}
                     lendersComplete={leadMenuState?.lendersComplete ?? false}
+                    docsComplete={leadMenuState?.docsComplete ?? false}
+                    offersComplete={leadMenuState?.offersComplete ?? false}
                   />
                   <button
                     type="button"
@@ -1558,6 +1560,8 @@ export default function InboxClient({
                   showAppDot
                   appComplete={leadMenuState?.appComplete ?? false}
                   lendersComplete={leadMenuState?.lendersComplete ?? false}
+                  docsComplete={leadMenuState?.docsComplete ?? false}
+                  offersComplete={leadMenuState?.offersComplete ?? false}
                 />
               ) : (
                 <span className="text-xs text-[#6b6b6b] font-medium">Pipeline</span>
@@ -1660,6 +1664,8 @@ export default function InboxClient({
               showAppDot
               appComplete={leadMenuState?.appComplete ?? false}
               lendersComplete={leadMenuState?.lendersComplete ?? false}
+              docsComplete={leadMenuState?.docsComplete ?? false}
+              offersComplete={leadMenuState?.offersComplete ?? false}
             />
             <div className="flex items-center gap-3">
               <a

@@ -58,6 +58,8 @@ export type LeadStateMsg = {
   section: string;
   appComplete: boolean;
   lendersComplete?: boolean;
+  docsComplete?: boolean;
+  offersComplete?: boolean;
 };
 
 export type PipelineFrameMsg =
@@ -107,8 +109,20 @@ export function postLeadShown(id: string) {
   postToParent({ type: LEAD_SHOWN_MSG, id });
 }
 
-export function postLeadState(section: string, appComplete: boolean, lendersComplete = false) {
-  postToParent({ type: LEAD_STATE_MSG, section, appComplete, lendersComplete });
+export function postLeadState(
+  section: string,
+  appComplete: boolean,
+  lendersComplete = false,
+  extra?: { docsComplete?: boolean; offersComplete?: boolean },
+) {
+  postToParent({
+    type: LEAD_STATE_MSG,
+    section,
+    appComplete,
+    lendersComplete,
+    docsComplete: extra?.docsComplete,
+    offersComplete: extra?.offersComplete,
+  });
 }
 
 export function postCallToTop(data: Omit<CallMsg, 'type'>) {

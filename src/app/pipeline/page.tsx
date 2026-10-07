@@ -149,12 +149,26 @@ export default async function PipelinePage({
     }
   }
 
+  const pipelineIds = [...leadMap.keys()];
+  const docCountByLead: Record<string, number> = {};
+  if (pipelineIds.length) {
+    const { data: attRows } = await supabase
+      .from('lead_attachments')
+      .select('lead_id')
+      .in('lead_id', pipelineIds);
+    for (const row of attRows ?? []) {
+      const id = String((row as { lead_id: string }).lead_id);
+      docCountByLead[id] = (docCountByLead[id] ?? 0) + 1;
+    }
+  }
+
   const leadsWithText = [...leadMap.values()].map(l => {
     const t = lastTextByLead[String(l.id)];
     return {
       ...l,
       last_text: t?.preview ?? null,
       last_text_outbound: t?.outbound ?? false,
+      doc_count: docCountByLead[String(l.id)] ?? 0,
     };
   });
 

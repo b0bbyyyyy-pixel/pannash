@@ -22,10 +22,11 @@ type MenuEntry =
   | { kind: 'group'; label: string; groupId?: LeadActionId; collapse?: boolean; items: { id: LeadActionId; label: string }[] };
 
 const MENU: MenuEntry[] = [
+  { kind: 'item', id: 'docs', label: 'Docs' },
   { kind: 'item', id: 'application', label: 'Application' },
   { kind: 'item', id: 'lender', label: 'Lenders' },
+  { kind: 'item', id: 'offers', label: 'Offers' },
   { kind: 'item', id: 'status', label: 'Status' },
-  { kind: 'item', id: 'docs', label: 'Docs' },
   {
     kind: 'group',
     label: 'Comms',
@@ -47,6 +48,8 @@ export default function LeadActionsMenu({
   showAppDot = false,
   appComplete = false,
   lendersComplete = false,
+  docsComplete = false,
+  offersComplete = false,
   hiddenItems,
 }: {
   onAction: (id: LeadActionId) => void;
@@ -56,6 +59,8 @@ export default function LeadActionsMenu({
   showAppDot?: boolean;
   appComplete?: boolean;
   lendersComplete?: boolean;
+  docsComplete?: boolean;
+  offersComplete?: boolean;
   hiddenItems?: LeadActionId[];
 }) {
   const [open, setOpen] = useState(false);
@@ -183,6 +188,12 @@ export default function LeadActionsMenu({
                   className={`${itemCls} ${current ? 'font-semibold' : ''}`}
                 >
                   <span className="flex-1 inline-flex items-center gap-1.5">
+                    {entry.id === 'docs' && (
+                      <span
+                        className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${docsComplete ? 'bg-emerald-500' : 'bg-red-500'}`}
+                        aria-hidden
+                      />
+                    )}
                     {entry.id === 'application' && (
                       <span
                         className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${appComplete ? 'bg-emerald-500' : 'bg-red-500'}`}
@@ -192,6 +203,12 @@ export default function LeadActionsMenu({
                     {entry.id === 'lender' && (
                       <span
                         className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${lendersComplete ? 'bg-emerald-500' : 'bg-red-500'}`}
+                        aria-hidden
+                      />
+                    )}
+                    {entry.id === 'offers' && (
+                      <span
+                        className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${offersComplete ? 'bg-emerald-500' : 'bg-red-500'}`}
                         aria-hidden
                       />
                     )}

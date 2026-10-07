@@ -92,6 +92,8 @@ interface UnderwritingSuiteProps {
   showOffersModal?: boolean;
   /** Called when the offers modal overlay should close */
   onCloseOffersModal?: () => void;
+  /** Dedicated Offers tab — only the Actual Offers module, in-page */
+  offersOnly?: boolean;
 }
 
 // ── SOS Registry URLs by state abbreviation ─────────────────────────────────
@@ -304,6 +306,7 @@ export default function UnderwritingSuite({
   offersAsModal = false,
   showOffersModal = false,
   onCloseOffersModal,
+  offersOnly = false,
 }: UnderwritingSuiteProps) {
   const [data, setData] = useState<UnderwritingData>({ ...DEFAULT_DATA, ...initialData });
 
@@ -1449,10 +1452,10 @@ export default function UnderwritingSuite({
 
   return (
     <>
-    <div className={inline ? "contents" : "fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"}>
-      <div className={inline ? "w-full flex flex-col" : "bg-white rounded-lg shadow-2xl w-full max-w-[1600px] h-[90vh] flex flex-col"}>
+    <div className={inline ? (offersOnly ? "w-full" : "contents") : "fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"}>
+      <div className={inline ? (offersOnly ? "w-full max-w-5xl mx-auto bg-white border border-[#e5e5e5] rounded-lg overflow-hidden" : "w-full flex flex-col") : "bg-white rounded-lg shadow-2xl w-full max-w-[1600px] h-[90vh] flex flex-col"}>
         {/* Header */}
-        <div className="border-b border-gray-200 p-6 flex items-center justify-between">
+        {!offersOnly && <div className="border-b border-gray-200 p-6 flex items-center justify-between">
           <div className="flex items-start gap-4">
             {/* Business name + person + SOS */}
             <div>
@@ -1559,12 +1562,12 @@ export default function UnderwritingSuite({
               </button>
             )}
           </div>
-        </div>
+        </div>}
 
         {/* Main Content */}
-        <div className="flex-1 flex overflow-hidden">
+        <div className={offersOnly ? '' : 'flex-1 flex overflow-hidden'}>
           {/* Left Sidebar - Financial Data Inputs */}
-          <div className="w-80 border-r border-gray-200 p-6 overflow-y-auto bg-gray-50">
+          {!offersOnly && <div className="w-80 border-r border-gray-200 p-6 overflow-y-auto bg-gray-50">
             {/* Calculate Button */}
             <div className="mb-6">
               <button
@@ -1574,10 +1577,10 @@ export default function UnderwritingSuite({
                 Calculate Offer
               </button>
             </div>
-          </div>
+          </div>}
 
           {/* Center - Analysis & Charts */}
-          <div className="flex-1 p-6 overflow-y-auto">
+          {!offersOnly && <div className="flex-1 p-6 overflow-y-auto">
             {(() => {
                   let displayAmount: number;
                   let displayFactorRate: number;
@@ -1745,20 +1748,22 @@ export default function UnderwritingSuite({
                   );
                 })()}
 
-          </div>
+          </div>}
 
           {/* Right Panel - Actual Offers Received */}
           {/* When offersAsModal=true, backdrop shown when open */}
-          {offersAsModal && showOffersModal && (
+          {offersAsModal && !offersOnly && showOffersModal && (
             <div className="fixed inset-0 bg-black/50 z-[74]" onClick={onCloseOffersModal} />
           )}
           <div className={
-            offersAsModal
+            offersOnly
+              ? 'w-full p-4 md:p-5 overflow-y-auto bg-white'
+              : offersAsModal
               ? `fixed right-0 top-0 bottom-0 w-full max-w-lg bg-gray-50 overflow-y-auto shadow-2xl z-[75] transition-transform duration-200 ${showOffersModal ? 'translate-x-0' : 'translate-x-full'}`
               : 'w-96 border-l border-gray-200 p-6 overflow-y-auto bg-gray-50'
           }>
             {/* Modal header — only shown when rendered as an overlay */}
-            {offersAsModal && (
+            {offersAsModal && !offersOnly && (
               <div className="sticky top-0 flex items-center justify-between px-6 py-4 bg-white border-b border-gray-200 z-10">
                 <h2 className="text-base font-bold text-gray-900">Actual Offers Received</h2>
                 <div className="flex items-center gap-2">
@@ -1779,7 +1784,7 @@ export default function UnderwritingSuite({
             {/* Inner wrapper adds padding when in modal mode */}
             <div className={offersAsModal ? 'p-6' : ''}>
             {/* Normal sidebar header — only shown when NOT in modal mode */}
-            {!offersAsModal && <div className="flex items-center justify-between mb-4">
+            {(!offersAsModal || offersOnly) && <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold text-gray-900">Actual Offers Received</h2>
               <button
                 onClick={() => setShowPitchModal(true)}
@@ -1788,6 +1793,9 @@ export default function UnderwritingSuite({
                 Pitch
               </button>
             </div>}
+
+            <div className={offersOnly ? 'grid grid-cols-1 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,1fr)] gap-4 items-start' : ''}>
+            <div className={offersOnly ? 'min-w-0' : ''}>
             
             {/* Saved Offers List - Now at top */}
             {actualOffers.length > 0 && (
@@ -2538,13 +2546,14 @@ export default function UnderwritingSuite({
               </div>
               )}
             </div>
-            
+            </div>
+
             {/* Notes Section — auto-populated from the lead's CRM notes, editable */}
-            <div>
+            <div className={offersOnly ? 'bg-[#fafafa] border border-[#ececec] rounded-xl p-4 min-h-[420px] flex flex-col lg:row-span-2' : ''}>
               <div className="flex items-center justify-between mb-2">
-                <label className="block text-sm font-medium text-gray-700">Lead Notes</label>
+                <label className="block text-sm font-medium text-gray-700">{offersOnly ? 'Notes' : 'Lead Notes'}</label>
                 <div className="flex items-center gap-2">
-                  {!notesEditing && notesEditValue.trim().length > 0 && (
+                  {!offersOnly && !notesEditing && notesEditValue.trim().length > 0 && (
                     <button
                       type="button"
                       onClick={() => setNotesExpanded(v => !v)}
@@ -2597,13 +2606,13 @@ export default function UnderwritingSuite({
                   autoFocus
                   value={notesEditValue}
                   onChange={e => setNotesEditValue(e.target.value)}
-                  className="w-full px-3 py-2 border border-[#5a7fc7] rounded-md text-sm resize-y focus:outline-none focus:ring-2 focus:ring-[#5a7fc7] bg-white text-gray-700"
-                  rows={6}
+                  className={`w-full px-3 py-2 border border-[#5a7fc7] rounded-md text-sm resize-y focus:outline-none focus:ring-2 focus:ring-[#5a7fc7] bg-white text-gray-700 ${offersOnly ? 'flex-1 min-h-[320px]' : ''}`}
+                  rows={offersOnly ? 16 : 6}
                 />
               ) : notesEditValue.trim().length > 0 ? (
                 <div
-                  className={`w-full px-3 py-2 border border-gray-200 rounded-md text-sm bg-[#f8f9fc] text-gray-700 whitespace-pre-wrap break-words overflow-y-auto transition-all ${notesExpanded ? '' : 'max-h-28'}`}
-                  style={{ minHeight: '4.5rem' }}
+                  className={`w-full px-3 py-2 border border-gray-200 rounded-md text-sm bg-[#f8f9fc] text-gray-700 whitespace-pre-wrap break-words overflow-y-auto transition-all ${offersOnly ? 'flex-1 min-h-[320px]' : notesExpanded ? '' : 'max-h-28'}`}
+                  style={offersOnly ? undefined : { minHeight: '4.5rem' }}
                 >
                   {notesEditValue.trim()}
                 </div>
@@ -2611,8 +2620,8 @@ export default function UnderwritingSuite({
                 <button
                   type="button"
                   onClick={() => { setNotesEditing(true); setNotesExpanded(true); }}
-                  className="w-full px-3 py-2 border border-dashed border-gray-200 rounded-md text-sm text-gray-400 italic text-left hover:border-[#5a7fc7] hover:text-[#5a7fc7] transition-colors"
-                  style={{ minHeight: '4.5rem' }}
+                  className={`w-full px-3 py-2 border border-dashed border-gray-200 rounded-md text-sm text-gray-400 italic text-left hover:border-[#5a7fc7] hover:text-[#5a7fc7] transition-colors ${offersOnly ? 'flex-1 min-h-[320px]' : ''}`}
+                  style={offersOnly ? undefined : { minHeight: '4.5rem' }}
                 >
                   No notes yet — click to add
                 </button>
@@ -2621,7 +2630,7 @@ export default function UnderwritingSuite({
             
             {/* Quick Comparison */}
             {hasCalculated && actualOffers.length > 0 && (
-              <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <div className={`mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4 ${offersOnly ? 'lg:col-start-1' : ''}`}>
                 <h3 className="text-sm font-medium text-blue-900 mb-3">Quick Comparison</h3>
                 <div className="space-y-2 text-xs text-blue-800">
                   {actualOffers.map((offer) => (
@@ -2644,6 +2653,7 @@ export default function UnderwritingSuite({
                 </div>
               </div>
             )}
+            </div>
             
           </div>
           </div>{/* closes inner p-6 wrapper */}

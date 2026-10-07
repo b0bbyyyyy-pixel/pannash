@@ -17,6 +17,7 @@ import {
   postOpenLead,
 } from '@/lib/pipeline/iframeMessages';
 import { saveLeadStatusWrite } from '@/lib/pipeline/saveLeadStatus';
+import { isDocsComplete, isOffersComplete } from '@/lib/leads/menuComplete';
 import { buildFundingApplication } from '@/lib/fundingApplication';
 import { toE164 } from '@/lib/dialer/e164';
 import { useWebPhone } from '@/components/webphone/WebPhone';
@@ -55,6 +56,7 @@ interface Lead {
   underwriting_data?: Record<string, unknown> | null;
   last_text?: string | null;
   last_text_outbound?: boolean;
+  doc_count?: number;
   timer_type?: string | null;
   timer_end_date?: string | null;
 }
@@ -175,6 +177,14 @@ function rowLendersComplete(lead: Lead): boolean {
   const offers = Array.isArray(ud.actualOffers) ? ud.actualOffers : [];
   if (offers.length > 0) return true;
   return /approv/i.test(lead.lead_status || '');
+}
+
+function rowDocsComplete(lead: Lead): boolean {
+  return isDocsComplete(lead.doc_count ?? 0);
+}
+
+function rowOffersComplete(lead: Lead): boolean {
+  return isOffersComplete({ underwriting_data: lead.underwriting_data, lead_status: lead.lead_status });
 }
 
 function parseLocalDate(dateStr: string): Date | null {
@@ -316,7 +326,7 @@ export default function PipelineClient({ leads, userId, compact = false, initial
   const [rowEmailLead, setRowEmailLead]     = useState<Lead | null>(null);
   const [rowFollowUpLead, setRowFollowUpLead] = useState<Lead | null>(null);
   const [rowCallMsg, setRowCallMsg]         = useState<string | null>(null);
-  const [leadMenuState, setLeadMenuState]   = useState<{ section: LeadActionId; appComplete: boolean; lendersComplete: boolean } | null>(null);
+  const [leadMenuState, setLeadMenuState]   = useState<{ section: LeadActionId; appComplete: boolean; lendersComplete: boolean; docsComplete: boolean; offersComplete: boolean } | null>(null);
   const [docsLead, setDocsLead]             = useState<{ id: string; name: string; company?: string | null } | null>(null);
   const leadFrameRef = useRef<HTMLIFrameElement>(null);
   const webphone = useWebPhone();
@@ -349,7 +359,7 @@ export default function PipelineClient({ leads, userId, compact = false, initial
         return;
       }
       if (d.type === LEAD_STATE_MSG && typeof d.section === 'string') {
-        setLeadMenuState({ section: d.section as LeadActionId, appComplete: !!d.appComplete, lendersComplete: !!d.lendersComplete });
+        setLeadMenuState({ section: d.section as LeadActionId, appComplete: !!d.appComplete, lendersComplete: !!d.lendersComplete, docsComplete: !!d.docsComplete, offersComplete: !!d.offersComplete });
         return;
       }
       if (d.type === PIPELINE_LEAD_MSG && d.id && d.patch) {
@@ -506,6 +516,8 @@ export default function PipelineClient({ leads, userId, compact = false, initial
         section: (extra?.tab as LeadActionId) || 'application',
         appComplete: rowAppComplete(opened),
         lendersComplete: rowLendersComplete(opened),
+        docsComplete: rowDocsComplete(opened),
+        offersComplete: rowOffersComplete(opened),
       });
     }
   };
@@ -568,7 +580,7 @@ export default function PipelineClient({ leads, userId, compact = false, initial
         goTo(lead.id, { tab: 'lender', action: 'send' });
         break;
       case 'offers':
-        goTo(lead.id, { tab: 'lender', action: 'offers' });
+        goTo(lead.id, { tab: 'offers' });
         break;
       case 'financials':
         goTo(lead.id, { tab: 'lender' });
@@ -798,6 +810,8 @@ export default function PipelineClient({ leads, userId, compact = false, initial
                     showAppDot
                     appComplete={rowAppComplete(lead)}
                     lendersComplete={rowLendersComplete(lead)}
+                    docsComplete={rowDocsComplete(lead)}
+                    offersComplete={rowOffersComplete(lead)}
                   />
                 </div>
               </div>
@@ -1188,6 +1202,8 @@ export default function PipelineClient({ leads, userId, compact = false, initial
                 showAppDot
                 appComplete={Boolean(leadMenuState?.appComplete) || (overlayLeadForMenu ? rowAppComplete(overlayLeadForMenu) : false)}
                 lendersComplete={Boolean(leadMenuState?.lendersComplete) || (overlayLeadForMenu ? rowLendersComplete(overlayLeadForMenu) : false)}
+                docsComplete={Boolean(leadMenuState?.docsComplete) || (overlayLeadForMenu ? rowDocsComplete(overlayLeadForMenu) : false)}
+                offersComplete={Boolean(leadMenuState?.offersComplete) || (overlayLeadForMenu ? rowOffersComplete(overlayLeadForMenu) : false)}
               />
               <div className="flex items-center gap-3">
                 <a

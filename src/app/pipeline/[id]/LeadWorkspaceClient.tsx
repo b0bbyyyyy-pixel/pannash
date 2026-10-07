@@ -7,6 +7,7 @@ import { isInIframe, LEAD_ACTION_MSG, postBackToPipeline, postCallToTop, postLea
 import { saveLeadStatusWrite } from '@/lib/pipeline/saveLeadStatus';
 import { toE164 } from '@/lib/dialer/e164';
 import { buildFundingApplication } from '@/lib/fundingApplication';
+import { isDocsComplete, isOffersComplete } from '@/lib/leads/menuComplete';
 import { useWebPhone } from '@/components/webphone/WebPhone';
 import LeadUpdatesTimeline from '@/components/LeadUpdatesTimeline';
 import LeadActionsMenu, { type LeadActionId } from '@/components/LeadActionsMenu';
@@ -51,8 +52,8 @@ interface Lead {
   list_id?: string | null;
 }
 
-type SurfaceTab = 'application' | 'status' | 'lender' | 'comms';
-const SURFACE_TABS: SurfaceTab[] = ['application', 'status', 'lender', 'comms'];
+type SurfaceTab = 'application' | 'status' | 'lender' | 'offers' | 'comms';
+const SURFACE_TABS: SurfaceTab[] = ['application', 'status', 'lender', 'offers', 'comms'];
 type ChildOverlay = 'send' | 'offers' | 'financials' | 'docs' | 'sms' | 'email' | 'followup';
 
 interface LeadWorkspaceClientProps {
@@ -336,11 +337,10 @@ export default function LeadWorkspaceClient({
   const [showDocsModal, setShowDocsModal]       = useState(false);
   const [showVault, setShowVault]               = useState(false);
   const [showManageStatuses, setShowManageStatuses] = useState(false);
-  const [showOffersModal, setShowOffersModal] = useState(false);
+  const [docCount, setDocCount]               = useState(0);
   const [dbStatuses, setDbStatuses]           = useState<DBStatus[]>([]);
 
   const closeChildOverlays = useCallback(() => {
-    setShowOffersModal(false);
     setShowDocsModal(false);
     setShowTextPopup(false);
     setShowEmailModal(false);
@@ -350,7 +350,7 @@ export default function LeadWorkspaceClient({
   const openChildOverlay = useCallback((which: ChildOverlay) => {
     closeChildOverlays();
     if (which === 'send' || which === 'financials') setSurfaceTab('lender');
-    else if (which === 'offers') setShowOffersModal(true);
+    else if (which === 'offers') setSurfaceTab('offers');
     else if (which === 'docs') setShowDocsModal(true);
     else if (which === 'sms') setShowTextPopup(true);
     else if (which === 'email') setShowEmailModal(true);
@@ -459,6 +459,15 @@ export default function LeadWorkspaceClient({
   useEffect(() => {
     loadSubmissions();
   }, [loadSubmissions]);
+
+  const loadDocCount = useCallback(() => {
+    fetch(`/api/attachments?leadId=${lead.id}`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(j => setDocCount(Array.isArray(j.attachments) ? j.attachments.length : 0))
+      .catch(() => {});
+  }, [lead.id]);
+  useEffect(() => { loadDocCount(); }, [loadDocCount]);
+  useEffect(() => { if (!showDocsModal) loadDocCount(); }, [showDocsModal, loadDocCount]);
   useEffect(() => {
     const u = (initialLead.underwriting_data || {}) as Record<string, unknown>;
     if (u.owner2FirstName || u.owner2LastName || u.owner2CreditScore) setShowOwner2(true);
@@ -827,6 +836,10 @@ export default function LeadWorkspaceClient({
       underwriting_data: payload,
       ...(payload.isFunded ? { lead_status: 'Funded' } : {}),
     }));
+    postLeadPatch(lead.id, {
+      underwriting_data: payload,
+      ...(payload.isFunded ? { lead_status: 'Funded' } : {}),
+    });
   };
 
   // ── Delete lead ──────────────────────────────────────────────────────────────
@@ -1064,6 +1077,11 @@ export default function LeadWorkspaceClient({
   }), [lead.name, lead.email, lead.phone, lead.company, lead.value, ud]);
   const appComplete = appCheck.missing.length === 0;
   const missingList = appMissing.length ? appMissing : appCheck.missing;
+  const docsComplete = isDocsComplete(docCount);
+  const offersComplete = useMemo(
+    () => isOffersComplete({ underwriting_data: ud, lead_status: lead.lead_status, submissions }),
+    [ud, lead.lead_status, submissions],
+  );
   const lendersComplete = useMemo(() => {
     const offers = Array.isArray(ud.actualOffers) ? ud.actualOffers : [];
     if (offers.length > 0) return true;
@@ -1073,8 +1091,8 @@ export default function LeadWorkspaceClient({
   }, [ud.actualOffers, submissions, lead.lead_status]);
 
   useEffect(() => {
-    postLeadState(surfaceTab, appComplete, lendersComplete);
-  }, [surfaceTab, appComplete, lendersComplete]);
+    postLeadState(surfaceTab, appComplete, lendersComplete, { docsComplete, offersComplete });
+  }, [surfaceTab, appComplete, lendersComplete, docsComplete, offersComplete]);
 
   const lenderCriteria = useMemo(() => ({
     timeInBusiness:    derivedTIB ?? Number(ud.timeInBusiness ?? 0),
@@ -1110,8 +1128,7 @@ export default function LeadWorkspaceClient({
         setSurfaceTab('lender');
         break;
       case 'offers':
-        setSurfaceTab('lender');
-        openChildOverlay('offers');
+        setSurfaceTab('offers');
         break;
       case 'sms':
         setSurfaceTab('comms');
@@ -1157,15 +1174,17 @@ export default function LeadWorkspaceClient({
 
     if (tab && (SURFACE_TABS as string[]).includes(tab)) {
       setSurfaceTab(tab as SurfaceTab);
-    } else if (action === 'send' || action === 'offers' || action === 'financials') {
+    } else if (action === 'send' || action === 'financials') {
       setSurfaceTab('lender');
+    } else if (action === 'offers') {
+      setSurfaceTab('offers');
     } else if (action === 'email' || action === 'sms' || action === 'followup') {
       setSurfaceTab('comms');
     } else if (action === 'edit') {
       setSurfaceTab('application');
     }
 
-    if (action === 'offers') openChildOverlay('offers');
+    if (action === 'offers' || tab === 'offers') setSurfaceTab('offers');
     else if (tab === 'docs' || action === 'docs') openChildOverlay('docs');
     else if (action === 'email') openChildOverlay('email');
     else if (action === 'sms') openChildOverlay('sms');
@@ -1335,10 +1354,12 @@ export default function LeadWorkspaceClient({
           {!isModal && (
             <LeadActionsMenu
               onAction={handleMenuAction}
-              currentSection={surfaceTab}
+              currentSection={showDocsModal ? 'docs' : surfaceTab}
               showAppDot
               appComplete={appComplete}
               lendersComplete={lendersComplete}
+              docsComplete={docsComplete}
+              offersComplete={offersComplete}
             />
           )}
           <button
@@ -1388,12 +1409,26 @@ export default function LeadWorkspaceClient({
 
       <div className="bg-white border-b border-[#e5e5e5] px-6 py-2">
         <span className="text-[11px] font-semibold text-[#9b9b9b] uppercase tracking-wider">
-          {{ application: 'Application', status: 'Status', lender: 'Lenders', comms: 'Comms' }[surfaceTab]}
+          {{ application: 'Application', status: 'Status', lender: 'Lenders', offers: 'Offers', comms: 'Comms' }[surfaceTab]}
         </span>
       </div>
 
       <div className={surfaceTab === 'lender' ? 'flex-1 min-h-0 overflow-hidden bg-white' : 'bg-[#fafafa] min-h-[calc(100vh-180px)] p-4'}>
-        {surfaceTab === 'lender' ? (
+        {surfaceTab === 'offers' ? (
+          <UnderwritingSuite
+            leadId={lead.id}
+            leadName={lead.name}
+            businessName={lead.company}
+            phone={lead.phone}
+            leadNotes={lead.notes}
+            initialData={lead.underwriting_data as any}
+            onClose={() => setSurfaceTab('lender')}
+            onSave={handleUnderwritingSave as any}
+            onNotesUpdate={async (n: string) => { await saveField('notes', n); setNotes(n); }}
+            inline
+            offersOnly
+          />
+        ) : surfaceTab === 'lender' ? (
           (() => {
             const flagOn = (v: unknown) => v === true || v === 'true';
             const snapFlags = (
@@ -1535,7 +1570,7 @@ export default function LeadWorkspaceClient({
                 userName={userName}
                 criteria={lenderCriteria}
                 onSent={loadSubmissions}
-                onOpenOffers={() => openChildOverlay('offers')}
+                onOpenOffers={() => setSurfaceTab('offers')}
               />
             </div>
           </div>
@@ -1874,31 +1909,6 @@ export default function LeadWorkspaceClient({
         )}
       </div>
 
-      {/* ── UNDERWRITING SUITE — hidden from view, kept dormant so the
-           Offers overlay (position:fixed) still works when triggered.
-           Do NOT add transform/filter to this wrapper or fixed children break.
-           NOTE: no pointer-events-none here — the in-flow content is already
-           unclickable (0x0 + overflow-hidden), and the fixed overlays
-           (Offers panel, Pitch modal, Client Portal) must stay clickable. ── */}
-      {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-      <div className="absolute -left-[9999px] -top-[9999px] overflow-hidden w-0 h-0">
-        <UnderwritingSuite
-          leadId={lead.id}
-          leadName={lead.name}
-          businessName={lead.company}
-          phone={lead.phone}
-          leadNotes={lead.notes}
-          initialData={lead.underwriting_data as any}
-          onClose={() => {}}
-          onSave={handleUnderwritingSave as any}
-          onNotesUpdate={async (n: string) => { await saveField('notes', n); setNotes(n); }}
-          inline
-          offersAsModal
-          showOffersModal={showOffersModal}
-          onCloseOffersModal={() => setShowOffersModal(false)}
-        />
-      </div>
-
       {showFullFinancials && (
         <FinancialsModal
           snap={bankSnap}
@@ -1919,8 +1929,8 @@ export default function LeadWorkspaceClient({
           leadCompany={lead.company}
           onApplyParsed={applyParsedApp}
           onAnalyze={analyzeBankAttachment}
-          onApplied={() => { void refreshLeadFromServer(); }}
-          onClose={() => setShowDocsModal(false)}
+          onApplied={() => { void refreshLeadFromServer(); loadDocCount(); }}
+          onClose={() => { setShowDocsModal(false); loadDocCount(); }}
         />
       )}
 

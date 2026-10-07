@@ -137,7 +137,7 @@ function LeadInfoOverlay({
 }) {
   const router = useRouter();
   const frameRef = useRef<HTMLIFrameElement>(null);
-  const [leadMenuState, setLeadMenuState] = useState<{ section: LeadActionId; appComplete: boolean; lendersComplete: boolean } | null>(null);
+  const [leadMenuState, setLeadMenuState] = useState<{ section: LeadActionId; appComplete: boolean; lendersComplete: boolean; docsComplete: boolean; offersComplete: boolean } | null>(null);
   const [showDocs, setShowDocs] = useState(false);
   const [showEmail, setShowEmail] = useState(false);
   const [showFollowUp, setShowFollowUp] = useState(false);
@@ -147,7 +147,7 @@ function LeadInfoOverlay({
       const d = e.data;
       if (!d || typeof d !== 'object') return;
       if (d.type === LEAD_STATE_MSG && typeof d.section === 'string') {
-        setLeadMenuState({ section: d.section as LeadActionId, appComplete: !!d.appComplete, lendersComplete: !!d.lendersComplete });
+        setLeadMenuState({ section: d.section as LeadActionId, appComplete: !!d.appComplete, lendersComplete: !!d.lendersComplete, docsComplete: !!d.docsComplete, offersComplete: !!d.offersComplete });
         return;
       }
       if (d.type === BACK_TO_PIPELINE_MSG) onClose();
@@ -184,6 +184,8 @@ function LeadInfoOverlay({
             showAppDot
             appComplete={leadMenuState?.appComplete ?? false}
             lendersComplete={leadMenuState?.lendersComplete ?? false}
+            docsComplete={leadMenuState?.docsComplete ?? false}
+            offersComplete={leadMenuState?.offersComplete ?? false}
           />
           <div className="flex items-center gap-3">
             <a
