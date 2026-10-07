@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import type { BankStatementAnalysisSnapshot } from '@/lib/bankAnalyzer';
 import ClientPortalModal from '@/components/ClientPortalModal';
+import { JotPad, type JotPadHandle } from '@/components/JotPad';
 
 interface UnderwritingData {
   // Merchant Info
@@ -72,6 +73,9 @@ interface UnderwritingData {
   creditUtilization?: number;
   creditInquiries?: number;
   creditLates?: number;
+
+  /** Handwritten jot snapshot for the Notes panel */
+  jotImage?: string | null;
 }
 
 interface UnderwritingSuiteProps {
@@ -559,6 +563,11 @@ export default function UnderwritingSuite({
   const [notesEditing, setNotesEditing] = useState(false);
   const [notesEditValue, setNotesEditValue] = useState(leadNotes ?? '');
   const [notesSaving, setNotesSaving] = useState(false);
+  const [jotImage, setJotImage] = useState<string | null>(initialData?.jotImage ?? null);
+  const [showJot, setShowJot] = useState(false);
+  const [jotSaving, setJotSaving] = useState(false);
+  const [jotError, setJotError] = useState('');
+  const jotRef = useRef<JotPadHandle>(null);
 
   // ── Credit Report Parsing (client-side via PDF.js) ───────────────────────
   interface CreditReportMeta {
@@ -764,8 +773,8 @@ export default function UnderwritingSuite({
     setNegotiationAddedPoints((p) => Math.min(p, commissionPointsMax));
   }, [commissionPointsMax]);
   
-  // Negotiation section collapse state
-  const [isNegotiationCollapsed, setIsNegotiationCollapsed] = useState(false);
+  // Negotiation section collapse state — always start collapsed; leaving and returning remounts this.
+  const [isNegotiationCollapsed, setIsNegotiationCollapsed] = useState(true);
 
   // LOC draw slider
   const [locDrawAmount, setLocDrawAmount] = useState(0);
@@ -1187,6 +1196,7 @@ export default function UnderwritingSuite({
     fundedAt: data.fundedAt,
     hasCalculated,
     lastUpdated: new Date().toISOString(),
+    jotImage,
     ...overrides,
   });
 
@@ -1202,6 +1212,31 @@ export default function UnderwritingSuite({
       setSaving(false);
     }
   };
+
+  useEffect(() => {
+    if (!showJot) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setShowJot(false); setJotError(''); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showJot]);
+
+  async function saveNotesJot() {
+    if (jotSaving) return;
+    setJotSaving(true);
+    setJotError('');
+    try {
+      const image = jotRef.current?.isBlank() ? '' : (jotRef.current?.toDataURL() ?? '');
+      await onSave(buildSavePayload({ jotImage: image || null }));
+      setJotImage(image || null);
+      setShowJot(false);
+    } catch (err) {
+      setJotError(err instanceof Error ? err.message : 'Could not save jot');
+    } finally {
+      setJotSaving(false);
+    }
+  }
 
   const handleSave = async () => {
     await persistUnderwriting();
@@ -2549,9 +2584,30 @@ export default function UnderwritingSuite({
             </div>
 
             {/* Notes Section — auto-populated from the lead's CRM notes, editable */}
-            <div className={offersOnly ? 'bg-[#fafafa] border border-[#ececec] rounded-xl p-4 min-h-[420px] flex flex-col lg:row-span-2' : ''}>
+            <div className={`${offersOnly ? 'bg-[#fafafa] border border-[#ececec] rounded-xl p-4 min-h-[420px] flex flex-col lg:row-span-2' : ''} relative ${showJot ? 'min-h-[420px]' : ''}`}>
               <div className="flex items-center justify-between mb-2">
-                <label className="block text-sm font-medium text-gray-700">{offersOnly ? 'Notes' : 'Lead Notes'}</label>
+                <div className="flex items-center gap-1.5">
+                  <label className="block text-sm font-medium text-gray-700">{offersOnly ? 'Notes' : 'Lead Notes'}</label>
+                  <button
+                    type="button"
+                    title="Handwritten jot"
+                    onClick={() => { setJotError(''); setShowJot(true); }}
+                    className="inline-flex items-center justify-center w-8 h-8 -my-2 text-[#9b9b9b] hover:text-[#1a1a1a]"
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+                      <path d="M12 3c1.2 2.4 4 5.2 4 8.2A4 4 0 0 1 8 11.2C8 8.2 10.8 5.4 12 3Z" />
+                      <circle cx="12" cy="11" r="1" fill="currentColor" stroke="none" />
+                      <path d="M12 15.2V21" />
+                      <path d="M9 21h6" />
+                    </svg>
+                  </button>
+                  {jotImage ? (
+                    <>
+                      <img src={jotImage} alt="" className="w-5 h-4 object-cover border border-[#e5e5e5]" />
+                      <span className="text-[10px] uppercase tracking-wider text-[#9b9b9b]">1 jot</span>
+                    </>
+                  ) : null}
+                </div>
                 <div className="flex items-center gap-2">
                   {!offersOnly && !notesEditing && notesEditValue.trim().length > 0 && (
                     <button
@@ -2625,6 +2681,46 @@ export default function UnderwritingSuite({
                 >
                   No notes yet — click to add
                 </button>
+              )}
+
+              {showJot && (
+                <div
+                  className="absolute inset-0 z-20 bg-white flex flex-col select-none rounded-xl overflow-hidden"
+                  style={{ overscrollBehavior: 'none', touchAction: 'none', WebkitUserSelect: 'none' }}
+                >
+                  <div className="px-5 py-4 border-b border-[#e5e5e5] flex items-start justify-between gap-3 shrink-0">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide">{businessName || leadName || 'Lead'}</p>
+                      <p className="text-[11px] text-[#9b9b9b] mt-0.5">Jot</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => { setShowJot(false); setJotError(''); }}
+                      className="text-[#9b9b9b] hover:text-[#1a1a1a] text-lg leading-none"
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <JotPad ref={jotRef} initialImage={jotImage} />
+                  <div className="p-4 border-t border-[#e5e5e5] flex items-center gap-3 shrink-0">
+                    <button
+                      type="button"
+                      onClick={saveNotesJot}
+                      disabled={jotSaving}
+                      className="text-xs font-medium uppercase tracking-wide text-[#1a1a1a] disabled:opacity-40"
+                    >
+                      {jotSaving ? 'Saving…' : 'Save'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setShowJot(false); setJotError(''); }}
+                      className="text-xs uppercase tracking-wide text-[#9b9b9b]"
+                    >
+                      Cancel
+                    </button>
+                    {jotError ? <p className="text-xs text-red-600 ml-auto">{jotError}</p> : null}
+                  </div>
+                </div>
               )}
             </div>
             
