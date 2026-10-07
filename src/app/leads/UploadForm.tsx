@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import JSZip from 'jszip';
 import { parseLeadPasteText } from '@/lib/parse-lead-paste';
 import { toE164 } from '@/lib/dialer/e164';
+import { extractSheetLead, looksLikeHeaderRow, mergeSheetLead } from '@/lib/import/extractSheetLead';
 
 interface UploadFormProps {
   selectedListId?: string;
@@ -312,11 +313,6 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
     return false;
   };
 
-  const isLikelyName = (value: string): boolean => {
-    // Names are typically 2-4 words, contain letters, possibly spaces
-    return /^[a-zA-Z\s\-\.]{2,50}$/.test(value) && value.split(' ').length <= 4;
-  };
-
   const isLikelyCompany = (value: string): boolean => {
     // Company names often have these indicators
     const companyKeywords = [
@@ -331,141 +327,36 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
            value.split(' ').length > 4; // Companies often have longer names
   };
 
-  const isShortName = (value: string): boolean => {
-    // Short single words are likely first or last names
-    const trimmed = value.trim();
-    return trimmed.length > 1 && trimmed.length < 20 && !trimmed.includes(' ');
-  };
-
   // Positional column mapper for files WITHOUT headers
   const positionalColumnMapper = (row: string[]): any => {
-    const result: any = {
-      name: '',
-      email: '',
-      phone: null,
-      company: null,
-      notes: null,
-    };
-
-    // Find email and ALL phone positions
-    let emailIndex = -1;
-    const phoneIndices: number[] = [];
-
-    row.forEach((value, index) => {
-      const trimmed = String(value || '').trim();
-      if (isEmail(trimmed)) {
-        emailIndex = index;
-        result.email = trimmed;
-      } else if (isPhone(trimmed)) {
-        phoneIndices.push(index);
-      }
-    });
-
-    // Primary phone = first phone found; extras go to notes
-    const phoneIndex = phoneIndices[0] ?? -1;
-    if (phoneIndex !== -1) result.phone = String(row[phoneIndex] || '').trim();
-    const extraPhones = phoneIndices.slice(1).map(i => String(row[i] || '').trim()).filter(Boolean);
-
-    // Find the key anchor point (email or first phone, whichever comes first)
-    const keyIndex = Math.min(
-      ...[emailIndex, phoneIndex].filter(i => i !== -1)
+    const extracted = extractSheetLead(row);
+    const usedVals = new Set(
+      [
+        extracted.name,
+        extracted.email,
+        extracted.phone,
+        extracted.company,
+        extracted.industry,
+        extracted.address,
+        ...(extracted.name ? extracted.name.split(/\s+/) : []),
+      ].filter(Boolean).map(v => String(v)),
     );
+    const extraPhones = row
+      .map(v => String(v || '').trim())
+      .filter(v => isPhone(v) && v !== extracted.phone);
+    const leftover = row
+      .map(v => String(v || '').trim())
+      .filter(v => v && !usedVals.has(v) && !isPhone(v) && !isEmail(v) && !isMoney(v));
 
-    // Analyze text columns BEFORE email/phone
-    const namePartIndices: number[] = [];
-    let companyIndex = -1;
-
-    if (keyIndex !== Infinity) {
-      // Look at columns before email/phone
-      for (let i = 0; i < keyIndex; i++) {
-        const trimmed = String(row[i] || '').trim();
-        if (trimmed && !isPhone(trimmed) && !isEmail(trimmed)) {
-          // Check if it's text
-          if (/^[a-zA-Z\s\-\.&,']+$/.test(trimmed)) {
-            // Determine if it's a company or person name
-            if (isLikelyCompany(trimmed)) {
-              // This looks like a company name
-              if (companyIndex === -1) {
-                companyIndex = i;
-              }
-            } else if (isShortName(trimmed) || namePartIndices.length < 2) {
-              // Short names (like "John", "Smith") are likely person name parts
-              // Or if we haven't found 2 name parts yet, keep collecting
-              namePartIndices.push(i);
-            } else {
-              // If we already have 2 name parts and this is a longer text, it's probably company
-              if (companyIndex === -1) {
-                companyIndex = i;
-              }
-            }
-          }
-        }
-      }
-    } else {
-      // No email/phone found, use heuristics on first few columns
-      for (let i = 0; i < Math.min(4, row.length); i++) {
-        const trimmed = String(row[i] || '').trim();
-        if (trimmed && /^[a-zA-Z\s\-\.&,']+$/.test(trimmed)) {
-          if (isLikelyCompany(trimmed) && companyIndex === -1) {
-            companyIndex = i;
-          } else if (namePartIndices.length < 2 && !isLikelyCompany(trimmed)) {
-            namePartIndices.push(i);
-          }
-        }
-      }
-    }
-
-    // Build name from collected name parts (typically first and last name)
-    if (namePartIndices.length > 0) {
-      result.name = namePartIndices
-        .slice(0, 3) // Max 3 name parts (e.g., First Middle Last)
-        .map(idx => String(row[idx] || '').trim())
-        .filter(part => part)
-        .join(' ');
-    }
-
-    // Set company if found before email/phone
-    if (companyIndex !== -1) {
-      result.company = String(row[companyIndex] || '').trim();
-    }
-
-    // Find additional company/notes from columns AFTER email/phone
-    const usedIndices = [emailIndex, ...phoneIndices, companyIndex, ...namePartIndices].filter(i => i !== -1);
-    const remaining = row
-      .map((val, idx) => ({ val: String(val || '').trim(), idx }))
-      .filter(item => !usedIndices.includes(item.idx) && item.val);
-
-    // If company not found yet, look after email/phone
-    if (!result.company && remaining.length > 0) {
-      const afterKeyColumns = remaining.filter(item => {
-        if (emailIndex !== -1 && phoneIndex !== -1) {
-          return item.idx > Math.max(emailIndex, phoneIndex);
-        } else if (emailIndex !== -1) {
-          return item.idx > emailIndex;
-        } else if (phoneIndex !== -1) {
-          return item.idx > phoneIndex;
-        }
-        return true;
-      });
-
-      // Pick the first NON-money value as company; money values stay in notes
-      const pool = afterKeyColumns.length > 0 ? afterKeyColumns : remaining;
-      const companyPick = pool.find(item => !isMoney(item.val));
-      if (companyPick) {
-        result.company = companyPick.val;
-        const leftover = pool.filter(item => item.idx !== companyPick.idx).map(r => r.val);
-        result.notes = [...extraPhones, ...leftover].join(' | ') || null;
-      } else {
-        // Everything left is money — all of it goes to notes
-        result.notes = [...extraPhones, ...pool.map(r => r.val)].join(' | ') || null;
-      }
-    } else {
-      // Company already found, remaining columns + extra phones go to notes
-      const leftover = remaining.map(r => r.val);
-      result.notes = [...extraPhones, ...leftover].join(' | ') || null;
-    }
-
-    return result;
+    return {
+      name: extracted.name || '',
+      email: extracted.email || '',
+      phone: extracted.phone,
+      company: extracted.company,
+      notes: [...extraPhones, ...leftover].join(' | ') || null,
+      industry: extracted.industry,
+      address: extracted.address,
+    };
   };
 
   // Smart column mapper - finds the right value regardless of column name or order
@@ -604,7 +495,7 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
 
     // Email: ignore obvious placeholder emails
     const rawEmail = findColumn(['email', 'e-mail', 'email address', 'emailaddress', 'contact email', 'mail']);
-    const email = rawEmail && !rawEmail.toLowerCase().includes('noemail') ? rawEmail : null;
+    let email = rawEmail && !rawEmail.toLowerCase().includes('noemail') ? rawEmail : null;
 
     // Words that are phone-type labels, not company names — reject these
     const PHONE_TYPE_LABELS = new Set([
@@ -624,12 +515,17 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
     // Reject money values from any structured lead-info field → they fall through to notes
     const noMoney = (v: string | null): string | null => (v && !isMoney(v) ? v : null);
 
-    // Company: prefer "Business Name" then "Company Name" then generic
-    const company = isValidCompany(
-      findExact(['business name', 'business_name', 'dba', 'dba name']) ||
+    // Company: prefer "Business Name" / "Company" then generic; never require the word "name"
+    let company = isValidCompany(
+      findExact(['company', 'business', 'business name', 'business_name', 'dba', 'dba name']) ||
       findExact(['company name', 'company_name', 'companyname']) ||
-      findColumn(['organization', 'org', 'employer', 'account'])
+      findColumn(['organization', 'employer', 'account name'])
     );
+
+    const heur = extractSheetLead(rowKeys.map(k => row[k]));
+    if (!company) company = isValidCompany(heur.company);
+    if (!name) name = heur.name;
+    if (!email) email = heur.email;
 
     // ── Business profile fields (shown in the lead info card) ──────────────────
     // All wrapped in noMoney() so dollar amounts can never land in the info card.
@@ -735,7 +631,7 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
       'name','full name','fullname','first name','firstname','first_name','fname','given name',
       'last name','lastname','last_name','lname','surname','family name',
       'email','e-mail','email address','emailaddress','mail',
-      'business name','business_name','company name','company_name','companyname',
+      'business name','business_name','company name','company_name','companyname','company','business',
       'organization','org','employer','account','dba','dba name','doing business as',
       'notes','note','comments','comment','description','details','memo','remarks',
       'mobile','cell','home','work','office','direct','landline','voip','personal',
@@ -784,11 +680,11 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
     return {
       name: name || '',
       email: email || '',
-      phone: primaryPhone,
+      phone: primaryPhone || heur.phone,
       company: company || null,
       notes: combinedNotes,
-      industry: industry || null,
-      address: address || null,
+      industry: industry || heur.industry || null,
+      address: address || heur.address || null,
       city: bizCity || null,
       state: bizState || null,
       zip: bizZip || null,
@@ -1487,14 +1383,14 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
 
   const sliceCsvToRange = (csv: string, from: number, to: number, hasHeader: boolean) => {
     const rows = parseSheetCsv(csv);
-    if (rows.length === 0) return { csv, count: 0 };
+    if (rows.length === 0) return { csv, count: 0, dataRows: [] as string[][] };
     const start = Math.max(0, from - 1);
     const end = Math.min(rows.length, to);
     let slice = rows.slice(start, end);
     if (hasHeader && start === 0) slice = slice.slice(1);
     const header = hasHeader ? rows[0] : null;
     const out = header ? [header, ...slice] : slice;
-    return { csv: Papa.unparse(out), count: slice.length };
+    return { csv: Papa.unparse(out), count: slice.length, dataRows: slice };
   };
 
   const handleRangeChange = (from: string, to: string) => {
@@ -1521,7 +1417,7 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
   const handleAiParse = async () => {
     if (!rawSheetsCsv) return;
     const { from, to } = selectedRange();
-    const { csv: rangedCsv, count } = sliceCsvToRange(rawSheetsCsv, from, to, sheetsHasHeader);
+    const { csv: rangedCsv, count, dataRows } = sliceCsvToRange(rawSheetsCsv, from, to, sheetsHasHeader);
     if (count === 0) {
       setAiParseError('No rows in the selected range to parse.');
       return;
@@ -1539,26 +1435,29 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
         setAiParseError(json.error || 'AI parse failed. Check your XAI_API_KEY.');
         return;
       }
-      const mapped: ParsedLead[] = (json.leads as Array<{
+      const aiLeads = (json.leads as Array<{
         name: string | null; email: string | null; phone: string | null; company: string | null;
         industry?: string | null; address?: string | null; city?: string | null;
         state?: string | null; zip?: string | null; start_date?: string | null;
-      }>).map(l => ({
-        name:      l.name    || '',
-        email:     l.email   || '',
-        phone:     l.phone   || null,
-        company:   l.company || null,
-        notes:     null,
-        industry:  l.industry   || null,
-        address:   l.address    || null,
-        city:      l.city       || null,
-        state:     l.state      || null,
-        zip:       l.zip        || null,
-        startDate: l.start_date || null,
-      }));
-      // Keep 1:1 with Google Sheets rows — never drop/shift before writeback
-      while (mapped.length < count) mapped.push({ ...EMPTY_PARSED_LEAD });
-      mapped.length = count;
+      }>) ?? [];
+      const mapped: ParsedLead[] = [];
+      for (let i = 0; i < count; i++) {
+        const l = aiLeads[i] ?? {};
+        const merged = mergeSheetLead(l, dataRows[i] ?? []);
+        mapped.push({
+          name:      merged.name    || '',
+          email:     merged.email   || '',
+          phone:     merged.phone   || null,
+          company:   merged.company || null,
+          notes:     null,
+          industry:  merged.industry   || null,
+          address:   merged.address    || null,
+          city:      merged.city       || null,
+          state:     merged.state      || null,
+          zip:       merged.zip        || null,
+          startDate: merged.start_date || null,
+        });
+      }
 
       const firstDataSheetRowInRange = sheetsHasHeader ? Math.max(from, 2) : from;
       const next = [...sheetsAllRows];
@@ -1601,15 +1500,7 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
       if (sheetRows.length === 0) { setMessage('Sheet appears empty'); setSheetsLoading(false); return; }
 
       const firstRow = sheetRows[0];
-      const headerKeywords = ['name', 'email', 'phone', 'company', 'business', 'contact', 'first', 'last', 'mobile', 'cell'];
-      // A cell only counts as a header label if it has no digits and no @ —
-      // otherwise data like "2292200603 mobile" or emails would be mistaken for headers
-      const looksLikeHeaderCell = (v: unknown) => {
-        const s = String(v).toLowerCase().trim();
-        if (!s || s.includes('@') || /\d/.test(s)) return false;
-        return headerKeywords.some(k => s.includes(k));
-      };
-      const hasHeaders = firstRow.some(looksLikeHeaderCell);
+      const hasHeaders = looksLikeHeaderRow(firstRow);
       setSheetsHasHeader(hasHeaders);
 
       let leads: ParsedLead[];
@@ -1618,13 +1509,17 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
         leads = sheetRows.slice(1).map((row, i) => {
           const obj: Record<string, string> = {};
           row.forEach((val, col) => { obj[headers[col] || `col${col}`] = String(val || '').trim(); });
-          return { ...(smartColumnMapper(obj) as ParsedLead), sheetRow: i + 2 };
+          const mapped = mergeSheetLead(smartColumnMapper(obj) as ParsedLead, row);
+          return { ...mapped, name: mapped.name || '', email: mapped.email || '', sheetRow: i + 2 };
         });
       } else {
-        leads = sheetRows.map((row, i) => ({
-          ...(positionalColumnMapper(row.map(v => String(v || '').trim())) as ParsedLead),
-          sheetRow: i + 1,
-        }));
+        leads = sheetRows.map((row, i) => {
+          const mapped = mergeSheetLead(
+            positionalColumnMapper(row.map(v => String(v || '').trim())) as ParsedLead,
+            row,
+          );
+          return { ...mapped, name: mapped.name || '', email: mapped.email || '', sheetRow: i + 1 };
+        });
       }
 
       if (leads.length === 0) {

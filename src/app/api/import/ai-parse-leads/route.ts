@@ -3,9 +3,9 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import Papa from 'papaparse';
 import { getAIClient, GROK_MINI_MODEL } from '@/lib/ai';
+import { looksLikeHeaderRow, mergeSheetLead } from '@/lib/import/extractSheetLead';
 
 export const dynamic = 'force-dynamic';
-// Allow up to 60s for large sheets
 export const maxDuration = 60;
 
 type ParsedRow = {
@@ -19,13 +19,28 @@ const emptyRow = (): ParsedRow => ({
   industry: null, address: null, city: null, state: null, zip: null, start_date: null,
 });
 
+function parseJsonArray(raw: string): unknown[] {
+  const start = raw.indexOf('[');
+  if (start < 0) return [];
+  let s = raw.slice(start);
+  try {
+    const v = JSON.parse(s);
+    return Array.isArray(v) ? v : [];
+  } catch { /* truncated — keep complete objects */ }
+  const last = s.lastIndexOf('}');
+  if (last < 0) return [];
+  s = `${s.slice(0, last + 1)}]`;
+  try {
+    const v = JSON.parse(s);
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+
 /**
  * POST /api/import/ai-parse-leads
  * Body: { csv: string, expectedCount?: number }
- *
- * Uses Grok to map any column layout to lead fields.
- * Returns exactly one object per data row (same order) so the client can
- * write results back onto matching Google Sheets row numbers.
  */
 export async function POST(req: NextRequest) {
   const cookieStore = await cookies();
@@ -74,16 +89,28 @@ export async function POST(req: NextRequest) {
   while (last > 0 && !rows[last - 1].some(c => String(c ?? '').trim())) last--;
   const trimmed = rows.slice(0, last);
 
-  if (trimmed.length < 2) {
-    return NextResponse.json({ error: 'Sheet appears empty or has only one row.' }, { status: 422 });
+  if (trimmed.length < 1) {
+    return NextResponse.json({ error: 'Sheet appears empty.' }, { status: 422 });
   }
 
-  const header = trimmed[0];
-  const dataRows = trimmed.slice(1);
+  const hasHeader = looksLikeHeaderRow(trimmed[0]);
+  const header = hasHeader
+    ? trimmed[0]
+    : Array.from({ length: Math.max(...trimmed.map(r => r.length), 1) }, (_, i) => `col_${i}`);
+  const dataRows = hasHeader ? trimmed.slice(1) : trimmed;
 
-  const BATCH_SIZE = 80;
+  if (!dataRows.length) {
+    return NextResponse.json({ error: 'Sheet appears empty or has only a header.' }, { status: 422 });
+  }
 
-  const strOrNull = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
+  const BATCH_SIZE = 40;
+
+  const strOrNull = (v: unknown): string | null => {
+    if (v == null || v === '') return null;
+    const s = String(v).trim();
+    if (!s || s === 'null' || s === 'undefined') return null;
+    return s;
+  };
 
   const parseRow = (row: unknown): ParsedRow => {
     if (!row || typeof row !== 'object') return emptyRow();
@@ -120,43 +147,39 @@ export async function POST(req: NextRequest) {
         const completion = await ai.chat.completions.create({
           model: GROK_MINI_MODEL,
           temperature: 0.0,
+          max_tokens: 8000,
           messages: [
             {
               role: 'system',
-              content: `You are a data extraction assistant for a business CRM.
-You will receive CSV data with column headers. Extract lead information from EVERY data row, in the same order.
+              content: `You extract merchant leads from a spreadsheet. Return ONLY a JSON array — no markdown, no fences.
 
-Return ONLY a valid JSON array — no markdown, no explanation, no code fences.
-The array MUST contain exactly as many objects as there are data rows (not counting the header).
-Each element must be an object with exactly these keys:
-  "name"       — Full name of the contact person (first + last). Combine separate first/last columns.
-  "email"      — Email address (or null)
-  "phone"      — Primary phone number string, preferring mobile/cell. Keep original format. (or null)
-  "company"    — Business / company name (or null)
-  "industry"   — Industry / business type / category, e.g. "Transportation", "Food & Beverage" (or null)
-  "address"    — Business street address, e.g. "724 Baptist Church Rd" (or null)
-  "city"       — Business city (or null)
-  "state"      — Business state, 2-letter if possible (or null)
-  "zip"        — Business ZIP code (or null)
-  "start_date" — Business start / established date, e.g. "2022-07-22" (or null)
+The array MUST have exactly one object per data row, same order. Never skip a row. Blank rows → all-null object.
+
+Each object keys:
+  "name"       — person first + last. Combine separate first/last columns (often two short columns just before email).
+  "email"      — email or null
+  "phone"      — 10+ digit phone, prefer mobile/cell. Keep digits. or null
+  "company"    — legal business name (LLC, Inc, Corp, Services, etc.). NEVER put industry here.
+  "industry"   — category only, e.g. "Construction & Home", "Food & Beverage". Not the company.
+  "address"    — street address or null
+  "city"       — city or null
+  "state"      — 2-letter state or null
+  "zip"        — ZIP or null
+  "start_date" — business start date or null
 
 Rules:
-- name should be a person name, NOT an email address or company name
-- If first name and last name are in separate columns, concatenate them with a space
-- If the only name-like column contains a company (LLC, Inc, Corp etc.), put it in company and leave name null
-- NEVER put dollar amounts, revenue figures, or monetary values (e.g. "50,000.00", "$1.2M") into ANY field — leave those fields null instead
-- Return null for any field you cannot find — do not guess or invent data
-- Include a result for EVERY data row, even if most fields are null. Do not skip blank or messy rows — return an object of nulls for those.
-- Skip the header row — only return data rows
-- Do not reorder rows`,
+- Common layout (headers may be missing): company, industry, date, address, first, last, email, extra, phone, phone.
+- Company is usually the first long text cell and often contains LLC/Inc/Corp. Copy it even if it has digits (e.g. "J-4 Removal LLC").
+- Do not use "Construction & Home" or similar categories as company.
+- name is a person, never a company or email.
+- Never put dollar amounts into any field.
+- Include EVERY data row. Do not reorder.`,
             },
-            { role: 'user', content: `Parse these ${batch.length} rows. Return exactly ${batch.length} JSON objects in the same order.\n\n${batchCsv}` },
+            { role: 'user', content: `Parse these ${batch.length} data rows. Return exactly ${batch.length} JSON objects in the same order.\n\n${batchCsv}` },
           ],
         });
         const raw = completion.choices[0]?.message?.content ?? '[]';
-        const jsonMatch = raw.match(/\[[\s\S]*\]/);
-        if (!jsonMatch) return padTo([], batch.length);
-        const parsed = JSON.parse(jsonMatch[0]) as unknown[];
+        const parsed = parseJsonArray(raw);
         return padTo(parsed.map(parseRow), batch.length);
       } catch (err) {
         console.error(`[ai-parse-leads] batch ${idx} failed:`, err);
@@ -167,7 +190,7 @@ Rules:
 
   let allLeads = batchResults.flat();
   const target = expectedCount ?? dataRows.length;
-  allLeads = padTo(allLeads, target);
+  allLeads = padTo(allLeads, target).map((lead, i) => mergeSheetLead(lead, dataRows[i] ?? []) as ParsedRow);
 
   return NextResponse.json({ leads: allLeads });
 }
