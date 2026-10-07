@@ -335,7 +335,7 @@ export default function InboxClient({
 
   const loadLeads = useCallback(async () => {
     // A campaign list is open — don't overwrite it with the replies-only inbox
-    if (activeListName && !debouncedSearch.trim()) return;
+    if (activeListNameRef.current && !debouncedSearch.trim()) return;
     try {
       const params = new URLSearchParams();
       if (initialLeadId) params.set('leadId', initialLeadId);
@@ -347,6 +347,8 @@ export default function InboxClient({
         return;
       }
       const data = await res.json();
+      // Campaign opened while this inbox fetch was in flight
+      if (activeListNameRef.current && !debouncedSearch.trim()) return;
       setLeads(sortInboxLeads(data.leads ?? []));
       setPhoneConn(data.phoneConnection ?? null);
       if (data.dbError || data.setupRequired) setDbSetupRequired(true);
@@ -355,7 +357,7 @@ export default function InboxClient({
     } finally {
       setLoadingLeads(false);
     }
-  }, [initialLeadId, debouncedSearch, activeListName]);
+  }, [initialLeadId, debouncedSearch]);
 
   useEffect(() => { loadLeads(); }, [loadLeads]);
 
@@ -408,10 +410,7 @@ export default function InboxClient({
           lead_status: patch.lead_status,
         })) {
           setLeads(prev => prev.filter(l => l.id !== d.id));
-          if (selectedLeadIdRef.current === d.id) {
-            setActiveListName(null);
-            setActiveListId(null);
-          }
+          if (selectedLeadIdRef.current === d.id) setSelectedLeadId(null);
           return;
         }
         setLeads(prev => sortInboxLeads(prev.map(l => l.id === d.id ? { ...l, ...patch } as InboxLead : l)));
@@ -448,11 +447,6 @@ export default function InboxClient({
         return next;
       });
       setConversationId(data.conversationId ?? null);
-
-      if (activeListNameRef.current && next.some(m => m.direction === 'inbound')) {
-        setActiveListName(null);
-        setActiveListId(null);
-      }
 
       const last = next[next.length - 1];
       setLeads(prev => sortInboxLeads(prev.map(l => {
@@ -665,8 +659,12 @@ export default function InboxClient({
   const loadListLeads = async (list: LeadList) => {
     setShowListPicker(false);
     setLoadingListLeads(true);
+    activeListNameRef.current = list.name;
     setActiveListName(list.name);
     setActiveListId(list.id);
+    setSelectedLeadId(null);
+    setMessages([]);
+    setConversationId(null);
     try {
       // Use the inbox lead-lists route to get leads with phones from this list
       const res = await fetch(`/api/inbox/lead-lists?listId=${list.id}`);
@@ -974,7 +972,13 @@ export default function InboxClient({
                   data={listPickerData}
                   loading={loadingListPicker}
                   onSelect={loadListLeads}
-                  onClear={activeListName ? () => { setActiveListName(null); setActiveListId(null); setShowListPicker(false); loadLeads(); } : undefined}
+                  onClear={activeListName ? () => {
+                    activeListNameRef.current = null;
+                    setActiveListName(null);
+                    setActiveListId(null);
+                    setShowListPicker(false);
+                    loadLeads();
+                  } : undefined}
                   onClose={() => setShowListPicker(false)}
                 />
               )}
