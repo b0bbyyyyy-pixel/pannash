@@ -203,8 +203,32 @@ function monthSortKey(s: string): string {
   return trimmed;
 }
 
+/** Last 4 of a real account. File indexes like "1" / "2" from statement1.pdf are not accounts. */
+function plausibleAccount(raw: unknown): string {
+  const digits = String(raw ?? '').replace(/\D/g, '');
+  if (digits.length < 4) return '';
+  const last4 = digits.slice(-4);
+  return /^0+$/.test(last4) ? '' : last4;
+}
+
 function accountKey(m: Pick<StatementMonth, 'accountNumber'>): string {
-  return String(m.accountNumber ?? '').replace(/\D/g, '').slice(-4);
+  return plausibleAccount(m.accountNumber);
+}
+
+function rowQuality(m: StatementMonth): number {
+  let score = 0;
+  if (accountKey(m)) score += 20;
+  const deps = m.depositCount;
+  if (deps != null) {
+    if (deps > 0 && deps <= 80) score += 10;
+    else if (deps > 80) score -= 8;
+  }
+  if ((m.totalDeposits ?? 0) > 0) score += 1;
+  return score;
+}
+
+function preferStatement(a: StatementMonth, b: StatementMonth): StatementMonth {
+  return rowQuality(a) >= rowQuality(b) ? combineMonthRow(a, b) : combineMonthRow(b, a);
 }
 
 function preferNum(a?: number, b?: number): number | undefined {
@@ -273,7 +297,7 @@ export function parseStatementMonths(raw: unknown): StatementMonth[] {
     const ending = endingBalance;
     const adb = coerceNumber(r.avgDailyBalance)
       ?? (opening != null && ending != null ? Math.round(((opening + ending) / 2) * 100) / 100 : null);
-    const acct = String(r.accountNumber ?? r.acct ?? '').replace(/\D/g, '').slice(-4);
+    const acct = plausibleAccount(r.accountNumber ?? r.acct);
     const normalized = monthSortKey(month) || month || 'Unknown';
     out.push({
       month: normalized,
@@ -310,43 +334,50 @@ export function statementMonthFromFields(fields: Record<string, unknown>): State
   }])[0] ?? null;
 }
 
+function collapseMonthGroup(list: StatementMonth[]): StatementMonth[] {
+  if (list.length <= 1) return list;
+  const byAcct = new Map<string, StatementMonth[]>();
+  for (const m of list) {
+    const k = accountKey(m);
+    const rows = byAcct.get(k) ?? [];
+    rows.push(m);
+    byAcct.set(k, rows);
+  }
+  const perAccount = [...byAcct.values()].map(rows => rows.reduce((a, b) => preferStatement(a, b)));
+  if (perAccount.length === 1) return perAccount;
+
+  const byEnd = new Map<string, StatementMonth[]>();
+  const noEnd: StatementMonth[] = [];
+  for (const m of perAccount) {
+    if (m.endingBalance == null) {
+      noEnd.push(m);
+      continue;
+    }
+    const k = String(Math.round(m.endingBalance));
+    const rows = byEnd.get(k) ?? [];
+    rows.push(m);
+    byEnd.set(k, rows);
+  }
+  const out = [...byEnd.values()].map(rows => rows.reduce((a, b) => preferStatement(a, b)));
+  for (const m of noEnd) {
+    if (!out.some(kept => sameMonthFigures(kept, m))) out.push(m);
+  }
+  return out;
+}
+
 export function mergeStatementMonths(existing: StatementMonth[], incoming: StatementMonth[]): StatementMonth[] {
-  const byExact = new Map<string, StatementMonth>();
+  const byMonth = new Map<string, StatementMonth[]>();
   for (const raw of [...existing, ...incoming]) {
     const month = monthSortKey(raw.month) || raw.month || 'Unknown';
     const acct = accountKey(raw);
     const row: StatementMonth = { ...raw, month, ...(acct ? { accountNumber: acct } : { accountNumber: undefined }) };
-    const key = `${month}|${acct}`;
-    const prev = byExact.get(key);
-    byExact.set(key, prev ? combineMonthRow(prev, row) : row);
-  }
-
-  const byMonth = new Map<string, StatementMonth[]>();
-  for (const row of byExact.values()) {
-    const mk = monthSortKey(row.month);
-    const list = byMonth.get(mk) ?? [];
+    const list = byMonth.get(month) ?? [];
     list.push(row);
-    byMonth.set(mk, list);
+    byMonth.set(month, list);
   }
-
-  const out: StatementMonth[] = [];
-  for (const list of byMonth.values()) {
-    const withAcct = list.filter(m => accountKey(m));
-    const without = list.filter(m => !accountKey(m));
-    if (withAcct.length === 1 && without.length) {
-      out.push(without.reduce((acc, m) => combineMonthRow(acc, m), withAcct[0]));
-      continue;
-    }
-    if (withAcct.length === 0 && without.length) {
-      out.push(without.reduce((acc, m) => combineMonthRow(acc, m)));
-      continue;
-    }
-    out.push(...withAcct);
-    for (const blank of without) {
-      if (!withAcct.some(w => sameMonthFigures(w, blank))) out.push(blank);
-    }
-  }
-  return out.sort((a, b) => monthSortKey(a.month).localeCompare(monthSortKey(b.month)));
+  return [...byMonth.values()]
+    .flatMap(collapseMonthGroup)
+    .sort((a, b) => monthSortKey(a.month).localeCompare(monthSortKey(b.month)));
 }
 
 /** Recover per-month rows already saved on a lead (statementMonths, else analysis snapshot). */

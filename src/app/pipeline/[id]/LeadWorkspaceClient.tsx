@@ -307,6 +307,7 @@ import {
   statementMonthFromFields,
   statementMonthsFromUd,
   mergeStatementMonths,
+  averagesFromMonths,
 } from '@/lib/bankAnalyzer';
 import { inferFromLegalName } from '@/lib/businessName';
 import { normalizeParsedFields, monthsInBusinessFromStartDate, sanitizeUnderwritingStrings } from '@/lib/normalizeParsedFields';
@@ -933,18 +934,21 @@ export default function LeadWorkspaceClient({
   const [showFullFinancials, setShowFullFinancials] = useState(false);
 
   const projectedOffer = useMemo(() => {
-    const rev      = Number(ud.monthlyRevenue  ?? 0);
+    const monthAvgs = averagesFromMonths(mergeStatementMonths(statementMonthsFromUd(ud), []));
+    const rev      = Number(monthAvgs.monthlyRevenue ?? ud.monthlyRevenue  ?? 0);
     const fico     = Number(ud.creditScore     ?? 0);
     const tib      = derivedTIB ?? Number(ud.timeInBusiness ?? 0);
-    const nsf      = Number(ud.nsfCount        ?? 0);
-    const deps     = Number(ud.depositsCount   ?? 0);
-    const adb      = Number(ud.avgDailyBalance ?? 0);
+    const nsf      = Number(monthAvgs.nsfCount ?? ud.nsfCount        ?? 0);
+    const deps     = Number(monthAvgs.depositsCount ?? ud.depositsCount   ?? 0);
+    const adb      = Number(monthAvgs.avgDailyBalance ?? ud.avgDailyBalance ?? 0);
     const industry = String(ud.industry        ?? '');
     const hasMCA   = Boolean(ud.hasOtherMCALoans ?? false);
     const mcaPmt   = Number(ud.otherMCAMonthlyPayment ?? 0);
     const mcaBal   = Number(ud.otherMCAOutstandingBalance ?? 0);
-    const m1 = Number(ud.month1Revenue ?? 0), m2 = Number(ud.month2Revenue ?? 0);
-    const m3 = Number(ud.month3Revenue ?? 0), m4 = Number(ud.month4Revenue ?? 0);
+    const m1 = Number(monthAvgs.month1Revenue ?? ud.month1Revenue ?? 0);
+    const m2 = Number(monthAvgs.month2Revenue ?? ud.month2Revenue ?? 0);
+    const m3 = Number(monthAvgs.month3Revenue ?? ud.month3Revenue ?? 0);
+    const m4 = Number(monthAvgs.month4Revenue ?? ud.month4Revenue ?? 0);
 
     if (!rev) return null; // need at least monthly revenue
 

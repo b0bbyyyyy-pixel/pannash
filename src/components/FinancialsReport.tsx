@@ -48,7 +48,8 @@ function acctLabel(raw: unknown): string {
 function monthFromSummary(row: Record<string, unknown>, acctFallback = ''): StatementMonth {
   const totalDeposits = coerceNumber(row.true_deposits ?? row.total_deposits ?? row.revenue);
   const ending = coerceNumber(row.ending_balance ?? row.endBal);
-  const acct = String(row.account ?? row.accountNumber ?? acctFallback).replace(/\D/g, '').slice(-4);
+  const rawAcct = String(row.account ?? row.accountNumber ?? acctFallback).replace(/\D/g, '');
+  const acct = rawAcct.length >= 4 ? rawAcct.slice(-4) : '';
   return {
     month: String(row.month ?? ''),
     ...(acct ? { accountNumber: acct } : {}),
@@ -84,7 +85,7 @@ function buildMonthRows(snap: BankSnap | undefined, ud: Record<string, unknown>)
   const perFile = snap?.per_file ?? [];
   let perFileMonths = 0;
   for (const pf of perFile) {
-    const rows = monthsFromMetrics(pf.metrics, pf.filename.replace(/\D/g, '').slice(-4));
+    const rows = monthsFromMetrics(pf.metrics);
     perFileMonths += rows.length;
     extra.push(...rows);
   }
@@ -133,12 +134,19 @@ export default function FinancialsReport({
 }: FinancialsReportProps) {
   const m = snap?.displayMetrics;
   const rows = buildMonthRows(snap, ud);
-  const monthAvgs = averagesFromMonths(mergeStatementMonths(statementMonthsFromUd(ud), []));
+  const monthAvgs = averagesFromMonths(rows.map(r => ({
+    month: r.month,
+    totalDeposits: r.revenue,
+    endingBalance: r.endBal,
+    depositCount: r.depCount,
+    negativeDays: r.neg,
+    nsfCount: r.nsf,
+  })));
   const inline = variant === 'inline';
 
-  const avgRevenue    = Number(ud.monthlyRevenue ?? monthAvgs.monthlyRevenue ?? m?.avg_monthly_true_deposits ?? m?.avg_monthly_deposits ?? 0);
-  const avgDailyBal   = Number(ud.avgDailyBalance ?? monthAvgs.avgDailyBalance ?? m?.avg_monthly_daily_balance ?? 0);
-  const depositsPerMo = Number(ud.depositsCount ?? monthAvgs.depositsCount ?? m?.avg_monthly_deposit_count ?? 0);
+  const avgRevenue    = Number(monthAvgs.monthlyRevenue ?? ud.monthlyRevenue ?? m?.avg_monthly_true_deposits ?? m?.avg_monthly_deposits ?? 0);
+  const avgDailyBal   = Number(monthAvgs.avgDailyBalance ?? ud.avgDailyBalance ?? m?.avg_monthly_daily_balance ?? 0);
+  const depositsPerMo = Number(monthAvgs.depositsCount ?? ud.depositsCount ?? m?.avg_monthly_deposit_count ?? 0);
   const last3         = rows.slice(-3);
   const negDays3mo    = last3.length
     ? last3.reduce((s, r) => s + r.neg, 0)
