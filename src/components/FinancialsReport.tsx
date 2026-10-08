@@ -1,6 +1,6 @@
 'use client';
 import React from 'react';
-import { parseMcaPositions, parseStatementMonths, averagesFromMonths, formatMcaFundedDate, mergeStatementMonths, statementMonthsFromUd, coerceNumber, type StatementMonth } from '@/lib/bankAnalyzer';
+import { parseMcaPositions, averagesFromMonths, formatMcaFundedDate, mergeStatementMonths, statementMonthsFromUd, coerceNumber, type StatementMonth } from '@/lib/bankAnalyzer';
 
 export type BankSnap = {
   analyzedAt?: string;
@@ -61,34 +61,35 @@ function monthFromSummary(row: Record<string, unknown>, acctFallback = ''): Stat
   };
 }
 
+function monthsFromMetrics(
+  metrics: Record<string, unknown> | undefined,
+  acctFallback = '',
+): StatementMonth[] {
+  if (!metrics) return [];
+  const ms = (metrics.monthly_summary as Array<Record<string, unknown>>) ?? [];
+  const mr = (metrics.monthly_revenue as Array<{ month?: string; amount?: number }>) ?? [];
+  return ms.map(row => {
+    const month = String(row.month ?? '');
+    const rev = mr.find(r => r.month === month);
+    return monthFromSummary({
+      ...row,
+      true_deposits: rev?.amount ?? row.true_deposits ?? row.total_deposits,
+      account: row.account ?? row.accountNumber ?? acctFallback,
+    }, acctFallback);
+  });
+}
+
 function buildMonthRows(snap: BankSnap | undefined, ud: Record<string, unknown>): MonthRow[] {
   const extra: StatementMonth[] = [];
   const perFile = snap?.per_file ?? [];
+  let perFileMonths = 0;
   for (const pf of perFile) {
-    const ms = (pf.metrics?.monthly_summary as Array<Record<string, unknown>>) ?? [];
-    const mr = (pf.metrics?.monthly_revenue as Array<{ month?: string; amount?: number }>) ?? [];
-    const fallback = pf.filename.replace(/\D/g, '').slice(-4);
-    for (const row of ms) {
-      const month = String(row.month ?? '');
-      const rev = mr.find(r => r.month === month);
-      extra.push(monthFromSummary({
-        ...row,
-        true_deposits: rev?.amount ?? row.true_deposits ?? row.total_deposits,
-        account: row.account ?? fallback,
-      }, fallback));
-    }
+    const rows = monthsFromMetrics(pf.metrics, pf.filename.replace(/\D/g, '').slice(-4));
+    perFileMonths += rows.length;
+    extra.push(...rows);
   }
-  const m = snap?.displayMetrics;
-  const summary = (m?.monthly_summary as Array<Record<string, unknown>> | undefined) ?? [];
-  const mr = (m?.monthly_revenue as Array<{ month?: string; amount?: number }>) ?? [];
-  for (const row of summary) {
-    const month = String(row.month ?? '');
-    const rev = mr.find(r => r.month === month);
-    extra.push(monthFromSummary({
-      ...row,
-      true_deposits: rev?.amount ?? row.true_deposits ?? row.total_deposits,
-    }));
-  }
+  // Combined displayMetrics is the same months again — only use it when files did not already supply rows.
+  if (!perFileMonths) extra.push(...monthsFromMetrics(snap?.displayMetrics));
 
   const merged = mergeStatementMonths(statementMonthsFromUd(ud), extra);
   return merged.map(row => ({
@@ -132,7 +133,7 @@ export default function FinancialsReport({
 }: FinancialsReportProps) {
   const m = snap?.displayMetrics;
   const rows = buildMonthRows(snap, ud);
-  const monthAvgs = averagesFromMonths(parseStatementMonths(ud.statementMonths));
+  const monthAvgs = averagesFromMonths(mergeStatementMonths(statementMonthsFromUd(ud), []));
   const inline = variant === 'inline';
 
   const avgRevenue    = Number(ud.monthlyRevenue ?? monthAvgs.monthlyRevenue ?? m?.avg_monthly_true_deposits ?? m?.avg_monthly_deposits ?? 0);

@@ -175,18 +175,78 @@ export type StatementMonth = {
   largestDeposit?: number;
 };
 
+const MONTH_NAME: Record<string, string> = {
+  jan: '01', january: '01', feb: '02', february: '02', mar: '03', march: '03',
+  apr: '04', april: '04', may: '05', jun: '06', june: '06',
+  jul: '07', july: '07', aug: '08', august: '08', sep: '09', sept: '09', september: '09',
+  oct: '10', october: '10', nov: '11', november: '11', dec: '12', december: '12',
+};
+
 function monthSortKey(s: string): string {
   const trimmed = String(s ?? '').trim();
-  const named = Date.parse(trimmed.replace(/^([A-Za-z]+)\s+(\d{4})$/, '$1 1, $2'));
-  if (!Number.isNaN(named)) {
-    const d = new Date(named);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-  }
-  const mmyyyy = trimmed.match(/^(\d{1,2})[/\-](\d{4})$/);
-  if (mmyyyy) return `${mmyyyy[2]}-${mmyyyy[1].padStart(2, '0')}`;
-  const yyyymm = trimmed.match(/^(\d{4})[/\-](\d{1,2})$/);
+  const yyyymm = trimmed.match(/^(\d{4})[/\-.](\d{1,2})(?:[/\-.](\d{1,2}))?$/);
   if (yyyymm) return `${yyyymm[1]}-${yyyymm[2].padStart(2, '0')}`;
+  const mmyyyy = trimmed.match(/^(\d{1,2})[/\-.](\d{4})$/);
+  if (mmyyyy) return `${mmyyyy[2]}-${mmyyyy[1].padStart(2, '0')}`;
+  const named = trimmed.match(/^([A-Za-z]+)\.?,?\s+(\d{4})$/);
+  if (named) {
+    const mm = MONTH_NAME[named[1].toLowerCase()];
+    if (mm) return `${named[2]}-${mm}`;
+  }
+  const parsed = Date.parse(trimmed.replace(/^([A-Za-z]+)\s+(\d{4})$/, '$1 1, $2'));
+  if (!Number.isNaN(parsed)) {
+    const d = new Date(parsed);
+    if (!Number.isNaN(d.getTime())) {
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    }
+  }
   return trimmed;
+}
+
+function accountKey(m: Pick<StatementMonth, 'accountNumber'>): string {
+  return String(m.accountNumber ?? '').replace(/\D/g, '').slice(-4);
+}
+
+function preferNum(a?: number, b?: number): number | undefined {
+  if (a != null && Number.isFinite(a) && a !== 0) return a;
+  if (b != null && Number.isFinite(b) && b !== 0) return b;
+  if (a != null && Number.isFinite(a)) return a;
+  if (b != null && Number.isFinite(b)) return b;
+  return undefined;
+}
+
+function preferCount(a?: number, b?: number): number | undefined {
+  if (a != null && Number.isFinite(a)) return a;
+  if (b != null && Number.isFinite(b)) return b;
+  return undefined;
+}
+
+function combineMonthRow(a: StatementMonth, b: StatementMonth): StatementMonth {
+  const month = monthSortKey(a.month) || monthSortKey(b.month) || a.month || b.month;
+  const acct = accountKey(a) || accountKey(b);
+  return {
+    month,
+    ...(acct ? { accountNumber: acct } : {}),
+    ...(a.bankName || b.bankName ? { bankName: a.bankName || b.bankName } : {}),
+    ...(preferNum(a.openingBalance, b.openingBalance) != null ? { openingBalance: preferNum(a.openingBalance, b.openingBalance) } : {}),
+    ...(preferNum(a.endingBalance, b.endingBalance) != null ? { endingBalance: preferNum(a.endingBalance, b.endingBalance) } : {}),
+    ...(preferNum(a.totalDeposits, b.totalDeposits) != null ? { totalDeposits: preferNum(a.totalDeposits, b.totalDeposits) } : {}),
+    ...(preferNum(a.totalWithdrawals, b.totalWithdrawals) != null ? { totalWithdrawals: preferNum(a.totalWithdrawals, b.totalWithdrawals) } : {}),
+    ...(preferNum(a.avgDailyBalance, b.avgDailyBalance) != null ? { avgDailyBalance: preferNum(a.avgDailyBalance, b.avgDailyBalance) } : {}),
+    ...(preferCount(a.depositCount, b.depositCount) != null ? { depositCount: preferCount(a.depositCount, b.depositCount) } : {}),
+    ...(preferCount(a.nsfCount, b.nsfCount) != null ? { nsfCount: preferCount(a.nsfCount, b.nsfCount) } : {}),
+    ...(preferCount(a.negativeDays, b.negativeDays) != null ? { negativeDays: preferCount(a.negativeDays, b.negativeDays) } : {}),
+    ...(preferNum(a.largestDeposit, b.largestDeposit) != null ? { largestDeposit: preferNum(a.largestDeposit, b.largestDeposit) } : {}),
+  };
+}
+
+function sameMonthFigures(a: StatementMonth, b: StatementMonth): boolean {
+  const depA = a.totalDeposits ?? 0;
+  const depB = b.totalDeposits ?? 0;
+  if (depA > 0 && depB > 0 && Math.abs(depA - depB) < 1) return true;
+  const endA = a.endingBalance ?? 0;
+  const endB = b.endingBalance ?? 0;
+  return endA !== 0 && endB !== 0 && Math.abs(endA - endB) < 1;
 }
 
 function avgNums(values: Array<number | null | undefined>): number | null {
@@ -214,8 +274,9 @@ export function parseStatementMonths(raw: unknown): StatementMonth[] {
     const adb = coerceNumber(r.avgDailyBalance)
       ?? (opening != null && ending != null ? Math.round(((opening + ending) / 2) * 100) / 100 : null);
     const acct = String(r.accountNumber ?? r.acct ?? '').replace(/\D/g, '').slice(-4);
+    const normalized = monthSortKey(month) || month || 'Unknown';
     out.push({
-      month: month || 'Unknown',
+      month: normalized,
       ...(acct ? { accountNumber: acct } : {}),
       ...(r.bankName ? { bankName: String(r.bankName) } : {}),
       ...(opening != null ? { openingBalance: opening } : {}),
@@ -250,12 +311,42 @@ export function statementMonthFromFields(fields: Record<string, unknown>): State
 }
 
 export function mergeStatementMonths(existing: StatementMonth[], incoming: StatementMonth[]): StatementMonth[] {
-  const map = new Map<string, StatementMonth>();
-  for (const m of [...existing, ...incoming]) {
-    const key = `${monthSortKey(m.month)}|${(m.accountNumber || '').slice(-4)}`;
-    map.set(key, m);
+  const byExact = new Map<string, StatementMonth>();
+  for (const raw of [...existing, ...incoming]) {
+    const month = monthSortKey(raw.month) || raw.month || 'Unknown';
+    const acct = accountKey(raw);
+    const row: StatementMonth = { ...raw, month, ...(acct ? { accountNumber: acct } : { accountNumber: undefined }) };
+    const key = `${month}|${acct}`;
+    const prev = byExact.get(key);
+    byExact.set(key, prev ? combineMonthRow(prev, row) : row);
   }
-  return [...map.values()].sort((a, b) => monthSortKey(a.month).localeCompare(monthSortKey(b.month)));
+
+  const byMonth = new Map<string, StatementMonth[]>();
+  for (const row of byExact.values()) {
+    const mk = monthSortKey(row.month);
+    const list = byMonth.get(mk) ?? [];
+    list.push(row);
+    byMonth.set(mk, list);
+  }
+
+  const out: StatementMonth[] = [];
+  for (const list of byMonth.values()) {
+    const withAcct = list.filter(m => accountKey(m));
+    const without = list.filter(m => !accountKey(m));
+    if (withAcct.length === 1 && without.length) {
+      out.push(without.reduce((acc, m) => combineMonthRow(acc, m), withAcct[0]));
+      continue;
+    }
+    if (withAcct.length === 0 && without.length) {
+      out.push(without.reduce((acc, m) => combineMonthRow(acc, m)));
+      continue;
+    }
+    out.push(...withAcct);
+    for (const blank of without) {
+      if (!withAcct.some(w => sameMonthFigures(w, blank))) out.push(blank);
+    }
+  }
+  return out.sort((a, b) => monthSortKey(a.month).localeCompare(monthSortKey(b.month)));
 }
 
 /** Recover per-month rows already saved on a lead (statementMonths, else analysis snapshot). */
@@ -359,7 +450,7 @@ export function mergeMcaPositions(...lists: Array<McaPosition[] | unknown>): Mca
 /** Map parsed bank-statement fields onto underwriting JSON. */
 export function mapParsedBankFieldsToUd(fields: Record<string, unknown>): Record<string, unknown> {
   const ud: Record<string, unknown> = {};
-  let months = parseStatementMonths(fields.statementMonths);
+  let months = mergeStatementMonths([], parseStatementMonths(fields.statementMonths));
   if (!months.length) {
     const one = statementMonthFromFields(fields);
     if (one) months = [one];
@@ -436,7 +527,7 @@ export function seedBankAnalysisFromParsed(
   fields: Record<string, unknown>,
   existing?: BankSnapLite | null,
 ): { analyzedAt: string; displayMetrics: Record<string, unknown>; per_file?: Array<{ filename: string; metrics: Record<string, unknown> }> } {
-  let months = parseStatementMonths(fields.statementMonths);
+  let months = mergeStatementMonths([], parseStatementMonths(fields.statementMonths));
   if (!months.length) {
     const one = statementMonthFromFields(fields);
     if (one) months = [one];
