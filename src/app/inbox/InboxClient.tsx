@@ -235,8 +235,11 @@ export default function InboxClient({
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(initialLeadId);
   const activeListNameRef = useRef<string | null>(null);
   const selectedLeadIdRef = useRef<string | null>(initialLeadId);
+  const loadSeqRef = useRef(0);
+  const draftsRef = useRef<Record<string, string>>({});
   useEffect(() => { activeListNameRef.current = activeListName; }, [activeListName]);
   useEffect(() => { selectedLeadIdRef.current = selectedLeadId; }, [selectedLeadId]);
+  const pinLeads = (rows: InboxLead[]) => sortInboxLeads(rows, selectedLeadIdRef.current);
   const [messages, setMessages] = useState<InboxMessage[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const messagesRef = useRef<InboxMessage[]>([]);
@@ -344,7 +347,8 @@ export default function InboxClient({
     if (activeListNameRef.current && !debouncedSearch.trim()) return;
     try {
       const params = new URLSearchParams();
-      if (initialLeadId) params.set('leadId', initialLeadId);
+      const pinId = selectedLeadIdRef.current || initialLeadId;
+      if (pinId) params.set('leadId', pinId);
       if (debouncedSearch.trim()) params.set('q', debouncedSearch.trim());
       if (initialConvsRef.current) params.set('initial', '1');
       const qs = params.toString() ? `?${params}` : '';
@@ -356,7 +360,15 @@ export default function InboxClient({
       const data = await res.json();
       // Campaign opened while this inbox fetch was in flight
       if (activeListNameRef.current && !debouncedSearch.trim()) return;
-      setLeads(sortInboxLeads(data.leads ?? []));
+      setLeads(prev => {
+        const incoming = (data.leads ?? []) as InboxLead[];
+        const pin = selectedLeadIdRef.current;
+        if (pin && !incoming.some(l => l.id === pin)) {
+          const keep = prev.find(l => l.id === pin);
+          if (keep) return pinLeads([keep, ...incoming]);
+        }
+        return pinLeads(incoming);
+      });
       if (data.phoneConnection) setPhoneConn(data.phoneConnection);
       else if (initialConvsRef.current) setPhoneConn(null);
       initialConvsRef.current = false;
@@ -422,7 +434,7 @@ export default function InboxClient({
           if (selectedLeadIdRef.current === d.id) setSelectedLeadId(null);
           return;
         }
-        setLeads(prev => sortInboxLeads(prev.map(l => l.id === d.id ? { ...l, ...patch } as InboxLead : l)));
+        setLeads(prev => pinLeads(prev.map(l => l.id === d.id ? { ...l, ...patch } as InboxLead : l)));
       }
     };
     window.addEventListener('message', onMsg);
@@ -431,7 +443,10 @@ export default function InboxClient({
 
   // ── Load messages on lead select ────────────────────────────────────────────
   const loadMessages = useCallback(async (leadId: string, opts?: { quiet?: boolean; since?: string; conversationId?: string | null }) => {
+    const seq = opts?.quiet ? loadSeqRef.current : ++loadSeqRef.current;
+    const stillOpen = () => selectedLeadIdRef.current === leadId && loadSeqRef.current === seq;
     if (!opts?.quiet) {
+      if (selectedLeadIdRef.current !== leadId) return;
       setLoadingMsgs(true);
       setMessages([]);
       setSendError(null);
@@ -444,7 +459,9 @@ export default function InboxClient({
       }
       const res = await fetch(`/api/inbox/messages?${params}`);
       if (!res.ok) return;
+      if (!stillOpen()) return;
       const data = await res.json();
+      if (!stillOpen()) return;
       const incoming: InboxMessage[] = data.messages ?? [];
       let merged: InboxMessage[];
       if (opts?.since) {
@@ -457,6 +474,7 @@ export default function InboxClient({
           if (id.startsWith('opt_') && outboundBodies.has(m.body)) map.delete(id);
         }
         for (const m of incoming) {
+          if (m.lead_id && m.lead_id !== leadId) continue;
           const cur = map.get(m.id);
           map.set(m.id, cur ? { ...cur, ...m } : m);
         }
@@ -466,7 +484,7 @@ export default function InboxClient({
         });
       } else {
         const prev = messagesRef.current;
-        merged = incoming;
+        merged = incoming.filter(m => !m.lead_id || m.lead_id === leadId);
         if (
           prev.length === incoming.length &&
           prev.every((m, i) =>
@@ -484,7 +502,7 @@ export default function InboxClient({
       if (data.conversationId) setConversationId(data.conversationId);
 
       const last = merged[merged.length - 1];
-      setLeads(prev => sortInboxLeads(prev.map(l => {
+      setLeads(prev => pinLeads(prev.map(l => {
         if (l.id !== leadId) return l;
         const prevAt = Date.parse(l.conversation?.last_message_at ?? '') || 0;
         const nextAt = last ? Date.parse(last.created_at) || 0 : 0;
@@ -506,17 +524,19 @@ export default function InboxClient({
         };
       })));
     } finally {
-      if (!opts?.quiet) setLoadingMsgs(false);
+      if (!opts?.quiet && loadSeqRef.current === seq) setLoadingMsgs(false);
     }
   }, []);
 
   useEffect(() => {
-    if (selectedLeadId) loadMessages(selectedLeadId);
+    setConversationId(null);
     setShowTpls(false);
     setAddingTpl(false);
     setEditingTplId(null);
     stickToBottomRef.current = true;
     lastScrolledMsgIdRef.current = null;
+    setComposerText(selectedLeadId ? (draftsRef.current[selectedLeadId] ?? '') : '');
+    if (selectedLeadId) loadMessages(selectedLeadId);
   }, [selectedLeadId, loadMessages]);
 
   const { pulse, registerOpenLead } = useSync();
@@ -608,7 +628,7 @@ export default function InboxClient({
         missing = true;
       }
       if (missing && !activeListNameRef.current) void loadLeads();
-      return sortInboxLeads(next);
+      return pinLeads(next);
     });
   }, [pulse, loadLeads, selectedLeadId]);
 
@@ -664,6 +684,8 @@ export default function InboxClient({
         },
         (payload) => {
           const newMsg = payload.new as InboxMessage;
+          if (newMsg.lead_id && newMsg.lead_id !== selectedLeadIdRef.current) return;
+          if (newMsg.conversation_id && conversationIdRef.current && newMsg.conversation_id !== conversationIdRef.current) return;
           setMessages(prev => {
             // Avoid duplicates (we already optimistically add outbound)
             if (prev.some(m => m.id === newMsg.id)) return prev;
@@ -689,7 +711,7 @@ export default function InboxClient({
     return () => { supabase.removeChannel(channel); };
   }, [conversationId]);
 
-  // Any inbound/outbound on any thread — jump that lead to the top of the rail.
+  // Any inbound/outbound — update the rail. The open thread stays pinned until you pick another.
   useEffect(() => {
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -717,7 +739,7 @@ export default function InboxClient({
               void loadLeads();
               return prev;
             }
-            return sortInboxLeads(prev.map(l =>
+            return pinLeads(prev.map(l =>
               l.id === leadId
                 ? {
                     ...l,
@@ -727,7 +749,9 @@ export default function InboxClient({
                       last_inbound_at: row.last_inbound_at ?? l.conversation?.last_inbound_at,
                       last_message_preview: row.last_message_preview ?? l.conversation?.last_message_preview ?? null,
                       last_direction: row.last_direction ?? l.conversation?.last_direction ?? null,
-                      unread_count: row.unread_count ?? l.conversation?.unread_count ?? 0,
+                      unread_count: leadId === selectedLeadIdRef.current
+                        ? 0
+                        : (row.unread_count ?? l.conversation?.unread_count ?? 0),
                     },
                   }
                 : l
@@ -816,19 +840,22 @@ export default function InboxClient({
 
   // ── Send message ────────────────────────────────────────────────────────────
   const handleSend = async () => {
-    if (!selectedLeadId || !composerText.trim() || sending) return;
+    const sendLeadId = selectedLeadId;
+    if (!sendLeadId || !composerText.trim() || sending) return;
     setSending(true);
     setSendError(null);
 
     const body = composerText.trim();
+    draftsRef.current[sendLeadId] = '';
     setComposerText('');
     stickToBottomRef.current = true;
+    const stillOnThread = () => selectedLeadIdRef.current === sendLeadId;
 
     // Optimistic message
     const optimistic: InboxMessage = {
       id: `opt_${Date.now()}`,
       conversation_id: conversationId ?? '',
-      lead_id: selectedLeadId,
+      lead_id: sendLeadId,
       direction: 'outbound',
       body,
       status: 'queued',
@@ -837,28 +864,30 @@ export default function InboxClient({
       error_message: null,
       created_at: new Date().toISOString(),
     };
-    setMessages(prev => [...prev, optimistic]);
+    if (stillOnThread()) setMessages(prev => [...prev, optimistic]);
 
     try {
       const res = await fetch('/api/inbox/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ leadId: selectedLeadId, body }),
+        body: JSON.stringify({ leadId: sendLeadId, body }),
       });
       const data = await res.json();
 
       if (data.message) {
-        setMessages(prev => {
-          const realId = data.message.id as string | undefined;
-          if (realId && prev.some(m => m.id === realId)) {
-            return prev.filter(m => m.id !== optimistic.id);
-          }
-          return prev.map(m => m.id === optimistic.id ? { ...optimistic, ...data.message } : m);
-        });
+        if (stillOnThread()) {
+          setMessages(prev => {
+            const realId = data.message.id as string | undefined;
+            if (realId && prev.some(m => m.id === realId)) {
+              return prev.filter(m => m.id !== optimistic.id);
+            }
+            return prev.map(m => m.id === optimistic.id ? { ...optimistic, ...data.message } : m);
+          });
+        }
         // Update conversation preview in lead list
         const preview = body.length > 100 ? body.slice(0, 97) + '…' : body;
-        setLeads(prev => sortInboxLeads(prev.map(l =>
-          l.id === selectedLeadId
+        setLeads(prev => pinLeads(prev.map(l =>
+          l.id === sendLeadId
             ? {
                 ...l,
                 conversation: {
@@ -872,17 +901,23 @@ export default function InboxClient({
             : l
         )));
 
-        if (data.error) setSendError(data.error);
-        if (data.message?.id && selectedLeadId) {
-          window.setTimeout(() => { loadMessages(selectedLeadId); }, 4000);
+        if (data.error && stillOnThread()) setSendError(data.error);
+        if (data.message?.id) {
+          window.setTimeout(() => {
+            if (selectedLeadIdRef.current === sendLeadId) {
+              void loadMessages(sendLeadId, { quiet: true });
+            }
+          }, 4000);
         }
       }
     } catch {
-      setMessages(prev =>
-        prev.map(m =>
-          m.id === optimistic.id ? { ...m, status: 'failed', error_message: 'Network error' } : m
-        )
-      );
+      if (stillOnThread()) {
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === optimistic.id ? { ...m, status: 'failed', error_message: 'Network error' } : m
+          )
+        );
+      }
     } finally {
       setSending(false);
     }
@@ -919,7 +954,9 @@ export default function InboxClient({
 
   const useTpl = (body: string) => {
     if (!selectedLead) return;
-    setComposerText(fillTpl(body, selectedLead));
+    const next = fillTpl(body, selectedLead);
+    draftsRef.current[selectedLead.id] = next;
+    setComposerText(next);
     setShowTpls(false);
     requestAnimationFrame(() => {
       const el = composerRef.current;
@@ -1126,7 +1163,10 @@ export default function InboxClient({
               return (
                 <button
                   key={lead.id}
-                  onClick={() => setSelectedLeadId(lead.id)}
+                  onClick={() => {
+                    if (lead.id === selectedLeadIdRef.current) return;
+                    setSelectedLeadId(lead.id);
+                  }}
                   className={`w-full text-left px-4 py-2 border-b border-[#f0f0f0] transition-colors ${
                     isSelected ? 'bg-[#f0f0f0]' : 'hover:bg-[#fafafa]'
                   }`}
@@ -1534,7 +1574,11 @@ export default function InboxClient({
                   <textarea
                     ref={composerRef}
                     value={composerText}
-                    onChange={e => setComposerText(e.target.value)}
+                    onChange={e => {
+                      const next = e.target.value;
+                      if (selectedLeadIdRef.current) draftsRef.current[selectedLeadIdRef.current] = next;
+                      setComposerText(next);
+                    }}
                     onKeyDown={handleKeyDown}
                     disabled={selectedLead.sms_opt_out ?? false}
                     placeholder={
