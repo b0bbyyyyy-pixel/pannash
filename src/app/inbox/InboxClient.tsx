@@ -239,7 +239,6 @@ export default function InboxClient({
   const draftsRef = useRef<Record<string, string>>({});
   useEffect(() => { activeListNameRef.current = activeListName; }, [activeListName]);
   useEffect(() => { selectedLeadIdRef.current = selectedLeadId; }, [selectedLeadId]);
-  const pinLeads = (rows: InboxLead[]) => sortInboxLeads(rows, selectedLeadIdRef.current);
   const [messages, setMessages] = useState<InboxMessage[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const messagesRef = useRef<InboxMessage[]>([]);
@@ -365,9 +364,9 @@ export default function InboxClient({
         const pin = selectedLeadIdRef.current;
         if (pin && !incoming.some(l => l.id === pin)) {
           const keep = prev.find(l => l.id === pin);
-          if (keep) return pinLeads([keep, ...incoming]);
+          if (keep) return sortInboxLeads([keep, ...incoming]);
         }
-        return pinLeads(incoming);
+        return sortInboxLeads(incoming);
       });
       if (data.phoneConnection) setPhoneConn(data.phoneConnection);
       else if (initialConvsRef.current) setPhoneConn(null);
@@ -434,7 +433,7 @@ export default function InboxClient({
           if (selectedLeadIdRef.current === d.id) setSelectedLeadId(null);
           return;
         }
-        setLeads(prev => pinLeads(prev.map(l => l.id === d.id ? { ...l, ...patch } as InboxLead : l)));
+        setLeads(prev => sortInboxLeads(prev.map(l => l.id === d.id ? { ...l, ...patch } as InboxLead : l)));
       }
     };
     window.addEventListener('message', onMsg);
@@ -502,7 +501,7 @@ export default function InboxClient({
       if (data.conversationId) setConversationId(data.conversationId);
 
       const last = merged[merged.length - 1];
-      setLeads(prev => pinLeads(prev.map(l => {
+      setLeads(prev => sortInboxLeads(prev.map(l => {
         if (l.id !== leadId) return l;
         const prevAt = Date.parse(l.conversation?.last_message_at ?? '') || 0;
         const nextAt = last ? Date.parse(last.created_at) || 0 : 0;
@@ -628,7 +627,7 @@ export default function InboxClient({
         missing = true;
       }
       if (missing && !activeListNameRef.current) void loadLeads();
-      return pinLeads(next);
+      return sortInboxLeads(next);
     });
   }, [pulse, loadLeads, selectedLeadId]);
 
@@ -711,7 +710,7 @@ export default function InboxClient({
     return () => { supabase.removeChannel(channel); };
   }, [conversationId]);
 
-  // Any inbound/outbound — update the rail. The open thread stays pinned until you pick another.
+  // Any inbound/outbound — update the rail. The open thread stays selected until you pick another.
   useEffect(() => {
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -739,7 +738,7 @@ export default function InboxClient({
               void loadLeads();
               return prev;
             }
-            return pinLeads(prev.map(l =>
+            return sortInboxLeads(prev.map(l =>
               l.id === leadId
                 ? {
                     ...l,
@@ -886,7 +885,7 @@ export default function InboxClient({
         }
         // Update conversation preview in lead list
         const preview = body.length > 100 ? body.slice(0, 97) + '…' : body;
-        setLeads(prev => pinLeads(prev.map(l =>
+        setLeads(prev => sortInboxLeads(prev.map(l =>
           l.id === sendLeadId
             ? {
                 ...l,
