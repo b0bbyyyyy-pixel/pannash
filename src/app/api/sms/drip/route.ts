@@ -4,6 +4,7 @@ import { cookies } from 'next/headers';
 import { toE164 } from '@/lib/dialer/e164';
 import { normalizeState } from '@/lib/smsDrip/timezones';
 import { isCampaignInboxLead } from '@/lib/inbox/promoteCampaignReply';
+import { tallyDripSends } from '@/lib/smsDrip/tally';
 
 export const dynamic = 'force-dynamic';
 
@@ -71,7 +72,14 @@ export async function GET(req: NextRequest) {
       .select('lead_id, sms_status, scheduled_for, sent_at, error')
       .eq('job_id', job.id);
 
-    return NextResponse.json({ job, sends: sends ?? [], savedTemplates });
+    const rows = sends ?? [];
+    const tally = tallyDripSends(rows);
+    if (job.sent_count !== tally.sent) {
+      await supabase.from('sms_drip_jobs').update({ sent_count: tally.sent, updated_at: new Date().toISOString() }).eq('id', job.id);
+      job.sent_count = tally.sent;
+    }
+
+    return NextResponse.json({ job, sends: rows, savedTemplates, tally });
   } catch (err) {
     console.error('[sms/drip GET]', err);
     return NextResponse.json({ job: null, sends: [], error: 'Internal error' }, { status: 500 });

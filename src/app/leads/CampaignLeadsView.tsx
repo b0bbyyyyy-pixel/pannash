@@ -8,6 +8,7 @@ import RunSmsModal, { type ExistingDripJob } from '@/components/RunSmsModal';
 import QuickTextPopup from '@/components/QuickTextPopup';
 import { zoneForLocation, formatLocal } from '@/lib/smsDrip/timezones';
 import UploadForm from './UploadForm';
+import { formatDripTally, tallyDripSends } from '@/lib/smsDrip/tally';
 
 interface DripJob {
   id: string;
@@ -169,7 +170,9 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
       if (map.size) {
         setLeads(prev => prev.map(l => {
           const s = map.get(l.id);
-          return s?.sent_at && !l.sms_sent_at ? { ...l, sms_sent_at: s.sent_at } : l;
+          return s?.sms_status === 'sent' && s.sent_at && !l.sms_sent_at
+            ? { ...l, sms_sent_at: s.sent_at }
+            : l;
         }));
       }
     } catch { /* poll again next tick */ }
@@ -243,6 +246,8 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
     });
   }, [leads, search]);
 
+  const dripTally = useMemo(() => tallyDripSends([...dripSends.values()]), [dripSends]);
+  const dripTallyLabel = useMemo(() => formatDripTally(dripTally), [dripTally]);
   const smsCount = leads.filter((l) => l.sms_sent_at).length;
   const callCount = leads.filter((l) => l.call_made_at).length;
   const failsafePause = useMemo(() => {
@@ -346,7 +351,7 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
               {leads.length} lead{leads.length !== 1 ? 's' : ''}
             </span>
             <span className="bg-blue-50 text-blue-600 text-[10px] font-semibold px-2 py-0.5 rounded-full">
-              SMS {smsCount}
+              SMS {dripSends.size ? dripTally.sent : smsCount}
             </span>
             <span className="bg-green-50 text-green-600 text-[10px] font-semibold px-2 py-0.5 rounded-full">
               Calls {callCount}
@@ -377,7 +382,7 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
                   Pause
                 </button>
                 <span className="text-[11px] text-[#6b6b6b] font-medium tabular-nums">
-                  Sent {dripJob.sent_count}/{dripJob.total_count}
+                  {dripTallyLabel}
                   {countdown ? ` · ${countdown}` : ''}
                 </span>
               </>
@@ -395,7 +400,7 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
                   Resume
                 </button>
                 <span className="text-[11px] text-amber-700 font-medium tabular-nums">
-                  {failsafePause ? 'Paused after 3 failed texts' : 'Paused'} · {dripJob.sent_count}/{dripJob.total_count} sent
+                  {failsafePause ? 'Paused after 3 failed texts' : 'Paused'} · {dripTallyLabel}
                 </span>
                 <button
                   onClick={() => setShowRunSms(true)}
@@ -415,7 +420,7 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
             )}
             {dripJob?.status === 'completed' && (
               <span className="text-[11px] text-green-700 font-medium">
-                Drip done · {dripJob.sent_count}/{dripJob.total_count} sent
+                Drip done · {dripTallyLabel}
               </span>
             )}
 

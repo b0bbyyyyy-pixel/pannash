@@ -2,6 +2,7 @@ import { getTwilioCreds } from '@/lib/telephony/twilio';
 import { sendTwilioSms } from '@/lib/telephony/sms';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
 import { finishDripAttempt } from '@/lib/smsDrip/failsafe';
+import { recountJobSentCount } from '@/lib/smsDrip/tally';
 import { zoneForLocation, isInSendWindow, nextWindowStart } from '@/lib/smsDrip/timezones';
 import { toE164 } from '@/lib/dialer/e164';
 import { isCampaignInboxLead } from '@/lib/inbox/promoteCampaignReply';
@@ -309,8 +310,9 @@ export async function processTick(supabase: any, user: { id: string; email?: str
             .in('sms_status', ['queued', 'scheduled', 'sending']);
 
           if (!remaining?.length) {
+            const sent = await recountJobSentCount(supabase, job.id);
             await supabase.from('sms_drip_jobs')
-              .update({ status: 'completed', updated_at: new Date().toISOString() })
+              .update({ status: 'completed', sent_count: sent, updated_at: new Date().toISOString() })
               .eq('id', job.id);
             results.push({ jobId: job.id, completed: true });
           } else {
@@ -470,11 +472,12 @@ export async function processTick(supabase: any, user: { id: string; email?: str
           .eq('id', lead.id);
       }
 
-      let sentTally = sendStatus === 'sent' ? 1 : 0;
       const delay = nextDelayMs(job);
       if (!paused) {
+        const sent = await recountJobSentCount(supabase, job.id);
+        job.sent_count = sent;
         await supabase.from('sms_drip_jobs').update({
-          sent_count: job.sent_count + sentTally,
+          sent_count: sent,
           next_send_at: new Date(Date.now() + delay).toISOString(),
           updated_at: sentAt,
         }).eq('id', job.id);
@@ -577,12 +580,13 @@ export async function processTick(supabase: any, user: { id: string; email?: str
             email: user.email,
           });
           if (extraStatus === 'sent') {
-            sentTally += 1;
             await supabase.from('leads').update({ sms_sent_at: extraAt, last_contact: extraAt }).eq('id', nextLead.id);
           }
           if (!extraPause.paused) {
+            const sent = await recountJobSentCount(supabase, job.id);
+            job.sent_count = sent;
             await supabase.from('sms_drip_jobs').update({
-              sent_count: job.sent_count + sentTally,
+              sent_count: sent,
               next_send_at: extraAt,
               updated_at: extraAt,
             }).eq('id', job.id);
