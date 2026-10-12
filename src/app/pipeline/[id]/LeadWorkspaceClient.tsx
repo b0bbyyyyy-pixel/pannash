@@ -372,6 +372,7 @@ export default function LeadWorkspaceClient({
   const [showPasteParse, setShowPasteParse] = useState(false);
   const [pasteParseText, setPasteParseText] = useState('');
   const [pasteParseBusy, setPasteParseBusy] = useState(false);
+  const [pasteParseMsg, setPasteParseMsg] = useState<string | null>(null);
   const [inFrame, setInFrame]     = useState(false);
   useEffect(() => { setInFrame(isInIframe()); }, []);
 
@@ -802,7 +803,7 @@ export default function LeadWorkspaceClient({
 
   const openPasteParse = async () => {
     setShowPasteParse(true);
-    setAppMsg(null);
+    setPasteParseMsg(null);
     try {
       const clip = await navigator.clipboard.readText();
       if (clip.trim()) setPasteParseText(clip);
@@ -815,7 +816,7 @@ export default function LeadWorkspaceClient({
     const text = (raw ?? pasteParseText).trim();
     if (!text) return;
     setPasteParseBusy(true);
-    setAppMsg(null);
+    setPasteParseMsg(null);
     try {
       const res = await fetch('/api/leads/parse-sheet', {
         method: 'POST',
@@ -825,22 +826,22 @@ export default function LeadWorkspaceClient({
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setAppMsg((json as { error?: string }).error || 'Could not parse paste');
+        setPasteParseMsg((json as { error?: string }).error || 'Could not parse paste');
         return;
       }
       const fields = ((json as { fields?: Record<string, string> }).fields ?? {}) as Record<string, string>;
       await applyParsedApp(fields, new Set(Object.keys(fields)));
       const n = Object.keys(fields).length;
-      setAppMsg(
+      setPasteParseMsg(
         n > 0
-          ? `Pasted & parsed — filled ${n} field${n === 1 ? '' : 's'}.`
+          ? `Filled ${n} field${n === 1 ? '' : 's'}.`
           : 'Limited data extracted — review the form.'
       );
       setShowPasteParse(false);
       setPasteParseText('');
       void refreshLeadFromServer();
     } catch {
-      setAppMsg('Could not parse paste');
+      setPasteParseMsg('Could not parse paste');
     } finally {
       setPasteParseBusy(false);
     }
@@ -1771,6 +1772,9 @@ export default function LeadWorkspaceClient({
               {appMsg && (
                 <p className="text-[11px] text-[#6b6b6b] mt-2">{appMsg}</p>
               )}
+              {pasteParseMsg && (
+                <p className="text-[11px] text-[#6b6b6b] mt-2">{pasteParseMsg}</p>
+              )}
               {showPasteParse && (
                 <div className="mt-3 space-y-2">
                   <p className="text-[11px] text-[#6b6b6b]">
@@ -1788,14 +1792,6 @@ export default function LeadWorkspaceClient({
               )}
               <div className="mt-3 flex items-center gap-2">
                 <button
-                  onClick={createApplication}
-                  disabled={appBusy || pasteParseBusy}
-                  title="Create a signed application from this lead's details"
-                  className="px-3 py-2.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] disabled:opacity-50 transition-colors"
-                >
-                  {appBusy ? 'Creating…' : 'Create Application'}
-                </button>
-                <button
                   type="button"
                   onClick={() => {
                     if (!showPasteParse) void openPasteParse();
@@ -1805,7 +1801,15 @@ export default function LeadWorkspaceClient({
                   title="Paste a Google Sheets row and fill this application"
                   className="px-3 py-2.5 border border-[#e5e5e5] bg-white text-[#1a1a1a] text-xs font-medium rounded-md hover:bg-[#f5f5f5] disabled:opacity-50 transition-colors"
                 >
-                  {pasteParseBusy ? 'Parsing…' : 'Paste & Parse'}
+                  {pasteParseBusy ? 'Parsing…' : 'Paste'}
+                </button>
+                <button
+                  onClick={createApplication}
+                  disabled={appBusy || pasteParseBusy}
+                  title="Create a signed application from this lead's details"
+                  className="px-3 py-2.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] disabled:opacity-50 transition-colors"
+                >
+                  {appBusy ? 'Creating…' : 'Create Application'}
                 </button>
               </div>
             </div>
