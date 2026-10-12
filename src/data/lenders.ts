@@ -5,7 +5,7 @@ export const TIER_LABELS: Record<LenderTier, string> = {
   2: 'Tier B',
   3: 'Tier C',
   4: 'Tier D',
-  5: 'Tier E – Secondary',
+  5: 'Reverse Consolidation',
 };
 
 export interface LenderCriteria {
@@ -854,7 +854,7 @@ export const LENDERS: LenderCriteria[] = [
   {
     name: 'Fratello Capital',
     isActive: true,
-    tier: 3,
+    tier: 5,
     email: 'underwriting@fratellocapital.com',
     ccEmail: undefined,
     repName: undefined,
@@ -881,7 +881,7 @@ export const LENDERS: LenderCriteria[] = [
     acceptsDefaults: undefined,
     acceptsSoleProp: true,
     doesBuyout: undefined,
-    doesReverseConsolidation: false,
+    doesReverseConsolidation: true,
     stateRestrictions: undefined,
     prohibitedIndustries: 'trucking, towing',
     preferredIndustries: 'Auto sales',
@@ -968,7 +968,7 @@ export const LENDERS: LenderCriteria[] = [
   {
     name: 'Global Funding Experts',
     isActive: true,
-    tier: 3,
+    tier: 5,
     email: 'underwriting@ezrevenuefinance.com',
     ccEmail: 'andre@globalfundingexperts.com',
     repName: 'andre',
@@ -995,7 +995,7 @@ export const LENDERS: LenderCriteria[] = [
     acceptsDefaults: undefined,
     acceptsSoleProp: undefined,
     doesBuyout: undefined,
-    doesReverseConsolidation: false,
+    doesReverseConsolidation: true,
     stateRestrictions: undefined,
     prohibitedIndustries: undefined,
     preferredIndustries: undefined,
@@ -1880,7 +1880,7 @@ export const LENDERS: LenderCriteria[] = [
   {
     name: 'silver line',
     isActive: true,
-    tier: 3,
+    tier: 5,
     email: 'submissions@silverlinefunding.com',
     ccEmail: undefined,
     repName: undefined,
@@ -1907,7 +1907,7 @@ export const LENDERS: LenderCriteria[] = [
     acceptsDefaults: undefined,
     acceptsSoleProp: undefined,
     doesBuyout: undefined,
-    doesReverseConsolidation: false,
+    doesReverseConsolidation: true,
     stateRestrictions: undefined,
     prohibitedIndustries: undefined,
     preferredIndustries: undefined,

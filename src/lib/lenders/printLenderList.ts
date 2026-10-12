@@ -41,7 +41,7 @@ const TIER_SHORT: Record<number, string> = {
   2: 'B',
   3: 'C',
   4: 'D',
-  5: 'E',
+  5: 'RC',
 };
 
 function esc(raw: unknown): string {

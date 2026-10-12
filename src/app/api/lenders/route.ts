@@ -97,8 +97,29 @@ export async function GET(request: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
+  const reverseNames = (name: string) => {
+    const n = name.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    return n.includes('fratello') || n.includes('silver line') || n === 'silverline' || n.includes('global funding experts') || n === 'gfe';
+  };
+  let rows = existing ?? [];
+  const toReverse = rows.filter((l: { name: string; tier: number }) => reverseNames(l.name) && l.tier !== 5);
+  if (toReverse.length) {
+    await supabase
+      .from('lenders')
+      .update({ tier: 5, does_reverse_consolidation: true })
+      .eq('user_id', user.id)
+      .in('id', toReverse.map((l: { id: string }) => l.id));
+    const { data: refreshed } = await supabase
+      .from('lenders')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('tier', { ascending: true })
+      .order('name', { ascending: true });
+    rows = refreshed ?? rows;
+  }
+
   // Auto-seed default lenders on first load
-  if (!existing || existing.length === 0) {
+  if (!rows.length) {
     const { data: seeded, error: seedErr } = await supabase
       .from('lenders')
       .insert(buildSeedRows(user.id))
@@ -109,7 +130,7 @@ export async function GET(request: NextRequest) {
 
   // ?sync=true — insert any seed lenders that don't already exist (matched by name)
   if (sync) {
-    const existingNames = new Set((existing ?? []).map((l: { name: string }) => l.name.toLowerCase()));
+    const existingNames = new Set(rows.map((l: { name: string }) => l.name.toLowerCase()));
     const missing = buildSeedRows(user.id).filter(r => !existingNames.has(r.name.toLowerCase()));
     let syncedCount = 0;
     if (missing.length > 0) {
@@ -127,7 +148,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ lenders: refreshed ?? [], synced: syncedCount });
   }
 
-  return NextResponse.json({ lenders: existing ?? [] });
+  return NextResponse.json({ lenders: rows });
 }
 
 // POST — create a new lender
