@@ -33,6 +33,8 @@ type Traveler = {
   path: number[];
   step: number;
   nextAt: number;
+  kind: BlipKind;
+  hopMs: number;
 };
 
 const BG = '#fafafa';
@@ -46,8 +48,9 @@ const LINE = { r: 150, g: 144, b: 118 };
 const GAP = 13;
 const PAD_X = 22;
 const PAD_Y = 18;
-const MAX_LIVE = 42;
-const MAX_LINES = 10;
+const MAX_LIVE = 56;
+const MAX_LINES = 18;
+const MAX_SMS_TRAVEL = 4;
 const FPS_MS = 33;
 
 function hash(n: number) {
@@ -71,13 +74,13 @@ function distCells(a: Cell, b: Cell) {
 
 function lifeFor(kind: BlipKind) {
   switch (kind) {
-    case 'declined': return 220;
-    case 'smsFail': return 160;
-    case 'sms': return 280;
-    case 'smsDone': return 420;
-    case 'smsReply': return 620;
-    case 'call': return 240;
-    case 'text': return 340;
+    case 'declined': return 280;
+    case 'smsFail': return 260;
+    case 'sms': return 720;
+    case 'smsDone': return 560;
+    case 'smsReply': return 1100;
+    case 'call': return 320;
+    case 'text': return 520;
     case 'idle': return 280;
   }
 }
@@ -85,24 +88,24 @@ function lifeFor(kind: BlipKind) {
 function peakFor(kind: BlipKind) {
   switch (kind) {
     case 'declined': return 0.55;
-    case 'smsFail': return 0.28;
-    case 'sms': return 0.52;
-    case 'smsDone': return 0.4;
-    case 'smsReply': return 0.7;
-    case 'call': return 0.58;
-    case 'text': return 0.32;
+    case 'smsFail': return 0.32;
+    case 'sms': return 0.78;
+    case 'smsDone': return 0.5;
+    case 'smsReply': return 0.92;
+    case 'call': return 0.62;
+    case 'text': return 0.42;
     case 'idle': return 0.18;
   }
 }
 
 function radiusFor(kind: BlipKind) {
   switch (kind) {
-    case 'smsReply': return 2.1;
-    case 'call': return 1.7;
-    case 'sms': return 1.55;
-    case 'smsDone': return 1.7;
+    case 'smsReply': return 2.55;
+    case 'call': return 1.75;
+    case 'sms': return 2.05;
+    case 'smsDone': return 1.85;
     case 'declined': return 1.6;
-    default: return 1.25;
+    default: return 1.3;
   }
 }
 
@@ -110,7 +113,7 @@ function colorFor(kind: BlipKind) {
   switch (kind) {
     case 'smsReply': return FUNDED;
     case 'call': return { r: 110, g: 128, b: 112 };
-    case 'sms': return { r: 124, g: 142, b: 118 };
+    case 'sms': return { r: 118, g: 148, b: 108 };
     case 'smsFail': return { r: 120, g: 120, b: 118 };
     case 'declined': return { r: 140, g: 128, b: 118 };
     default: return OFF;
@@ -129,10 +132,13 @@ export class SwitchboardEngine {
   live: Live[] = [];
   lines: Line[] = [];
   traveler: Traveler | null = null;
+  smsTravelers: Traveler[] = [];
   counts: SwitchboardCounts = { funded: 0, offers: 0, docsIn: 0, day: 1, daysInMonth: 31 };
   lastDraw = 0;
   nextIdle = 0;
   nextTravel = 0;
+  nextExchange = 0;
+  nextPatch = 0;
   liveFrozen = true;
   dialerLive = false;
   campaignLive = false;
@@ -165,11 +171,20 @@ export class SwitchboardEngine {
     this.dialerLive = opts.dialerLive;
     this.campaignLive = opts.campaignLive;
     if (opts.frozen || !opts.dialerLive) this.traveler = null;
+    if (opts.frozen || !opts.campaignLive) {
+      this.smsTravelers = [];
+      this.nextExchange = 0;
+    }
   }
 
   pulse(kind: BlipKind, n = 1) {
     if (this.liveFrozen && kind !== 'idle') return;
     const now = performance.now();
+    if (kind === 'sms' || kind === 'smsFail' || kind === 'smsDone') {
+      const count = Math.min(n, 4);
+      for (let k = 0; k < count; k++) this.startSmsPath(now + k * 50, kind);
+      return;
+    }
     const spawned: number[] = [];
     for (let k = 0; k < n; k++) {
       const i = this.pickFree(hash(now * 1000 + k + kind.length * 17 + this.live.length));
@@ -184,8 +199,11 @@ export class SwitchboardEngine {
       });
       spawned.push(i);
     }
-    if (spawned.length >= 2) {
-      this.pushLine(spawned[0], spawned[1], now, kind === 'sms' ? 220 : 280);
+    if (kind === 'smsReply' && spawned.length) {
+      const dest = this.currentSmsCell();
+      if (dest >= 0) this.pushLine(spawned[0], dest, now, 420);
+    } else if (spawned.length >= 2) {
+      this.pushLine(spawned[0], spawned[1], now, 280);
     } else if (spawned.length === 1) {
       const related = this.findRelated(kind, spawned[0], now);
       if (related >= 0) this.pushLine(spawned[0], related, now, 260);
@@ -340,38 +358,68 @@ export class SwitchboardEngine {
     return best;
   }
 
+  private startSmsPath(now: number, kind: BlipKind) {
+    if (this.smsTravelers.length >= MAX_SMS_TRAVEL) return;
+    this.smsTravelers.push(this.makeTraveler(now, kind, 52 + (hash(Math.floor(now)) % 28)));
+  }
+
+  private currentSmsCell() {
+    for (let i = this.smsTravelers.length - 1; i >= 0; i--) {
+      const t = this.smsTravelers[i];
+      const cell = t.path[Math.max(0, t.step - 1)];
+      if (cell != null) return cell;
+    }
+    return -1;
+  }
+
+  private stepTraveler(t: Traveler, now: number) {
+    if (now < t.nextAt) return false;
+    const i = t.path[t.step];
+    if (i != null) {
+      this.pushLive({
+        i,
+        kind: t.kind,
+        born: now,
+        life: t.kind === 'sms' ? 190 : lifeFor(t.kind),
+        peak: t.kind === 'sms' ? 0.72 : peakFor(t.kind),
+        r: t.kind === 'sms' ? 1.85 : radiusFor(t.kind),
+      });
+      if (t.step > 0) this.pushLine(t.path[t.step - 1], i, now, 160);
+    }
+    t.step += 1;
+    t.nextAt = now + t.hopMs;
+    return t.step >= t.path.length;
+  }
+
   private advance(now: number) {
     this.live = this.live.filter(b => now < b.born + b.life + 40);
     this.lines = this.lines.filter(l => now < l.born + l.life);
 
     if (!this.liveFrozen && this.dialerLive) {
       if (!this.traveler && now >= this.nextTravel) {
-        this.traveler = this.makeTraveler(now);
+        this.traveler = this.makeTraveler(now, 'call', 70);
         this.nextTravel = now + 1400 + (hash(Math.floor(now)) % 900);
       }
-      if (this.traveler) {
-        if (now >= this.traveler.nextAt) {
-          const i = this.traveler.path[this.traveler.step];
-          if (i != null) {
-            this.pushLive({
-              i,
-              kind: 'call',
-              born: now,
-              life: 220,
-              peak: 0.55,
-              r: 1.65,
-            });
-            if (this.traveler.step > 0) {
-              this.pushLine(this.traveler.path[this.traveler.step - 1], i, now, 180);
-            }
-          }
-          this.traveler.step += 1;
-          this.traveler.nextAt = now + 70;
-          if (this.traveler.step >= this.traveler.path.length) this.traveler = null;
-        }
-      }
+      if (this.traveler && this.stepTraveler(this.traveler, now)) this.traveler = null;
     } else {
       this.traveler = null;
+    }
+
+    if (!this.liveFrozen && this.campaignLive && this.cells.length) {
+      if (!this.nextExchange) this.nextExchange = now;
+      if (this.smsTravelers.length < 3 && now >= this.nextExchange) {
+        this.startSmsPath(now, 'sms');
+        this.nextExchange = now + 200 + (hash(Math.floor(now / 7)) % 160);
+      }
+      this.smsTravelers = this.smsTravelers.filter(t => !this.stepTraveler(t, now));
+      if (this.smsTravelers.length >= 2 && now >= this.nextPatch) {
+        const a = this.smsTravelers[0].path[Math.max(0, this.smsTravelers[0].step - 1)];
+        const b = this.smsTravelers[1].path[Math.max(0, this.smsTravelers[1].step - 1)];
+        if (a != null && b != null && a !== b) this.pushLine(a, b, now, 220);
+        this.nextPatch = now + 130 + (hash(Math.floor(now / 11)) % 110);
+      }
+    } else {
+      this.smsTravelers = [];
     }
 
     const idle = !this.dialerLive && !this.campaignLive && !this.liveFrozen;
@@ -384,19 +432,56 @@ export class SwitchboardEngine {
     }
   }
 
-  private makeTraveler(now: number): Traveler {
-    const row = hash(Math.floor(now / 80)) % this.rows;
-    const start = hash(Math.floor(now / 17)) % Math.max(1, this.cols - 6);
-    const len = 5 + (hash(row + start) % 5);
+  private makeTraveler(now: number, kind: BlipKind = 'call', hopMs = 70): Traveler {
+    const mode = hash(Math.floor(now / 13) + this.smsTravelers.length * 19) % 3;
     const path: number[] = [];
-    const dir = (hash(row * 13 + start) & 1) === 0 ? 1 : -1;
-    let c = dir < 0 ? Math.min(this.cols - 1, start + len) : start;
-    for (let n = 0; n < len; n++) {
-      const cc = c + dir * n;
-      if (cc < 0 || cc >= this.cols) break;
-      path.push(row * this.cols + cc);
+    if (mode === 1 && this.rows > 4) {
+      const col = hash(Math.floor(now / 29)) % this.cols;
+      const start = hash(Math.floor(now / 17)) % Math.max(1, this.rows - 5);
+      const len = 5 + (hash(col + start) % 4);
+      const dir = (hash(col * 11 + start) & 1) === 0 ? 1 : -1;
+      const r0 = dir < 0 ? Math.min(this.rows - 1, start + len) : start;
+      for (let n = 0; n < len; n++) {
+        const rr = r0 + dir * n;
+        if (rr < 0 || rr >= this.rows) break;
+        path.push(rr * this.cols + col);
+      }
+    } else if (mode === 2 && this.cols > 6 && this.rows > 4) {
+      const row = hash(Math.floor(now / 80)) % this.rows;
+      const start = hash(Math.floor(now / 17)) % Math.max(1, this.cols - 5);
+      const across = 4 + (hash(row + start) % 4);
+      const dir = (hash(row * 13 + start) & 1) === 0 ? 1 : -1;
+      let c = dir < 0 ? Math.min(this.cols - 1, start + across) : start;
+      for (let n = 0; n < across; n++) {
+        const cc = c + dir * n;
+        if (cc < 0 || cc >= this.cols) break;
+        path.push(row * this.cols + cc);
+        c = cc;
+      }
+      const last = path[path.length - 1];
+      if (last != null) {
+        const cc = last % this.cols;
+        const rr = Math.floor(last / this.cols);
+        const vdir = rr < this.rows / 2 ? 1 : -1;
+        for (let n = 1; n <= 3; n++) {
+          const r2 = rr + vdir * n;
+          if (r2 < 0 || r2 >= this.rows) break;
+          path.push(r2 * this.cols + cc);
+        }
+      }
+    } else {
+      const row = hash(Math.floor(now / 80)) % this.rows;
+      const start = hash(Math.floor(now / 17)) % Math.max(1, this.cols - 6);
+      const len = 6 + (hash(row + start) % 5);
+      const dir = (hash(row * 13 + start) & 1) === 0 ? 1 : -1;
+      const c0 = dir < 0 ? Math.min(this.cols - 1, start + len) : start;
+      for (let n = 0; n < len; n++) {
+        const cc = c0 + dir * n;
+        if (cc < 0 || cc >= this.cols) break;
+        path.push(row * this.cols + cc);
+      }
     }
-    return { path, step: 0, nextAt: now };
+    return { path, step: 0, nextAt: now, kind, hopMs };
   }
 
   private decay() {
@@ -438,13 +523,13 @@ export class SwitchboardEngine {
       else liveAt.set(b.i, [b]);
     }
 
-    ctx.lineWidth = 0.5;
+    ctx.lineWidth = this.campaignLive ? 0.65 : 0.5;
     for (const line of this.lines) {
       const ca = this.cells[line.a];
       const cb = this.cells[line.b];
       if (!ca || !cb) continue;
       const t = clamp((now - line.born) / line.life, 0, 1);
-      const a = (t < 0.2 ? t / 0.2 : 1 - (t - 0.2) / 0.8) * 0.32 * decay;
+      const a = (t < 0.2 ? t / 0.2 : 1 - (t - 0.2) / 0.8) * (this.campaignLive ? 0.42 : 0.32) * decay;
       ctx.strokeStyle = rgba(LINE, a);
       ctx.beginPath();
       ctx.moveTo(ca.x, ca.y);

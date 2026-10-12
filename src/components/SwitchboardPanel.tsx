@@ -14,11 +14,9 @@ const FUNDED_RE = /^funded$/i;
 const OFFER_RE = /offer|approv|pre-qualified/i;
 const DOCS_RE = /docs in|docs received/i;
 
-type DripJob = {
-  id: string;
-  list_id: string;
-  status: string;
-  sent_count: number | null;
+type LivePayload = {
+  drip?: { active: boolean; sent: number; failed: number };
+  inbound?: { leadId: string; at: string | null }[];
 };
 
 export default function SwitchboardPanel({
@@ -34,9 +32,9 @@ export default function SwitchboardPanel({
   const wrapRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef(new SwitchboardEngine());
   const { pulse } = useSync();
-  const seenPulse = useRef(new Set<string>());
+  const seenEvents = useRef(new Set<string>());
   const declinedRef = useRef(0);
-  const dripRef = useRef({ sent: 0, failed: 0, active: false, listId: '', primed: false });
+  const dripRef = useRef({ sent: 0, failed: 0, active: false, primed: false });
   const pulsePrimed = useRef(false);
   const countsRef = useRef<SwitchboardCounts>({ funded: 0, offers: 0, docsIn: 0, day: 1, daysInMonth: 31 });
   const actRef = useRef({ autoCall, dialerOpen, phoneStatus, visible: true });
@@ -83,66 +81,50 @@ export default function SwitchboardPanel({
     }
   }, [emit]);
 
-  const loadDrip = useCallback(async () => {
+  const loadLive = useCallback(async () => {
     try {
-      const res = await fetch('/api/sms/drip', { cache: 'no-store' });
+      const res = await fetch('/api/switchboard?live=1', { cache: 'no-store' });
       if (!res.ok) return;
-      const data = await res.json() as { jobs?: DripJob[] };
-      const jobs = data.jobs ?? [];
-      const active = jobs.find(j => j.status === 'active') ?? null;
+      const data = await res.json() as LivePayload;
+      const drip = data.drip ?? { active: false, sent: 0, failed: 0 };
       const prev = dripRef.current;
-      const wasActive = prev.active;
-      if (!prev.primed) {
-        dripRef.current = {
-          sent: active?.sent_count ?? 0,
-          failed: prev.failed,
-          active: !!active,
-          listId: active?.list_id ?? '',
-          primed: true,
-        };
-        applyActivity();
-        if (active) {
-          const det = await fetch(`/api/sms/drip?listId=${encodeURIComponent(active.list_id)}`, { cache: 'no-store' });
-          if (det.ok) {
-            const body = await det.json() as { tally?: { failed?: number } };
-            dripRef.current.failed = body.tally?.failed ?? 0;
-          }
-        }
-        return;
-      }
+      const first = !prev.primed;
       dripRef.current = {
-        sent: active?.sent_count ?? 0,
-        failed: prev.failed,
-        active: !!active,
-        listId: active?.list_id ?? '',
+        sent: drip.sent,
+        failed: drip.failed,
+        active: drip.active,
         primed: true,
       };
       applyActivity();
 
-      if (wasActive && !active) {
-        emit('smsDone', 3);
-        dripRef.current.failed = 0;
-        return;
+      if (!first) {
+        if (prev.active && !drip.active) emit('smsDone', 3);
+        const sentDelta = Math.max(0, drip.sent - prev.sent);
+        if (drip.active && sentDelta > 0) emit('sms', Math.min(8, sentDelta));
+        const failDelta = Math.max(0, drip.failed - prev.failed);
+        if (drip.active && failDelta > 0) emit('smsFail', Math.min(4, failDelta));
       }
-      if (!active) return;
 
-      const delta = Math.max(0, (active.sent_count ?? 0) - prev.sent);
-      if (delta > 0) emit('sms', Math.min(6, delta));
-
-      const det = await fetch(`/api/sms/drip?listId=${encodeURIComponent(active.list_id)}`, { cache: 'no-store' });
-      if (!det.ok) return;
-      const body = await det.json() as { tally?: { failed?: number; sent?: number } };
-      const failed = body.tally?.failed ?? 0;
-      const failDelta = Math.max(0, failed - prev.failed);
-      dripRef.current.failed = failed;
-      if (failDelta > 0) emit('smsFail', Math.min(4, failDelta));
+      const now = Date.now();
+      for (const row of data.inbound ?? []) {
+        const key = `${row.leadId}:${row.at ?? ''}`;
+        if (seenEvents.current.has(key)) continue;
+        seenEvents.current.add(key);
+        const at = row.at ? new Date(row.at).getTime() : 0;
+        if (first && now - at > 20_000) continue;
+        if (now - at > 45_000) continue;
+        emit('smsReply', 1);
+      }
+      if (seenEvents.current.size > 400) {
+        seenEvents.current = new Set([...seenEvents.current].slice(-200));
+      }
     } catch {
       /* ignore */
     }
   }, [applyActivity, emit]);
 
   usePolling(loadCounts, 45_000, true, true);
-  usePolling(loadDrip, 8_000, true, true);
+  usePolling(loadLive, 2_500, true, true);
 
   useEffect(() => {
     applyActivity();
@@ -161,22 +143,20 @@ export default function SwitchboardPanel({
     const rows = pulse?.inboxChanged ?? [];
     if (!rows.length) return;
     const campaign = dripRef.current.active;
-    if (!pulsePrimed.current) {
-      for (const row of rows) {
-        seenPulse.current.add(`${row.lead_id}:${row.last_message_at ?? ''}`);
-      }
-      pulsePrimed.current = true;
-      return;
-    }
+    const now = Date.now();
     for (const row of rows) {
       const key = `${row.lead_id}:${row.last_message_at ?? ''}`;
-      if (seenPulse.current.has(key)) continue;
-      seenPulse.current.add(key);
+      if (seenEvents.current.has(key)) continue;
+      seenEvents.current.add(key);
+      const at = row.last_message_at ? new Date(row.last_message_at).getTime() : 0;
+      if (!pulsePrimed.current && now - at > 8_000) continue;
+      if (now - at > 45_000) continue;
       if (row.last_direction === 'inbound') emit('smsReply', 1);
       else emit(campaign ? 'sms' : 'text', 1);
     }
-    if (seenPulse.current.size > 400) {
-      seenPulse.current = new Set([...seenPulse.current].slice(-200));
+    pulsePrimed.current = true;
+    if (seenEvents.current.size > 400) {
+      seenEvents.current = new Set([...seenEvents.current].slice(-200));
     }
   }, [pulse, emit]);
 

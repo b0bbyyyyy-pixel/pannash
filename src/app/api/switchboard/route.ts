@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 
@@ -89,7 +89,59 @@ async function fundedThisMonth(supabase: SbClient, userId: string, month: string
   return funded;
 }
 
-export async function GET() {
+async function liveActivity(supabase: SbClient, userId: string) {
+  const since = new Date(Date.now() - 45_000).toISOString();
+  let jobs: { id: string; list_id: string | null; status: string; sent_count: number | null }[] = [];
+  try {
+    const res = await supabase
+      .from('sms_drip_jobs')
+      .select('id, list_id, status, sent_count')
+      .eq('user_id', userId)
+      .eq('status', 'active')
+      .limit(3);
+    if (res.error) jobs = [];
+    else jobs = res.data ?? [];
+  } catch {
+    jobs = [];
+  }
+
+  const { data: inboundRows } = await supabase
+    .from('inbox_conversations')
+    .select('lead_id, last_message_at, last_direction')
+    .eq('user_id', userId)
+    .eq('last_direction', 'inbound')
+    .gt('last_message_at', since)
+    .limit(40);
+
+  let sent = 0;
+  let failed = 0;
+  for (const job of jobs) {
+    const [sentRes, failRes] = await Promise.all([
+      supabase
+        .from('sms_drip_sends')
+        .select('id', { count: 'exact', head: true })
+        .eq('job_id', job.id)
+        .in('sms_status', ['sent', 'delivered']),
+      supabase
+        .from('sms_drip_sends')
+        .select('id', { count: 'exact', head: true })
+        .eq('job_id', job.id)
+        .eq('sms_status', 'failed'),
+    ]);
+    sent += sentRes.count ?? 0;
+    failed += failRes.count ?? 0;
+  }
+
+  return {
+    drip: { active: jobs.length > 0, sent, failed },
+    inbound: (inboundRows ?? []).map(r => ({
+      leadId: r.lead_id as string,
+      at: r.last_message_at as string | null,
+    })),
+  };
+}
+
+export async function GET(req: NextRequest) {
   const cookieStore = await cookies();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -99,6 +151,11 @@ export async function GET() {
 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  if (req.nextUrl.searchParams.get('live') === '1') {
+    const live = await liveActivity(supabase, user.id);
+    return NextResponse.json(live, { headers: { 'Cache-Control': 'no-store' } });
+  }
 
   const now = new Date();
   const month = localMonthKey(now);
