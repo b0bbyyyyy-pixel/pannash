@@ -83,18 +83,22 @@ export default async function PipelinePage({
   const leadByConv = new Map<string, string>();
   for (let i = 0; i < pipelineLeadIds.length; i += 100) {
     const chunk = pipelineLeadIds.slice(i, i + 100);
-    let { data, error } = await supabase
+    let data: ConvRow[] | null = null;
+    let error: { message?: string } | null = null;
+    const withInbound = await supabase
       .from('inbox_conversations')
       .select('id, lead_id, last_message_preview, last_direction, last_inbound_at')
       .eq('user_id', user.id)
       .in('lead_id', chunk);
-    if (error) {
+    if (!withInbound.error) {
+      data = (withInbound.data ?? []) as ConvRow[];
+    } else {
       const fallback = await supabase
         .from('inbox_conversations')
         .select('id, lead_id, last_message_preview, last_direction')
         .eq('user_id', user.id)
         .in('lead_id', chunk);
-      data = fallback.data;
+      data = (fallback.data ?? []) as ConvRow[];
       error = fallback.error;
     }
     if (error) {
