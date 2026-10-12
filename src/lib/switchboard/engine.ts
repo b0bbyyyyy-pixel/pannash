@@ -37,6 +37,12 @@ type Traveler = {
   hopMs: number;
 };
 
+type Scan = {
+  born: number;
+  duration: number;
+  sigma: number;
+};
+
 const BG = '#fafafa';
 const OFF = { r: 148, g: 160, b: 148 };
 const RULE = { r: 168, g: 162, b: 148 };
@@ -44,14 +50,16 @@ const FUNDED = { r: 168, g: 132, b: 72 };
 const OFFER = { r: 142, g: 138, b: 88 };
 const DOCS = { r: 132, g: 148, b: 136 };
 const LINE = { r: 150, g: 144, b: 118 };
+const GLOW = { r: 255, g: 253, b: 248 };
 
 const GAP = 13;
 const PAD_X = 22;
 const PAD_Y = 18;
 const MAX_LIVE = 56;
 const MAX_LINES = 18;
-const MAX_SMS_TRAVEL = 4;
 const FPS_MS = 33;
+const SCAN_MS = 5200;
+const SCAN_GAP_MS = 600;
 
 function hash(n: number) {
   let x = n | 0;
@@ -132,13 +140,12 @@ export class SwitchboardEngine {
   live: Live[] = [];
   lines: Line[] = [];
   traveler: Traveler | null = null;
-  smsTravelers: Traveler[] = [];
+  scan: Scan | null = null;
   counts: SwitchboardCounts = { funded: 0, offers: 0, docsIn: 0, day: 1, daysInMonth: 31 };
   lastDraw = 0;
   nextIdle = 0;
   nextTravel = 0;
-  nextExchange = 0;
-  nextPatch = 0;
+  nextScan = 0;
   liveFrozen = true;
   dialerLive = false;
   campaignLive = false;
@@ -172,19 +179,15 @@ export class SwitchboardEngine {
     this.campaignLive = opts.campaignLive;
     if (opts.frozen || !opts.dialerLive) this.traveler = null;
     if (opts.frozen || !opts.campaignLive) {
-      this.smsTravelers = [];
-      this.nextExchange = 0;
+      this.scan = null;
+      this.nextScan = 0;
     }
   }
 
   pulse(kind: BlipKind, n = 1) {
     if (this.liveFrozen && kind !== 'idle') return;
+    if (kind === 'sms' || kind === 'smsFail' || kind === 'smsDone') return;
     const now = performance.now();
-    if (kind === 'sms' || kind === 'smsFail' || kind === 'smsDone') {
-      const count = Math.min(n, 4);
-      for (let k = 0; k < count; k++) this.startSmsPath(now + k * 50, kind);
-      return;
-    }
     const spawned: number[] = [];
     for (let k = 0; k < n; k++) {
       const i = this.pickFree(hash(now * 1000 + k + kind.length * 17 + this.live.length));
@@ -199,10 +202,7 @@ export class SwitchboardEngine {
       });
       spawned.push(i);
     }
-    if (kind === 'smsReply' && spawned.length) {
-      const dest = this.currentSmsCell();
-      if (dest >= 0) this.pushLine(spawned[0], dest, now, 420);
-    } else if (spawned.length >= 2) {
+    if (spawned.length >= 2) {
       this.pushLine(spawned[0], spawned[1], now, 280);
     } else if (spawned.length === 1) {
       const related = this.findRelated(kind, spawned[0], now);
@@ -358,18 +358,16 @@ export class SwitchboardEngine {
     return best;
   }
 
-  private startSmsPath(now: number, kind: BlipKind) {
-    if (this.smsTravelers.length >= MAX_SMS_TRAVEL) return;
-    this.smsTravelers.push(this.makeTraveler(now, kind, 52 + (hash(Math.floor(now)) % 28)));
-  }
-
-  private currentSmsCell() {
-    for (let i = this.smsTravelers.length - 1; i >= 0; i--) {
-      const t = this.smsTravelers[i];
-      const cell = t.path[Math.max(0, t.step - 1)];
-      if (cell != null) return cell;
-    }
-    return -1;
+  private waveAt(c: number, r: number, now: number) {
+    const scan = this.scan;
+    if (!scan || !this.cols) return 0;
+    const u = clamp((now - scan.born) / scan.duration, 0, 1);
+    const pad = scan.sigma * 2.2;
+    const head = u * (this.cols * this.rows + pad * 2) - pad;
+    const d = r * this.cols + c - head;
+    const g = Math.exp(-(d * d) / (2 * scan.sigma * scan.sigma));
+    const edge = u < 0.06 ? u / 0.06 : u > 0.94 ? (1 - u) / 0.06 : 1;
+    return g * edge;
   }
 
   private stepTraveler(t: Traveler, now: number) {
@@ -406,20 +404,15 @@ export class SwitchboardEngine {
     }
 
     if (!this.liveFrozen && this.campaignLive && this.cells.length) {
-      if (!this.nextExchange) this.nextExchange = now;
-      if (this.smsTravelers.length < 3 && now >= this.nextExchange) {
-        this.startSmsPath(now, 'sms');
-        this.nextExchange = now + 200 + (hash(Math.floor(now / 7)) % 160);
+      if (!this.scan && now >= this.nextScan) {
+        this.scan = { born: now, duration: SCAN_MS, sigma: 5.6 };
       }
-      this.smsTravelers = this.smsTravelers.filter(t => !this.stepTraveler(t, now));
-      if (this.smsTravelers.length >= 2 && now >= this.nextPatch) {
-        const a = this.smsTravelers[0].path[Math.max(0, this.smsTravelers[0].step - 1)];
-        const b = this.smsTravelers[1].path[Math.max(0, this.smsTravelers[1].step - 1)];
-        if (a != null && b != null && a !== b) this.pushLine(a, b, now, 220);
-        this.nextPatch = now + 130 + (hash(Math.floor(now / 11)) % 110);
+      if (this.scan && now - this.scan.born >= this.scan.duration) {
+        this.scan = null;
+        this.nextScan = now + SCAN_GAP_MS;
       }
     } else {
-      this.smsTravelers = [];
+      this.scan = null;
     }
 
     const idle = !this.dialerLive && !this.campaignLive && !this.liveFrozen;
@@ -433,7 +426,7 @@ export class SwitchboardEngine {
   }
 
   private makeTraveler(now: number, kind: BlipKind = 'call', hopMs = 70): Traveler {
-    const mode = hash(Math.floor(now / 13) + this.smsTravelers.length * 19) % 3;
+    const mode = hash(Math.floor(now / 13)) % 3;
     const path: number[] = [];
     if (mode === 1 && this.rows > 4) {
       const col = hash(Math.floor(now / 29)) % this.cols;
@@ -523,13 +516,13 @@ export class SwitchboardEngine {
       else liveAt.set(b.i, [b]);
     }
 
-    ctx.lineWidth = this.campaignLive ? 0.65 : 0.5;
+    ctx.lineWidth = 0.5;
     for (const line of this.lines) {
       const ca = this.cells[line.a];
       const cb = this.cells[line.b];
       if (!ca || !cb) continue;
       const t = clamp((now - line.born) / line.life, 0, 1);
-      const a = (t < 0.2 ? t / 0.2 : 1 - (t - 0.2) / 0.8) * (this.campaignLive ? 0.42 : 0.32) * decay;
+      const a = (t < 0.2 ? t / 0.2 : 1 - (t - 0.2) / 0.8) * 0.32 * decay;
       ctx.strokeStyle = rgba(LINE, a);
       ctx.beginPath();
       ctx.moveTo(ca.x, ca.y);
@@ -537,9 +530,21 @@ export class SwitchboardEngine {
       ctx.stroke();
     }
 
+    if (this.scan) {
+      for (const cell of this.cells) {
+        const g = this.waveAt(cell.c, cell.r, now);
+        if (g < 0.05) continue;
+        ctx.beginPath();
+        ctx.fillStyle = rgba(GLOW, g * 0.2 * decay);
+        ctx.arc(cell.x, cell.y, 5.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
     for (const cell of this.cells) {
       const p = persist.get(cell.i);
       const lives = liveAt.get(cell.i);
+      const g = this.waveAt(cell.c, cell.r, now);
       let r = 1.15;
       let col = OFF;
       let a = 0.2 * decay;
@@ -556,6 +561,17 @@ export class SwitchboardEngine {
         r = 2.6;
         col = FUNDED;
         a = 0.9 * decay;
+      }
+
+      if (g > 0.04) {
+        const mix = Math.min(1, g);
+        col = {
+          r: Math.round(col.r + (GLOW.r - col.r) * mix),
+          g: Math.round(col.g + (GLOW.g - col.g) * mix),
+          b: Math.round(col.b + (GLOW.b - col.b) * mix),
+        };
+        r = Math.max(r, 1.15 + g * 1.55);
+        a = Math.max(a, (0.22 + g * 0.78) * decay);
       }
 
       if (lives?.length) {
