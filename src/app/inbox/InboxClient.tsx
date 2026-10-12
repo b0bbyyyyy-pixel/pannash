@@ -6,7 +6,6 @@ import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@supabase/supabase-js';
 import { useWebPhone } from '@/components/webphone/WebPhone';
 import InboxDialer from '@/components/InboxDialer';
-import LeadUpdatesTimeline from '@/components/LeadUpdatesTimeline';
 import { casperEffectiveForLead } from '@/lib/casper/allow';
 import InboundPhoto from '@/components/mobile/InboundPhoto';
 import { getPhoneLocation } from '@/lib/phoneLocation';
@@ -1623,50 +1622,32 @@ export default function InboxClient({
 
       {/* ── RIGHT RAIL: Lead info ────────────────────────────────────────────── */}
       <div className="w-80 flex-shrink-0 flex flex-col border-l border-[#e5e5e5] bg-[#fafafa] overflow-hidden">
-        <InboxDialer open={dialerOpen} onOpenChange={setDialerOpen} />
-        <div className="flex-1 relative min-h-0 overflow-hidden">
-          <div className="absolute inset-x-0 bottom-0 pointer-events-none flex justify-center overflow-visible">
-            <img
-              src="/images/logo/elektro.png"
-              alt=""
-              className="w-[128%] max-w-none h-auto object-contain object-bottom opacity-20 block"
-            />
+        <div className="flex-1 min-h-0 relative flex flex-col overflow-hidden isolate">
+          <div className="relative z-0 flex min-h-0 flex-1 flex-col overflow-hidden">
+            <InboxDialer open={dialerOpen} onOpenChange={setDialerOpen} />
           </div>
-          {selectedLead && (
-            <div className="relative z-10 h-full overflow-y-auto p-4 [text-shadow:none]">
-              <p className="text-[10px] font-medium mb-3 text-[#c4c4c4]">
-                Casper for this lead: {leadCasperOn ? 'on' : 'off'}
-              </p>
-              <LeadUpdatesTimeline
-                createdAt={selectedLead.created_at}
-                lastContact={selectedLead.last_contact}
-              />
-            </div>
-          )}
-          {selectedLead && (
-            <button
-              type="button"
-              onClick={async () => {
-                const next = !casperOn;
-                setCasperOn(next);
-                try {
-                  await fetch('/api/settings/casper', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ enabled: next }),
-                  });
-                } catch {
-                  setCasperOn(!next);
-                }
-              }}
-              title={casperOn ? 'Casper is on — click to turn off' : 'Casper is off — click to turn on'}
-              className={`absolute left-4 bottom-3 z-20 text-[10px] font-semibold uppercase tracking-wide transition-colors ${
-                casperOn ? 'text-[#1a1a1a]' : 'text-red-500'
-              }`}
-            >
-              Casper AI
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={async () => {
+              const next = !casperOn;
+              setCasperOn(next);
+              try {
+                await fetch('/api/settings/casper', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ enabled: next }),
+                });
+              } catch {
+                setCasperOn(!next);
+              }
+            }}
+            title={casperOn ? 'Casper is on — click to turn off' : 'Casper is off — click to turn on'}
+            className={`absolute left-4 bottom-3 z-50 text-[10px] font-normal uppercase tracking-wide transition-colors ${
+              casperOn ? 'text-[#7d9b6e]' : 'text-[#c4c4c4]'
+            }`}
+          >
+            Casper AI
+          </button>
         </div>
 
         {/* Twilio connection status footer */}

@@ -3,6 +3,7 @@
 import dynamic from 'next/dynamic';
 import { DialerCard, CampaignPickerModal } from '@/app/dialer/DialerClient';
 import { useDialerSession } from '@/app/dialer/useDialerSession';
+import SwitchboardPanel from '@/components/SwitchboardPanel';
 
 const ScheduleEmailModal = dynamic(() => import('@/components/ScheduleEmailModal'), { ssr: false });
 
@@ -24,7 +25,8 @@ export default function InboxDialer({
   } = useDialerSession();
 
   return (
-    <div className="flex-shrink-0 bg-white border-b border-[#e5e5e5]">
+    <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+      <div className="flex-shrink-0 bg-white border-b border-[#e5e5e5]">
       <button
         type="button"
         onClick={() => onOpenChange(!open)}
@@ -154,6 +156,12 @@ export default function InboxDialer({
           onClose={() => setShowEmailModal(false)}
         />
       )}
+      </div>
+      <SwitchboardPanel
+        autoCall={autoCall}
+        dialerOpen={open}
+        phoneStatus={webphone.status}
+      />
     </div>
   );
 }
