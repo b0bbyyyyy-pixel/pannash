@@ -54,6 +54,8 @@ interface Lead {
 
 type SurfaceTab = 'application' | 'status' | 'lender' | 'offers' | 'comms';
 const SURFACE_TABS: SurfaceTab[] = ['application', 'status', 'lender', 'offers', 'comms'];
+/** Prev/Next walks these tabs on the same lead — not the next pipeline record. */
+const TAB_CYCLE: SurfaceTab[] = ['application', 'lender', 'offers', 'status'];
 type ChildOverlay = 'send' | 'offers' | 'financials' | 'docs' | 'sms' | 'email' | 'followup';
 
 interface LeadWorkspaceClientProps {
@@ -314,7 +316,6 @@ import { normalizeParsedFields, monthsInBusinessFromStartDate, sanitizeUnderwrit
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function LeadWorkspaceClient({
   lead: initialLead,
-  allLeadIds,
   userId,
   userName,
   fromLeads = false,
@@ -368,6 +369,9 @@ export default function LeadWorkspaceClient({
   const [appBusy, setAppBusy]     = useState(false);
   const [appMissing, setAppMissing] = useState<string[]>([]);
   const [appMsg, setAppMsg]       = useState<string | null>(null);
+  const [showPasteParse, setShowPasteParse] = useState(false);
+  const [pasteParseText, setPasteParseText] = useState('');
+  const [pasteParseBusy, setPasteParseBusy] = useState(false);
   const [inFrame, setInFrame]     = useState(false);
   useEffect(() => { setInFrame(isInIframe()); }, []);
 
@@ -476,21 +480,14 @@ export default function LeadWorkspaceClient({
     if (u.owner2FirstName || u.owner2LastName || u.owner2CreditScore) setShowOwner2(true);
   }, [initialLead.id, initialLead.underwriting_data]);
 
-  // Prev/Next navigation
-  const currentIdx = allLeadIds.indexOf(lead.id);
-  const prevId = currentIdx > 0 ? allLeadIds[currentIdx - 1] : null;
-  const nextId = currentIdx < allLeadIds.length - 1 ? allLeadIds[currentIdx + 1] : null;
+  // Prev/Next walks Application → Lenders → Offers → Status on this lead
+  const tabIdx = TAB_CYCLE.indexOf(surfaceTab);
+  const prevTab = tabIdx > 0 ? TAB_CYCLE[tabIdx - 1] : surfaceTab === 'comms' ? 'status' : null;
+  const nextTab = tabIdx >= 0 && tabIdx < TAB_CYCLE.length - 1 ? TAB_CYCLE[tabIdx + 1] : null;
 
-  const modalSiblingQs = () => {
-    const qs = new URLSearchParams({ modal: '1' });
-    if (fromSource) qs.set('from', fromSource);
-    return `?${qs.toString()}`;
-  };
-
-  const goToSibling = (id: string) => {
-    const inFrame = isModal || isInIframe();
-    if (inFrame) postLeadShown(id);
-    router.push(`/pipeline/${id}${inFrame ? modalSiblingQs() : ''}`);
+  const goToTab = (tab: SurfaceTab) => {
+    closeChildOverlays();
+    setSurfaceTab(tab);
   };
 
   useEffect(() => {
@@ -800,6 +797,52 @@ export default function LeadWorkspaceClient({
         underwriting_data: mergedUd,
         ...(requested != null ? { value: requested } : {}),
       }));
+    }
+  };
+
+  const openPasteParse = async () => {
+    setShowPasteParse(true);
+    setAppMsg(null);
+    try {
+      const clip = await navigator.clipboard.readText();
+      if (clip.trim()) setPasteParseText(clip);
+    } catch {
+      /* user can paste into the box */
+    }
+  };
+
+  const runPasteParse = async (raw?: string) => {
+    const text = (raw ?? pasteParseText).trim();
+    if (!text) return;
+    setPasteParseBusy(true);
+    setAppMsg(null);
+    try {
+      const res = await fetch('/api/leads/parse-sheet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ text }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setAppMsg((json as { error?: string }).error || 'Could not parse paste');
+        return;
+      }
+      const fields = ((json as { fields?: Record<string, string> }).fields ?? {}) as Record<string, string>;
+      await applyParsedApp(fields, new Set(Object.keys(fields)));
+      const n = Object.keys(fields).length;
+      setAppMsg(
+        n > 0
+          ? `Pasted & parsed — filled ${n} field${n === 1 ? '' : 's'}.`
+          : 'Limited data extracted — review the form.'
+      );
+      setShowPasteParse(false);
+      setPasteParseText('');
+      void refreshLeadFromServer();
+    } catch {
+      setAppMsg('Could not parse paste');
+    } finally {
+      setPasteParseBusy(false);
     }
   };
 
@@ -1394,23 +1437,23 @@ export default function LeadWorkspaceClient({
           <div className="flex gap-1 ml-2">
             <button
               onClick={() => {
-                if (!prevId) return;
-                goToSibling(prevId);
+                if (!prevTab) return;
+                goToTab(prevTab);
               }}
-              disabled={!prevId}
+              disabled={!prevTab}
               className="px-2 py-1.5 text-sm border border-[#e5e5e5] rounded-md disabled:opacity-30 hover:bg-[#f5f5f5] transition-colors"
-              title="Previous"
+              title="Previous tab"
             >
               ← Prev
             </button>
             <button
               onClick={() => {
-                if (!nextId) return;
-                goToSibling(nextId);
+                if (!nextTab) return;
+                goToTab(nextTab);
               }}
-              disabled={!nextId}
+              disabled={!nextTab}
               className="px-2 py-1.5 text-sm border border-[#e5e5e5] rounded-md disabled:opacity-30 hover:bg-[#f5f5f5] transition-colors"
-              title="Next"
+              title="Next tab"
             >
               Next →
             </button>
@@ -1728,14 +1771,43 @@ export default function LeadWorkspaceClient({
               {appMsg && (
                 <p className="text-[11px] text-[#6b6b6b] mt-2">{appMsg}</p>
               )}
-              <button
-                onClick={createApplication}
-                disabled={appBusy}
-                title="Create a signed application from this lead's details"
-                className="mt-3 px-3 py-2.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] disabled:opacity-50 transition-colors"
-              >
-                {appBusy ? 'Creating…' : 'Create Application'}
-              </button>
+              {showPasteParse && (
+                <div className="mt-3 space-y-2">
+                  <p className="text-[11px] text-[#6b6b6b]">
+                    Paste a Google Sheets row or copied application. AI maps company, owner, SSN, EIN, address, dates, and revenue onto this lead.
+                  </p>
+                  <textarea
+                    value={pasteParseText}
+                    onChange={e => setPasteParseText(e.target.value)}
+                    autoFocus
+                    rows={6}
+                    placeholder={'Paste a Google Sheets row, e.g:\n\n2026-10-05 11:45:22\tAcme LLC\tJane Smith\t123 Main St\t5551234567\tCanton\tOH\t44702'}
+                    className="w-full px-3 py-2.5 border border-[#e5e5e5] rounded-md text-sm font-mono text-[#1a1a1a] bg-[#fafafa] placeholder:text-[#b0b0b0] focus:outline-none focus:ring-1 focus:ring-[#1a1a1a] resize-none"
+                  />
+                </div>
+              )}
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  onClick={createApplication}
+                  disabled={appBusy || pasteParseBusy}
+                  title="Create a signed application from this lead's details"
+                  className="px-3 py-2.5 bg-[#1a1a1a] text-white text-xs font-medium rounded-md hover:bg-[#333] disabled:opacity-50 transition-colors"
+                >
+                  {appBusy ? 'Creating…' : 'Create Application'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!showPasteParse) void openPasteParse();
+                    else void runPasteParse();
+                  }}
+                  disabled={pasteParseBusy || (showPasteParse && !pasteParseText.trim())}
+                  title="Paste a Google Sheets row and fill this application"
+                  className="px-3 py-2.5 border border-[#e5e5e5] bg-white text-[#1a1a1a] text-xs font-medium rounded-md hover:bg-[#f5f5f5] disabled:opacity-50 transition-colors"
+                >
+                  {pasteParseBusy ? 'Parsing…' : 'Paste & Parse'}
+                </button>
+              </div>
             </div>
           )}
 
