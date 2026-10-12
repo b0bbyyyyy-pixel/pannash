@@ -134,9 +134,9 @@ async function liveActivity(supabase: SbClient, userId: string) {
 
   return {
     drip: { active: jobs.length > 0, sent, failed },
-    inbound: (inboundRows ?? []).map(r => ({
-      leadId: r.lead_id as string,
-      at: r.last_message_at as string | null,
+    inbound: (inboundRows ?? []).map((r: { lead_id: string; last_message_at: string | null }) => ({
+      leadId: r.lead_id,
+      at: r.last_message_at,
     })),
   };
 }
