@@ -11,11 +11,36 @@ const OFFER_STATUSES = [
   'Pre-Qualified',
 ];
 const DOCS_STATUSES = ['Docs In', 'Docs Received'];
+const PROSPECT_STATUSES = [
+  'New Lead',
+  'Prospect',
+  'Contacted',
+  'Callback Scheduled',
+  'Revisit',
+  'App Out',
+  'Application Acknowledgement',
+  'Documents Acknowledgment',
+  'Docs Requested',
+  'Missing Docs/info',
+  'Needs More Docs',
+  'Docs In',
+  'Docs Received',
+];
 const SUBMITTED_STATUSES = [
   'Submitted',
   'Submitted To Non-MCA',
   'Submitted to Underwriting',
   'In Underwriting',
+];
+const APPROVAL_STATUSES = [
+  'Offers/Follow up',
+  'Approved',
+  'Conditionally Approved',
+  'Pre-Qualified',
+  'Contract Sent',
+  'Contract In',
+  'Contract Signed',
+  'Contract Out',
 ];
 const DECLINED_STATUSES = [
   'Declined',
@@ -58,8 +83,8 @@ async function countByStatus(
     .from('leads')
     .select('id', { count: 'exact', head: true })
     .eq('user_id', userId)
-    .eq('month_key', month)
-    .in('lead_status', statuses);
+    .in('lead_status', statuses)
+    .or(`in_pipeline.eq.true,month_key.eq.${month}`);
   if (error) {
     console.error('[switchboard] count', error.message);
     return 0;
@@ -168,16 +193,18 @@ export async function GET(req: NextRequest) {
   const day = now.getDate();
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
 
-  const [funded, offers, docsIn, submitted, declined] = await Promise.all([
+  const [funded, offers, docsIn, prospects, submitted, approvals, declined] = await Promise.all([
     fundedThisMonth(supabase, user.id, month),
     countByStatus(supabase, user.id, month, OFFER_STATUSES),
     countByStatus(supabase, user.id, month, DOCS_STATUSES),
+    countByStatus(supabase, user.id, month, PROSPECT_STATUSES),
     countByStatus(supabase, user.id, month, SUBMITTED_STATUSES),
+    countByStatus(supabase, user.id, month, APPROVAL_STATUSES),
     countByStatus(supabase, user.id, month, DECLINED_STATUSES),
   ]);
 
   return NextResponse.json(
-    { month, day, daysInMonth, funded, offers, docsIn, submitted, declined },
+    { month, day, daysInMonth, funded, offers, docsIn, prospects, submitted, approvals, declined },
     { headers: { 'Cache-Control': 'no-store' } },
   );
 }

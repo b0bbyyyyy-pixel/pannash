@@ -38,7 +38,7 @@ export default function SwitchboardPanel({
   const declinedRef = useRef(0);
   const dripRef = useRef({ sent: 0, failed: 0, active: false, primed: false });
   const pulsePrimed = useRef(false);
-  const countsRef = useRef<SwitchboardCounts>({ funded: 0, offers: 0, docsIn: 0, submitted: 0, day: 1, daysInMonth: 31 });
+  const countsRef = useRef<SwitchboardCounts>({ funded: 0, offers: 0, docsIn: 0, prospects: 0, submitted: 0, approvals: 0, day: 1, daysInMonth: 31 });
   const actRef = useRef({ autoCall, dialerOpen, phoneStatus, aiOn, visible: true });
   actRef.current = { autoCall, dialerOpen, phoneStatus, aiOn, visible: actRef.current.visible };
 
@@ -70,7 +70,9 @@ export default function SwitchboardPanel({
         funded: data.funded ?? 0,
         offers: data.offers ?? 0,
         docsIn: data.docsIn ?? 0,
+        prospects: data.prospects ?? 0,
         submitted: data.submitted ?? 0,
+        approvals: data.approvals ?? 0,
         day: data.day ?? 1,
         daysInMonth: data.daysInMonth ?? 31,
       };

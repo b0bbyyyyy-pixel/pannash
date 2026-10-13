@@ -2,7 +2,9 @@ export type SwitchboardCounts = {
   funded: number;
   offers: number;
   docsIn: number;
+  prospects: number;
   submitted: number;
+  approvals: number;
   day: number;
   daysInMonth: number;
 };
@@ -44,11 +46,11 @@ type Scan = {
   sigma: number;
 };
 
-const BG_RGB = { r: 250, g: 250, b: 250 };
-const WASH_FUNDED = { r: 226, g: 220, b: 210 };
-const WASH_APPROVED = { r: 232, g: 228, b: 220 };
-const WASH_DOCS = { r: 238, g: 236, b: 230 };
-const WASH_SUBMITTED = { r: 247, g: 246, b: 243 };
+const WASH_FUNDED = { r: 228, g: 224, b: 216 };
+const WASH_APPROVED = { r: 238, g: 235, b: 228 };
+const WASH_DOCS = { r: 246, g: 244, b: 239 };
+const WASH_SUBMITTED = { r: 252, g: 251, b: 248 };
+const WASH_MIN_SHARE = 0.06;
 const OFF = { r: 148, g: 160, b: 148 };
 const RULE = { r: 168, g: 162, b: 148 };
 const FUNDED = { r: 74, g: 74, b: 74 };
@@ -148,7 +150,7 @@ export class SwitchboardEngine {
   lines: Line[] = [];
   traveler: Traveler | null = null;
   scan: Scan | null = null;
-  counts: SwitchboardCounts = { funded: 0, offers: 0, docsIn: 0, submitted: 0, day: 1, daysInMonth: 31 };
+  counts: SwitchboardCounts = { funded: 0, offers: 0, docsIn: 0, prospects: 0, submitted: 0, approvals: 0, day: 1, daysInMonth: 31 };
   lastDraw = 0;
   nextIdle = 0;
   nextTravel = 0;
@@ -513,49 +515,31 @@ export class SwitchboardEngine {
     return remaining / daysInMonth;
   }
 
-  private washPresence(n: number) {
-    if (n <= 0) return 0;
-    return 1 - Math.exp(-n / 5);
-  }
-
-  private washMix(a: { r: number; g: number; b: number }, b: { r: number; g: number; b: number }, t: number) {
-    const u = clamp(t, 0, 1);
-    return {
-      r: Math.round(a.r + (b.r - a.r) * u),
-      g: Math.round(a.g + (b.g - a.g) * u),
-      b: Math.round(a.b + (b.b - a.b) * u),
-    };
-  }
-
-  /** t=0 bottom (funded), t=1 top (submitted). Soft, no bands. */
-  private washColorAt(t: number) {
-    const p = [
-      this.washPresence(this.counts.funded),
-      this.washPresence(this.counts.offers),
-      this.washPresence(this.counts.docsIn),
-      this.washPresence(this.counts.submitted),
-    ];
-    const targets = [WASH_FUNDED, WASH_APPROVED, WASH_DOCS, WASH_SUBMITTED];
-    const x = clamp(t, 0, 1) * 3;
-    const i = Math.min(2, Math.floor(x));
-    const f = x - i;
-    const s = f * f * (3 - 2 * f);
-    const pres = p[i] + (p[i + 1] - p[i]) * s;
-    const tgt = this.washMix(targets[i], targets[i + 1], s);
-    const bias = (1 - t) * 0.12;
-    const mix = Math.min(1, bias + pres);
-    return this.washMix(BG_RGB, tgt, mix);
-  }
-
   private drawWash(ctx: CanvasRenderingContext2D) {
-    const grad = ctx.createLinearGradient(0, this.h, 0, 0);
-    for (let i = 0; i <= 16; i++) {
-      const t = i / 16;
-      const c = this.washColorAt(t);
-      grad.addColorStop(t, `rgb(${c.r},${c.g},${c.b})`);
+    const layers = [
+      { n: Math.max(0, this.counts.prospects), color: WASH_SUBMITTED },
+      { n: Math.max(0, this.counts.submitted), color: WASH_DOCS },
+      { n: Math.max(0, this.counts.approvals), color: WASH_APPROVED },
+      { n: Math.max(0, this.counts.funded), color: WASH_FUNDED },
+    ];
+    const total = layers.reduce((s, l) => s + l.n, 0);
+    const extra = 1 - WASH_MIN_SHARE * layers.length;
+    const shares = layers.map(l => WASH_MIN_SHARE + extra * (total > 0 ? l.n / total : 0.25));
+    const heights = shares.map(s => Math.round(s * this.h));
+    let delta = this.h - heights.reduce((s, h) => s + h, 0);
+    let grow = 0;
+    for (let i = 1; i < layers.length; i++) {
+      if (layers[i].n > layers[grow].n) grow = i;
     }
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, this.w, this.h);
+    heights[grow] += delta;
+    let y = 0;
+    for (let i = 0; i < layers.length; i++) {
+      const h = Math.max(1, heights[i]);
+      const c = layers[i].color;
+      ctx.fillStyle = `rgb(${c.r},${c.g},${c.b})`;
+      ctx.fillRect(0, y, this.w, h + 1);
+      y += h;
+    }
   }
 
   private draw(ctx: CanvasRenderingContext2D) {
