@@ -37,6 +37,14 @@ interface AgentDecision {
   created_at: string;
 }
 
+type PendingOutbox = {
+  id: string;
+  lead_id: string;
+  send_at: string;
+  lead_name: string;
+  company: string | null;
+};
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function timeAgo(iso: string) {
@@ -47,6 +55,13 @@ function timeAgo(iso: string) {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h ago`;
   return `${Math.floor(h / 24)}d ago`;
+}
+
+function replyInLabel(sendAt: string, now = Date.now()) {
+  const ms = new Date(sendAt).getTime() - now;
+  if (!Number.isFinite(ms) || ms <= 0) return 'Replying…';
+  const m = Math.max(1, Math.round(ms / 60_000));
+  return `Replying in ~${m}m`;
 }
 
 function cardIcon(type: CardType, priority: string) {
@@ -105,9 +120,11 @@ function cardBadgeColor(type: CardType, priority: string) {
 function ActionCard({
   decision,
   onAction,
+  replyLabel,
 }: {
   decision: AgentDecision;
   onAction: (id: string, action: 'approve' | 'snooze' | 'dismiss' | 'edit', draft?: string) => Promise<void>;
+  replyLabel?: string | null;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(decision.draft_content || '');
@@ -167,13 +184,18 @@ function ActionCard({
         </div>
 
         {/* Lead chip */}
-        <div className="mb-2">
+        <div className="mb-2 flex items-center gap-2 flex-wrap">
           <span className="inline-block text-sm font-bold text-[#1a1a1a] bg-[#f4f4f4] px-3 py-1 rounded-full">
             {decision.lead_name}
             {decision.company && (
               <span className="font-normal text-gray-500"> · {decision.company}</span>
             )}
           </span>
+          {replyLabel && (
+            <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
+              {replyLabel}
+            </span>
+          )}
         </div>
 
         {/* Proposal */}
@@ -373,7 +395,19 @@ export default function AgentClient() {
   const [briefing, setBriefing] = useState<string | null>(null);
   const [globalOn, setGlobalOn] = useState(false);
   const [pausedLeads, setPausedLeads] = useState(0);
+  const [outbox, setOutbox] = useState<PendingOutbox[]>([]);
+  const [nowTick, setNowTick] = useState(() => Date.now());
   const askRef = useRef<HTMLTextAreaElement>(null);
+
+  const loadOutbox = useCallback(async () => {
+    try {
+      const res = await fetch('/api/casper/outbox');
+      const json = await res.json();
+      setOutbox(Array.isArray(json.pending) ? json.pending : []);
+    } catch {
+      /* table may not exist yet */
+    }
+  }, []);
 
   // ── Load decisions ─────────────────────────────────────────────────────────
   const loadDecisions = useCallback(async () => {
@@ -388,6 +422,16 @@ export default function AgentClient() {
   }, []);
 
   useEffect(() => { loadDecisions(); }, [loadDecisions]);
+  useEffect(() => { loadOutbox(); }, [loadOutbox]);
+
+  useEffect(() => {
+    const poll = setInterval(loadOutbox, 15_000);
+    const tick = setInterval(() => setNowTick(Date.now()), 15_000);
+    return () => {
+      clearInterval(poll);
+      clearInterval(tick);
+    };
+  }, [loadOutbox]);
 
   useEffect(() => {
     fetch('/api/settings/casper')
@@ -474,10 +518,33 @@ export default function AgentClient() {
     }
   })();
 
-  // ── Left rail leads (deduplicated from pending) ───────────────────────────
+  const outboxByLead = new Map(outbox.map((row) => [row.lead_id, row]));
+
+  // ── Left rail leads (deduplicated from pending + scheduled replies) ───────
   const railLeads = Array.from(
     new Map(pending.map((d) => [d.lead_id || d.lead_name, d])).values()
-  ).slice(0, 20);
+  );
+  for (const row of outbox) {
+    if (!railLeads.some((d) => d.lead_id === row.lead_id)) {
+      railLeads.unshift({
+        id: `outbox-${row.id}`,
+        lead_id: row.lead_id,
+        lead_name: row.lead_name,
+        company: row.company,
+        type: 'suggest_reply',
+        status: 'pending',
+        priority: 'normal',
+        proposal: '',
+        draft_content: null,
+        draft_type: 'sms',
+        conversation_id: null,
+        metadata: {},
+        snooze_until: null,
+        created_at: row.send_at,
+      });
+    }
+  }
+  const railVisible = railLeads.slice(0, 20);
 
   return (
     <div className="flex" style={{ height: 'calc(100vh - 80px)' }}>
@@ -535,11 +602,12 @@ export default function AgentClient() {
         </div>}
 
         {/* Lead list */}
-        {railLeads.length > 0 && (
+        {railVisible.length > 0 && (
           <div className="flex-1 overflow-y-auto px-3 py-2 border-t border-[#f0f0f0]">
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-2 px-1">Leads</p>
-            {railLeads.map((d) => {
+            {railVisible.map((d) => {
               const count = pending.filter((x) => (x.lead_id || x.lead_name) === (d.lead_id || d.lead_name)).length;
+              const scheduled = d.lead_id ? outboxByLead.get(d.lead_id) : undefined;
               return (
                 <button
                   key={d.lead_id || d.lead_name}
@@ -554,7 +622,13 @@ export default function AgentClient() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium text-[#1a1a1a] truncate">{d.lead_name}</p>
-                    {d.company && <p className="text-[10px] text-gray-400 truncate">{d.company}</p>}
+                    {scheduled ? (
+                      <p className="text-[10px] font-semibold text-emerald-600 truncate">
+                        {replyInLabel(scheduled.send_at, nowTick)}
+                      </p>
+                    ) : d.company ? (
+                      <p className="text-[10px] text-gray-400 truncate">{d.company}</p>
+                    ) : null}
                   </div>
                   {count > 1 && (
                     <span className="text-[10px] font-bold bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full">{count}</span>
@@ -621,13 +695,34 @@ export default function AgentClient() {
 
           {panel === 'queue' && briefing && <BriefingPanel text={briefing} onClose={() => setBriefing(null)} />}
 
+          {panel === 'queue' && !loading && outbox.length > 0 && (
+            <div className="bg-white border border-emerald-100 rounded-2xl px-4 py-3">
+              <p className="text-[10px] font-semibold text-emerald-700 uppercase tracking-widest mb-2">Scheduled replies</p>
+              <div className="space-y-1.5">
+                {outbox.map((row) => (
+                  <div key={row.id} className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-medium text-[#1a1a1a] truncate">
+                      {row.lead_name}
+                      {row.company ? <span className="font-normal text-gray-400"> · {row.company}</span> : null}
+                    </p>
+                    <span className="text-[11px] font-semibold text-emerald-700 flex-shrink-0">
+                      {replyInLabel(row.send_at, nowTick)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {panel === 'queue' && (loading ? (
             <div className="flex flex-col items-center justify-center h-64 gap-3">
               <div className="w-6 h-6 border-2 border-gray-300 border-t-gray-700 rounded-full animate-spin" />
               <p className="text-sm text-gray-400">Loading queue…</p>
             </div>
-          ) : filtered.length === 0 ? (
+          ) : filtered.length === 0 && outbox.length === 0 ? (
             <EmptyState onSeed={seedDecisions} seeding={seeding} />
+          ) : filtered.length === 0 ? (
+            null
           ) : (
             <>
               {/* Filter label */}
@@ -642,7 +737,14 @@ export default function AgentClient() {
                 </div>
               )}
               {filtered.map((d) => (
-                <ActionCard key={d.id} decision={d} onAction={handleAction} />
+                <ActionCard
+                  key={d.id}
+                  decision={d}
+                  onAction={handleAction}
+                  replyLabel={d.lead_id && outboxByLead.get(d.lead_id)
+                    ? replyInLabel(outboxByLead.get(d.lead_id)!.send_at, nowTick)
+                    : null}
+                />
               ))}
             </>
           ))}

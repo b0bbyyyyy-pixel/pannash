@@ -13,7 +13,14 @@ import OpenAI from 'openai';
 export const XAI_BASE_URL      = 'https://api.x.ai/v1';
 export const GROK_MODEL        = 'grok-3';
 export const GROK_MINI_MODEL   = 'grok-3-mini';
-export const GROK_VISION_MODEL = 'grok-2-vision-1212';
+/** grok-2-vision-1212 was retired. Current image-capable Grok models. */
+export const GROK_VISION_MODEL = process.env.GROK_VISION_MODEL?.trim() || 'grok-4.3';
+export const GROK_VISION_MODELS = [
+  GROK_VISION_MODEL,
+  'grok-4.3',
+  'grok-4.7',
+  'grok-4',
+].filter((m, i, all) => all.indexOf(m) === i);
 
 /** Create an xAI client (uses `XAI_API_KEY` env var). */
 export function getAIClient(): OpenAI {

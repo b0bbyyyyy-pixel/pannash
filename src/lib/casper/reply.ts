@@ -8,11 +8,14 @@ import {
 import { emailApplicationToLead } from '@/lib/casper/emailApplication';
 import { leadInAiFullPacks } from '@/lib/casper/fullPacks';
 import { extractEmailFromSms, runUpdateLeadEmailTool } from '@/lib/casper/updateLeadEmail';
+import { cancelPendingOutbox, enqueueCasperOutbox } from '@/lib/casper/outbox';
 import { logCasperRun, upsertCasperLeadState } from '@/lib/casper/runs';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
 import { sendTwilioSms } from '@/lib/telephony/sms';
 import { getTwilioCreds } from '@/lib/telephony/twilio';
 import { sendCasperPing } from '@/lib/casper/ping';
+
+export { humanDelayMs, outboxDelayMs } from '@/lib/casper/outbox';
 
 type MissionJson = {
   thinking?: string;
@@ -23,14 +26,6 @@ type MissionJson = {
   needs_human?: boolean;
   human_reason?: string;
 };
-
-function sleep(ms: number) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-export function humanDelayMs(text: string) {
-  return Math.min(12_000, Math.max(4_000, 2_800 + text.length * 42));
-}
 
 function parseMission(raw: string | null | undefined): MissionJson {
   const text = (raw ?? '').trim();
@@ -90,9 +85,24 @@ export async function runCasperInboundSms(
     .eq('lead_id', args.lead.id)
     .maybeSingle();
 
-  if ((state?.paused_reason === 'replying' || state?.paused_reason === 'thinking') && state.updated_at) {
+  // A new inbound cancels any unsent draft so we answer both texts in one SMS.
+  // Only block a duplicate run for the same inbound while thinking.
+  if (state?.paused_reason === 'thinking' && state.updated_at) {
     const age = Date.now() - new Date(state.updated_at).getTime();
-    if (age < 45_000) return { replied: false, reason: 'already_running' };
+    if (age < 20_000) {
+      const { data: lastInNow } = await supabase
+        .from('inbox_messages')
+        .select('created_at')
+        .eq('lead_id', args.lead.id)
+        .eq('direction', 'inbound')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const inboundAt = lastInNow?.created_at ? new Date(lastInNow.created_at).getTime() : 0;
+      if (inboundAt && inboundAt <= new Date(state.updated_at).getTime() + 500) {
+        return { replied: false, reason: 'already_running' };
+      }
+    }
   }
 
   const gate = canCasperAutoReply({
@@ -127,6 +137,8 @@ export async function runCasperInboundSms(
     return { replied: false, reason: 'already_replied' };
   }
 
+  await cancelPendingOutbox(supabase, { leadId: args.lead.id, userId: args.userId });
+
   await upsertCasperLeadState(supabase, {
     leadId: args.lead.id,
     userId: args.userId,
@@ -155,7 +167,8 @@ Capabilities: chat_sms=${caps.chat_sms} email_application=${caps.email_applicati
 Thread:
 ${history || '(no prior thread)'}
 
-Lead just texted: "${args.body}"`,
+Lead just texted: "${args.body}"
+If they sent more than one text since your last reply, cover all of them in a single SMS. Do not write a separate reply per message.`,
         },
       ],
       temperature: 0.6,
@@ -254,16 +267,13 @@ Lead just texted: "${args.body}"`,
     actions.push({ type: 'ping', ...ping });
   }
 
-  if (args.delay !== false) {
-    await upsertCasperLeadState(supabase, {
-      leadId: args.lead.id,
-      userId: args.userId,
-      phase: state?.phase || 'chatting',
-      pausedReason: 'replying',
-    });
-    await sleep(humanDelayMs(sms));
-  }
+  const phase: CasperPhase = parsed.needs_human
+    ? 'handed_off'
+    : (parsed.phase && ['chatting', 'awaiting_app', 'awaiting_banks', 'handed_off'].includes(parsed.phase)
+      ? parsed.phase
+      : ((state?.phase as CasperPhase) || 'chatting'));
 
+  const toPhone = args.from || args.lead.phone || '';
   const creds = await getTwilioCreds(supabase, args.userId);
   if (!creds) {
     await logCasperRun(supabase, {
@@ -278,53 +288,114 @@ Lead just texted: "${args.body}"`,
       outputSummary: sms,
       model: GROK_MINI_MODEL,
     });
+    await upsertCasperLeadState(supabase, {
+      leadId: args.lead.id,
+      userId: args.userId,
+      phase,
+      pausedReason: phase === 'handed_off' ? (parsed.human_reason || 'handed_off') : null,
+    });
     return { replied: false, reason: 'no_twilio' };
   }
 
-  let sid: string | null = null;
-  let sendStatus: 'sent' | 'failed' = 'sent';
-  let sendError: string | null = null;
-  try {
-    const sent = await sendTwilioSms(creds, args.from || args.lead.phone || '', sms);
-    sid = sent.sid;
-    if (sent.status === 'failed') {
+  // Manual / delay=false still sends now. Webhook path schedules the SMS.
+  if (args.delay === false) {
+    let sid: string | null = null;
+    let sendStatus: 'sent' | 'failed' = 'sent';
+    let sendError: string | null = null;
+    try {
+      const sent = await sendTwilioSms(creds, toPhone, sms);
+      sid = sent.sid;
+      if (sent.status === 'failed') {
+        sendStatus = 'failed';
+        sendError = sent.error ?? 'Send failed';
+      }
+    } catch (err) {
       sendStatus = 'failed';
-      sendError = sent.error ?? 'Send failed';
+      sendError = err instanceof Error ? err.message : 'Send failed';
     }
-  } catch (err) {
-    sendStatus = 'failed';
-    sendError = err instanceof Error ? err.message : 'Send failed';
+
+    await recordOutboundInboxSms(supabase, {
+      userId: args.userId,
+      leadId: args.lead.id,
+      toPhone,
+      body: sms,
+      twilioSid: sid,
+      status: sendStatus,
+      errorMessage: sendError,
+      sentBy: 'calvin',
+    });
+    actions.push({ type: 'sms', sid, status: sendStatus, error: sendError });
+
+    const runId = await logCasperRun(supabase, {
+      userId: args.userId,
+      leadId: args.lead.id,
+      trigger: 'inbound_sms',
+      status: sendStatus === 'failed' ? 'error' : 'ok',
+      thinking: parsed.thinking,
+      actions,
+      model: GROK_MINI_MODEL,
+      inputSummary: args.body.slice(0, 240),
+      outputSummary: sms,
+      error: sendError,
+    });
+
+    await upsertCasperLeadState(supabase, {
+      leadId: args.lead.id,
+      userId: args.userId,
+      phase,
+      lastRunId: runId,
+      pausedReason: phase === 'handed_off' ? (parsed.human_reason || 'handed_off') : null,
+    });
+
+    return { replied: sendStatus !== 'failed', reason: sendError || undefined };
   }
 
-  await recordOutboundInboxSms(supabase, {
+  const queued = await enqueueCasperOutbox(supabase, {
     userId: args.userId,
     leadId: args.lead.id,
-    toPhone: args.from || args.lead.phone,
+    toPhone,
     body: sms,
-    twilioSid: sid,
-    status: sendStatus,
-    errorMessage: sendError,
-    sentBy: 'calvin',
+    thinking: parsed.thinking,
+    actions,
+    phase,
+    inputSummary: args.body.slice(0, 240),
+    model: GROK_MINI_MODEL,
   });
-  actions.push({ type: 'sms', sid, status: sendStatus, error: sendError });
 
-  const phase: CasperPhase = parsed.needs_human
-    ? 'handed_off'
-    : (parsed.phase && ['chatting', 'awaiting_app', 'awaiting_banks', 'handed_off'].includes(parsed.phase)
-      ? parsed.phase
-      : ((state?.phase as CasperPhase) || 'chatting'));
+  if (!queued.id) {
+    await logCasperRun(supabase, {
+      userId: args.userId,
+      leadId: args.lead.id,
+      trigger: 'inbound_sms',
+      status: 'error',
+      thinking: parsed.thinking,
+      actions,
+      error: 'Failed to queue SMS',
+      inputSummary: args.body.slice(0, 240),
+      outputSummary: sms,
+      model: GROK_MINI_MODEL,
+    });
+    await upsertCasperLeadState(supabase, {
+      leadId: args.lead.id,
+      userId: args.userId,
+      phase,
+      pausedReason: phase === 'handed_off' ? (parsed.human_reason || 'handed_off') : null,
+    });
+    return { replied: false, reason: 'outbox_failed' };
+  }
+
+  actions.push({ type: 'sms_scheduled', send_at: queued.sendAt, outbox_id: queued.id, replaced: queued.cancelled });
 
   const runId = await logCasperRun(supabase, {
     userId: args.userId,
     leadId: args.lead.id,
     trigger: 'inbound_sms',
-    status: sendStatus === 'failed' ? 'error' : 'ok',
+    status: 'ok',
     thinking: parsed.thinking,
     actions,
     model: GROK_MINI_MODEL,
     inputSummary: args.body.slice(0, 240),
     outputSummary: sms,
-    error: sendError,
   });
 
   await upsertCasperLeadState(supabase, {
@@ -332,8 +403,8 @@ Lead just texted: "${args.body}"`,
     userId: args.userId,
     phase,
     lastRunId: runId,
-    pausedReason: phase === 'handed_off' ? (parsed.human_reason || 'handed_off') : null,
+    pausedReason: 'replying',
   });
 
-  return { replied: sendStatus !== 'failed', reason: sendError || undefined };
+  return { replied: true, reason: 'scheduled' };
 }

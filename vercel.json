@@ -11,6 +11,10 @@
     {
       "path": "/api/calendar/alerts",
       "schedule": "0 10 * * *"
+    },
+    {
+      "path": "/api/casper/outbox",
+      "schedule": "* * * * *"
     }
   ]
 }

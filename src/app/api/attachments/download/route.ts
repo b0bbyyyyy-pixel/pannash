@@ -34,13 +34,29 @@ export async function GET(request: Request) {
   // Get attachment info
   const { data: attachment, error: fetchError } = await supabase
     .from('lead_attachments')
-    .select('file_path, file_name')
+    .select('file_path, file_name, file_type')
     .eq('id', attachmentId)
     .eq('user_id', user.id)
     .single();
 
   if (fetchError || !attachment) {
     return NextResponse.json({ error: 'Attachment not found' }, { status: 404 });
+  }
+
+  // Same-origin bytes so the browser can render PDF pages without Storage CORS.
+  if (searchParams.get('raw') === '1') {
+    const { data: blob, error: dlErr } = await supabase.storage
+      .from('lead-attachments')
+      .download(attachment.file_path);
+    if (dlErr || !blob) {
+      return NextResponse.json({ error: 'Could not download file' }, { status: 502 });
+    }
+    return new NextResponse(blob, {
+      headers: {
+        'Content-Type': attachment.file_type || blob.type || 'application/pdf',
+        'Content-Disposition': `inline; filename="${attachment.file_name}"`,
+      },
+    });
   }
 
   // Generate signed URL (valid for 1 hour)

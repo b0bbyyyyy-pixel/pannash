@@ -292,7 +292,7 @@ export function parseStatementMonths(raw: unknown): StatementMonth[] {
     const month = String(r.month ?? r.statementMonth ?? '').trim();
     const totalDeposits = coerceNumber(r.totalDeposits ?? r.revenue ?? r.monthlyRevenue);
     const endingBalance = coerceNumber(r.endingBalance ?? r.endBal);
-    if (!month && totalDeposits == null && endingBalance == null) continue;
+    if (totalDeposits == null && endingBalance == null) continue;
     const opening = coerceNumber(r.openingBalance);
     const ending = endingBalance;
     const adb = coerceNumber(r.avgDailyBalance)

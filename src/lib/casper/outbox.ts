@@ -1,0 +1,438 @@
+import { casperEffectiveForLead } from '@/lib/casper/allow';
+import { mergeCapabilities, type CasperPhase } from '@/lib/casper/defaults';
+import { leadInAiFullPacks } from '@/lib/casper/fullPacks';
+import { logCasperRun, upsertCasperLeadState } from '@/lib/casper/runs';
+import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
+import { isSmsStopBody } from '@/lib/leads/dnc';
+import { sendTwilioSms } from '@/lib/telephony/sms';
+import { getTwilioCreds } from '@/lib/telephony/twilio';
+
+export type CasperOutboxStatus = 'pending' | 'sent' | 'cancelled';
+
+export type CasperOutboxRow = {
+  id: string;
+  user_id: string;
+  lead_id: string;
+  to_phone: string;
+  body: string;
+  send_at: string;
+  status: CasperOutboxStatus;
+  created_at: string;
+  thinking?: string | null;
+  actions?: unknown;
+  phase?: string | null;
+  input_summary?: string | null;
+  model?: string | null;
+  error?: string | null;
+};
+
+/** 70% 45s–2.5min, 30% 2.5–5min, plus ~1s per 20 characters. */
+export function outboxDelayMs(text: string): number {
+  const base = Math.random() < 0.7
+    ? 45_000 + Math.random() * (150_000 - 45_000)
+    : 150_000 + Math.random() * (300_000 - 150_000);
+  const typing = Math.floor(String(text || '').length / 20) * 1000;
+  return Math.round(base + typing);
+}
+
+/** @deprecated Use outboxDelayMs — replies are scheduled, not slept in-request. */
+export function humanDelayMs(text: string) {
+  return outboxDelayMs(text);
+}
+
+export function replyInLabel(sendAt: string, now = Date.now()): string {
+  const ms = new Date(sendAt).getTime() - now;
+  if (!Number.isFinite(ms) || ms <= 0) return 'Replying…';
+  const m = Math.max(1, Math.round(ms / 60_000));
+  return `Replying in ~${m}m`;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function cancelPendingOutbox(
+  supabase: any,
+  args: { leadId: string; userId?: string; exceptId?: string },
+): Promise<number> {
+  try {
+    let q = supabase
+      .from('casper_outbox')
+      .update({ status: 'cancelled' })
+      .eq('lead_id', args.leadId)
+      .eq('status', 'pending');
+    if (args.userId) q = q.eq('user_id', args.userId);
+    if (args.exceptId) q = q.neq('id', args.exceptId);
+    const { data, error } = await q.select('id');
+    if (error) {
+      console.error('[casper] cancel pending outbox', error);
+      return 0;
+    }
+    return (data ?? []).length;
+  } catch (err) {
+    console.error('[casper] cancel pending outbox', err);
+    return 0;
+  }
+}
+
+export type EnqueueOutboxArgs = {
+  userId: string;
+  leadId: string;
+  toPhone: string;
+  body: string;
+  thinking?: string | null;
+  actions?: unknown[];
+  phase?: string | null;
+  inputSummary?: string | null;
+  model?: string | null;
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function enqueueCasperOutbox(
+  supabase: any,
+  args: EnqueueOutboxArgs,
+): Promise<{ id: string | null; sendAt: string; cancelled: number }> {
+  const cancelled = await cancelPendingOutbox(supabase, {
+    leadId: args.leadId,
+    userId: args.userId,
+  });
+
+  const sendAt = new Date(Date.now() + outboxDelayMs(args.body)).toISOString();
+  const row = {
+    user_id: args.userId,
+    lead_id: args.leadId,
+    to_phone: args.toPhone,
+    body: args.body,
+    send_at: sendAt,
+    status: 'pending' as const,
+    thinking: args.thinking ?? null,
+    actions: args.actions ?? [],
+    phase: args.phase ?? null,
+    input_summary: args.inputSummary ?? null,
+    model: args.model ?? null,
+  };
+
+  const { data, error } = await supabase
+    .from('casper_outbox')
+    .insert(row)
+    .select('id, send_at')
+    .single();
+
+  if (!error && data?.id) {
+    return { id: data.id as string, sendAt: data.send_at as string, cancelled };
+  }
+
+  // Concurrent insert won the unique pending index — replace that row.
+  if (error) {
+    const { data: updated, error: updErr } = await supabase
+      .from('casper_outbox')
+      .update({
+        to_phone: args.toPhone,
+        body: args.body,
+        send_at: sendAt,
+        thinking: args.thinking ?? null,
+        actions: args.actions ?? [],
+        phase: args.phase ?? null,
+        input_summary: args.inputSummary ?? null,
+        model: args.model ?? null,
+        error: null,
+      })
+      .eq('lead_id', args.leadId)
+      .eq('user_id', args.userId)
+      .eq('status', 'pending')
+      .select('id, send_at')
+      .maybeSingle();
+    if (!updErr && updated?.id) {
+      return { id: updated.id as string, sendAt: updated.send_at as string, cancelled };
+    }
+    console.error('[casper] enqueue outbox', error, updErr);
+  }
+
+  return { id: null, sendAt, cancelled };
+}
+
+type GateResult = { ok: true } | { ok: false; reason: string };
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function outboxStillAllowed(supabase: any, row: CasperOutboxRow): Promise<GateResult> {
+  const [{ data: settings }, { data: lead }] = await Promise.all([
+    supabase
+      .from('user_settings')
+      .select('casper_enabled, casper_capabilities')
+      .eq('user_id', row.user_id)
+      .maybeSingle(),
+    supabase
+      .from('leads')
+      .select('id, list_id, casper_enabled, sms_opt_out')
+      .eq('id', row.lead_id)
+      .maybeSingle(),
+  ]);
+
+  if (!lead) return { ok: false, reason: 'lead_missing' };
+
+  if (!casperEffectiveForLead(!!settings?.casper_enabled, lead.casper_enabled)) {
+    return { ok: false, reason: lead.casper_enabled === false ? 'lead_off' : 'global_off' };
+  }
+  if (lead.sms_opt_out) return { ok: false, reason: 'opt_out' };
+
+  const { data: lastIn } = await supabase
+    .from('inbox_messages')
+    .select('body, created_at')
+    .eq('lead_id', row.lead_id)
+    .eq('direction', 'inbound')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (lastIn && isSmsStopBody(lastIn.body)) return { ok: false, reason: 'opt_out' };
+
+  // Newer inbound than this draft — inbound handler should have replaced us.
+  if (lastIn && new Date(lastIn.created_at).getTime() > new Date(row.created_at).getTime() + 2000) {
+    return { ok: false, reason: 'stale_superseded' };
+  }
+
+  if (await leadInAiFullPacks(supabase, {
+    userId: row.user_id,
+    leadId: row.lead_id,
+    listId: lead.list_id,
+  })) {
+    return { ok: false, reason: 'ai_full_packs' };
+  }
+
+  const caps = mergeCapabilities(settings?.casper_capabilities);
+  if (!caps.chat_sms) return { ok: false, reason: 'chat_sms_off' };
+
+  return { ok: true };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function markOutbox(
+  supabase: any,
+  id: string,
+  status: CasperOutboxStatus,
+  error?: string | null,
+) {
+  const patch: Record<string, unknown> = { status };
+  if (error !== undefined) patch.error = error;
+  await supabase.from('casper_outbox').update(patch).eq('id', id);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function clearReplyingIfIdle(supabase: any, row: CasperOutboxRow, handedOff?: boolean) {
+  const { data: still } = await supabase
+    .from('casper_outbox')
+    .select('id')
+    .eq('lead_id', row.lead_id)
+    .eq('status', 'pending')
+    .limit(1)
+    .maybeSingle();
+  if (still) return;
+
+  const phase = (row.phase as CasperPhase) || 'chatting';
+  await upsertCasperLeadState(supabase, {
+    leadId: row.lead_id,
+    userId: row.user_id,
+    phase,
+    pausedReason: handedOff || phase === 'handed_off' ? 'handed_off' : null,
+  });
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function sendOneOutbox(supabase: any, raw: CasperOutboxRow): Promise<{ sent: boolean; reason?: string }> {
+  const { data: fresh } = await supabase
+    .from('casper_outbox')
+    .select('*')
+    .eq('id', raw.id)
+    .maybeSingle();
+  const row = (fresh || raw) as CasperOutboxRow;
+  if (row.status !== 'pending') return { sent: false, reason: row.status };
+
+  const gate = await outboxStillAllowed(supabase, row);
+  if (!gate.ok) {
+    await markOutbox(supabase, row.id, 'cancelled', gate.reason);
+    await logCasperRun(supabase, {
+      userId: row.user_id,
+      leadId: row.lead_id,
+      trigger: 'outbox',
+      status: 'ok',
+      thinking: row.thinking,
+      actions: [...(Array.isArray(row.actions) ? row.actions : []), { type: 'sms', cancelled: true, reason: gate.reason }],
+      model: row.model,
+      inputSummary: row.input_summary,
+      outputSummary: row.body,
+      error: gate.reason,
+    });
+    await clearReplyingIfIdle(supabase, row, row.phase === 'handed_off');
+    return { sent: false, reason: gate.reason };
+  }
+
+  const creds = await getTwilioCreds(supabase, row.user_id);
+  if (!creds) {
+    await markOutbox(supabase, row.id, 'cancelled', 'no_twilio');
+    await logCasperRun(supabase, {
+      userId: row.user_id,
+      leadId: row.lead_id,
+      trigger: 'outbox',
+      status: 'error',
+      thinking: row.thinking,
+      actions: Array.isArray(row.actions) ? row.actions : [],
+      model: row.model,
+      inputSummary: row.input_summary,
+      outputSummary: row.body,
+      error: 'No Twilio connection',
+    });
+    await clearReplyingIfIdle(supabase, row, row.phase === 'handed_off');
+    return { sent: false, reason: 'no_twilio' };
+  }
+
+  let sid: string | null = null;
+  let sendStatus: 'sent' | 'failed' = 'sent';
+  let sendError: string | null = null;
+  try {
+    const sent = await sendTwilioSms(creds, row.to_phone, row.body);
+    sid = sent.sid;
+    if (sent.status === 'failed') {
+      sendStatus = 'failed';
+      sendError = sent.error ?? 'Send failed';
+    }
+  } catch (err) {
+    sendStatus = 'failed';
+    sendError = err instanceof Error ? err.message : 'Send failed';
+  }
+
+  await recordOutboundInboxSms(supabase, {
+    userId: row.user_id,
+    leadId: row.lead_id,
+    toPhone: row.to_phone,
+    body: row.body,
+    twilioSid: sid,
+    status: sendStatus,
+    errorMessage: sendError,
+    sentBy: 'calvin',
+  });
+
+  const actions = [
+    ...(Array.isArray(row.actions) ? row.actions : []),
+    { type: 'sms', sid, status: sendStatus, error: sendError },
+  ];
+
+  await logCasperRun(supabase, {
+    userId: row.user_id,
+    leadId: row.lead_id,
+    trigger: 'outbox',
+    status: sendStatus === 'failed' ? 'error' : 'ok',
+    thinking: row.thinking,
+    actions,
+    model: row.model,
+    inputSummary: row.input_summary,
+    outputSummary: row.body,
+    error: sendError,
+  });
+
+  if (sendStatus === 'failed') {
+    await markOutbox(supabase, row.id, 'cancelled', sendError);
+    await clearReplyingIfIdle(supabase, row, row.phase === 'handed_off');
+    return { sent: false, reason: sendError || 'send_failed' };
+  }
+
+  await markOutbox(supabase, row.id, 'sent', null);
+  await clearReplyingIfIdle(supabase, row, row.phase === 'handed_off');
+  return { sent: true };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function processDueCasperOutbox(
+  supabase: any,
+  userId?: string,
+): Promise<{ processed: number; sent: number; cancelled: number }> {
+  const now = new Date().toISOString();
+  let q = supabase
+    .from('casper_outbox')
+    .select('*')
+    .eq('status', 'pending')
+    .lte('send_at', now)
+    .order('send_at', { ascending: true })
+    .limit(25);
+  if (userId) q = q.eq('user_id', userId);
+
+  const { data, error } = await q;
+  if (error) {
+    console.error('[casper] process outbox', error);
+    return { processed: 0, sent: 0, cancelled: 0 };
+  }
+
+  let sent = 0;
+  let cancelled = 0;
+  for (const row of (data ?? []) as CasperOutboxRow[]) {
+    try {
+      const result = await sendOneOutbox(supabase, row);
+      if (result.sent) sent += 1;
+      else cancelled += 1;
+    } catch (err) {
+      console.error('[casper] send outbox', row.id, err);
+      cancelled += 1;
+    }
+  }
+
+  return { processed: (data ?? []).length, sent, cancelled };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function listPendingOutbox(supabase: any, userId: string) {
+  let { data, error } = await supabase
+    .from('casper_outbox')
+    .select('id, lead_id, to_phone, body, send_at, created_at, leads(name, company)')
+    .eq('user_id', userId)
+    .eq('status', 'pending')
+    .order('send_at', { ascending: true })
+    .limit(50);
+
+  if (error) {
+    const fallback = await supabase
+      .from('casper_outbox')
+      .select('id, lead_id, to_phone, body, send_at, created_at')
+      .eq('user_id', userId)
+      .eq('status', 'pending')
+      .order('send_at', { ascending: true })
+      .limit(50);
+    data = fallback.data;
+    error = fallback.error;
+  }
+  if (error) {
+    console.error('[casper] list pending outbox', error);
+    return [];
+  }
+
+  const rows = data ?? [];
+  const leadIds = [...new Set(rows.map((r: { lead_id: string }) => r.lead_id).filter(Boolean))];
+  const names = new Map<string, { name: string; company: string | null }>();
+  if (leadIds.length) {
+    const { data: leads } = await supabase
+      .from('leads')
+      .select('id, name, company')
+      .in('id', leadIds);
+    for (const lead of leads ?? []) {
+      names.set(lead.id, { name: lead.name || 'Lead', company: lead.company ?? null });
+    }
+  }
+
+  return rows.map((row: {
+    id: string;
+    lead_id: string;
+    to_phone: string;
+    body: string;
+    send_at: string;
+    created_at: string;
+    leads?: { name?: string | null; company?: string | null } | { name?: string | null; company?: string | null }[] | null;
+  }) => {
+    const embedded = Array.isArray(row.leads) ? row.leads[0] : row.leads;
+    const lookup = names.get(row.lead_id);
+    return {
+      id: row.id,
+      lead_id: row.lead_id,
+      to_phone: row.to_phone,
+      body: row.body,
+      send_at: row.send_at,
+      created_at: row.created_at,
+      lead_name: lookup?.name || embedded?.name || 'Lead',
+      company: lookup?.company ?? embedded?.company ?? null,
+    };
+  });
+}

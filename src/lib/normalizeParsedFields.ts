@@ -83,6 +83,16 @@ const KEY_ALIASES: Record<string, string> = {
   owner2Ownership: 'owner2OwnershipPercent',
   firstName: 'firstName',
   lastName: 'lastName',
+  previousBalance: 'openingBalance',
+  beginningBalance: 'openingBalance',
+  openingBal: 'openingBalance',
+  newBalance: 'endingBalance',
+  closingBalance: 'endingBalance',
+  endingBal: 'endingBalance',
+  totalCredits: 'totalDeposits',
+  depositsTotal: 'totalDeposits',
+  creditsTotal: 'totalDeposits',
+  depositsCount: 'depositCount',
 };
 
 /** Labels that get glued onto the previous PDF field when the text layer has no space. Longest first. */

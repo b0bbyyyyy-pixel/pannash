@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
-import { getAIClient, GROK_MODEL, GROK_VISION_MODEL } from '@/lib/ai';
+import { getAIClient, GROK_MODEL, GROK_VISION_MODELS } from '@/lib/ai';
+import { loadPdfjsNode } from '@/lib/pdf/loadPdfjsNode';
 import { explodeFormLabels, fieldsFromLabeledText, mergeParsedFieldMaps, normalizeParsedFields } from '@/lib/normalizeParsedFields';
 import { extractPdfImages } from '@/lib/pdf/extractPdfImages';
+import { extractBankMetricsFromText, hasBankMetrics } from '@/lib/pdf/extractBankMetrics';
 
 export const runtime     = 'nodejs';
 export const maxDuration = 120;
@@ -79,7 +81,12 @@ JSON schema (all fields optional, only include fields that have a value):
 const BANK_PROMPT = `You are a financial analyst extracting data from a business bank statement for MCA underwriting.
 Extract EVERY metric you can. Return ONLY a raw JSON object — no markdown fences.
 
-Look at: summary boxes, daily balances, deposit totals, NSF/overdraft fees, AND the transaction list.
+Look at: CHECKING SUMMARY / account summary boxes first (Previous Balance, Plus N Deposits totaling, New Balance), then daily balances, NSF/overdraft fees, AND the transaction list.
+Frost / community-bank layout:
+- PREVIOUS BALANCE → openingBalance
+- PLUS N DEPOSITS/OTHER CREDITS TOTALING → totalDeposits, depositCount, monthlyRevenue
+- LESS OTHER WITHDRAWALS/DEBITS TOTALING → totalWithdrawals
+- NEW BALANCE → endingBalance
 
 MCA positions: scan ACH withdrawals / debits for merchant-cash-advance or factoring funders
 (Rapid, OnDeck, Kapitus, Credibly, National Funding, Forward Financing, Libertas, Pearl, Everest,
@@ -147,12 +154,7 @@ function isBankStatement(filename: string, text: string): boolean {
   ].some(k => lower.includes(k));
 }
 
-async function loadPdfjs() {
-  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (pdfjs as any).GlobalWorkerOptions.workerSrc = '';
-  return pdfjs;
-}
+const loadPdfjs = loadPdfjsNode;
 
 function formValueText(raw: unknown): string {
   if (raw == null) return '';
@@ -318,30 +320,41 @@ async function extractWithVisionImages(
   console.log(`[parse-application] Vision OCR → ${images.length} image(s)`);
   try {
     const ai = getAIClient();
-    const completion = await ai.chat.completions.create({
-      model: GROK_VISION_MODEL,
-      max_tokens: 4000,
-      messages: [
-        { role: 'system', content: prompt + '\n\nReturn ONLY raw JSON, no markdown.' },
-        {
-          role: 'user',
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          content: [
-            { type: 'text', text: 'These are pages from one document. Extract fields from all pages.' },
-            ...images.map(img => ({
-              type: 'image_url',
-              image_url: {
-                url: `data:${img.mime};base64,${img.buffer.toString('base64')}`,
-                detail: 'high',
-              },
-            })),
-          ] as any,
-        },
-      ],
-    });
-    const raw = completion.choices[0]?.message?.content?.trim() ?? '{}';
-    console.log('[parse-application] Vision result (first 300):', raw.slice(0, 300));
-    return safeJson(raw);
+    let lastErr = '';
+    for (const model of GROK_VISION_MODELS) {
+      try {
+        const completion = await ai.chat.completions.create({
+          model,
+          max_tokens: 4000,
+          messages: [
+            { role: 'system', content: prompt + '\n\nReturn ONLY raw JSON, no markdown.' },
+            {
+              role: 'user',
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              content: [
+                { type: 'text', text: 'These are pages from one document. Extract fields from all pages.' },
+                ...images.map(img => ({
+                  type: 'image_url',
+                  image_url: {
+                    url: `data:${img.mime};base64,${img.buffer.toString('base64')}`,
+                    detail: 'high',
+                  },
+                })),
+              ] as any,
+            },
+          ],
+        });
+        const raw = completion.choices[0]?.message?.content?.trim() ?? '{}';
+        console.log(`[parse-application] Vision ${model} (first 300):`, raw.slice(0, 300));
+        return safeJson(raw);
+      } catch (e) {
+        lastErr = e instanceof Error ? e.message : String(e);
+        if (!/does not exist|404|not have access/i.test(lastErr)) break;
+        console.warn(`[parse-application] vision ${model} unavailable, trying next`);
+      }
+    }
+    console.error('[parse-application] Vision OCR failed:', lastErr);
+    return {};
   } catch (e) {
     console.error('[parse-application] Vision OCR failed:', e);
     return {};
@@ -386,6 +399,46 @@ export async function POST(request: Request) {
   const attachmentId = String(formData.get('attachmentId') ?? '').trim();
   const filePath = String(formData.get('filePath') ?? '').trim();
   const file = formData.get('file') as File | null;
+  const pageText = String(formData.get('pageText') ?? '');
+  const pageFiles = formData
+    .getAll('pages')
+    .filter((v): v is Blob => typeof v === 'object' && v !== null && 'arrayBuffer' in v && (v as Blob).size > 0);
+
+  const forcedType = String(formData.get('documentType') ?? '').toLowerCase().trim();
+  const forceBank =
+    forcedType === 'bank_statement' || forcedType === 'bank' || forcedType === 'statement';
+  const forceApp = forcedType === 'application' || forcedType === 'app';
+
+  const fromClientText = (!forceApp && pageText) ? extractBankMetricsFromText(pageText) : {};
+  if ((forceBank || isBankStatement('', pageText)) && hasBankMetrics(fromClientText)) {
+    return NextResponse.json({
+      fields: normalizeParsedFields(fromClientText),
+      documentType: 'bank_statement',
+    });
+  }
+
+  let visionFields: Record<string, string> = {};
+  if (pageFiles.length && !hasBankMetrics(fromClientText)) {
+    const prompt = forceApp ? APP_PROMPT : BANK_PROMPT;
+    const images: { mime: string; buffer: Buffer }[] = [];
+    for (const page of pageFiles.slice(0, 6)) {
+      images.push({
+        mime: (page.type && page.type.startsWith('image/')) ? page.type : 'image/jpeg',
+        buffer: Buffer.from(await page.arrayBuffer()),
+      });
+    }
+    visionFields = normalizeParsedFields(await extractWithVisionImages(images, prompt));
+    console.log(`[parse-application] page vision extracted ${Object.keys(visionFields).length} field(s):`, Object.keys(visionFields));
+    if (!attachmentId && !filePath && !file) {
+      return NextResponse.json({
+        fields: visionFields,
+        documentType: forceApp ? 'application' : 'bank_statement',
+        ...(Object.keys(visionFields).length === 0
+          ? { warning: 'AI could not read numbers from these pages.' }
+          : {}),
+      });
+    }
+  }
 
   let buffer: Buffer;
   let filename: string;
@@ -425,36 +478,41 @@ export async function POST(request: Request) {
   const isPdf    = ext === 'pdf' || mime.includes('pdf');
   const isImage  = ['jpg','jpeg','png','webp','gif'].includes(ext);
 
-  // ── Step 1: Extract text ───────────────────────────────────────────────────
-  let textContent = '';
+  // ── Step 1: Extract text (layer text only — raw PDF binary is not "readable") ─
+  let layerText = '';
+  let rawPdfText = '';
 
   if (ext === 'txt') {
-    textContent = buffer.toString('utf-8');
+    layerText = buffer.toString('utf-8');
 
   } else if (isPdf) {
     try {
       const parsed = await getPdfParse()(buffer);
-      textContent = (parsed.text ?? '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
-      console.log(`[parse-application] pdf-parse: ${textContent.length} chars`);
+      layerText = (parsed.text ?? '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+      console.log(`[parse-application] pdf-parse: ${layerText.length} chars`);
     } catch (e) {
       console.warn('[parse-application] pdf-parse failed:', e instanceof Error ? e.message : e);
     }
 
     const pdfjs = await extractPdfjsContent(buffer);
     console.log(`[parse-application] pdfjs text: ${pdfjs.text.length} chars, form fields: ${pdfjs.formLines.length}`);
-    if (pdfjs.text.length > textContent.length) textContent = pdfjs.text;
+    if (pdfjs.text.length > layerText.length) layerText = pdfjs.text;
     if (pdfjs.formLines.length) {
-      textContent = `FILLED FORM FIELDS:\n${pdfjs.formLines.join('\n')}\n\nDOCUMENT TEXT:\n${textContent}`;
+      layerText = `FILLED FORM FIELDS:\n${pdfjs.formLines.join('\n')}\n\nDOCUMENT TEXT:\n${layerText}`;
     }
 
-    if (textContent.replace(/\s/g, '').length < 200) {
-      const raw = extractRawStringsFromPdf(buffer);
-      console.log(`[parse-application] raw binary strings: ${raw.length} chars`);
-      if (raw.length > textContent.length) textContent += '\n' + raw;
-    }
+    rawPdfText = extractRawStringsFromPdf(buffer);
+    console.log(`[parse-application] raw binary strings: ${rawPdfText.length} chars`);
 
   } else if (!isImage) {
-    textContent = buffer.toString('utf-8').replace(/[^\x20-\x7E\n\r\t]/g, ' ');
+    layerText = buffer.toString('utf-8').replace(/[^\x20-\x7E\n\r\t]/g, ' ');
+  }
+
+  let textContent = layerText;
+  if (pageText.replace(/\s/g, '').length > textContent.replace(/\s/g, '').length) {
+    textContent = pageText;
+  } else if (pageText.trim()) {
+    textContent = `${pageText}\n\n${textContent}`;
   }
 
   textContent = explodeFormLabels(textContent).replace(
@@ -463,40 +521,48 @@ export async function POST(request: Request) {
   );
 
   // ── Step 2: Detect document type (caller can force app vs statement) ──────
-  const forcedType = String(formData.get('documentType') ?? '').toLowerCase().trim();
   const isBank =
-    forcedType === 'bank_statement' || forcedType === 'bank' || forcedType === 'statement'
+    forceBank
       ? true
-      : forcedType === 'application' || forcedType === 'app'
+      : forceApp
         ? false
         : isBankStatement(filename, textContent);
   const prompt = isBank ? BANK_PROMPT : APP_PROMPT;
 
   // ── Step 3: Extract fields ─────────────────────────────────────────────────
+  const fromSummary = isBank
+    ? mergeParsedFieldMaps(
+        extractBankMetricsFromText(pageText),
+        extractBankMetricsFromText(layerText),
+        extractBankMetricsFromText(rawPdfText),
+      )
+    : {};
   let fields: Record<string, string> = {};
 
-  const usableText = textContent.replace(/\s/g, '').length >= 100;
-  const thinPdf = isPdf && textContent.replace(/\s/g, '').length < 200;
+  const usableLayer = layerText.replace(/\s/g, '').length >= 100;
+  const seed = mergeParsedFieldMaps(fromSummary, visionFields);
+  const needAi = !isBank || !hasBankMetrics(seed);
 
-  if (isImage) {
+  if (isImage && needAi) {
     fields = await extractWithVisionAI(buffer, filename, prompt);
-  } else if (thinPdf) {
+  } else if (isPdf && isBank && needAi) {
     const images = await extractPdfImages(buffer, loadPdfjs);
-    console.log(`[parse-application] scanned PDF → ${images.length} image(s)`);
+    console.log(`[parse-application] bank PDF images → ${images.length}`);
     if (images.length) {
       fields = await extractWithVisionImages(images, prompt);
     }
-    if (!Object.keys(fields).length && textContent.replace(/\s/g, '').length > 20) {
-      fields = await extractWithTextAI(textContent, prompt);
+    const afterVision = mergeParsedFieldMaps(fromSummary, visionFields, fields);
+    if (!hasBankMetrics(afterVision) && usableLayer) {
+      fields = mergeParsedFieldMaps(fields, await extractWithTextAI(layerText, prompt));
     }
-  } else if (usableText) {
+  } else if (needAi && usableLayer) {
     fields = await extractWithTextAI(textContent, prompt);
-  } else if (isPdf && textContent.replace(/\s/g, '').length > 20) {
-    fields = await extractWithTextAI(textContent, prompt);
+  } else if (needAi && isPdf && layerText.replace(/\s/g, '').length > 20) {
+    fields = await extractWithTextAI(layerText, prompt);
   }
 
   const fromLabels = fieldsFromLabeledText(textContent);
-  fields = mergeParsedFieldMaps(fromLabels, fields);
+  fields = mergeParsedFieldMaps(fromSummary, visionFields, fields, fromLabels);
   fields = normalizeParsedFields(fields);
 
   console.log(`[parse-application] Extracted ${Object.keys(fields).length} field(s):`, Object.keys(fields));

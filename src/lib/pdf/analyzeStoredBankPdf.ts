@@ -1,0 +1,228 @@
+import { getAIClient, GROK_MODEL, GROK_VISION_MODELS } from '@/lib/ai';
+import { loadPdfjsNode } from '@/lib/pdf/loadPdfjsNode';
+import { mergeParsedFieldMaps, normalizeParsedFields } from '@/lib/normalizeParsedFields';
+import { extractPdfImages } from '@/lib/pdf/extractPdfImages';
+import { extractBankMetricsFromText, hasBankMetrics } from '@/lib/pdf/extractBankMetrics';
+
+const BANK_PROMPT = `You are a financial analyst extracting data from a business bank statement for MCA underwriting.
+Extract EVERY metric you can. Return ONLY a raw JSON object — no markdown fences.
+Read CHECKING SUMMARY / account summary first: Previous Balance, Plus N Deposits totaling, New Balance.
+{
+  "company": "",
+  "bankName": "",
+  "accountNumber": "",
+  "statementMonth": "",
+  "openingBalance": "",
+  "endingBalance": "",
+  "totalDeposits": "",
+  "totalWithdrawals": "",
+  "monthlyRevenue": "",
+  "avgDailyBalance": "",
+  "nsfCount": "",
+  "depositCount": "",
+  "largestDeposit": "",
+  "hasOtherMCALoans": false,
+  "mcaPositions": []
+}`;
+
+let _pdfParse: ((buf: Buffer) => Promise<{ text: string }>) | null = null;
+function getPdfParse() {
+  if (!_pdfParse) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require('pdf-parse');
+    _pdfParse = typeof mod === 'function' ? mod : mod.default;
+  }
+  return _pdfParse!;
+}
+
+const loadPdfjs = loadPdfjsNode;
+
+function safeJson(raw: string): Record<string, string> {
+  try {
+    const clean = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '');
+    const obj = JSON.parse(clean);
+    const result: Record<string, string> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (v == null || v === '') continue;
+      if (typeof v === 'boolean') { result[k] = v ? 'true' : 'false'; continue; }
+      if (typeof v === 'object') {
+        const encoded = JSON.stringify(v);
+        if (encoded && encoded !== '[]' && encoded !== '{}') result[k] = encoded;
+        continue;
+      }
+      const s = String(v).trim();
+      if (s && s !== 'null' && s !== 'undefined') result[k] = s;
+    }
+    return result;
+  } catch { return {}; }
+}
+
+function extractRawStringsFromPdf(buffer: Buffer): string {
+  const latin = buffer.toString('latin1');
+  const matches = latin.match(/[\x20-\x7E]{5,}/g) ?? [];
+  const filtered = matches.filter(s => {
+    const t = s.trim();
+    if (!t) return false;
+    if (/^(obj|endobj|stream|endstream|xref|trailer|startxref)$/.test(t)) return false;
+    if (/^[0-9A-Fa-f]{20,}$/.test(t)) return false;
+    if (!/[a-zA-Z]/.test(t)) return false;
+    return true;
+  });
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const s of filtered) {
+    if (!seen.has(s)) { seen.add(s); out.push(s); }
+    if (out.join(' ').length > 15000) break;
+  }
+  return out.join('\n');
+}
+
+async function extractPdfjsText(buffer: Buffer): Promise<string> {
+  try {
+    const pdfjs = await loadPdfjs();
+    const pdf = await pdfjs.getDocument({
+      data: new Uint8Array(buffer),
+      useWorkerFetch: false,
+      disableFontFace: true,
+    }).promise;
+    let full = '';
+    for (let n = 1; n <= pdf.numPages; n++) {
+      const page = await pdf.getPage(n);
+      const content = await page.getTextContent();
+      let prevY: number | null = null;
+      for (const item of content.items) {
+        if (!('str' in item)) continue;
+        const str = (item as { str: string }).str;
+        const y = (item as { transform: number[] }).transform[5];
+        if (prevY !== null && Math.abs(y - prevY) > 2) full += '\n';
+        else if (full && !full.endsWith('\n') && !full.endsWith(' ')) full += ' ';
+        full += str;
+        prevY = y;
+      }
+      full += '\n\n';
+    }
+    return full.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+  } catch (e) {
+    console.warn('[analyze-bank] pdfjs text failed:', e instanceof Error ? e.message : e);
+    return '';
+  }
+}
+
+async function extractWithTextAI(text: string): Promise<Record<string, string>> {
+  if (text.replace(/\s/g, '').length < 20) return {};
+  try {
+    const ai = getAIClient();
+    const completion = await ai.chat.completions.create({
+      model: GROK_MODEL,
+      temperature: 0,
+      max_tokens: 4000,
+      messages: [
+        { role: 'system', content: BANK_PROMPT + '\n\nReturn ONLY raw JSON, no markdown.' },
+        { role: 'user', content: `DOCUMENT TEXT:\n\n${text.slice(0, 28000)}` },
+      ],
+    });
+    return safeJson(completion.choices[0]?.message?.content?.trim() ?? '{}');
+  } catch (e) {
+    console.error('[analyze-bank] text AI failed:', e instanceof Error ? e.message : e);
+    return {};
+  }
+}
+
+async function extractWithVision(
+  images: { mime: string; buffer: Buffer }[],
+  filename: string,
+): Promise<Record<string, string>> {
+  if (!images.length) return {};
+  const ai = getAIClient();
+  const ask = async (
+    pages: { mime: string; buffer: Buffer }[],
+    model: string,
+    timeout: number,
+  ) => {
+    const completion = await ai.chat.completions.create({
+      model,
+      max_tokens: 1500,
+      messages: [
+        { role: 'system', content: BANK_PROMPT + '\n\nReturn ONLY raw JSON, no markdown.' },
+        {
+          role: 'user',
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          content: [
+            {
+              type: 'text',
+              text: `File: ${filename}. Read the CHECKING SUMMARY / previous-new balance box on these pages. You MUST fill totalDeposits, monthlyRevenue, openingBalance, endingBalance, statementMonth (YYYY-MM). Digits only for money.`,
+            },
+            ...pages.map(img => ({
+              type: 'image_url',
+              image_url: { url: `data:${img.mime};base64,${img.buffer.toString('base64')}`, detail: 'high' },
+            })),
+          ] as any,
+        },
+      ],
+    }, { timeout });
+    return safeJson(completion.choices[0]?.message?.content?.trim() ?? '{}');
+  };
+
+  let fields: Record<string, string> = {};
+  const first = images.slice(0, Math.min(3, images.length));
+  try {
+    fields = await ask(first, GROK_VISION_MODELS[0], 50_000);
+    console.log(`[analyze-bank] vision ${GROK_VISION_MODELS[0]}`, Object.keys(fields), fields.totalDeposits || fields.monthlyRevenue || '');
+    if (hasBankMetrics(fields)) return fields;
+  } catch (e) {
+    console.warn('[analyze-bank] vision first pass failed:', e instanceof Error ? e.message : e);
+  }
+
+  const more = images.slice(0, Math.min(4, images.length));
+  for (const model of ['grok-4.7', 'grok-4']) {
+    try {
+      const retry = await ask(more, model, 90_000);
+      console.log(`[analyze-bank] vision retry ${model}`, Object.keys(retry), retry.totalDeposits || retry.monthlyRevenue || '');
+      if (hasBankMetrics(retry)) return retry;
+      fields = mergeParsedFieldMaps(fields, retry);
+    } catch (e) {
+      console.warn(`[analyze-bank] vision retry ${model} failed:`, e instanceof Error ? e.message : e);
+    }
+  }
+  return fields;
+}
+
+export async function analyzeStoredBankPdf(
+  buffer: Buffer,
+  filename: string,
+): Promise<Record<string, string>> {
+  let layer = '';
+  try {
+    const parsed = await getPdfParse()(buffer);
+    layer = (parsed.text ?? '').trim();
+  } catch (e) {
+    console.warn('[analyze-bank] pdf-parse failed:', e instanceof Error ? e.message : e);
+  }
+  if (layer.replace(/\s/g, '').length < 80) {
+    const pdfjsText = await extractPdfjsText(buffer);
+    if (pdfjsText.length > layer.length) layer = pdfjsText;
+  }
+  const raw = extractRawStringsFromPdf(buffer);
+  console.log(`[analyze-bank] ${filename}: layer=${layer.length} raw=${raw.length}`);
+
+  const fromText = mergeParsedFieldMaps(
+    extractBankMetricsFromText(layer),
+    extractBankMetricsFromText(raw),
+  );
+  if (hasBankMetrics(fromText)) {
+    console.log(`[analyze-bank] ${filename}: summary box`, Object.keys(fromText));
+    return normalizeParsedFields(fromText);
+  }
+
+  const images = await extractPdfImages(buffer, loadPdfjs);
+  console.log(`[analyze-bank] ${filename}: images=${images.length}`);
+  const vision = images.length ? await extractWithVision(images, filename) : {};
+  const merged = mergeParsedFieldMaps(fromText, vision);
+  if (hasBankMetrics(merged)) return normalizeParsedFields(merged);
+
+  if (layer.replace(/\s/g, '').length >= 40) {
+    const ai = await extractWithTextAI(layer);
+    return normalizeParsedFields(mergeParsedFieldMaps(merged, ai));
+  }
+  return normalizeParsedFields(merged);
+}

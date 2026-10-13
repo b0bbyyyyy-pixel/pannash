@@ -13,6 +13,8 @@ import {
   splitFullPackFiles,
 } from '@/lib/leadDocActions';
 import { explainUploadFailure, uploadFileToLeadStorage } from '@/lib/uploadLeadFile';
+import { downloadAttachmentBytes, readBankStatementPdf } from '@/lib/pdf/renderPdfPages';
+import { hasBankMetrics } from '@/lib/pdf/extractBankMetrics';
 import { postLeadPatch } from '@/lib/pipeline/iframeMessages';
 import {
   parseMcaPositions,
@@ -304,20 +306,62 @@ export default function DocumentsModal({
     /app(lication)?/i.test(a.file_name) &&
     !looksLikeStatement(a);
 
-  const BANK_METRIC_KEYS = [
-    'monthlyRevenue', 'totalDeposits', 'endingBalance', 'openingBalance',
-    'avgDailyBalance', 'nsfCount', 'depositCount', 'negativeDays',
-    'statementMonth', 'bankName', 'largestDeposit', 'totalWithdrawals',
-  ];
   const hasMeaningfulBankFields = (fields: Record<string, string>) =>
-    BANK_METRIC_KEYS.some(k => !!fields[k]) || !!fields.statementMonths;
+    hasBankMetrics(fields) || !!fields.statementMonths;
+
+  const analyzeStoredStatements = async (atts: Attachment[]) => {
+    const merged: Record<string, string> = {};
+    const months: StatementMonth[] = [];
+    let lastError: string | undefined;
+    for (let i = 0; i < atts.length; i++) {
+      setUploadStatus(`Reading statement ${i + 1} of ${atts.length}…`);
+      const res = await fetch('/api/leads/analyze-bank-docs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ attachmentIds: [atts[i].id] }),
+      });
+      const json = await res.json().catch(() => ({})) as { fields?: Record<string, string>; error?: string };
+      if (!res.ok) lastError = json.error || lastError;
+      const incoming = json.fields ?? {};
+      const row = statementMonthFromFields(incoming);
+      if (row) months.push(row);
+      mergeParseFields(merged, incoming);
+    }
+    attachStatementMonths(merged, months);
+    return { ok: !lastError, fields: merged, error: lastError };
+  };
 
   const parseAttachment = async (a: Attachment, documentType?: 'application' | 'bank_statement') => {
     const fd = new FormData();
-    fd.append('attachmentId', a.id);
     const kind = documentType ?? (looksLikeStatement(a) ? 'bank_statement' : undefined);
     if (kind) fd.append('documentType', kind);
-    const res = await fetch('/api/leads/parse-application', { method: 'POST', body: fd, credentials: 'include' });
+    const isPdf = /\.pdf$/i.test(a.file_name) || /pdf/i.test(a.file_type || '');
+    if (kind === 'bank_statement' && isPdf) {
+      try {
+        const bytes = await downloadAttachmentBytes(a.id);
+        if (bytes) {
+          const read = await readBankStatementPdf(bytes, { fileName: a.file_name });
+          if (hasBankMetrics(read.fields)) {
+            return { ok: true, json: { fields: read.fields, documentType: 'bank_statement' } };
+          }
+          if (read.text.trim()) fd.append('pageText', read.text.slice(0, 100_000));
+          for (const page of read.pages) fd.append('pages', page, page.name);
+        }
+      } catch (err) {
+        console.warn('Could not read statement pages', a.file_name, err);
+      }
+    }
+    fd.append('attachmentId', a.id);
+    let res = await fetch('/api/leads/parse-application', { method: 'POST', body: fd, credentials: 'include' });
+    if (res.status === 413 && (fd.has('pages') || fd.has('pageText'))) {
+      const retry = new FormData();
+      if (kind) retry.append('documentType', kind);
+      retry.append('attachmentId', a.id);
+      const pageText = fd.get('pageText');
+      if (typeof pageText === 'string' && pageText) retry.append('pageText', pageText);
+      res = await fetch('/api/leads/parse-application', { method: 'POST', body: retry, credentials: 'include' });
+    }
     const json = await res.json();
     return { ok: res.ok, json };
   };
@@ -403,45 +447,31 @@ export default function DocumentsModal({
       setUploading(false);
       setParseStep('parsing');
       pendingBankAttIds.current = newAttachments.map(a => a.id);
-      const mergedFields: Record<string, string> = {};
-      const months: StatementMonth[] = [];
+      setUploadStatus(`Reading ${newAttachments.length} stored statement(s)…`);
       try {
-        for (let i = 0; i < newAttachments.length; i++) {
-          setUploadStatus(`Parsing statement ${i + 1} of ${newAttachments.length}…`);
-          try {
-            const { ok, json } = await parseAttachment(newAttachments[i], 'bank_statement');
-            if (ok && json.fields && Object.keys(json.fields).length > 0) {
-              const incoming = json.fields as Record<string, string>;
-              const row = statementMonthFromFields(incoming);
-              if (row) months.push(row);
-              mergeParseFields(mergedFields, incoming);
-            } else if (!ok) {
-              setUploadStatus(json.error || `Could not parse ${newAttachments[i].file_name}`);
-            }
-          } catch (e) {
-            setUploadStatus(e instanceof Error ? e.message : `Parse failed for ${newAttachments[i].file_name}`);
-          }
-        }
-
+        const { ok, fields, error } = await analyzeStoredStatements(newAttachments);
+        const incoming = fields;
+        const months: StatementMonth[] = [];
+        const row = statementMonthFromFields(incoming);
+        if (row) months.push(row);
+        const mergedFields: Record<string, string> = {};
+        mergeParseFields(mergedFields, incoming);
         attachStatementMonths(mergedFields, months);
         const reviewFields = enrichParsedBusinessFields(normalizeParsedFields(mergedFields));
         setPendingFiles([]);
         setUploadProgress({});
-        if (Object.keys(reviewFields).length > 0) {
+        if (hasMeaningfulBankFields(reviewFields) || Object.keys(reviewFields).length > 0) {
           setParsedFields(reviewFields);
           setParsedSelected(new Set(Object.keys(reviewFields)));
           setParseStep('review');
           setUploadStatus(null);
         } else {
           setParseStep('upload');
-          setUploadStatus('Could not read these statements. If they are scans, try Analyze again.');
+          setUploadStatus(ok ? 'Could not read deposit or balance numbers from these files.' : (error || 'Could not read these statements.'));
         }
       } catch (e) {
         setParseStep('upload');
-        const raw = e instanceof Error ? e.message : 'Bank statement parse failed';
-        setUploadStatus(/no text found|scanned image|XAI_API_KEY|OPENAI_API_KEY/i.test(raw)
-          ? 'These statements are scans. Use Analyze so AI can read the pages.'
-          : raw);
+        setUploadStatus(e instanceof Error ? e.message : 'Bank statement parse failed');
       }
       return;
     }
@@ -500,7 +530,7 @@ export default function DocumentsModal({
           setParseStep('upload');
           setUploadStatus(result.ok
             ? 'Applied to lead'
-            : 'Could not read these statements. If they are scans, use Analyze so AI can read the pages.');
+            : 'Statement reader found no deposit or balance totals in these files.');
         } else {
           setParsedFields({});
           setParsedSelected(new Set());
@@ -546,7 +576,7 @@ export default function DocumentsModal({
       setUploadProgress({});
     } catch (e) {
       const raw = e instanceof Error ? e.message : 'Could not apply fields';
-      if (!/no text found|scanned image|OPENAI_API_KEY|XAI_API_KEY/i.test(raw)) {
+      if (!/no text found|scanned image|OPENAI_API_KEY|XAI_API_KEY|could not reach the bank analyzer|BANK_ANALYZER_URL|not configured/i.test(raw)) {
         setUploadStatus(raw);
       } else {
         onApplied?.();
@@ -637,7 +667,7 @@ export default function DocumentsModal({
       }
     } catch (e) {
       const raw = e instanceof Error ? e.message : 'Analyze failed';
-      if (!/no text found|scanned image|XAI_API_KEY|OPENAI_API_KEY/i.test(raw)) alert(raw);
+      if (!/no text found|scanned image|XAI_API_KEY|OPENAI_API_KEY|could not reach the bank analyzer|BANK_ANALYZER_URL|not configured/i.test(raw)) alert(raw);
     } finally {
       setAnalyzingId(null);
     }
@@ -663,26 +693,30 @@ export default function DocumentsModal({
     const merged: Record<string, string> = {};
     const months: StatementMonth[] = [];
 
-    for (let i = 0; i < targets.length; i++) {
-      const a = targets[i];
-      const kind = looksLikeApplication(a) ? 'application' : 'bank_statement';
-      setUploadStatus(
-        kind === 'bank_statement'
-          ? `Parsing statement ${i + 1} of ${targets.length}…`
-          : `Parsing application ${i + 1} of ${targets.length}…`,
-      );
-      try {
-        const { ok, json } = await parseAttachment(a, kind);
-        if (ok && json.fields && Object.keys(json.fields).length > 0) {
-          const incoming = json.fields as Record<string, string>;
-          const row = statementMonthFromFields(incoming);
-          if (row) months.push(row);
-          mergeParseFields(merged, incoming);
-        } else if (!ok) {
-          setUploadStatus(json.error || `Could not parse ${a.file_name}`);
+    if (asApps.length) {
+      for (let i = 0; i < asApps.length; i++) {
+        setUploadStatus(`Parsing application ${i + 1} of ${asApps.length}…`);
+        try {
+          const { ok, json } = await parseAttachment(asApps[i], 'application');
+          if (ok && json.fields && Object.keys(json.fields).length > 0) {
+            mergeParseFields(merged, json.fields as Record<string, string>);
+          }
+        } catch (e) {
+          setUploadStatus(e instanceof Error ? e.message : `Parse failed for ${asApps[i].file_name}`);
         }
+      }
+    }
+
+    if (asBanks.length) {
+      setUploadStatus(`Reading ${asBanks.length} stored statement(s)…`);
+      try {
+        const { fields, error } = await analyzeStoredStatements(asBanks);
+        if (error) setUploadStatus(error);
+        const row = statementMonthFromFields(fields);
+        if (row) months.push(row);
+        mergeParseFields(merged, fields);
       } catch (e) {
-        setUploadStatus(e instanceof Error ? e.message : `Parse failed for ${a.file_name}`);
+        setUploadStatus(e instanceof Error ? e.message : 'Could not read stored statements');
       }
     }
 
@@ -690,27 +724,16 @@ export default function DocumentsModal({
     const reviewFields = enrichParsedBusinessFields(normalizeParsedFields(merged));
     const rich = hasMeaningfulBankFields(reviewFields) || asApps.length > 0 && Object.keys(reviewFields).length > 0;
 
-    let analyzerOk = false;
-    if (asBanks.length > 0 && !rich) {
-      setUploadStatus(asBanks.length === 1 ? 'Analyzing bank statements…' : `Analyzing ${asBanks.length} statements…`);
-      const result = await analyzeBankAttachmentsForLead(leadId, asBanks.map(a => a.id));
-      analyzerOk = result.ok;
-      if (result.ok) onApplied?.();
-    }
-
     setAnalyzing(false);
     if (rich) {
       setParsedFields(reviewFields);
       setParsedSelected(new Set(Object.keys(reviewFields)));
       setParseStep('review');
-      setUploadStatus('Read with AI from scanned pages. Review the numbers, then Apply.');
-    } else if (analyzerOk) {
-      setParseStep('upload');
-      setShowUpload(false);
+      setUploadStatus('Pulled totals from the stored statements. Review, then Apply.');
     } else {
       setParseStep('upload');
       setShowUpload(false);
-      alert('Could not read these statements. If they are scans, wait for the page reader — or export CSV from the bank.');
+      alert('Statement reader found no deposit or balance totals in these files.');
     }
   };
 
@@ -789,7 +812,7 @@ export default function DocumentsModal({
             <button
                 onClick={handleAnalyzeSelected}
                 disabled={analyzing}
-                title={selected.size > 0 ? `Analyze ${selected.size} selected doc(s)` : 'Analyze all docs'}
+                title={selected.size > 0 ? `Read ${selected.size} selected statement(s)` : 'Read all statements'}
                 className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium border border-[#e5e5e5] rounded-lg bg-white text-[#1a1a1a] hover:bg-[#f5f5f5] disabled:opacity-50 transition-colors whitespace-nowrap"
               >
                 {analyzing ? (
@@ -797,7 +820,7 @@ export default function DocumentsModal({
                 ) : (
                   <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
                 )}
-                {selected.size > 0 ? `Analyze (${selected.size})` : 'Analyze'}
+                {selected.size > 0 ? `Read statements (${selected.size})` : 'Read statements'}
               </button>
 
             <select

@@ -174,7 +174,7 @@ export async function saveBankAnalysisForLead(
 }
 
 export function isScannedAnalyzerFailure(msg: string) {
-  return /no text found|scanned image|OPENAI_API_KEY|XAI_API_KEY/i.test(msg);
+  return /no text found|scanned image|OPENAI_API_KEY|XAI_API_KEY|could not reach the bank analyzer|BANK_ANALYZER_URL|not configured/i.test(msg);
 }
 
 function analyzerError(json: Record<string, unknown>, status: number) {
@@ -194,7 +194,12 @@ export async function analyzeBankAttachmentForLead(
 ): Promise<BankAnalyzeOutcome> {
   const fd = new FormData();
   fd.append('attachmentIds', attachment.id);
-  const resp = await fetch('/api/bank-analyze', { method: 'POST', body: fd, credentials: 'include' });
+  let resp: Response;
+  try {
+    resp = await fetch('/api/bank-analyze', { method: 'POST', body: fd, credentials: 'include' });
+  } catch {
+    return { ok: false, scanned: true };
+  }
   const data = await resp.json().catch(() => ({})) as Record<string, unknown>;
   if (!resp.ok) {
     const msg = analyzerError(data, resp.status);
@@ -218,7 +223,12 @@ export async function analyzeBankAttachmentsForLead(
   if (!attachmentIds.length) return { ok: true };
   const fd = new FormData();
   attachmentIds.forEach(id => fd.append('attachmentIds', id));
-  const resp = await fetch('/api/bank-analyze', { method: 'POST', body: fd, credentials: 'include' });
+  let resp: Response;
+  try {
+    resp = await fetch('/api/bank-analyze', { method: 'POST', body: fd, credentials: 'include' });
+  } catch {
+    return { ok: false, scanned: true };
+  }
   const data = await resp.json().catch(() => ({})) as {
     error?: string;
     detail?: unknown;

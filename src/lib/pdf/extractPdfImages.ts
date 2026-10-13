@@ -5,17 +5,17 @@ export type PdfImage = { mime: string; buffer: Buffer };
 const MAX_IMAGES = 6;
 const MIN_JPEG = 12_000;
 
-/** Pull embedded JPEGs from a scanned PDF (common for bank statements). */
+/** Pull embedded JPEGs from a scanned PDF — largest pages first (summary is often last). */
 export function extractEmbeddedJpegs(pdf: Buffer): PdfImage[] {
-  const out: PdfImage[] = [];
+  const found: PdfImage[] = [];
   let i = 0;
-  while (i < pdf.length - 1 && out.length < MAX_IMAGES) {
+  while (i < pdf.length - 1) {
     if (pdf[i] === 0xff && pdf[i + 1] === 0xd8) {
       let j = i + 2;
       while (j < pdf.length - 1) {
         if (pdf[j] === 0xff && pdf[j + 1] === 0xd9) {
           const slice = pdf.subarray(i, j + 2);
-          if (slice.length >= MIN_JPEG) out.push({ mime: 'image/jpeg', buffer: Buffer.from(slice) });
+          if (slice.length >= MIN_JPEG) found.push({ mime: 'image/jpeg', buffer: Buffer.from(slice) });
           i = j + 2;
           break;
         }
@@ -25,6 +25,18 @@ export function extractEmbeddedJpegs(pdf: Buffer): PdfImage[] {
     } else {
       i++;
     }
+  }
+  if (found.length <= MAX_IMAGES) return found;
+  // Document order: cover + last pages (Checking Summary is usually at the end).
+  const cover = found.slice(0, 1);
+  const tail = found.slice(-(MAX_IMAGES - 1));
+  const seen = new Set<number>();
+  const out: PdfImage[] = [];
+  for (const img of [...cover, ...tail]) {
+    const key = img.buffer.length;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(img);
   }
   return out;
 }
@@ -94,8 +106,11 @@ export async function extractPdfjsImages(
   );
   if (!paint.size) return [];
   const out: PdfImage[] = [];
-  const max = Math.min(doc.numPages, MAX_IMAGES);
-  for (let n = 1; n <= max && out.length < MAX_IMAGES; n++) {
+  const pageNums = new Set<number>();
+  for (let n = 1; n <= Math.min(2, doc.numPages); n++) pageNums.add(n);
+  for (let n = Math.max(1, doc.numPages - 1); n <= doc.numPages; n++) pageNums.add(n);
+  for (const n of [...pageNums].sort((a, b) => a - b)) {
+    if (out.length >= MAX_IMAGES) break;
     const page = await doc.getPage(n);
     const ops = await page.getOperatorList();
     for (let i = 0; i < ops.fnArray.length && out.length < MAX_IMAGES; i++) {
