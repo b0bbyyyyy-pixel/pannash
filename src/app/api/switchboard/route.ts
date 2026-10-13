@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import { getRequestUser } from '@/lib/auth/getRequestUser';
 
 export const dynamic = 'force-dynamic';
 
@@ -180,7 +181,7 @@ export async function GET(req: NextRequest) {
     { cookies: { get: (n) => cookieStore.get(n)?.value, set: () => {}, remove: () => {} } }
   );
 
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getRequestUser(supabase);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   if (req.nextUrl.searchParams.get('live') === '1') {

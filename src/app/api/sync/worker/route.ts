@@ -5,6 +5,7 @@ import { processTick } from '@/lib/smsDrip/processTick';
 import { processDue } from '@/lib/followups/processDue';
 import { fireDueCalendarPings } from '@/lib/casper/calendarPing';
 import { nextPendingOutboxAt, processDueCasperOutbox } from '@/lib/casper/outbox';
+import { getRequestUser } from '@/lib/auth/getRequestUser';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -32,7 +33,7 @@ export async function POST() {
     { cookies: { get: (n) => cookieStore.get(n)?.value, set: () => {}, remove: () => {} } }
   );
 
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getRequestUser(supabase);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const now = Date.now();

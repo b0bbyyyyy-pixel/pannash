@@ -5,6 +5,7 @@ import { getTwilioCreds } from '@/lib/telephony/twilio';
 import { refreshSmsStatuses, fetchTwilioSmsBody } from '@/lib/telephony/sms';
 import { backfillInboundPhotos } from '@/lib/inbox/saveInboundMms';
 import { isPlaceholderSmsBody, recoverOutboundSmsBody } from '@/lib/inbox/recordOutboundSms';
+import { getRequestUser } from '@/lib/auth/getRequestUser';
 
 export async function GET(req: NextRequest) {
   try {
@@ -20,7 +21,7 @@ export async function GET(req: NextRequest) {
       { cookies: { get: (n) => cookieStore.get(n)?.value, set: () => {}, remove: () => {} } }
     );
 
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getRequestUser(supabase);
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     // Incremental: skip get-or-create, backfill, placeholder recovery, status refresh, mark-read.

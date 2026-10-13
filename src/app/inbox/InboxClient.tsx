@@ -290,12 +290,20 @@ export default function InboxClient({
     ? casperEffectiveForLead(casperOn, selectedLead.casper_enabled)
     : false;
   const lastThreadMsg = messages[messages.length - 1] ?? null;
+  const [outboxByLead, setOutboxByLead] = useState<Record<string, string>>({});
+  const [nowTick, setNowTick] = useState(() => Date.now());
   const casperWaiting = !!(
     selectedLead &&
     leadCasperOn &&
     lastThreadMsg?.direction === 'inbound' &&
     Date.now() - new Date(lastThreadMsg.created_at).getTime() < 10 * 60_000
   );
+  const scheduledSendAt = selectedLeadId ? outboxByLead[selectedLeadId] : undefined;
+  const replyEta = scheduledSendAt ? (() => {
+    const ms = new Date(scheduledSendAt).getTime() - nowTick;
+    if (!Number.isFinite(ms) || ms <= 0) return 'Replying…';
+    return `Replying in ~${Math.max(1, Math.round(ms / 60_000))}m`;
+  })() : null;
   const webphone = useWebPhone();
   const router = useRouter();
   const pathname = usePathname();
@@ -577,6 +585,31 @@ export default function InboxClient({
   }, [selectedLeadId, loadMessages]);
   usePolling(casperPoll, 5000, !!(selectedLeadId && casperWaiting));
 
+  const loadOutbox = useCallback(async () => {
+    try {
+      const res = await fetch('/api/casper/outbox');
+      const json = await res.json();
+      const next: Record<string, string> = {};
+      for (const row of Array.isArray(json.pending) ? json.pending : []) {
+        if (row.lead_id && row.send_at) next[row.lead_id] = row.send_at;
+      }
+      setOutboxByLead(next);
+    } catch {
+      /* table may not exist yet */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!casperWaiting) return;
+    void loadOutbox();
+    const poll = setInterval(() => { void loadOutbox(); }, 10_000);
+    const tick = setInterval(() => setNowTick(Date.now()), 15_000);
+    return () => {
+      clearInterval(poll);
+      clearInterval(tick);
+    };
+  }, [casperWaiting, loadOutbox]);
+
   const markedReadRef = useRef('');
   useEffect(() => {
     if (!selectedLeadId || !pulse?.inboxChanged?.length) return;
@@ -631,19 +664,31 @@ export default function InboxClient({
   }, [pulse, loadLeads, selectedLeadId]);
 
   // If the inbound webhook timed out, kick Casper from the open thread.
+  // Retry a few times — a 401 during auth rate-limit used to leave this bubble stuck.
   useEffect(() => {
-    if (!selectedLeadId || !casperWaiting || !lastThreadMsg) return;
-    const t = window.setTimeout(() => {
+    if (!selectedLeadId || !casperWaiting || !lastThreadMsg || scheduledSendAt) return;
+    let tries = 0;
+    const kick = () => {
+      if (tries >= 3) return;
+      tries += 1;
       fetch('/api/casper/reply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ leadId: selectedLeadId, delay: true }),
       })
-        .then(() => loadMessages(selectedLeadId, { quiet: true }))
+        .then(() => {
+          void loadOutbox();
+          void loadMessages(selectedLeadId, { quiet: true });
+        })
         .catch(() => {});
-    }, 2800);
-    return () => window.clearTimeout(t);
-  }, [selectedLeadId, casperWaiting, lastThreadMsg?.id, loadMessages]);
+    };
+    const first = window.setTimeout(kick, 2800);
+    const again = window.setInterval(kick, 15_000);
+    return () => {
+      window.clearTimeout(first);
+      window.clearInterval(again);
+    };
+  }, [selectedLeadId, casperWaiting, lastThreadMsg?.id, scheduledSendAt, loadMessages, loadOutbox]);
 
   // Keep the thread pinned to newest only if the user is already at the bottom
   // (or just opened/sent). Polling must not yank the view while reading history.
@@ -1425,10 +1470,14 @@ export default function InboxClient({
                           <span className="w-1.5 h-1.5 rounded-full bg-white/90 animate-bounce [animation-delay:-0.15s]" />
                           <span className="w-1.5 h-1.5 rounded-full bg-white/90 animate-bounce" />
                         </span>
-                        <span className="text-[11px] text-white/80">Casper is thinking…</span>
+                        <span className="text-[11px] text-white/80">
+                          {replyEta || 'Casper is thinking…'}
+                        </span>
                       </span>
                     </div>
-                    <span className="text-[10px] text-gray-400 px-1">getting ready to reply</span>
+                    <span className="text-[10px] text-gray-400 px-1">
+                      {replyEta || 'getting ready to reply'}
+                    </span>
                   </div>
                 </div>
               )}

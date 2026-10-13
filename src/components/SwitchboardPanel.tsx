@@ -130,7 +130,7 @@ export default function SwitchboardPanel({
   }, [applyActivity, emit]);
 
   usePolling(loadCounts, 45_000, true, true);
-  usePolling(loadLive, 2_500, true, true);
+  usePolling(loadLive, 15_000, true, true);
 
   useEffect(() => {
     applyActivity();

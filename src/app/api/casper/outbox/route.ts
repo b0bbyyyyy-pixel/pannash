@@ -8,6 +8,7 @@ import {
   pumpCasperOutboxRow,
 } from '@/lib/casper/outbox';
 import { serviceClient } from '@/lib/telephony/twilio';
+import { getRequestUser } from '@/lib/auth/getRequestUser';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -35,7 +36,7 @@ async function runDue(req: NextRequest) {
   }
 
   const supabase = await userClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getRequestUser(supabase);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const result = await processDueCasperOutbox(supabase, user.id);
   return NextResponse.json(result);
@@ -49,7 +50,7 @@ export async function GET(req: NextRequest) {
     }
 
     const supabase = await userClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getRequestUser(supabase);
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     await processDueCasperOutbox(supabase, user.id);

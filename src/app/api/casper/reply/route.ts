@@ -47,6 +47,7 @@ export async function POST(req: NextRequest) {
     to: '',
     delay: delay !== false,
   });
+  console.log('[casper/reply]', lead.id, result);
 
   return NextResponse.json(result);
 }

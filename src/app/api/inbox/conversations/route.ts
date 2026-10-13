@@ -4,6 +4,7 @@ import { cookies } from 'next/headers';
 import { isSmsStopBody } from '@/lib/leads/dnc';
 import { inboxActivityMs, sortInboxLeads } from '@/lib/inbox/sortInboxLeads';
 import { countAttachmentsByLead } from '@/lib/leads/attachmentCounts';
+import { getRequestUser } from '@/lib/auth/getRequestUser';
 
 const LEAD_COLS = 'id, name, company, phone, email, value, stage, month_key, last_contact, created_at, in_pipeline, lead_status, list_id, underwriting_data, sms_opt_out, casper_enabled';
 const LEAD_COLS_FALLBACK = 'id, name, company, phone, email, value, stage, month_key, last_contact, created_at, in_pipeline, lead_status, list_id, underwriting_data';
@@ -28,7 +29,7 @@ export async function GET(req: NextRequest) {
       { cookies: { get: (n) => cookieStore.get(n)?.value, set: () => {}, remove: () => {} } }
     );
 
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getRequestUser(supabase);
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const pinLeadId = req.nextUrl.searchParams.get('leadId');

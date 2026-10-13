@@ -147,9 +147,8 @@ export async function runCasperInboundSms(
     .order('created_at', { ascending: false })
     .limit(12);
 
-  const lastIn = (thread ?? []).find((m: { direction: string }) => m.direction === 'inbound');
-  const lastOut = (thread ?? []).find((m: { direction: string }) => m.direction === 'outbound');
-  if (lastIn && lastOut && new Date(lastOut.created_at).getTime() >= new Date(lastIn.created_at).getTime()) {
+  const latest = (thread ?? [])[0] as { direction?: string } | undefined;
+  if (latest?.direction === 'outbound') {
     await logCasperRun(supabase, {
       userId: args.userId,
       leadId: args.lead.id,
