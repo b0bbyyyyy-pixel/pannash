@@ -23,10 +23,12 @@ export default function SwitchboardPanel({
   autoCall,
   dialerOpen,
   phoneStatus,
+  aiOn = false,
 }: {
   autoCall: boolean;
   dialerOpen: boolean;
   phoneStatus: PhoneStatus;
+  aiOn?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -37,8 +39,8 @@ export default function SwitchboardPanel({
   const dripRef = useRef({ sent: 0, failed: 0, active: false, primed: false });
   const pulsePrimed = useRef(false);
   const countsRef = useRef<SwitchboardCounts>({ funded: 0, offers: 0, docsIn: 0, day: 1, daysInMonth: 31 });
-  const actRef = useRef({ autoCall, dialerOpen, phoneStatus, visible: true });
-  actRef.current = { autoCall, dialerOpen, phoneStatus, visible: actRef.current.visible };
+  const actRef = useRef({ autoCall, dialerOpen, phoneStatus, aiOn, visible: true });
+  actRef.current = { autoCall, dialerOpen, phoneStatus, aiOn, visible: actRef.current.visible };
 
   const applyActivity = useCallback(() => {
     const a = actRef.current;
@@ -50,6 +52,7 @@ export default function SwitchboardPanel({
       frozen,
       dialerLive,
       campaignLive: dripRef.current.active && visible,
+      aiLive: a.aiOn && visible,
     });
   }, []);
 
@@ -128,7 +131,7 @@ export default function SwitchboardPanel({
 
   useEffect(() => {
     applyActivity();
-  }, [autoCall, dialerOpen, phoneStatus, applyActivity]);
+  }, [autoCall, dialerOpen, phoneStatus, aiOn, applyActivity]);
 
   useEffect(() => {
     const onVis = () => {

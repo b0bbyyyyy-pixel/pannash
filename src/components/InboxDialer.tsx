@@ -10,9 +10,11 @@ const ScheduleEmailModal = dynamic(() => import('@/components/ScheduleEmailModal
 export default function InboxDialer({
   open,
   onOpenChange,
+  aiOn = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  aiOn?: boolean;
 }) {
   const {
     state, lead, error, setError,
@@ -161,6 +163,7 @@ export default function InboxDialer({
         autoCall={autoCall}
         dialerOpen={open}
         phoneStatus={webphone.status}
+        aiOn={aiOn}
       />
     </div>
   );

@@ -1624,7 +1624,7 @@ export default function InboxClient({
       <div className="w-80 flex-shrink-0 flex flex-col border-l border-[#e5e5e5] bg-[#fafafa] overflow-hidden">
         <div className="flex-1 min-h-0 relative flex flex-col overflow-hidden isolate">
           <div className="relative z-0 flex min-h-0 flex-1 flex-col overflow-hidden">
-            <InboxDialer open={dialerOpen} onOpenChange={setDialerOpen} />
+            <InboxDialer open={dialerOpen} onOpenChange={setDialerOpen} aiOn={casperOn} />
           </div>
           <button
             type="button"

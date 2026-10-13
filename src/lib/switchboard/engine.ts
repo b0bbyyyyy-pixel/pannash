@@ -60,6 +60,9 @@ const MAX_LINES = 18;
 const FPS_MS = 33;
 const SCAN_MS = 5200;
 const SCAN_GAP_MS = 600;
+const AI_CYCLE_MS = 5800;
+const AI_PULSE_MS = 3000;
+const AI_SIGMA = 1.7;
 
 function hash(n: number) {
   let x = n | 0;
@@ -149,6 +152,8 @@ export class SwitchboardEngine {
   liveFrozen = true;
   dialerLive = false;
   campaignLive = false;
+  aiLive = false;
+  aiT0 = 0;
 
   setSize(w: number, h: number) {
     const nw = Math.max(1, Math.floor(w));
@@ -173,10 +178,13 @@ export class SwitchboardEngine {
     }
   }
 
-  setActivity(opts: { frozen: boolean; dialerLive: boolean; campaignLive: boolean }) {
+  setActivity(opts: { frozen: boolean; dialerLive: boolean; campaignLive: boolean; aiLive: boolean }) {
     this.liveFrozen = opts.frozen;
     this.dialerLive = opts.dialerLive;
     this.campaignLive = opts.campaignLive;
+    if (opts.aiLive && !this.aiLive) this.aiT0 = performance.now();
+    if (!opts.aiLive) this.aiT0 = 0;
+    this.aiLive = opts.aiLive;
     if (opts.frozen || !opts.dialerLive) this.traveler = null;
     if (opts.frozen || !opts.campaignLive) {
       this.scan = null;
@@ -370,6 +378,23 @@ export class SwitchboardEngine {
     return g * edge;
   }
 
+  /** Soft ring from the center out to the edges. 0 at rest. */
+  private aiAt(c: number, r: number, now: number) {
+    if (!this.aiLive || this.liveFrozen || !this.cols || !this.rows || !this.aiT0) return 0;
+    const phase = (now - this.aiT0) % AI_CYCLE_MS;
+    const u = phase / AI_PULSE_MS;
+    if (u >= 1) return 0;
+    const cx = (this.cols - 1) / 2;
+    const cy = (this.rows - 1) / 2;
+    const maxR = Math.hypot(cx, cy);
+    const d = Math.hypot(c - cx, r - cy);
+    const head = u * (maxR + AI_SIGMA * 2.2);
+    const x = d - head;
+    const g = Math.exp(-(x * x) / (2 * AI_SIGMA * AI_SIGMA));
+    const fade = u < 0.08 ? u / 0.08 : u > 0.8 ? (1 - u) / 0.2 : 1;
+    return g * fade;
+  }
+
   private stepTraveler(t: Traveler, now: number) {
     if (now < t.nextAt) return false;
     const i = t.path[t.step];
@@ -415,7 +440,7 @@ export class SwitchboardEngine {
       this.scan = null;
     }
 
-    const idle = !this.dialerLive && !this.campaignLive && !this.liveFrozen;
+    const idle = !this.dialerLive && !this.campaignLive && !this.aiLive && !this.liveFrozen;
     if (idle) {
       if (!this.nextIdle) this.nextIdle = now + 4500;
       if (now >= this.nextIdle) {
@@ -530,9 +555,11 @@ export class SwitchboardEngine {
       ctx.stroke();
     }
 
-    if (this.scan) {
+    if (this.scan || this.aiLive) {
       for (const cell of this.cells) {
-        const g = this.waveAt(cell.c, cell.r, now);
+        const sms = this.waveAt(cell.c, cell.r, now);
+        const ai = this.aiAt(cell.c, cell.r, now);
+        const g = Math.max(sms, ai);
         if (g < 0.05) continue;
         ctx.beginPath();
         ctx.fillStyle = rgba(GLOW, g * 0.2 * decay);
@@ -544,7 +571,9 @@ export class SwitchboardEngine {
     for (const cell of this.cells) {
       const p = persist.get(cell.i);
       const lives = liveAt.get(cell.i);
-      const g = this.waveAt(cell.c, cell.r, now);
+      const sms = this.waveAt(cell.c, cell.r, now);
+      const ai = this.aiAt(cell.c, cell.r, now);
+      const g = Math.max(sms, ai);
       let r = 1.15;
       let col = OFF;
       let a = 0.2 * decay;
@@ -564,13 +593,14 @@ export class SwitchboardEngine {
       }
 
       if (g > 0.04) {
-        const mix = Math.min(1, g);
+        const persistMix = p ? 0.48 : 1;
+        const mix = Math.min(1, g * persistMix);
         col = {
           r: Math.round(col.r + (GLOW.r - col.r) * mix),
           g: Math.round(col.g + (GLOW.g - col.g) * mix),
           b: Math.round(col.b + (GLOW.b - col.b) * mix),
         };
-        r = Math.max(r, 1.15 + g * 1.55);
+        if (!p) r = Math.max(r, 1.15 + g * 1.55);
         a = Math.max(a, (0.22 + g * 0.78) * decay);
       }
 
