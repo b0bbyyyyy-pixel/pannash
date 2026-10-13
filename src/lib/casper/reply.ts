@@ -64,7 +64,7 @@ export async function runCasperInboundSms(
     to: string;
     delay?: boolean;
   },
-): Promise<{ replied: boolean; reason?: string }> {
+): Promise<{ replied: boolean; reason?: string; body?: string; send_at?: string }> {
   let { data: settings } = await supabase
     .from('user_settings')
     .select('casper_enabled, casper_system_prompt, casper_capabilities, casper_mission')
@@ -105,13 +105,15 @@ export async function runCasperInboundSms(
     }
   }
 
+  // A new inbound resumes the thread — leftover handed_off / docs-received
+  // pause was blocking every reply (reason: 'paused').
   const gate = canCasperAutoReply({
     globalEnabled: !!settings?.casper_enabled,
     leadCasperEnabled: args.lead.casper_enabled,
     smsOptOut: args.lead.sms_opt_out,
     capabilities: settings?.casper_capabilities,
-    phase: state?.phase,
-    pausedReason: state?.paused_reason,
+    phase: 'chatting',
+    pausedReason: null,
   });
   if (!gate.ok) {
     await logCasperRun(supabase, {
@@ -415,5 +417,5 @@ If they sent more than one text since your last reply, cover all of them in a si
     pausedReason: 'replying',
   });
 
-  return { replied: true, reason: 'scheduled' };
+  return { replied: true, reason: 'scheduled', body: sms, send_at: queued.sendAt };
 }
