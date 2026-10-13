@@ -52,10 +52,26 @@ export async function putFileToSignedUpload(signed: SignedUpload, file: File) {
   }
 }
 
+export type UploadedAttachment = {
+  id: string;
+  file_name: string;
+  file_path: string;
+  file_size: number;
+  file_type: string;
+  column_field: string;
+  created_at: string;
+};
+
+function asUploadResult(json: unknown): { attachment: UploadedAttachment; docsIn?: boolean } {
+  const row = json && typeof json === 'object' ? json as { attachment?: UploadedAttachment; docsIn?: boolean; error?: string } : {};
+  if (!row.attachment?.id) throw new Error(row.error || 'Failed to save attachment');
+  return { attachment: row.attachment, docsIn: row.docsIn };
+}
+
 export async function uploadFileToLeadStorage(
   file: File,
   args: { leadId: string; columnField: string },
-): Promise<{ attachment: Record<string, unknown>; docsIn?: boolean }> {
+): Promise<{ attachment: UploadedAttachment; docsIn?: boolean }> {
   if (file.size > MAX_DIRECT_BYTES) {
     throw new Error(`${file.name} is ${(file.size / 1024 / 1024).toFixed(1)} MB — max is 20 MB.`);
   }
@@ -68,7 +84,7 @@ export async function uploadFileToLeadStorage(
     const res = await fetch('/api/attachments', { method: 'POST', body: fd, credentials: 'include' });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(json.error || 'Failed to upload file');
-    return json;
+    return asUploadResult(json);
   }
 
   const signed = await signLeadUpload({
@@ -95,7 +111,7 @@ export async function uploadFileToLeadStorage(
   });
   const json = await reg.json().catch(() => ({}));
   if (!reg.ok) throw new Error(json.error || 'Failed to save attachment');
-  return json;
+  return asUploadResult(json);
 }
 
 /** Upload to a temp path (no lead yet) so parse/analyze can read it without posting bytes through Next. */

@@ -333,7 +333,7 @@ export default function DocumentsModal({
         : 'documents';
       try {
         const { attachment, docsIn } = await uploadFileToLeadStorage(file, { leadId, columnField });
-        newAttachments.push(attachment as Attachment);
+        newAttachments.push(attachment);
         if (docsIn) markedDocsIn = true;
         setUploadProgress(p => ({ ...p, [file.name]: 'done' }));
       } catch (e) {
