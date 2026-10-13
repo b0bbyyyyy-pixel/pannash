@@ -36,6 +36,15 @@ function actionsList(raw: unknown): Array<Record<string, unknown>> {
   return Array.isArray(raw) ? raw.filter(a => a && typeof a === 'object') as Array<Record<string, unknown>> : [];
 }
 
+function actionLabel(a: Record<string, unknown>, kind: string) {
+  if (typeof a.summary === 'string' && a.summary.trim()) return a.summary;
+  if (kind === 'update_lead_email' && a.updated) {
+    return `Email updated: ${a.old || '(none)'} -> ${a.next || ''}`;
+  }
+  if (kind === 'application_sent' && a.sent !== false) return 'APPLICATION sent';
+  return kind;
+}
+
 export function ActivityPanel() {
   const [runs, setRuns] = useState<CasperRun[]>([]);
   const [loading, setLoading] = useState(true);
@@ -96,9 +105,9 @@ export function ActivityPanel() {
                   const kind = String(a.type || 'action');
                   return (
                     <li key={i} className="text-[11px] text-gray-500">
-                      {kind}
+                      {actionLabel(a, kind)}
                       {file ? ` · ${file}` : ''}
-                      {a.sent === false ? ' · not sent' : ''}
+                      {a.sent === false && !a.summary ? ' · not sent' : ''}
                       {a.sid ? ` · ${String(a.sid).slice(0, 12)}…` : ''}
                     </li>
                   );
@@ -190,6 +199,7 @@ export function BrainPanel() {
 const CAP_ITEMS: { key: keyof CasperCapabilities; label: string; future?: boolean }[] = [
   { key: 'chat_sms', label: 'Chatting (SMS replies)' },
   { key: 'email_application', label: 'Email application to lead' },
+  { key: 'update_lead_email', label: 'Update lead email' },
   { key: 'upload_docs_to_crm', label: 'Upload docs to CRM', future: true },
   { key: 'submit_deals_waterfall', label: 'Submit deals to lenders (waterfall)', future: true },
   { key: 'propose_deals', label: 'Propose deals', future: true },

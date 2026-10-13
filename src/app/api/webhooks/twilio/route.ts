@@ -46,7 +46,7 @@ async function findLeadByPhone(from: string, userId: string | null) {
   const tryMatch = async (uid: string | null) => {
     let q = supabase
       .from('leads')
-      .select('id, user_id, phone, name, company, email, notes, casper_enabled, sms_opt_out')
+      .select('id, user_id, phone, name, company, email, notes, list_id, casper_enabled, sms_opt_out')
       .in('phone', variants);
     if (uid) q = q.eq('user_id', uid);
     const { data } = await q.limit(5);
@@ -55,7 +55,7 @@ async function findLeadByPhone(from: string, userId: string | null) {
     if (uid && from10.length === 10) {
       const { data: all } = await supabase
         .from('leads')
-        .select('id, user_id, phone, name, company, email, notes, casper_enabled, sms_opt_out')
+        .select('id, user_id, phone, name, company, email, notes, list_id, casper_enabled, sms_opt_out')
         .eq('user_id', uid)
         .not('phone', 'is', null);
       return (all ?? []).find(l => last10(l.phone) === from10) ?? null;
@@ -315,7 +315,7 @@ export async function POST(req: NextRequest) {
 
     const { data: fullLead } = await supabase
       .from('leads')
-      .select('id, user_id, phone, name, company, email, notes, casper_enabled, sms_opt_out')
+      .select('id, user_id, phone, name, company, email, notes, list_id, casper_enabled, sms_opt_out')
       .eq('id', lead.id)
       .maybeSingle();
 

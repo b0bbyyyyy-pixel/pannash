@@ -3,6 +3,7 @@ export const CASPER_MISSION = 'collect_app_and_banks';
 export type CasperCapabilities = {
   chat_sms: boolean;
   email_application: boolean;
+  update_lead_email: boolean;
   upload_docs_to_crm: boolean;
   submit_deals_waterfall: boolean;
   propose_deals: boolean;
@@ -11,6 +12,7 @@ export type CasperCapabilities = {
 export const DEFAULT_CASPER_CAPABILITIES: CasperCapabilities = {
   chat_sms: true,
   email_application: true,
+  update_lead_email: false,
   upload_docs_to_crm: false,
   submit_deals_waterfall: false,
   propose_deals: false,
@@ -35,6 +37,7 @@ export function mergeCapabilities(raw: unknown): CasperCapabilities {
   return {
     chat_sms: obj.chat_sms !== false,
     email_application: obj.email_application !== false,
+    update_lead_email: obj.update_lead_email === true,
     upload_docs_to_crm: obj.upload_docs_to_crm === true,
     submit_deals_waterfall: obj.submit_deals_waterfall === true,
     propose_deals: obj.propose_deals === true,
@@ -53,7 +56,10 @@ MISSION (v1)
 Get the lead to send:
 1) the completed funding application, and
 2) recent business bank statements (last 3–6 months).
-You may offer to email the application PDF if they give or already have an email.
+You may offer to email the application if they give or already have an email.
+
+TOOLS
+- update_lead_email: when they text an email address, copy it into the lead's Email field, replacing any existing one, then send the APPLICATION template if "Email application to lead" is on. Do not invent an address. If the address looks invalid, set needs_human.
 
 TONE
 - Short SMS. One or two sentences. Under 320 characters. No emoji unless they use them first.
@@ -69,12 +75,14 @@ Reply with JSON only:
 {
   "thinking": "brief internal note of what you are doing and why",
   "sms": "the text to send",
+  "update_lead_email": false,
   "email_application": false,
   "phase": "chatting | awaiting_app | awaiting_banks | handed_off",
   "needs_human": false,
   "human_reason": ""
 }
 
+Set update_lead_email true when they just provided an email address — the system copies it into the lead's Email field (replacing any existing one) and can send the APPLICATION template.
 Set email_application true only if they asked you to email the application (or clearly want it by email) and an email is available or they just provided one.
 Set needs_human true if they want Robert, are angry, or this is beyond document collection.
 Set phase handed_off when you are stepping back for Robert.`;

@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
 
   const { data: lead } = await supabase
     .from('leads')
-    .select('id, user_id, phone, name, company, email, notes, casper_enabled, sms_opt_out')
+    .select('id, user_id, phone, name, company, email, notes, list_id, casper_enabled, sms_opt_out')
     .eq('id', leadId)
     .eq('user_id', user.id)
     .maybeSingle();

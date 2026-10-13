@@ -6,6 +6,8 @@ import {
   type CasperPhase,
 } from '@/lib/casper/defaults';
 import { emailApplicationToLead } from '@/lib/casper/emailApplication';
+import { leadInAiFullPacks } from '@/lib/casper/fullPacks';
+import { extractEmailFromSms, runUpdateLeadEmailTool } from '@/lib/casper/updateLeadEmail';
 import { logCasperRun, upsertCasperLeadState } from '@/lib/casper/runs';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
 import { sendTwilioSms } from '@/lib/telephony/sms';
@@ -15,6 +17,7 @@ import { sendCasperPing } from '@/lib/casper/ping';
 type MissionJson = {
   thinking?: string;
   sms?: string;
+  update_lead_email?: boolean;
   email_application?: boolean;
   phase?: CasperPhase;
   needs_human?: boolean;
@@ -57,6 +60,7 @@ export async function runCasperInboundSms(
       email?: string | null;
       phone?: string | null;
       notes?: string | null;
+      list_id?: string | null;
       casper_enabled?: boolean | null;
       sms_opt_out?: boolean | null;
     };
@@ -103,6 +107,10 @@ export async function runCasperInboundSms(
     return { replied: false, reason: gate.reason };
   }
 
+  if (await leadInAiFullPacks(supabase, { userId: args.userId, leadId: args.lead.id, listId: args.lead.list_id })) {
+    return { replied: false, reason: 'ai_full_packs' };
+  }
+
   const caps = mergeCapabilities(settings?.casper_capabilities);
   const brain = (settings?.casper_system_prompt || '').trim() || DEFAULT_CASPER_SYSTEM_PROMPT;
 
@@ -142,7 +150,7 @@ export async function runCasperInboundSms(
           content: `Lead: ${args.lead.name || 'Unknown'} | Company: ${args.lead.company || 'n/a'} | Email: ${args.lead.email || 'none'} | Phone: ${args.lead.phone || args.from}
 Phase: ${state?.phase || 'chatting'}
 Mission: ${settings?.casper_mission || 'collect_app_and_banks'}
-Capabilities: chat_sms=${caps.chat_sms} email_application=${caps.email_application} (waterfall/propose/upload are off)
+Capabilities: chat_sms=${caps.chat_sms} email_application=${caps.email_application} update_lead_email=${caps.update_lead_email} (waterfall/propose/upload are off)
 
 Thread:
 ${history || '(no prior thread)'}
@@ -176,7 +184,36 @@ Lead just texted: "${args.body}"`,
   let sms = (parsed.sms || '').trim().slice(0, 480);
   if (!sms) sms = 'Thanks — can you send the completed application and last 3–6 months of bank statements when you get a chance?';
 
-  if (parsed.email_application && caps.email_application) {
+  let sentApplication = false;
+  if (caps.update_lead_email) {
+    const detected = extractEmailFromSms(args.body);
+    if (parsed.update_lead_email || detected.email || detected.invalid) {
+      try {
+        const emailTool = await runUpdateLeadEmailTool(supabase, {
+          userId: args.userId,
+          lead: args.lead,
+          body: args.body,
+          sendApplication: caps.email_application,
+        });
+        actions.push(...emailTool.actions);
+        sentApplication = !!emailTool.sentApplication;
+        if (emailTool.needsHuman) {
+          parsed.needs_human = true;
+          parsed.human_reason = parsed.human_reason || emailTool.humanReason || 'Lead sent an email that looks invalid.';
+        }
+      } catch (err) {
+        actions.push({
+          type: 'update_lead_email',
+          updated: false,
+          error: err instanceof Error ? err.message : 'email tool failed',
+        });
+      }
+    }
+  } else if (parsed.update_lead_email) {
+    actions.push({ type: 'update_lead_email', skipped: true, reason: 'capability_off' });
+  }
+
+  if (parsed.email_application && caps.email_application && !sentApplication) {
     try {
       const emailed = await emailApplicationToLead(supabase, { userId: args.userId, lead: args.lead });
       actions.push({ type: 'email_application', ...emailed });
