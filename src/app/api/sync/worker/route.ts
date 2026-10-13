@@ -4,6 +4,7 @@ import { cookies } from 'next/headers';
 import { processTick } from '@/lib/smsDrip/processTick';
 import { processDue } from '@/lib/followups/processDue';
 import { fireDueCalendarPings } from '@/lib/casper/calendarPing';
+import { nextPendingOutboxAt, processDueCasperOutbox } from '@/lib/casper/outbox';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -106,6 +107,12 @@ export async function POST() {
     console.error('[sync/worker] calendar ping', err);
   }
 
+  try {
+    await processDueCasperOutbox(supabase, user.id);
+  } catch (err) {
+    console.error('[sync/worker] casper outbox', err);
+  }
+
   if (tickFailed) {
     return NextResponse.json({
       drip: drip.results,
@@ -177,7 +184,12 @@ export async function POST() {
       nextPing = pingRow?.alert_at ?? null;
     } catch { /* column may be missing */ }
 
-    nextDueAt = minIso([nextDrip, nextFu?.follow_up_due_at, nextPing]);
+    let nextOutbox: string | null = null;
+    try {
+      nextOutbox = await nextPendingOutboxAt(supabase, user.id);
+    } catch { /* table may be missing */ }
+
+    nextDueAt = minIso([nextDrip, nextFu?.follow_up_due_at, nextPing, nextOutbox]);
   }
 
   const cap = now + 60_000;

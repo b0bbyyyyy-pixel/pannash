@@ -8,7 +8,7 @@ import {
 import { emailApplicationToLead } from '@/lib/casper/emailApplication';
 import { leadInAiFullPacks } from '@/lib/casper/fullPacks';
 import { extractEmailFromSms, runUpdateLeadEmailTool } from '@/lib/casper/updateLeadEmail';
-import { cancelPendingOutbox, enqueueCasperOutbox } from '@/lib/casper/outbox';
+import { cancelPendingOutbox, enqueueCasperOutbox, kickOutboxPump } from '@/lib/casper/outbox';
 import { logCasperRun, upsertCasperLeadState } from '@/lib/casper/runs';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
 import { sendTwilioSms } from '@/lib/telephony/sms';
@@ -114,10 +114,26 @@ export async function runCasperInboundSms(
     pausedReason: state?.paused_reason,
   });
   if (!gate.ok) {
+    await logCasperRun(supabase, {
+      userId: args.userId,
+      leadId: args.lead.id,
+      trigger: 'inbound_sms',
+      status: 'ok',
+      error: gate.reason,
+      inputSummary: args.body.slice(0, 200),
+    });
     return { replied: false, reason: gate.reason };
   }
 
   if (await leadInAiFullPacks(supabase, { userId: args.userId, leadId: args.lead.id, listId: args.lead.list_id })) {
+    await logCasperRun(supabase, {
+      userId: args.userId,
+      leadId: args.lead.id,
+      trigger: 'inbound_sms',
+      status: 'ok',
+      error: 'ai_full_packs',
+      inputSummary: args.body.slice(0, 200),
+    });
     return { replied: false, reason: 'ai_full_packs' };
   }
 
@@ -134,6 +150,14 @@ export async function runCasperInboundSms(
   const lastIn = (thread ?? []).find((m: { direction: string }) => m.direction === 'inbound');
   const lastOut = (thread ?? []).find((m: { direction: string }) => m.direction === 'outbound');
   if (lastIn && lastOut && new Date(lastOut.created_at).getTime() >= new Date(lastIn.created_at).getTime()) {
+    await logCasperRun(supabase, {
+      userId: args.userId,
+      leadId: args.lead.id,
+      trigger: 'inbound_sms',
+      status: 'ok',
+      error: 'already_replied',
+      inputSummary: args.body.slice(0, 200),
+    });
     return { replied: false, reason: 'already_replied' };
   }
 
@@ -297,8 +321,7 @@ If they sent more than one text since your last reply, cover all of them in a si
     return { replied: false, reason: 'no_twilio' };
   }
 
-  // Manual / delay=false still sends now. Webhook path schedules the SMS.
-  if (args.delay === false) {
+  const sendNow = async (fallbackReason?: string) => {
     let sid: string | null = null;
     let sendStatus: 'sent' | 'failed' = 'sent';
     let sendError: string | null = null;
@@ -324,7 +347,7 @@ If they sent more than one text since your last reply, cover all of them in a si
       errorMessage: sendError,
       sentBy: 'calvin',
     });
-    actions.push({ type: 'sms', sid, status: sendStatus, error: sendError });
+    actions.push({ type: 'sms', sid, status: sendStatus, error: sendError, fallback: fallbackReason || undefined });
 
     const runId = await logCasperRun(supabase, {
       userId: args.userId,
@@ -336,7 +359,7 @@ If they sent more than one text since your last reply, cover all of them in a si
       model: GROK_MINI_MODEL,
       inputSummary: args.body.slice(0, 240),
       outputSummary: sms,
-      error: sendError,
+      error: sendError || fallbackReason || null,
     });
 
     await upsertCasperLeadState(supabase, {
@@ -347,8 +370,11 @@ If they sent more than one text since your last reply, cover all of them in a si
       pausedReason: phase === 'handed_off' ? (parsed.human_reason || 'handed_off') : null,
     });
 
-    return { replied: sendStatus !== 'failed', reason: sendError || undefined };
-  }
+    return { replied: sendStatus !== 'failed', reason: sendError || fallbackReason || undefined };
+  };
+
+  // Manual / delay=false still sends now. Webhook path schedules the SMS.
+  if (args.delay === false) return sendNow();
 
   const queued = await enqueueCasperOutbox(supabase, {
     userId: args.userId,
@@ -363,28 +389,12 @@ If they sent more than one text since your last reply, cover all of them in a si
   });
 
   if (!queued.id) {
-    await logCasperRun(supabase, {
-      userId: args.userId,
-      leadId: args.lead.id,
-      trigger: 'inbound_sms',
-      status: 'error',
-      thinking: parsed.thinking,
-      actions,
-      error: 'Failed to queue SMS',
-      inputSummary: args.body.slice(0, 240),
-      outputSummary: sms,
-      model: GROK_MINI_MODEL,
-    });
-    await upsertCasperLeadState(supabase, {
-      leadId: args.lead.id,
-      userId: args.userId,
-      phase,
-      pausedReason: phase === 'handed_off' ? (parsed.human_reason || 'handed_off') : null,
-    });
-    return { replied: false, reason: 'outbox_failed' };
+    console.error('[casper] outbox enqueue failed — sending now');
+    return sendNow('outbox_failed');
   }
 
   actions.push({ type: 'sms_scheduled', send_at: queued.sendAt, outbox_id: queued.id, replaced: queued.cancelled });
+  kickOutboxPump(queued.id);
 
   const runId = await logCasperRun(supabase, {
     userId: args.userId,

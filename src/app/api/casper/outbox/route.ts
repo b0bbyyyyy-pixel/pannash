@@ -1,16 +1,21 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
-import { NextRequest, NextResponse } from 'next/server';
-import { listPendingOutbox, processDueCasperOutbox } from '@/lib/casper/outbox';
+import { after, NextRequest, NextResponse } from 'next/server';
+import {
+  kickOutboxPump,
+  listPendingOutbox,
+  processDueCasperOutbox,
+  pumpCasperOutboxRow,
+} from '@/lib/casper/outbox';
 import { serviceClient } from '@/lib/telephony/twilio';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-function isCron(req: NextRequest) {
-  const secret = process.env.CRON_SECRET;
+function isProcessor(req: NextRequest) {
   const auth = req.headers.get('authorization');
-  if (secret && auth === `Bearer ${secret}`) return true;
+  const secrets = [process.env.CRON_SECRET, process.env.SUPABASE_SERVICE_ROLE_KEY].filter(Boolean);
+  if (secrets.some(secret => auth === `Bearer ${secret}`)) return true;
   return Boolean(req.headers.get('x-vercel-cron'));
 }
 
@@ -24,7 +29,7 @@ async function userClient() {
 }
 
 async function runDue(req: NextRequest) {
-  if (isCron(req)) {
+  if (isProcessor(req)) {
     const result = await processDueCasperOutbox(serviceClient());
     return NextResponse.json(result);
   }
@@ -36,10 +41,10 @@ async function runDue(req: NextRequest) {
   return NextResponse.json(result);
 }
 
-/** Queue tab: pending scheduled replies for the signed-in user. */
+/** Queue tab: pending scheduled replies for the signed-in user. Also flushes due rows. */
 export async function GET(req: NextRequest) {
   try {
-    if (isCron(req) || req.nextUrl.searchParams.get('process') === '1') {
+    if (isProcessor(req) || req.nextUrl.searchParams.get('process') === '1') {
       return await runDue(req);
     }
 
@@ -47,6 +52,7 @@ export async function GET(req: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+    await processDueCasperOutbox(supabase, user.id);
     const pending = await listPendingOutbox(supabase, user.id);
     return NextResponse.json({ pending });
   } catch (err) {
@@ -57,6 +63,19 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    let body: { id?: string } = {};
+    try {
+      body = await req.json();
+    } catch {
+      body = {};
+    }
+
+    if (body.id && isProcessor(req)) {
+      const result = await pumpCasperOutboxRow(serviceClient(), body.id);
+      if (result.hop) after(() => kickOutboxPump(body.id!));
+      return NextResponse.json(result);
+    }
+
     return await runDue(req);
   } catch (err) {
     console.error('[casper/outbox POST]', err);

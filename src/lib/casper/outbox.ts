@@ -5,7 +5,38 @@ import { logCasperRun, upsertCasperLeadState } from '@/lib/casper/runs';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
 import { isSmsStopBody } from '@/lib/leads/dnc';
 import { sendTwilioSms } from '@/lib/telephony/sms';
-import { getTwilioCreds } from '@/lib/telephony/twilio';
+import { getTwilioCreds, publicAppUrl } from '@/lib/telephony/twilio';
+
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function outboxProcessorSecret() {
+  return process.env.CRON_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+}
+
+function outboxSelfUrl() {
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+  return publicAppUrl();
+}
+
+/** Fire a new invocation so Vercel can wait out the delay (Hobby has no per-minute cron). */
+export function kickOutboxPump(id: string) {
+  const secret = outboxProcessorSecret();
+  const url = `${outboxSelfUrl()}/api/casper/outbox`;
+  if (!secret) {
+    console.error('[casper] outbox pump skipped — no CRON_SECRET or service role');
+    return;
+  }
+  void fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${secret}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ id }),
+  }).catch(err => console.error('[casper] kick outbox pump', err));
+}
 
 export type CasperOutboxStatus = 'pending' | 'sent' | 'cancelled';
 
@@ -337,6 +368,30 @@ async function sendOneOutbox(supabase: any, raw: CasperOutboxRow): Promise<{ sen
   return { sent: true };
 }
 
+/** Wait until send_at (in ≤40s slices) then send. Returns hop=true if another invocation should continue. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function pumpCasperOutboxRow(
+  supabase: any,
+  id: string,
+): Promise<{ sent?: boolean; hop?: boolean; reason?: string }> {
+  const { data: raw } = await supabase.from('casper_outbox').select('*').eq('id', id).maybeSingle();
+  if (!raw || raw.status !== 'pending') return { reason: raw?.status || 'missing' };
+  const row = raw as CasperOutboxRow;
+  const wait = new Date(row.send_at).getTime() - Date.now();
+  if (wait > 1000) {
+    await sleep(Math.min(wait, 40_000));
+    const { data: again } = await supabase
+      .from('casper_outbox')
+      .select('id, status, send_at')
+      .eq('id', id)
+      .maybeSingle();
+    if (!again || again.status !== 'pending') return { reason: again?.status || 'missing' };
+    if (new Date(again.send_at).getTime() - Date.now() > 1000) return { hop: true };
+  }
+  const result = await sendOneOutbox(supabase, row);
+  return { sent: result.sent, reason: result.reason };
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function processDueCasperOutbox(
   supabase: any,
@@ -372,6 +427,23 @@ export async function processDueCasperOutbox(
   }
 
   return { processed: (data ?? []).length, sent, cancelled };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function nextPendingOutboxAt(supabase: any, userId: string): Promise<string | null> {
+  try {
+    const { data } = await supabase
+      .from('casper_outbox')
+      .select('send_at')
+      .eq('user_id', userId)
+      .eq('status', 'pending')
+      .order('send_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    return data?.send_at ?? null;
+  } catch {
+    return null;
+  }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
