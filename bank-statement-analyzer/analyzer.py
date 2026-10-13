@@ -415,10 +415,16 @@ def _parse_statement_with_ai(full_text: str) -> "pd.DataFrame | None":
     import os, json, re as _re, logging
     log = logging.getLogger(__name__)
 
-    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    api_key = (
+        os.environ.get("OPENAI_API_KEY", "").strip()
+        or os.environ.get("XAI_API_KEY", "").strip()
+    )
     if not api_key:
-        log.warning("AI fallback skipped – OPENAI_API_KEY not set.")
+        log.warning("AI fallback skipped – OPENAI_API_KEY / XAI_API_KEY not set.")
         return None
+    use_xai = not os.environ.get("OPENAI_API_KEY", "").strip() and bool(
+        os.environ.get("XAI_API_KEY", "").strip()
+    )
 
     try:
         import httpx as _httpx
@@ -441,7 +447,7 @@ def _parse_statement_with_ai(full_text: str) -> "pd.DataFrame | None":
     user_prompt = f"Statement text:\n\n{text_snippet}"
 
     payload = {
-        "model": "gpt-4o-mini",
+        "model": "grok-3-mini" if use_xai else "gpt-4o-mini",
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user",   "content": user_prompt},
@@ -453,7 +459,7 @@ def _parse_statement_with_ai(full_text: str) -> "pd.DataFrame | None":
 
     try:
         resp = _httpx.post(
-            "https://api.openai.com/v1/chat/completions",
+            "https://api.x.ai/v1/chat/completions" if use_xai else "https://api.openai.com/v1/chat/completions",
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type":  "application/json",
@@ -556,8 +562,8 @@ def _ingest_transactions(file_bytes: bytes, filename: str) -> pd.DataFrame:
     _min_ai_chars = 20 if ext == "csv" else 80
     if len((snippet or "").strip()) < _min_ai_chars:
         msg = str(last_error) if last_error else "Could not extract enough text from the uploaded file for analysis."
-        if not _os.environ.get("OPENAI_API_KEY", "").strip():
-            msg += " Set OPENAI_API_KEY in the environment to enable AI-assisted extraction for unknown formats."
+        if not (_os.environ.get("OPENAI_API_KEY", "").strip() or _os.environ.get("XAI_API_KEY", "").strip()):
+            msg += " Set XAI_API_KEY (or OPENAI_API_KEY) on the analyzer service for AI-assisted extraction."
         raise ValueError(msg)
 
     ai_df = _parse_statement_with_ai(snippet)
@@ -569,8 +575,8 @@ def _ingest_transactions(file_bytes: bytes, filename: str) -> pd.DataFrame:
         if last_error
         else "Could not extract transaction data from the uploaded file."
     )
-    if not _os.environ.get("OPENAI_API_KEY", "").strip():
-        msg += " Set OPENAI_API_KEY in the environment to enable AI-assisted extraction for unknown formats."
+    if not (_os.environ.get("OPENAI_API_KEY", "").strip() or _os.environ.get("XAI_API_KEY", "").strip()):
+        msg += " Set XAI_API_KEY (or OPENAI_API_KEY) on the analyzer service for AI-assisted extraction."
     raise ValueError(msg)
 
 

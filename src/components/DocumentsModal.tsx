@@ -304,9 +304,13 @@ export default function DocumentsModal({
     /app(lication)?/i.test(a.file_name) &&
     !looksLikeStatement(a);
 
+  const BANK_METRIC_KEYS = [
+    'monthlyRevenue', 'totalDeposits', 'endingBalance', 'openingBalance',
+    'avgDailyBalance', 'nsfCount', 'depositCount', 'negativeDays',
+    'statementMonth', 'bankName', 'largestDeposit', 'totalWithdrawals',
+  ];
   const hasMeaningfulBankFields = (fields: Record<string, string>) =>
-    Object.keys(fields).some(k => k !== 'hasOtherMCALoans' && k !== 'statementMonths' && fields[k])
-    || !!fields.statementMonths;
+    BANK_METRIC_KEYS.some(k => !!fields[k]) || !!fields.statementMonths;
 
   const parseAttachment = async (a: Attachment, documentType?: 'application' | 'bank_statement') => {
     const fd = new FormData();
@@ -658,7 +662,6 @@ export default function DocumentsModal({
     const rich = hasMeaningfulBankFields(reviewFields) || asApps.length > 0 && Object.keys(reviewFields).length > 0;
 
     let analyzerOk = false;
-    let analyzerErr = '';
     if (asBanks.length > 0) {
       setUploadStatus(asBanks.length === 1 ? 'Analyzing bank statements…' : `Analyzing ${asBanks.length} statements…`);
       try {
@@ -666,8 +669,15 @@ export default function DocumentsModal({
         analyzerOk = true;
         onApplied?.();
       } catch (e) {
-        analyzerErr = e instanceof Error ? e.message : 'Analyze failed';
-        setUploadStatus(analyzerErr);
+        const raw = e instanceof Error ? e.message : 'Analyze failed';
+        const scanned = /no text found|scanned image|OPENAI_API_KEY/i.test(raw);
+        if (!scanned) setUploadStatus(raw);
+        if (rich) {
+          try {
+            await applyParsed(reviewFields, new Set(Object.keys(reviewFields)));
+            onApplied?.();
+          } catch { /* review still lets them apply */ }
+        }
       }
     }
 
@@ -676,14 +686,16 @@ export default function DocumentsModal({
       setParsedFields(reviewFields);
       setParsedSelected(new Set(Object.keys(reviewFields)));
       setParseStep('review');
-      if (analyzerOk) setUploadStatus('Financials applied. Review fields below, then Apply to the lead.');
+      setUploadStatus(analyzerOk
+        ? 'Financials applied. Review fields below, then Apply to the lead.'
+        : 'Read with AI from scanned pages. Review the numbers, then Apply.');
     } else if (analyzerOk) {
       setParseStep('upload');
       setShowUpload(false);
     } else {
       setParseStep('upload');
       setShowUpload(false);
-      alert(analyzerErr || 'Could not extract data from the selected documents. Try PDFs with readable text or scanned images.');
+      alert('These look like scanned statements with no text layer. AI will read the pages on the next try — if it is still empty, export CSV from the bank.');
     }
   };
 

@@ -3,6 +3,7 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { getAIClient, GROK_MODEL, GROK_VISION_MODEL } from '@/lib/ai';
 import { explodeFormLabels, fieldsFromLabeledText, mergeParsedFieldMaps, normalizeParsedFields } from '@/lib/normalizeParsedFields';
+import { extractPdfImages } from '@/lib/pdf/extractPdfImages';
 
 export const runtime     = 'nodejs';
 export const maxDuration = 120;
@@ -475,9 +476,19 @@ export async function POST(request: Request) {
   let fields: Record<string, string> = {};
 
   const usableText = textContent.replace(/\s/g, '').length >= 100;
+  const thinPdf = isPdf && textContent.replace(/\s/g, '').length < 200;
 
   if (isImage) {
     fields = await extractWithVisionAI(buffer, filename, prompt);
+  } else if (thinPdf) {
+    const images = await extractPdfImages(buffer, loadPdfjs);
+    console.log(`[parse-application] scanned PDF → ${images.length} image(s)`);
+    if (images.length) {
+      fields = await extractWithVisionImages(images, prompt);
+    }
+    if (!Object.keys(fields).length && textContent.replace(/\s/g, '').length > 20) {
+      fields = await extractWithTextAI(textContent, prompt);
+    }
   } else if (usableText) {
     fields = await extractWithTextAI(textContent, prompt);
   } else if (isPdf && textContent.replace(/\s/g, '').length > 20) {

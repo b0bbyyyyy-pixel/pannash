@@ -175,9 +175,17 @@ export async function saveBankAnalysisForLead(
 
 function analyzerError(json: Record<string, unknown>, status: number) {
   const detail = json.detail ?? json.error;
-  if (typeof detail === 'string' && detail.trim()) return detail;
-  if (Array.isArray(detail)) return detail.map(d => (typeof d === 'object' && d && 'msg' in d ? String((d as { msg: unknown }).msg) : String(d))).join('; ');
-  return `Bank analyze failed (${status})`;
+  let raw = '';
+  if (typeof detail === 'string' && detail.trim()) raw = detail;
+  else if (Array.isArray(detail)) {
+    raw = detail.map(d => (typeof d === 'object' && d && 'msg' in d ? String((d as { msg: unknown }).msg) : String(d))).join('; ');
+  } else {
+    raw = `Bank analyze failed (${status})`;
+  }
+  if (/no text found|scanned image|OPENAI_API_KEY/i.test(raw)) {
+    return 'No text found in the PDF. It may be a scanned image.';
+  }
+  return raw;
 }
 
 export async function analyzeBankAttachmentForLead(
