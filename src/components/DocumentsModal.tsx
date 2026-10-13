@@ -183,7 +183,7 @@ const MAX_FILES     = 10;
 
 // ── Main Modal ────────────────────────────────────────────────────────────────
 export default function DocumentsModal({
-  leadId, leadName, leadCompany, onAnalyze, onApplyParsed, onApplied, onClose,
+  leadId, leadName, leadCompany, onApplyParsed, onApplied, onClose,
 }: DocumentsModalProps) {
   const [attachments, setAttachments]   = useState<Attachment[]>([]);
   const [loading, setLoading]           = useState(true);
@@ -225,8 +225,6 @@ export default function DocumentsModal({
   const applyParsed = onApplyParsed
     ?? ((fields: Record<string, string>, selected: Set<string>) =>
       applyParsedFieldsToLead(leadId, fields, selected, leadCompany));
-  const analyzeOne = onAnalyze
-    ?? ((a: Attachment) => analyzeBankAttachmentForLead(leadId, a));
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -300,6 +298,15 @@ export default function DocumentsModal({
   const looksLikeStatement = (a: { file_name: string; column_field?: string }) =>
     a.column_field === 'bank_statements' ||
     /stmt|statement|checking|savings|\bbank\b|frost/i.test(a.file_name);
+
+  const looksLikeApplication = (a: { file_name: string; column_field?: string }) =>
+    a.column_field !== 'bank_statements' &&
+    /app(lication)?/i.test(a.file_name) &&
+    !looksLikeStatement(a);
+
+  const hasMeaningfulBankFields = (fields: Record<string, string>) =>
+    Object.keys(fields).some(k => k !== 'hasOtherMCALoans' && k !== 'statementMonths' && fields[k])
+    || !!fields.statementMonths;
 
   const parseAttachment = async (a: Attachment, documentType?: 'application' | 'bank_statement') => {
     const fd = new FormData();
@@ -594,7 +601,8 @@ export default function DocumentsModal({
   const handleAnalyzeFile = async (a: Attachment) => {
     setAnalyzingId(a.id);
     try {
-      await analyzeOne(a);
+      await analyzeBankAttachmentForLead(leadId, a);
+      onApplied?.();
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Analyze failed');
     } finally {
@@ -602,43 +610,80 @@ export default function DocumentsModal({
     }
   };
 
-  // Analyze selected (or all) docs via parse-application (bank statement or app extraction)
+  // Analyze selected (or all) docs: AI extract + combined bank financials
   const handleAnalyzeSelected = async () => {
     const targets = attachments.filter(a =>
       selected.size > 0 ? selected.has(a.id) : true
     );
     if (!targets.length) return;
+    const asApps = targets.filter(looksLikeApplication);
+    const asBanks = targets.filter(a => looksLikeStatement(a) || !looksLikeApplication(a));
+    const bankOnly = asBanks.length > 0 && asApps.length === 0;
+
     setAnalyzing(true);
     setParseStep('parsing');
     setShowUpload(true);
+    setUploadStatus(null);
+    if (bankOnly) setUploadKind('bank');
+    pendingBankAttIds.current = asBanks.map(a => a.id);
 
     const merged: Record<string, string> = {};
     const months: StatementMonth[] = [];
-    let anySuccess = false;
-    for (const a of targets) {
+
+    for (let i = 0; i < targets.length; i++) {
+      const a = targets[i];
+      const kind = looksLikeApplication(a) ? 'application' : 'bank_statement';
+      setUploadStatus(
+        kind === 'bank_statement'
+          ? `Parsing statement ${i + 1} of ${targets.length}…`
+          : `Parsing application ${i + 1} of ${targets.length}…`,
+      );
       try {
-        const { ok, json } = await parseAttachment(a);
+        const { ok, json } = await parseAttachment(a, kind);
         if (ok && json.fields && Object.keys(json.fields).length > 0) {
           const incoming = json.fields as Record<string, string>;
           const row = statementMonthFromFields(incoming);
           if (row) months.push(row);
           mergeParseFields(merged, incoming);
-          anySuccess = true;
+        } else if (!ok) {
+          setUploadStatus(json.error || `Could not parse ${a.file_name}`);
         }
-      } catch { /* skip */ }
+      } catch (e) {
+        setUploadStatus(e instanceof Error ? e.message : `Parse failed for ${a.file_name}`);
+      }
     }
+
     attachStatementMonths(merged, months);
     const reviewFields = enrichParsedBusinessFields(normalizeParsedFields(merged));
+    const rich = hasMeaningfulBankFields(reviewFields) || asApps.length > 0 && Object.keys(reviewFields).length > 0;
+
+    let analyzerOk = false;
+    let analyzerErr = '';
+    if (asBanks.length > 0) {
+      setUploadStatus(asBanks.length === 1 ? 'Analyzing bank statements…' : `Analyzing ${asBanks.length} statements…`);
+      try {
+        await analyzeBankAttachmentsForLead(leadId, asBanks.map(a => a.id));
+        analyzerOk = true;
+        onApplied?.();
+      } catch (e) {
+        analyzerErr = e instanceof Error ? e.message : 'Analyze failed';
+        setUploadStatus(analyzerErr);
+      }
+    }
 
     setAnalyzing(false);
-    if (anySuccess) {
+    if (rich) {
       setParsedFields(reviewFields);
       setParsedSelected(new Set(Object.keys(reviewFields)));
       setParseStep('review');
+      if (analyzerOk) setUploadStatus('Financials applied. Review fields below, then Apply to the lead.');
+    } else if (analyzerOk) {
+      setParseStep('upload');
+      setShowUpload(false);
     } else {
       setParseStep('upload');
       setShowUpload(false);
-      alert('Could not extract data from the selected documents. Try PDFs with readable text or scanned images.');
+      alert(analyzerErr || 'Could not extract data from the selected documents. Try PDFs with readable text or scanned images.');
     }
   };
 
@@ -1052,7 +1097,7 @@ export default function DocumentsModal({
                 </div>
                 <div className="text-center">
                   <p className="text-sm font-semibold text-[#1a1a1a]">{uploadStatus || 'Parsing…'}</p>
-                  <p className="text-xs text-[#9b9b9b] mt-1">AI is scanning for application fields. Takes ~10–20 seconds.</p>
+                  <p className="text-xs text-[#9b9b9b] mt-1">AI is reading the statements and building financials. Takes ~10–20 seconds per file.</p>
                 </div>
               </div>
             )}
