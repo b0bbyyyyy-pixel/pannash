@@ -368,15 +368,38 @@ export async function POST(request: Request) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const formData = await request.formData();
+  let formData: FormData;
+  try {
+    formData = await request.formData();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : '';
+    return NextResponse.json(
+      {
+        error: /413|too large|entity too large|body.*limit|payload/i.test(msg)
+          ? 'This file is too large to send through the app server (~4.5 MB limit). Upload it first, then parse the stored file.'
+          : (msg || 'Could not read upload'),
+      },
+      { status: 413 },
+    );
+  }
   const attachmentId = String(formData.get('attachmentId') ?? '').trim();
+  const filePath = String(formData.get('filePath') ?? '').trim();
   const file = formData.get('file') as File | null;
 
   let buffer: Buffer;
   let filename: string;
   let mime: string;
 
-  if (attachmentId) {
+  if (filePath) {
+    if (!filePath.startsWith(`${user.id}/`) || filePath.includes('..')) {
+      return NextResponse.json({ error: 'Invalid file path' }, { status: 400 });
+    }
+    const { data: blob, error: dlErr } = await supabase.storage.from('lead-attachments').download(filePath);
+    if (dlErr || !blob) return NextResponse.json({ error: 'Could not download file' }, { status: 502 });
+    buffer = Buffer.from(await blob.arrayBuffer());
+    filename = filePath.split('/').pop() || 'document.pdf';
+    mime = blob.type || 'application/octet-stream';
+  } else if (attachmentId) {
     const { data: att } = await supabase
       .from('lead_attachments')
       .select('file_path, file_name, file_type')

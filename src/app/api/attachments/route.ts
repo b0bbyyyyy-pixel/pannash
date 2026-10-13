@@ -48,7 +48,19 @@ export async function GET(request: Request) {
   return NextResponse.json({ attachments: data });
 }
 
-// POST: Upload a new attachment
+function isOwnedPath(userId: string, filePath: string) {
+  return filePath.startsWith(`${userId}/`) && !filePath.includes('..');
+}
+
+function bodyTooLargeMessage(err: unknown) {
+  const msg = err instanceof Error ? err.message : String(err || '');
+  if (/413|too large|entity too large|body.*limit|payload/i.test(msg)) {
+    return 'This file is too large to send through the app server (~4.5 MB limit). Upload goes to storage instead — retry; if you still see this, split the PDF.';
+  }
+  return msg || 'Upload failed';
+}
+
+// POST: Upload a new attachment (multipart file, or JSON after a signed storage upload)
 export async function POST(request: Request) {
   const cookieStore = await cookies();
   const supabase = createServerClient(
@@ -70,32 +82,71 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const formData = await request.formData();
-  const file = formData.get('file') as File;
-  const leadId = formData.get('leadId') as string;
-  const columnField = formData.get('columnField') as string;
+  const contentType = request.headers.get('content-type') || '';
+  let file: File | null = null;
+  let leadId = '';
+  let columnField = '';
+  let existingPath = '';
+  let existingName = '';
+  let existingSize = 0;
+  let existingType = '';
 
-  if (!file || !leadId || !columnField) {
+  try {
+    if (contentType.includes('application/json')) {
+      const body = await request.json();
+      leadId = String(body.leadId || '');
+      columnField = String(body.columnField || '');
+      existingPath = String(body.filePath || '');
+      existingName = String(body.fileName || '');
+      existingSize = Number(body.fileSize || 0);
+      existingType = String(body.fileType || '');
+    } else {
+      const formData = await request.formData();
+      const raw = formData.get('file');
+      file = raw instanceof File ? raw : null;
+      leadId = String(formData.get('leadId') || '');
+      columnField = String(formData.get('columnField') || '');
+    }
+  } catch (err) {
+    return NextResponse.json({ error: bodyTooLargeMessage(err) }, { status: 413 });
+  }
+
+  if (!leadId || !columnField) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
   }
 
-  // Create unique filename with timestamp
-  const timestamp = Date.now();
-  const sanitizedFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
-  const filePath = `${user.id}/${leadId}/${columnField}/${timestamp}_${sanitizedFileName}`;
+  let filePath = existingPath;
+  let fileName = existingName;
+  let fileSize = existingSize;
+  let fileType = existingType;
 
-  // Upload to Supabase Storage
-  const fileBuffer = await file.arrayBuffer();
-  const { data: uploadData, error: uploadError } = await supabase.storage
-    .from('lead-attachments')
-    .upload(filePath, fileBuffer, {
-      contentType: file.type,
-      upsert: false,
-    });
+  if (existingPath) {
+    if (!isOwnedPath(user.id, existingPath)) {
+      return NextResponse.json({ error: 'Invalid file path' }, { status: 400 });
+    }
+    if (!fileName) fileName = existingPath.split('/').pop() || 'file';
+  } else if (file) {
+    const timestamp = Date.now();
+    const sanitizedFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+    filePath = `${user.id}/${leadId}/${columnField}/${timestamp}_${sanitizedFileName}`;
+    fileName = file.name;
+    fileSize = file.size;
+    fileType = file.type;
 
-  if (uploadError) {
-    console.error('Error uploading file:', uploadError);
-    return NextResponse.json({ error: 'Failed to upload file' }, { status: 500 });
+    const fileBuffer = await file.arrayBuffer();
+    const { error: uploadError } = await supabase.storage
+      .from('lead-attachments')
+      .upload(filePath, fileBuffer, {
+        contentType: file.type,
+        upsert: false,
+      });
+
+    if (uploadError) {
+      console.error('Error uploading file:', uploadError);
+      return NextResponse.json({ error: uploadError.message || 'Failed to upload file' }, { status: 500 });
+    }
+  } else {
+    return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
   }
 
   // Save attachment metadata to database
@@ -105,10 +156,10 @@ export async function POST(request: Request) {
       user_id: user.id,
       lead_id: leadId,
       column_field: columnField,
-      file_name: file.name,
+      file_name: fileName,
       file_path: filePath,
-      file_size: file.size,
-      file_type: file.type,
+      file_size: fileSize,
+      file_type: fileType,
     })
     .select()
     .single();
@@ -126,7 +177,7 @@ export async function POST(request: Request) {
     await onCasperDocsReceived(supabase, {
       userId: user.id,
       leadId,
-      fileName: file.name,
+      fileName,
       columnField,
       filePath,
       attachmentId: attachment.id,

@@ -173,27 +173,55 @@ export async function saveBankAnalysisForLead(
   }
 }
 
+function analyzerError(json: Record<string, unknown>, status: number) {
+  const detail = json.detail ?? json.error;
+  if (typeof detail === 'string' && detail.trim()) return detail;
+  if (Array.isArray(detail)) return detail.map(d => (typeof d === 'object' && d && 'msg' in d ? String((d as { msg: unknown }).msg) : String(d))).join('; ');
+  return `Bank analyze failed (${status})`;
+}
+
 export async function analyzeBankAttachmentForLead(
   leadId: string,
   attachment: DocAttachment,
 ) {
-  try {
-    const dlRes = await fetch(`/api/attachments/download?id=${attachment.id}`, { credentials: 'include' });
-    if (!dlRes.ok) return;
-    const { url } = await dlRes.json();
-    const blob = await fetch(url).then(r => r.blob());
-    const file = new File([blob], attachment.file_name, { type: attachment.file_type || 'application/pdf' });
-    const fd = new FormData();
-    fd.append('files', file);
-    const resp = await fetch('/api/bank-analyze', { method: 'POST', body: fd, credentials: 'include' });
-    if (!resp.ok) return;
-    const data = await resp.json() as Record<string, unknown>;
-    await saveBankAnalysisForLead(leadId, {
-      analyzedAt: new Date().toISOString(),
-      displayMetrics: data.metrics,
-      per_file: data.per_file,
-    });
-  } catch { /* silent — same as Lead Info analyze */ }
+  const fd = new FormData();
+  fd.append('attachmentIds', attachment.id);
+  const resp = await fetch('/api/bank-analyze', { method: 'POST', body: fd, credentials: 'include' });
+  const data = await resp.json().catch(() => ({})) as Record<string, unknown>;
+  if (!resp.ok) throw new Error(analyzerError(data, resp.status));
+  if (!data.metrics || typeof data.metrics !== 'object') throw new Error('Analyzer returned no metrics');
+  await saveBankAnalysisForLead(leadId, {
+    analyzedAt: new Date().toISOString(),
+    displayMetrics: data.metrics,
+    per_file: data.per_file,
+  });
+}
+
+/** Analyze stored statements (preferred — avoids re-posting large PDFs through Next). */
+export async function analyzeBankAttachmentsForLead(leadId: string, attachmentIds: string[]) {
+  if (!attachmentIds.length) return;
+  const fd = new FormData();
+  attachmentIds.forEach(id => fd.append('attachmentIds', id));
+  const resp = await fetch('/api/bank-analyze', { method: 'POST', body: fd, credentials: 'include' });
+  const data = await resp.json().catch(() => ({})) as {
+    error?: string;
+    detail?: unknown;
+    metrics?: Record<string, unknown>;
+    per_file?: Array<{ filename: string; metrics: Record<string, unknown> }>;
+    transactions?: unknown[];
+    ai_assisted?: boolean;
+    ai_assisted_message?: string | null;
+  };
+  if (!resp.ok) throw new Error(analyzerError(data as Record<string, unknown>, resp.status));
+  if (!data.metrics || typeof data.metrics !== 'object') throw new Error('Analyzer returned no metrics');
+  await saveBankAnalysisForLead(leadId, {
+    analyzedAt: new Date().toISOString(),
+    ai_assisted: !!data.ai_assisted,
+    ai_assisted_message: data.ai_assisted_message ?? null,
+    displayMetrics: compactMetricsForStorage(data.metrics),
+    per_file: data.per_file,
+    transactions: data.transactions ?? [],
+  });
 }
 
 /** Add-lead Full pack analyzer: one request for every statement file. */
@@ -206,15 +234,17 @@ export async function analyzeBankFilesForLead(leadId: string, files: File[]) {
     files.forEach(f => fd.append('files', f, f.name));
   }
   const resp = await fetch('/api/bank-analyze', { method: 'POST', body: fd, credentials: 'include' });
-  if (!resp.ok) return;
-  const data = await resp.json() as {
+  const data = await resp.json().catch(() => ({})) as {
+    error?: string;
+    detail?: unknown;
     metrics?: Record<string, unknown>;
     per_file?: Array<{ filename: string; metrics: Record<string, unknown> }>;
     transactions?: unknown[];
     ai_assisted?: boolean;
     ai_assisted_message?: string | null;
   };
-  if (!data.metrics || typeof data.metrics !== 'object') return;
+  if (!resp.ok) throw new Error(analyzerError(data as Record<string, unknown>, resp.status));
+  if (!data.metrics || typeof data.metrics !== 'object') throw new Error('Analyzer returned no metrics');
   await saveBankAnalysisForLead(leadId, {
     analyzedAt: new Date().toISOString(),
     ai_assisted: !!data.ai_assisted,

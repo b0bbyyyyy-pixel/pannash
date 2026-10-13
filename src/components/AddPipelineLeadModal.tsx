@@ -90,8 +90,13 @@ function displayUwValue(k: string, v: unknown): string | null {
 
 async function parseDoc(file: File, documentType: DocKind) {
   const fd = new FormData();
-  fd.append('file', file);
   fd.append('documentType', documentType);
+  const { needsSignedUpload, uploadTempLeadFile } = await import('@/lib/uploadLeadFile');
+  if (needsSignedUpload(file)) {
+    fd.append('filePath', await uploadTempLeadFile(file));
+  } else {
+    fd.append('file', file);
+  }
   const res = await fetch('/api/leads/parse-application', { method: 'POST', body: fd, credentials: 'include' });
   const json = await res.json();
   if (!res.ok) throw new Error(json.error || `Failed to parse ${file.name}`);
@@ -364,10 +369,16 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
       setParseStatus('Analyzing bank statements…');
       try {
         const fd = new FormData();
-        if (bankFiles.length === 1) {
-          fd.append('file', bankFiles[0], bankFiles[0].name);
+        const { needsSignedUpload, uploadTempLeadFile } = await import('@/lib/uploadLeadFile');
+        const large = bankFiles.filter(f => needsSignedUpload(f));
+        const small = bankFiles.filter(f => !needsSignedUpload(f));
+        if (large.length) {
+          for (const f of large) fd.append('filePaths', await uploadTempLeadFile(f));
+        }
+        if (small.length === 1 && large.length === 0) {
+          fd.append('file', small[0], small[0].name);
         } else {
-          bankFiles.forEach(f => fd.append('files', f, f.name));
+          small.forEach(f => fd.append('files', f, f.name));
         }
         const resp = await fetch('/api/bank-analyze', { method: 'POST', body: fd, credentials: 'include' });
         if (resp.ok) {
@@ -479,13 +490,10 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
 
       // Full pack: persist statements only — the uploaded application is discarded
       if (method === 'fullpack' && bankFiles.length > 0) {
+        const { uploadFileToLeadStorage } = await import('@/lib/uploadLeadFile');
         for (const file of bankFiles) {
-          const fd = new FormData();
-          fd.append('file', file);
-          fd.append('leadId', lead.id);
-          fd.append('columnField', 'bank_statements');
           try {
-            await fetch('/api/attachments', { method: 'POST', body: fd, credentials: 'include' });
+            await uploadFileToLeadStorage(file, { leadId: lead.id, columnField: 'bank_statements' });
           } catch (e) {
             console.warn('Failed to save statement', file.name, e);
           }

@@ -8,10 +8,11 @@ import { enrichParsedBusinessFields } from '@/lib/businessName';
 import { normalizeParsedFields } from '@/lib/normalizeParsedFields';
 import {
   analyzeBankAttachmentForLead,
-  analyzeBankFilesForLead,
+  analyzeBankAttachmentsForLead,
   applyParsedFieldsToLead,
   splitFullPackFiles,
 } from '@/lib/leadDocActions';
+import { explainUploadFailure, uploadFileToLeadStorage } from '@/lib/uploadLeadFile';
 import { postLeadPatch } from '@/lib/pipeline/iframeMessages';
 import {
   parseMcaPositions,
@@ -196,6 +197,7 @@ export default function DocumentsModal({
   const [pendingFiles, setPendingFiles]   = useState<File[]>([]);
   const [uploading, setUploading]         = useState(false);
   const [uploadProgress, setUploadProgress] = useState<Record<string, 'pending' | 'done' | 'error'>>({});
+  const [uploadErrors, setUploadErrors] = useState<Record<string, string>>({});
 
   // Optional AI extract after upload
   const [parseStep, setParseStep]         = useState<'upload' | 'parsing' | 'review'>('upload');
@@ -218,6 +220,7 @@ export default function DocumentsModal({
   const [uploadStatus, setUploadStatus]   = useState<string | null>(null);
   const [editingDoc, setEditingDoc]       = useState<Attachment | null>(null);
   const pendingBankSnapFiles = useRef<File[]>([]);
+  const pendingBankAttIds = useRef<string[]>([]);
 
   const applyParsed = onApplyParsed
     ?? ((fields: Record<string, string>, selected: Set<string>) =>
@@ -249,12 +252,14 @@ export default function DocumentsModal({
     setShowUpload(false);
     setPendingFiles([]);
     setUploadProgress({});
+    setUploadErrors({});
     setParseStep('upload');
     setParsedFields({});
     setParsedSelected(new Set());
     setUploadKind('fullpack');
     setUploadStatus(null);
     pendingBankSnapFiles.current = [];
+    pendingBankAttIds.current = [];
   }, [uploading]);
 
   // ── Sort + filter ──────────────────────────────────────────────────────────
@@ -314,6 +319,7 @@ export default function DocumentsModal({
     const progress: Record<string, 'pending' | 'done' | 'error'> = {};
     pendingFiles.forEach(f => { progress[f.name] = 'pending'; });
     setUploadProgress({ ...progress });
+    setUploadErrors({});
 
     const newAttachments: Attachment[] = [];
     let markedDocsIn = false;
@@ -322,25 +328,19 @@ export default function DocumentsModal({
     pendingBankSnapFiles.current = packSplit ? packSplit.banks.map(b => b.file) : [];
 
     for (const file of pendingFiles) {
-      const fd = new FormData();
-      fd.append('file', file);
-      fd.append('leadId', leadId);
       const columnField = uploadKind === 'bank' || (uploadKind === 'fullpack' && bankNameSet.has(file.name))
         ? 'bank_statements'
         : 'documents';
-      fd.append('columnField', columnField);
       try {
-        const res = await fetch('/api/attachments', { method: 'POST', body: fd, credentials: 'include' });
-        if (res.ok) {
-          const { attachment, docsIn } = await res.json();
-          newAttachments.push(attachment);
-          if (docsIn) markedDocsIn = true;
-          setUploadProgress(p => ({ ...p, [file.name]: 'done' }));
-        } else {
-          setUploadProgress(p => ({ ...p, [file.name]: 'error' }));
-        }
-      } catch {
+        const { attachment, docsIn } = await uploadFileToLeadStorage(file, { leadId, columnField });
+        newAttachments.push(attachment as Attachment);
+        if (docsIn) markedDocsIn = true;
+        setUploadProgress(p => ({ ...p, [file.name]: 'done' }));
+      } catch (e) {
+        const reason = explainUploadFailure(e, file);
         setUploadProgress(p => ({ ...p, [file.name]: 'error' }));
+        setUploadErrors(p => ({ ...p, [file.name]: reason }));
+        setUploadStatus(reason);
       }
     }
 
@@ -413,6 +413,7 @@ export default function DocumentsModal({
       const byName = new Map(newAttachments.map(a => [a.file_name, a]));
       const appAtts = (packSplit?.apps ?? []).map(f => byName.get(f.name)).filter(Boolean) as Attachment[];
       const bankAtts = (packSplit?.banks ?? []).map(f => byName.get(f.name)).filter(Boolean) as Attachment[];
+      pendingBankAttIds.current = bankAtts.map(a => a.id);
       const mergedFields: Record<string, string> = {};
       const months: StatementMonth[] = [];
 
@@ -438,15 +439,16 @@ export default function DocumentsModal({
               const row = statementMonthFromFields(incoming);
               if (row) months.push(row);
               mergeParseFields(mergedFields, incoming);
+            } else if (!ok) {
+              setUploadStatus(json.error || `Could not parse ${bankAtts[i].file_name}`);
             }
-          } catch {
-            console.warn('Parse failed for', bankAtts[i].file_name);
+          } catch (e) {
+            setUploadStatus(e instanceof Error ? e.message : `Parse failed for ${bankAtts[i].file_name}`);
           }
         }
 
         attachStatementMonths(mergedFields, months);
         const reviewFields = enrichParsedBusinessFields(normalizeParsedFields(mergedFields));
-        const bankFiles = pendingBankSnapFiles.current;
         setPendingFiles([]);
         setUploadProgress({});
         if (Object.keys(reviewFields).length > 0) {
@@ -454,9 +456,9 @@ export default function DocumentsModal({
           setParsedSelected(new Set(Object.keys(reviewFields)));
           setParseStep('review');
           setUploadStatus(null);
-        } else if (bankFiles.length > 0) {
-          setUploadStatus(bankFiles.length === 1 ? 'Analyzing bank statements…' : `Analyzing ${bankFiles.length} statements…`);
-          await analyzeBankFilesForLead(leadId, bankFiles);
+        } else if (bankAtts.length > 0) {
+          setUploadStatus(bankAtts.length === 1 ? 'Analyzing bank statements…' : `Analyzing ${bankAtts.length} statements…`);
+          await analyzeBankAttachmentsForLead(leadId, bankAtts.map(a => a.id));
           setParseStep('upload');
           setUploadStatus('Applied to lead');
         } else {
@@ -486,9 +488,10 @@ export default function DocumentsModal({
     if (parsedFields.statementMonths) selected.add('statementMonths');
     try {
       await applyParsed(parsedFields, selected);
-      if (uploadKind === 'fullpack' && pendingBankSnapFiles.current.length > 0) {
-        setUploadStatus(pendingBankSnapFiles.current.length === 1 ? 'Analyzing bank statements…' : `Analyzing ${pendingBankSnapFiles.current.length} statements…`);
-        await analyzeBankFilesForLead(leadId, pendingBankSnapFiles.current);
+      const bankIds = pendingBankAttIds.current;
+      if (uploadKind === 'fullpack' && bankIds.length > 0) {
+        setUploadStatus(bankIds.length === 1 ? 'Analyzing bank statements…' : `Analyzing ${bankIds.length} statements…`);
+        await analyzeBankAttachmentsForLead(leadId, bankIds);
       }
       onApplied?.();
       setUploadStatus('Applied to lead');
@@ -564,6 +567,8 @@ export default function DocumentsModal({
     setAnalyzingId(a.id);
     try {
       await analyzeOne(a);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Analyze failed');
     } finally {
       setAnalyzingId(null);
     }
@@ -925,7 +930,11 @@ export default function DocumentsModal({
                             <p className="text-[11px] text-[#9b9b9b]">{fmtSize(f.size)}</p>
                           </div>
                           {prog === 'done'    && <span className="text-emerald-500 text-xs font-semibold">✓ Done</span>}
-                          {prog === 'error'   && <span className="text-red-500 text-xs font-semibold">✗ Failed</span>}
+                          {prog === 'error'   && (
+                            <span className="text-red-500 text-xs font-semibold text-right max-w-[220px]" title={uploadErrors[f.name]}>
+                              ✗ Failed{uploadErrors[f.name] ? ` — ${uploadErrors[f.name]}` : ''}
+                            </span>
+                          )}
                           {prog === 'pending' && <span className="text-[#9b9b9b] text-xs">Uploading…</span>}
                           {!prog && !uploading && (
                             <button onClick={() => removePending(i)} className="text-[#9b9b9b] hover:text-red-500 transition-colors">
