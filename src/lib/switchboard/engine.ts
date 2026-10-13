@@ -54,8 +54,12 @@ const WASH_MIN_SHARE = 0.06;
 const OFF = { r: 148, g: 160, b: 148 };
 const RULE = { r: 168, g: 162, b: 148 };
 const FUNDED = { r: 74, g: 74, b: 74 };
-const OFFER = { r: 142, g: 138, b: 88 };
-const DOCS = { r: 132, g: 148, b: 136 };
+const DOT_SUBMITTED = { r: 104, g: 118, b: 128 };
+const DOT_APPROVAL = { r: 138, g: 132, b: 82 };
+const DOT_FUNDED = { r: 74, g: 74, b: 74 };
+
+type PersistKind = 'prospect' | 'submitted' | 'approval' | 'funded';
+type WashBand = { key: PersistKind; n: number; wash: { r: number; g: number; b: number }; y: number; h: number };
 const LINE = { r: 150, g: 144, b: 118 };
 const GLOW = { r: 255, g: 253, b: 248 };
 
@@ -144,8 +148,7 @@ export class SwitchboardEngine {
   cols = 0;
   rows = 0;
   cells: Cell[] = [];
-  offers: number[] = [];
-  docs: number[] = [];
+  persist: Partial<Record<PersistKind, number[]>> = {};
   live: Live[] = [];
   lines: Line[] = [];
   traveler: Traveler | null = null;
@@ -174,7 +177,12 @@ export class SwitchboardEngine {
   setCounts(next: SwitchboardCounts) {
     const prev = this.counts;
     this.counts = next;
-    if (prev.offers !== next.offers || prev.docsIn !== next.docsIn) {
+    if (
+      prev.prospects !== next.prospects ||
+      prev.submitted !== next.submitted ||
+      prev.approvals !== next.approvals ||
+      prev.funded !== next.funded
+    ) {
       this.placePersistent();
     }
   }
@@ -244,26 +252,62 @@ export class SwitchboardEngine {
     }
   }
 
+  private washBands(): WashBand[] {
+    const layers: { key: PersistKind; n: number; wash: { r: number; g: number; b: number } }[] = [
+      { key: 'prospect', n: Math.max(0, this.counts.prospects), wash: WASH_SUBMITTED },
+      { key: 'submitted', n: Math.max(0, this.counts.submitted), wash: WASH_DOCS },
+      { key: 'approval', n: Math.max(0, this.counts.approvals), wash: WASH_APPROVED },
+      { key: 'funded', n: Math.max(0, this.counts.funded), wash: WASH_FUNDED },
+    ];
+    const total = layers.reduce((s, l) => s + l.n, 0);
+    const extra = 1 - WASH_MIN_SHARE * layers.length;
+    const shares = layers.map(l => WASH_MIN_SHARE + extra * (total > 0 ? l.n / total : 0.25));
+    const heights = shares.map(s => Math.round(s * this.h));
+    let delta = this.h - heights.reduce((s, h) => s + h, 0);
+    let grow = 0;
+    for (let i = 1; i < layers.length; i++) {
+      if (layers[i].n > layers[grow].n) grow = i;
+    }
+    heights[grow] += delta;
+    let y = 0;
+    return layers.map((l, i) => {
+      const h = Math.max(1, heights[i]);
+      const band = { ...l, y, h };
+      y += h;
+      return band;
+    });
+  }
+
   private placePersistent() {
     if (!this.cells.length) return;
     const used = new Set<number>();
-    this.offers = this.placeSpread(this.counts.offers, 29, 2, used);
-    this.docs = this.placeClusters(this.counts.docsIn, 47, used);
+    const next: Partial<Record<PersistKind, number[]>> = {};
+    const bands = this.washBands();
+    for (let i = 0; i < bands.length; i++) {
+      const band = bands[i];
+      if (band.key === 'prospect') {
+        next[band.key] = [];
+        continue;
+      }
+      const y1 = i === bands.length - 1 ? this.h + 1 : band.y + band.h;
+      next[band.key] = this.placeInBand(band.n, band.y, y1, 17 + i * 41, used);
+    }
+    this.persist = next;
   }
 
-  private placeSpread(count: number, salt: number, minDist: number, used: Set<number>) {
+  private placeInBand(count: number, y0: number, y1: number, salt: number, used: Set<number>) {
+    const pool = this.cells.filter(c => c.y >= y0 && c.y < y1 && !used.has(c.i));
     const out: number[] = [];
-    const total = this.cells.length;
-    if (!total || count <= 0) return out;
+    if (!pool.length || count <= 0) return out;
+    const cap = Math.min(count, pool.length);
+    const minDist = pool.length > cap * 3 ? 2 : 1;
     let cursor = salt;
     let attempts = 0;
-    const cap = Math.min(count, total);
-    while (out.length < cap && attempts < total * 6) {
+    while (out.length < cap && attempts < pool.length * 8) {
       cursor = (Math.imul(cursor, 1664525) + 1013904223) >>> 0;
-      const i = cursor % total;
+      const cell = pool[cursor % pool.length];
       attempts += 1;
-      if (used.has(i)) continue;
-      const cell = this.cells[i];
+      if (used.has(cell.i)) continue;
       let ok = true;
       if (minDist > 1) {
         for (const o of out) {
@@ -274,51 +318,26 @@ export class SwitchboardEngine {
         }
       }
       if (!ok) continue;
-      used.add(i);
-      out.push(i);
+      used.add(cell.i);
+      out.push(cell.i);
     }
-    return out;
-  }
-
-  private placeClusters(count: number, salt: number, used: Set<number>) {
-    const out: number[] = [];
-    const total = this.cells.length;
-    if (!total || count <= 0) return out;
-    const clusterN = Math.max(1, Math.ceil(count / 5));
-    const per = Math.ceil(count / clusterN);
-    let cursor = salt;
-    for (let k = 0; k < clusterN && out.length < count; k++) {
-      cursor = (Math.imul(cursor, 1103515245) + 12345) >>> 0;
-      const center = cursor % total;
-      const cr = Math.floor(center / this.cols);
-      const cc = center % this.cols;
-      const neigh: number[] = [];
-      for (let dr = -2; dr <= 2; dr++) {
-        for (let dc = -2; dc <= 2; dc++) {
-          const rr = cr + dr;
-          const c = cc + dc;
-          if (rr < 0 || c < 0 || rr >= this.rows || c >= this.cols) continue;
-          const i = rr * this.cols + c;
-          if (used.has(i)) continue;
-          neigh.push(i);
-        }
+    if (out.length < cap) {
+      for (const cell of pool) {
+        if (out.length >= cap) break;
+        if (used.has(cell.i)) continue;
+        used.add(cell.i);
+        out.push(cell.i);
       }
-      neigh.sort((a, b) => distCells(this.cells[a], this.cells[center]) - distCells(this.cells[b], this.cells[center]));
-      const take = Math.min(per, count - out.length, neigh.length);
-      for (let n = 0; n < take; n++) {
-        used.add(neigh[n]);
-        out.push(neigh[n]);
-      }
-    }
-    if (out.length < count) {
-      out.push(...this.placeSpread(count - out.length, salt + 99, 1, used));
     }
     return out;
   }
 
   private occupied() {
-    const s = new Set<number>(this.offers);
-    for (const i of this.docs) s.add(i);
+    const s = new Set<number>();
+    for (const list of Object.values(this.persist)) {
+      if (!list) continue;
+      for (const i of list) s.add(i);
+    }
     return s;
   }
 
@@ -516,29 +535,10 @@ export class SwitchboardEngine {
   }
 
   private drawWash(ctx: CanvasRenderingContext2D) {
-    const layers = [
-      { n: Math.max(0, this.counts.prospects), color: WASH_SUBMITTED },
-      { n: Math.max(0, this.counts.submitted), color: WASH_DOCS },
-      { n: Math.max(0, this.counts.approvals), color: WASH_APPROVED },
-      { n: Math.max(0, this.counts.funded), color: WASH_FUNDED },
-    ];
-    const total = layers.reduce((s, l) => s + l.n, 0);
-    const extra = 1 - WASH_MIN_SHARE * layers.length;
-    const shares = layers.map(l => WASH_MIN_SHARE + extra * (total > 0 ? l.n / total : 0.25));
-    const heights = shares.map(s => Math.round(s * this.h));
-    let delta = this.h - heights.reduce((s, h) => s + h, 0);
-    let grow = 0;
-    for (let i = 1; i < layers.length; i++) {
-      if (layers[i].n > layers[grow].n) grow = i;
-    }
-    heights[grow] += delta;
-    let y = 0;
-    for (let i = 0; i < layers.length; i++) {
-      const h = Math.max(1, heights[i]);
-      const c = layers[i].color;
+    for (const band of this.washBands()) {
+      const c = band.wash;
       ctx.fillStyle = `rgb(${c.r},${c.g},${c.b})`;
-      ctx.fillRect(0, y, this.w, h + 1);
-      y += h;
+      ctx.fillRect(0, band.y, this.w, band.h + 1);
     }
   }
 
@@ -555,9 +555,11 @@ export class SwitchboardEngine {
     ctx.lineTo(10, PAD_Y + ruleH);
     ctx.stroke();
 
-    const persist = new Map<number, 'offer' | 'docs'>();
-    for (const i of this.offers) persist.set(i, 'offer');
-    for (const i of this.docs) persist.set(i, 'docs');
+    const persist = new Map<number, PersistKind>();
+    for (const [kind, list] of Object.entries(this.persist) as [PersistKind, number[] | undefined][]) {
+      if (!list) continue;
+      for (const i of list) persist.set(i, kind);
+    }
 
     const liveAt = new Map<number, Live[]>();
     for (const b of this.live) {
@@ -604,14 +606,18 @@ export class SwitchboardEngine {
       let col = OFF;
       let a = 0.2 * decay;
 
-      if (p === 'docs') {
-        r = 1.2;
-        col = DOCS;
-        a = 0.38 * decay;
-      } else if (p === 'offer') {
-        r = 1.7;
-        col = OFFER;
-        a = 0.58 * decay;
+      if (p === 'submitted') {
+        r = 1.3;
+        col = DOT_SUBMITTED;
+        a = 0.88 * decay;
+      } else if (p === 'approval') {
+        r = 1.3;
+        col = DOT_APPROVAL;
+        a = 0.88 * decay;
+      } else if (p === 'funded') {
+        r = 1.35;
+        col = DOT_FUNDED;
+        a = 0.92 * decay;
       }
 
       if (g > 0.04) {
