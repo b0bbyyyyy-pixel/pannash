@@ -173,41 +173,49 @@ export async function saveBankAnalysisForLead(
   }
 }
 
+export function isScannedAnalyzerFailure(msg: string) {
+  return /no text found|scanned image|OPENAI_API_KEY|XAI_API_KEY/i.test(msg);
+}
+
 function analyzerError(json: Record<string, unknown>, status: number) {
   const detail = json.detail ?? json.error;
-  let raw = '';
-  if (typeof detail === 'string' && detail.trim()) raw = detail;
-  else if (Array.isArray(detail)) {
-    raw = detail.map(d => (typeof d === 'object' && d && 'msg' in d ? String((d as { msg: unknown }).msg) : String(d))).join('; ');
-  } else {
-    raw = `Bank analyze failed (${status})`;
+  if (typeof detail === 'string' && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    return detail.map(d => (typeof d === 'object' && d && 'msg' in d ? String((d as { msg: unknown }).msg) : String(d))).join('; ');
   }
-  if (/no text found|scanned image|OPENAI_API_KEY/i.test(raw)) {
-    return 'No text found in the PDF. It may be a scanned image.';
-  }
-  return raw;
+  return `Bank analyze failed (${status})`;
 }
+
+export type BankAnalyzeOutcome = { ok: boolean; scanned?: boolean };
 
 export async function analyzeBankAttachmentForLead(
   leadId: string,
   attachment: DocAttachment,
-) {
+): Promise<BankAnalyzeOutcome> {
   const fd = new FormData();
   fd.append('attachmentIds', attachment.id);
   const resp = await fetch('/api/bank-analyze', { method: 'POST', body: fd, credentials: 'include' });
   const data = await resp.json().catch(() => ({})) as Record<string, unknown>;
-  if (!resp.ok) throw new Error(analyzerError(data, resp.status));
+  if (!resp.ok) {
+    const msg = analyzerError(data, resp.status);
+    if (isScannedAnalyzerFailure(msg)) return { ok: false, scanned: true };
+    throw new Error(msg);
+  }
   if (!data.metrics || typeof data.metrics !== 'object') throw new Error('Analyzer returned no metrics');
   await saveBankAnalysisForLead(leadId, {
     analyzedAt: new Date().toISOString(),
     displayMetrics: data.metrics,
     per_file: data.per_file,
   });
+  return { ok: true };
 }
 
 /** Analyze stored statements (preferred — avoids re-posting large PDFs through Next). */
-export async function analyzeBankAttachmentsForLead(leadId: string, attachmentIds: string[]) {
-  if (!attachmentIds.length) return;
+export async function analyzeBankAttachmentsForLead(
+  leadId: string,
+  attachmentIds: string[],
+): Promise<BankAnalyzeOutcome> {
+  if (!attachmentIds.length) return { ok: true };
   const fd = new FormData();
   attachmentIds.forEach(id => fd.append('attachmentIds', id));
   const resp = await fetch('/api/bank-analyze', { method: 'POST', body: fd, credentials: 'include' });
@@ -220,7 +228,11 @@ export async function analyzeBankAttachmentsForLead(leadId: string, attachmentId
     ai_assisted?: boolean;
     ai_assisted_message?: string | null;
   };
-  if (!resp.ok) throw new Error(analyzerError(data as Record<string, unknown>, resp.status));
+  if (!resp.ok) {
+    const msg = analyzerError(data as Record<string, unknown>, resp.status);
+    if (isScannedAnalyzerFailure(msg)) return { ok: false, scanned: true };
+    throw new Error(msg);
+  }
   if (!data.metrics || typeof data.metrics !== 'object') throw new Error('Analyzer returned no metrics');
   await saveBankAnalysisForLead(leadId, {
     analyzedAt: new Date().toISOString(),
@@ -230,6 +242,7 @@ export async function analyzeBankAttachmentsForLead(leadId: string, attachmentId
     per_file: data.per_file,
     transactions: data.transactions ?? [],
   });
+  return { ok: true };
 }
 
 /** Add-lead Full pack analyzer: one request for every statement file. */

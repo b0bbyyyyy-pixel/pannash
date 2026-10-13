@@ -433,15 +433,15 @@ export default function DocumentsModal({
           setParseStep('review');
           setUploadStatus(null);
         } else {
-          setUploadStatus(newAttachments.length === 1 ? 'Analyzing bank statements…' : `Analyzing ${newAttachments.length} statements…`);
-          await analyzeBankAttachmentsForLead(leadId, newAttachments.map(a => a.id));
-          onApplied?.();
           setParseStep('upload');
-          setUploadStatus('Applied to lead');
+          setUploadStatus('Could not read these statements. If they are scans, try Analyze again.');
         }
       } catch (e) {
         setParseStep('upload');
-        setUploadStatus(e instanceof Error ? e.message : 'Bank statement parse failed');
+        const raw = e instanceof Error ? e.message : 'Bank statement parse failed';
+        setUploadStatus(/no text found|scanned image|XAI_API_KEY|OPENAI_API_KEY/i.test(raw)
+          ? 'These statements are scans. Use Analyze so AI can read the pages.'
+          : raw);
       }
       return;
     }
@@ -496,10 +496,11 @@ export default function DocumentsModal({
           setParseStep('review');
           setUploadStatus(null);
         } else if (bankAtts.length > 0) {
-          setUploadStatus(bankAtts.length === 1 ? 'Analyzing bank statements…' : `Analyzing ${bankAtts.length} statements…`);
-          await analyzeBankAttachmentsForLead(leadId, bankAtts.map(a => a.id));
+          const result = await analyzeBankAttachmentsForLead(leadId, bankAtts.map(a => a.id));
           setParseStep('upload');
-          setUploadStatus('Applied to lead');
+          setUploadStatus(result.ok
+            ? 'Applied to lead'
+            : 'Could not read these statements. If they are scans, use Analyze so AI can read the pages.');
         } else {
           setParsedFields({});
           setParsedSelected(new Set());
@@ -508,7 +509,10 @@ export default function DocumentsModal({
         }
       } catch (e) {
         setParseStep('upload');
-        setUploadStatus(e instanceof Error ? e.message : 'Full pack parse failed');
+        const raw = e instanceof Error ? e.message : 'Full pack parse failed';
+        setUploadStatus(/no text found|scanned image|XAI_API_KEY|OPENAI_API_KEY/i.test(raw)
+          ? 'These statements are scans. Use Analyze so AI can read the pages.'
+          : raw);
       }
       return;
     }
@@ -528,7 +532,10 @@ export default function DocumentsModal({
     try {
       await applyParsed(parsedFields, selected);
       const bankIds = pendingBankAttIds.current;
-      if ((uploadKind === 'fullpack' || uploadKind === 'bank') && bankIds.length > 0) {
+      const needPython = (uploadKind === 'fullpack' || uploadKind === 'bank')
+        && bankIds.length > 0
+        && !hasMeaningfulBankFields(parsedFields);
+      if (needPython) {
         setUploadStatus(bankIds.length === 1 ? 'Analyzing bank statements…' : `Analyzing ${bankIds.length} statements…`);
         await analyzeBankAttachmentsForLead(leadId, bankIds);
       }
@@ -538,7 +545,14 @@ export default function DocumentsModal({
       setPendingFiles([]);
       setUploadProgress({});
     } catch (e) {
-      setUploadStatus(e instanceof Error ? e.message : 'Could not apply fields');
+      const raw = e instanceof Error ? e.message : 'Could not apply fields';
+      if (!/no text found|scanned image|OPENAI_API_KEY|XAI_API_KEY/i.test(raw)) {
+        setUploadStatus(raw);
+      } else {
+        onApplied?.();
+        setUploadStatus('Applied to lead');
+        setParseStep('upload');
+      }
     }
     setApplying(false);
   };
@@ -605,10 +619,25 @@ export default function DocumentsModal({
   const handleAnalyzeFile = async (a: Attachment) => {
     setAnalyzingId(a.id);
     try {
-      await analyzeBankAttachmentForLead(leadId, a);
-      onApplied?.();
+      const result = await analyzeBankAttachmentForLead(leadId, a);
+      if (result.ok) {
+        onApplied?.();
+        return;
+      }
+      if (result.scanned) {
+        const { ok, json } = await parseAttachment(a, 'bank_statement');
+        const fields = enrichParsedBusinessFields(normalizeParsedFields({ ...(json.fields ?? {}) } as Record<string, string>));
+        if (ok && hasMeaningfulBankFields(fields)) {
+          await applyParsed(fields, new Set(Object.keys(fields)));
+          onApplied?.();
+          return;
+        }
+        alert('This statement is a scan. Use Analyze on all four together so AI can read the pages.');
+        return;
+      }
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Analyze failed');
+      const raw = e instanceof Error ? e.message : 'Analyze failed';
+      if (!/no text found|scanned image|XAI_API_KEY|OPENAI_API_KEY/i.test(raw)) alert(raw);
     } finally {
       setAnalyzingId(null);
     }
@@ -662,23 +691,11 @@ export default function DocumentsModal({
     const rich = hasMeaningfulBankFields(reviewFields) || asApps.length > 0 && Object.keys(reviewFields).length > 0;
 
     let analyzerOk = false;
-    if (asBanks.length > 0) {
+    if (asBanks.length > 0 && !rich) {
       setUploadStatus(asBanks.length === 1 ? 'Analyzing bank statements…' : `Analyzing ${asBanks.length} statements…`);
-      try {
-        await analyzeBankAttachmentsForLead(leadId, asBanks.map(a => a.id));
-        analyzerOk = true;
-        onApplied?.();
-      } catch (e) {
-        const raw = e instanceof Error ? e.message : 'Analyze failed';
-        const scanned = /no text found|scanned image|OPENAI_API_KEY/i.test(raw);
-        if (!scanned) setUploadStatus(raw);
-        if (rich) {
-          try {
-            await applyParsed(reviewFields, new Set(Object.keys(reviewFields)));
-            onApplied?.();
-          } catch { /* review still lets them apply */ }
-        }
-      }
+      const result = await analyzeBankAttachmentsForLead(leadId, asBanks.map(a => a.id));
+      analyzerOk = result.ok;
+      if (result.ok) onApplied?.();
     }
 
     setAnalyzing(false);
@@ -686,16 +703,14 @@ export default function DocumentsModal({
       setParsedFields(reviewFields);
       setParsedSelected(new Set(Object.keys(reviewFields)));
       setParseStep('review');
-      setUploadStatus(analyzerOk
-        ? 'Financials applied. Review fields below, then Apply to the lead.'
-        : 'Read with AI from scanned pages. Review the numbers, then Apply.');
+      setUploadStatus('Read with AI from scanned pages. Review the numbers, then Apply.');
     } else if (analyzerOk) {
       setParseStep('upload');
       setShowUpload(false);
     } else {
       setParseStep('upload');
       setShowUpload(false);
-      alert('These look like scanned statements with no text layer. AI will read the pages on the next try — if it is still empty, export CSV from the bank.');
+      alert('Could not read these statements. If they are scans, wait for the page reader — or export CSV from the bank.');
     }
   };
 
