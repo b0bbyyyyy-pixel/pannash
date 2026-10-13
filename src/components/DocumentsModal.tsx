@@ -389,20 +389,48 @@ export default function DocumentsModal({
     }
 
     if (uploadKind === 'bank' && newAttachments.length > 0) {
-      const n = newAttachments.length;
-      setUploadStatus(n === 1 ? 'Analyzing…' : `Analyzing ${n} statements…`);
+      setUploading(false);
+      setParseStep('parsing');
+      pendingBankAttIds.current = newAttachments.map(a => a.id);
+      const mergedFields: Record<string, string> = {};
+      const months: StatementMonth[] = [];
       try {
-        for (const att of newAttachments) {
-          await analyzeOne(att);
+        for (let i = 0; i < newAttachments.length; i++) {
+          setUploadStatus(`Parsing statement ${i + 1} of ${newAttachments.length}…`);
+          try {
+            const { ok, json } = await parseAttachment(newAttachments[i], 'bank_statement');
+            if (ok && json.fields && Object.keys(json.fields).length > 0) {
+              const incoming = json.fields as Record<string, string>;
+              const row = statementMonthFromFields(incoming);
+              if (row) months.push(row);
+              mergeParseFields(mergedFields, incoming);
+            } else if (!ok) {
+              setUploadStatus(json.error || `Could not parse ${newAttachments[i].file_name}`);
+            }
+          } catch (e) {
+            setUploadStatus(e instanceof Error ? e.message : `Parse failed for ${newAttachments[i].file_name}`);
+          }
         }
-        onApplied?.();
-        setUploadStatus('Applied to lead');
+
+        attachStatementMonths(mergedFields, months);
+        const reviewFields = enrichParsedBusinessFields(normalizeParsedFields(mergedFields));
         setPendingFiles([]);
         setUploadProgress({});
+        if (Object.keys(reviewFields).length > 0) {
+          setParsedFields(reviewFields);
+          setParsedSelected(new Set(Object.keys(reviewFields)));
+          setParseStep('review');
+          setUploadStatus(null);
+        } else {
+          setUploadStatus(newAttachments.length === 1 ? 'Analyzing bank statements…' : `Analyzing ${newAttachments.length} statements…`);
+          await analyzeBankAttachmentsForLead(leadId, newAttachments.map(a => a.id));
+          onApplied?.();
+          setParseStep('upload');
+          setUploadStatus('Applied to lead');
+        }
       } catch (e) {
-        setUploadStatus(e instanceof Error ? e.message : 'Analyze failed');
-      } finally {
-        setUploading(false);
+        setParseStep('upload');
+        setUploadStatus(e instanceof Error ? e.message : 'Bank statement parse failed');
       }
       return;
     }
@@ -489,7 +517,7 @@ export default function DocumentsModal({
     try {
       await applyParsed(parsedFields, selected);
       const bankIds = pendingBankAttIds.current;
-      if (uploadKind === 'fullpack' && bankIds.length > 0) {
+      if ((uploadKind === 'fullpack' || uploadKind === 'bank') && bankIds.length > 0) {
         setUploadStatus(bankIds.length === 1 ? 'Analyzing bank statements…' : `Analyzing ${bankIds.length} statements…`);
         await analyzeBankAttachmentsForLead(leadId, bankIds);
       }
