@@ -54,9 +54,9 @@ const WASH_MIN_SHARE = 0.06;
 const OFF = { r: 148, g: 160, b: 148 };
 const RULE = { r: 168, g: 162, b: 148 };
 const FUNDED = { r: 74, g: 74, b: 74 };
-const DOT_SUBMITTED = { r: 104, g: 118, b: 128 };
-const DOT_APPROVAL = { r: 138, g: 132, b: 82 };
-const DOT_FUNDED = { r: 74, g: 74, b: 74 };
+const DOT_SUBMITTED = { r: 148, g: 146, b: 138 };
+const DOT_APPROVAL = { r: 148, g: 144, b: 118 };
+const DOT_FUNDED = { r: 148, g: 144, b: 132 };
 
 type PersistKind = 'prospect' | 'submitted' | 'approval' | 'funded';
 type WashBand = { key: PersistKind; n: number; wash: { r: number; g: number; b: number }; y: number; h: number };
@@ -609,15 +609,15 @@ export class SwitchboardEngine {
       if (p === 'submitted') {
         r = 1.3;
         col = DOT_SUBMITTED;
-        a = 0.88 * decay;
+        a = 0.55 * decay;
       } else if (p === 'approval') {
         r = 1.3;
         col = DOT_APPROVAL;
-        a = 0.88 * decay;
+        a = 0.55 * decay;
       } else if (p === 'funded') {
-        r = 1.35;
+        r = 1.3;
         col = DOT_FUNDED;
-        a = 0.92 * decay;
+        a = 0.55 * decay;
       }
 
       if (g > 0.04) {
