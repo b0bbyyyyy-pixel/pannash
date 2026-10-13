@@ -402,7 +402,7 @@ export async function POST(request: Request) {
   const pageText = String(formData.get('pageText') ?? '');
   const pageFiles = formData
     .getAll('pages')
-    .filter((v): v is Blob => typeof v === 'object' && v !== null && 'arrayBuffer' in v && (v as Blob).size > 0);
+    .filter((v): v is File => typeof v === 'object' && v !== null && 'arrayBuffer' in v && (v as File).size > 0);
 
   const forcedType = String(formData.get('documentType') ?? '').toLowerCase().trim();
   const forceBank =
