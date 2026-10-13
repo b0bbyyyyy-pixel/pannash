@@ -91,9 +91,10 @@ async function extractPdfjsText(buffer: Buffer): Promise<string> {
       const content = await page.getTextContent();
       let prevY: number | null = null;
       for (const item of content.items) {
-        if (!('str' in item)) continue;
-        const str = (item as { str: string }).str;
-        const y = (item as { transform: number[] }).transform[5];
+        if (!item || typeof item !== 'object' || !('str' in item)) continue;
+        const rec = item as unknown as { str?: string; transform?: number[] };
+        const str = String(rec.str ?? '');
+        const y = Number(rec.transform?.[5] ?? 0);
         if (prevY !== null && Math.abs(y - prevY) > 2) full += '\n';
         else if (full && !full.endsWith('\n') && !full.endsWith(' ')) full += ' ';
         full += str;

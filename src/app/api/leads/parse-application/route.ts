@@ -208,11 +208,12 @@ async function extractPdfjsContent(buffer: Buffer): Promise<{ text: string; form
       let prevY: number | null = null;
       let prevEndX: number | null = null;
       for (const item of content.items) {
-        if (!('str' in item)) continue;
-        const str = (item as { str: string }).str;
-        const x = (item as { transform: number[] }).transform[4];
-        const y = (item as { transform: number[] }).transform[5];
-        const width = 'width' in item ? Number((item as { width: number }).width) || 0 : 0;
+        if (!item || typeof item !== 'object' || !('str' in item)) continue;
+        const rec = item as unknown as { str?: string; transform?: number[]; width?: number };
+        const str = String(rec.str ?? '');
+        const x = Number(rec.transform?.[4] ?? 0);
+        const y = Number(rec.transform?.[5] ?? 0);
+        const width = Number(rec.width) || 0;
         if (prevY !== null && Math.abs(y - prevY) > 2) {
           full += '\n';
           prevEndX = null;

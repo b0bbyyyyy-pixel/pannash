@@ -101,14 +101,14 @@ async function extractPdfText(buffer: Buffer): Promise<string> {
     // Join items — preserve newlines by checking y-position jumps
     let prevY: number | null = null;
     for (const item of content.items) {
-      if ('str' in item) {
-        const y = (item as { transform: number[] }).transform[5];
-        if (prevY !== null && Math.abs(y - prevY) > 2) {
-          fullText += '\n';
-        }
-        fullText += (item as { str: string }).str + ' ';
-        prevY = y;
+      if (!item || typeof item !== 'object' || !('str' in item)) continue;
+      const rec = item as unknown as { str?: string; transform?: number[] };
+      const y = Number(rec.transform?.[5] ?? 0);
+      if (prevY !== null && Math.abs(y - prevY) > 2) {
+        fullText += '\n';
       }
+      fullText += String(rec.str ?? '') + ' ';
+      prevY = y;
     }
     fullText += '\n\n';
   }
