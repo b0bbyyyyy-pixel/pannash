@@ -2,6 +2,7 @@ export type SwitchboardCounts = {
   funded: number;
   offers: number;
   docsIn: number;
+  submitted: number;
   day: number;
   daysInMonth: number;
 };
@@ -43,7 +44,11 @@ type Scan = {
   sigma: number;
 };
 
-const BG = '#fafafa';
+const BG_RGB = { r: 250, g: 250, b: 250 };
+const WASH_FUNDED = { r: 226, g: 220, b: 210 };
+const WASH_APPROVED = { r: 232, g: 228, b: 220 };
+const WASH_DOCS = { r: 238, g: 236, b: 230 };
+const WASH_SUBMITTED = { r: 247, g: 246, b: 243 };
 const OFF = { r: 148, g: 160, b: 148 };
 const RULE = { r: 168, g: 162, b: 148 };
 const FUNDED = { r: 74, g: 74, b: 74 };
@@ -137,14 +142,13 @@ export class SwitchboardEngine {
   cols = 0;
   rows = 0;
   cells: Cell[] = [];
-  funded: number[] = [];
   offers: number[] = [];
   docs: number[] = [];
   live: Live[] = [];
   lines: Line[] = [];
   traveler: Traveler | null = null;
   scan: Scan | null = null;
-  counts: SwitchboardCounts = { funded: 0, offers: 0, docsIn: 0, day: 1, daysInMonth: 31 };
+  counts: SwitchboardCounts = { funded: 0, offers: 0, docsIn: 0, submitted: 0, day: 1, daysInMonth: 31 };
   lastDraw = 0;
   nextIdle = 0;
   nextTravel = 0;
@@ -168,12 +172,7 @@ export class SwitchboardEngine {
   setCounts(next: SwitchboardCounts) {
     const prev = this.counts;
     this.counts = next;
-    if (
-      prev.funded !== next.funded ||
-      prev.offers !== next.offers ||
-      prev.docsIn !== next.docsIn ||
-      this.funded.length !== next.funded
-    ) {
+    if (prev.offers !== next.offers || prev.docsIn !== next.docsIn) {
       this.placePersistent();
     }
   }
@@ -246,7 +245,6 @@ export class SwitchboardEngine {
   private placePersistent() {
     if (!this.cells.length) return;
     const used = new Set<number>();
-    this.funded = this.placeSpread(this.counts.funded, 11, 3, used);
     this.offers = this.placeSpread(this.counts.offers, 29, 2, used);
     this.docs = this.placeClusters(this.counts.docsIn, 47, used);
   }
@@ -317,8 +315,7 @@ export class SwitchboardEngine {
   }
 
   private occupied() {
-    const s = new Set<number>(this.funded);
-    for (const i of this.offers) s.add(i);
+    const s = new Set<number>(this.offers);
     for (const i of this.docs) s.add(i);
     return s;
   }
@@ -372,10 +369,12 @@ export class SwitchboardEngine {
     const u = clamp((now - scan.born) / scan.duration, 0, 1);
     const pad = scan.sigma * 2.2;
     const head = u * (this.cols * this.rows + pad * 2) - pad;
-    const d = r * this.cols + c - head;
-    const g = Math.exp(-(d * d) / (2 * scan.sigma * scan.sigma));
+    const pos = r * this.cols + c;
+    const s2 = 2 * scan.sigma * scan.sigma;
+    const g0 = Math.exp(-((pos - head) ** 2) / s2);
+    const g1 = Math.exp(-((pos - this.cols - head) ** 2) / s2);
     const edge = u < 0.06 ? u / 0.06 : u > 0.94 ? (1 - u) / 0.06 : 1;
-    return g * edge;
+    return Math.max(g0, g1) * edge;
   }
 
   /** Soft ring from the center out to the edges. 0 at rest. */
@@ -514,11 +513,55 @@ export class SwitchboardEngine {
     return remaining / daysInMonth;
   }
 
+  private washPresence(n: number) {
+    if (n <= 0) return 0;
+    return 1 - Math.exp(-n / 5);
+  }
+
+  private washMix(a: { r: number; g: number; b: number }, b: { r: number; g: number; b: number }, t: number) {
+    const u = clamp(t, 0, 1);
+    return {
+      r: Math.round(a.r + (b.r - a.r) * u),
+      g: Math.round(a.g + (b.g - a.g) * u),
+      b: Math.round(a.b + (b.b - a.b) * u),
+    };
+  }
+
+  /** t=0 bottom (funded), t=1 top (submitted). Soft, no bands. */
+  private washColorAt(t: number) {
+    const p = [
+      this.washPresence(this.counts.funded),
+      this.washPresence(this.counts.offers),
+      this.washPresence(this.counts.docsIn),
+      this.washPresence(this.counts.submitted),
+    ];
+    const targets = [WASH_FUNDED, WASH_APPROVED, WASH_DOCS, WASH_SUBMITTED];
+    const x = clamp(t, 0, 1) * 3;
+    const i = Math.min(2, Math.floor(x));
+    const f = x - i;
+    const s = f * f * (3 - 2 * f);
+    const pres = p[i] + (p[i + 1] - p[i]) * s;
+    const tgt = this.washMix(targets[i], targets[i + 1], s);
+    const bias = (1 - t) * 0.12;
+    const mix = Math.min(1, bias + pres);
+    return this.washMix(BG_RGB, tgt, mix);
+  }
+
+  private drawWash(ctx: CanvasRenderingContext2D) {
+    const grad = ctx.createLinearGradient(0, this.h, 0, 0);
+    for (let i = 0; i <= 16; i++) {
+      const t = i / 16;
+      const c = this.washColorAt(t);
+      grad.addColorStop(t, `rgb(${c.r},${c.g},${c.b})`);
+    }
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, this.w, this.h);
+  }
+
   private draw(ctx: CanvasRenderingContext2D) {
     const now = performance.now();
     const decay = this.decay();
-    ctx.fillStyle = BG;
-    ctx.fillRect(0, 0, this.w, this.h);
+    this.drawWash(ctx);
 
     const ruleH = (this.h - PAD_Y * 2) * this.monthFrac();
     ctx.strokeStyle = rgba(RULE, 0.42 * decay);
@@ -528,8 +571,7 @@ export class SwitchboardEngine {
     ctx.lineTo(10, PAD_Y + ruleH);
     ctx.stroke();
 
-    const persist = new Map<number, 'funded' | 'offer' | 'docs'>();
-    for (const i of this.funded) persist.set(i, 'funded');
+    const persist = new Map<number, 'offer' | 'docs'>();
     for (const i of this.offers) persist.set(i, 'offer');
     for (const i of this.docs) persist.set(i, 'docs');
 
@@ -586,10 +628,6 @@ export class SwitchboardEngine {
         r = 1.7;
         col = OFFER;
         a = 0.58 * decay;
-      } else if (p === 'funded') {
-        r = 2.6;
-        col = FUNDED;
-        a = 0.9 * decay;
       }
 
       if (g > 0.04) {

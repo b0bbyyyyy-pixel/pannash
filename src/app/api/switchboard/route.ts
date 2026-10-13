@@ -11,6 +11,12 @@ const OFFER_STATUSES = [
   'Pre-Qualified',
 ];
 const DOCS_STATUSES = ['Docs In', 'Docs Received'];
+const SUBMITTED_STATUSES = [
+  'Submitted',
+  'Submitted To Non-MCA',
+  'Submitted to Underwriting',
+  'In Underwriting',
+];
 const DECLINED_STATUSES = [
   'Declined',
   'All Declined/Final',
@@ -162,15 +168,16 @@ export async function GET(req: NextRequest) {
   const day = now.getDate();
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
 
-  const [funded, offers, docsIn, declined] = await Promise.all([
+  const [funded, offers, docsIn, submitted, declined] = await Promise.all([
     fundedThisMonth(supabase, user.id, month),
     countByStatus(supabase, user.id, month, OFFER_STATUSES),
     countByStatus(supabase, user.id, month, DOCS_STATUSES),
+    countByStatus(supabase, user.id, month, SUBMITTED_STATUSES),
     countByStatus(supabase, user.id, month, DECLINED_STATUSES),
   ]);
 
   return NextResponse.json(
-    { month, day, daysInMonth, funded, offers, docsIn, declined },
+    { month, day, daysInMonth, funded, offers, docsIn, submitted, declined },
     { headers: { 'Cache-Control': 'no-store' } },
   );
 }
