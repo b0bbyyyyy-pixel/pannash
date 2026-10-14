@@ -14,7 +14,7 @@ import {
 } from '@/lib/leadDocActions';
 import { explainUploadFailure, uploadFileToLeadStorage } from '@/lib/uploadLeadFile';
 import { downloadAttachmentBytes, readBankStatementPdf } from '@/lib/pdf/renderPdfPages';
-import { hasBankMetrics } from '@/lib/pdf/extractBankMetrics';
+import { hasBankMetrics, reconcileBankMetrics } from '@/lib/pdf/extractBankMetrics';
 import { postLeadPatch } from '@/lib/pipeline/iframeMessages';
 import {
   parseMcaPositions,
@@ -132,7 +132,7 @@ const SUM_PARSE_KEYS = new Set(['nsfCount', 'negativeDays']);
 const LAST_WINS_PARSE = new Set(['endingBalance', 'statementMonth']);
 
 function mergeParseFields(into: Record<string, string>, incoming: Record<string, string>) {
-  const src = normalizeParsedFields(incoming);
+  const src = reconcileBankMetrics(normalizeParsedFields(incoming));
   for (const [k, v] of Object.entries(src)) {
     if (!v) continue;
     if (k === 'mcaPositions') {
@@ -342,9 +342,6 @@ export default function DocumentsModal({
         const bytes = await downloadAttachmentBytes(a.id);
         if (bytes) {
           const read = await readBankStatementPdf(bytes, { fileName: a.file_name });
-          if (hasBankMetrics(read.fields)) {
-            return { ok: true, json: { fields: read.fields, documentType: 'bank_statement' } };
-          }
           if (read.text.trim()) fd.append('pageText', read.text.slice(0, 100_000));
           for (const page of read.pages) fd.append('pages', page, page.name);
         }

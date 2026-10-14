@@ -20,6 +20,51 @@ function money(raw: string | undefined): string | undefined {
   return Number.isFinite(n) ? String(n) : undefined;
 }
 
+function fieldNum(fields: Record<string, string>, ...keys: string[]): number | null {
+  for (const k of keys) {
+    const raw = String(fields[k] ?? '').trim();
+    if (!raw) continue;
+    const n = Number(raw.replace(/[$,]/g, ''));
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+const NEAR = 0.02;
+const nearAbs = (a: number, b: number) => Math.abs(Math.abs(a) - Math.abs(b)) < NEAR;
+
+/**
+ * Bluevine Activity summary prints Withdrawals/debits as $-12,949.39.
+ * Vision / regex sometimes copy that line into endingBalance. Prefer the
+ * printed ending-balance line, or opening + deposits − |withdrawals|.
+ */
+export function reconcileBankMetrics(fields: Record<string, string>): Record<string, string> {
+  const out = { ...fields };
+  const opening = fieldNum(out, 'openingBalance');
+  const deposits = fieldNum(out, 'totalDeposits', 'monthlyRevenue');
+  const withdrawals = fieldNum(out, 'totalWithdrawals');
+  let ending = fieldNum(out, 'endingBalance');
+
+  if (ending != null && withdrawals != null && nearAbs(ending, withdrawals)) {
+    delete out.endingBalance;
+    ending = null;
+  }
+
+  if (opening != null && deposits != null && withdrawals != null) {
+    const computed = Math.round((opening + deposits - Math.abs(withdrawals)) * 100) / 100;
+    const looksWrong = ending == null
+      || nearAbs(ending, withdrawals)
+      || (nearAbs(ending, opening) && Math.abs(ending - computed) > 1)
+      || nearAbs(ending, deposits);
+    if (looksWrong) {
+      out.endingBalance = String(computed);
+      if (out.avgDailyBalance) delete out.avgDailyBalance;
+    }
+  }
+
+  return out;
+}
+
 function first(text: string, patterns: RegExp[]): RegExpMatchArray | null {
   for (const re of patterns) {
     const m = text.match(re);
@@ -50,9 +95,12 @@ export function unglueBankText(text: string): string {
     [/DEBITSTOTALING/gi, 'DEBITS TOTALING'],
     [/PREVIOUSBALANCE/gi, 'PREVIOUS BALANCE'],
     [/NEWBALANCE/gi, 'NEW BALANCE'],
+    [/ENDINGBALANCEON/gi, 'ENDING BALANCE ON'],
     [/ENDINGBALANCE/gi, 'ENDING BALANCE'],
+    [/BEGINNINGBALANCEON/gi, 'BEGINNING BALANCE ON'],
     [/BEGINNINGBALANCE/gi, 'BEGINNING BALANCE'],
     [/OPENINGBALANCE/gi, 'OPENING BALANCE'],
+    [/ACTIVITYSUMMARY/gi, 'ACTIVITY SUMMARY'],
     [/CHECKINGSUMMARY/gi, 'CHECKING SUMMARY'],
     [/ACCOUNTSUMMARY/gi, 'ACCOUNT SUMMARY'],
     [/CHECKSTOTALING/gi, 'CHECKS TOTALING'],
@@ -97,7 +145,7 @@ function largestDepositFromLines(text: string): string | undefined {
   let max = 0;
   for (const line of text.split('\n')) {
     if (!/deposit/i.test(line)) continue;
-    if (/total(?:ing)?|summary|credits\s*:/i.test(line)) continue;
+    if (/total(?:ing)?|summary|credits\s*:|(?:beginning|previous|opening|ending|closing|new)\s+balance|withdrawals?\s*(?:\/|,)?\s*debits/i.test(line)) continue;
     const amounts = [...line.matchAll(/-?[\d,]+\.\d{2}/g)].map(m => Number(m[0].replace(/,/g, '')));
     for (const n of amounts) {
       if (Number.isFinite(n) && n > max) max = n;
@@ -106,14 +154,28 @@ function largestDepositFromLines(text: string): string | undefined {
   return max > 0 ? String(max) : undefined;
 }
 
+const SUMMARY_LABEL = /(?:(?:beginning|previous|opening|ending|closing|new|present)\s+balance|(?:total\s+)?(?:deposits?|withdrawals?|credits?|debits?))/i;
+
+/** Money printed after this label on the same line (right-aligned amount). */
+function amountAfterLabel(line: string, label: RegExp): string | undefined {
+  const m = line.match(label);
+  if (!m || m.index == null) return undefined;
+  const after = line.slice(m.index + m[0].length);
+  const all = [...after.matchAll(new RegExp(MONEY, 'gi'))];
+  if (!all.length) return undefined;
+  return money(all[0][1]);
+}
+
 /** Label on one line, $ amount on the same line or the next. */
 function amountByLabel(lines: string[], label: RegExp): string | undefined {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (!label.test(line)) continue;
-    const same = line.match(new RegExp(MONEY, 'i'));
-    if (same) return money(same[1]);
-    const next = (lines[i + 1] || '').match(new RegExp(`^${MONEY}$`, 'i'));
+    const same = amountAfterLabel(line, label);
+    if (same) return same;
+    const nextLine = (lines[i + 1] || '').trim();
+    if (SUMMARY_LABEL.test(nextLine) && !new RegExp(`^${MONEY}$`, 'i').test(nextLine)) continue;
+    const next = nextLine.match(new RegExp(`^${MONEY}$`, 'i'));
     if (next) return money(next[1]);
   }
   return undefined;
@@ -141,15 +203,17 @@ export function extractBankMetricsFromText(raw: string): Record<string, string> 
   if (text.replace(/\s/g, '').length < 20) return {};
   const out: Record<string, string> = {};
 
+  const dateAfter = '(?:\\s+(?:ON|AS\\s+OF))?\\s*[\\d/.-]*';
+
   const opening = first(text, [
-    new RegExp(`(?:PREVIOUS|BEGINNING|OPENING|STARTING)\\s+BALANCE\\s*[:\\s]*${MONEY}`, 'i'),
+    new RegExp(`(?:PREVIOUS|BEGINNING|OPENING|STARTING)\\s+BALANCE${dateAfter}\\s*[:\\s]*${MONEY}`, 'i'),
     new RegExp(`${MONEY}\\s*(?:PREVIOUS|BEGINNING|OPENING)\\s+BALANCE`, 'i'),
   ]);
   const openingAmt = captureMoney(opening);
   if (openingAmt) out.openingBalance = openingAmt;
 
   const ending = first(text, [
-    new RegExp(`(?:NEW|ENDING|CLOSING|PRESENT)\\s+BALANCE\\s*[:\\s]*${MONEY}`, 'i'),
+    new RegExp(`(?:NEW|ENDING|CLOSING|PRESENT)\\s+BALANCE${dateAfter}\\s*[:\\s]*${MONEY}`, 'i'),
     new RegExp(`${MONEY}\\s*(?:NEW|ENDING|CLOSING)\\s+BALANCE`, 'i'),
   ]);
   const endingAmt = captureMoney(ending);
@@ -159,7 +223,7 @@ export function extractBankMetricsFromText(raw: string): Record<string, string> 
     new RegExp(`PLUS\\s+(\\d+)\\s+DEPOSITS?[\\s\\S]{0,90}?TOTAL(?:ING)?\\s*${MONEY}`, 'i'),
     new RegExp(`DEPOSITS?(?:\\s*\\/?\\s*OTHER\\s+CREDITS)?\\s*[:\\s]*\\(\\s*(\\d+)\\s*TOTAL(?:ING)?\\s*${MONEY}`, 'i'),
     new RegExp(`DEPOSITS?(?:\\s*\\/?\\s*OTHER\\s+CREDITS)?[^\\d\\-\\n$]{0,40}(\\d+)\\s*TOTAL(?:ING)?\\s*${MONEY}`, 'i'),
-    new RegExp(`(?:TOTAL\\s+)?DEPOSITS?(?:\\s*(?:\\/|,)?\\s*OTHER\\s+CREDITS)?(?:\\s+AND\\s+(?:OTHER\\s+)?(?:ADDITIONS|CREDITS))?\\s*[:\\s]*${MONEY}`, 'i'),
+    new RegExp(`(?:TOTAL\\s+)?DEPOSITS?(?:\\s*(?:\\/|,)?\\s*(?:OTHER\\s+)?CREDITS)?(?:\\s+AND\\s+(?:OTHER\\s+)?(?:ADDITIONS|CREDITS))?\\s*[:\\s]*${MONEY}`, 'i'),
     new RegExp(`DEPOSITS?\\s+AND\\s+ADDITIONS\\s*[:\\s]*${MONEY}`, 'i'),
     new RegExp(`TOTAL\\s+CREDITS\\s*[:\\s]*${MONEY}`, 'i'),
     new RegExp(`${MONEY}\\s*(?:TOTAL\\s+)?DEPOSITS?(?:\\s+AND\\s+ADDITIONS)?`, 'i'),
@@ -187,7 +251,11 @@ export function extractBankMetricsFromText(raw: string): Record<string, string> 
   const lined = fromLabeledLines(text);
   if (!out.openingBalance && lined.openingBalance) out.openingBalance = lined.openingBalance;
   if (!out.endingBalance && lined.endingBalance) out.endingBalance = lined.endingBalance;
-  if (!out.totalDeposits && lined.totalDeposits) {
+  if (lined.totalDeposits && (
+    !out.totalDeposits
+    || out.totalDeposits === out.openingBalance
+    || out.totalDeposits === out.endingBalance
+  )) {
     out.totalDeposits = lined.totalDeposits;
     out.monthlyRevenue = lined.monthlyRevenue || lined.totalDeposits;
   }
@@ -205,15 +273,16 @@ export function extractBankMetricsFromText(raw: string): Record<string, string> 
   const largest = largestDepositFromLines(text);
   if (largest) out.largestDeposit = largest;
 
-  if (out.openingBalance && out.endingBalance && !out.avgDailyBalance) {
-    const a = Number(out.openingBalance);
-    const b = Number(out.endingBalance);
+  const reconciled = reconcileBankMetrics(out);
+  if (reconciled.openingBalance && reconciled.endingBalance && !reconciled.avgDailyBalance) {
+    const a = Number(reconciled.openingBalance);
+    const b = Number(reconciled.endingBalance);
     if (Number.isFinite(a) && Number.isFinite(b)) {
-      out.avgDailyBalance = String(Math.round(((a + b) / 2) * 100) / 100);
+      reconciled.avgDailyBalance = String(Math.round(((a + b) / 2) * 100) / 100);
     }
   }
 
-  return out;
+  return reconciled;
 }
 
 export { MONEY_ONLY };

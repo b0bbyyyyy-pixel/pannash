@@ -5,7 +5,7 @@ import { getAIClient, GROK_MODEL, GROK_VISION_MODELS } from '@/lib/ai';
 import { loadPdfjsNode } from '@/lib/pdf/loadPdfjsNode';
 import { explodeFormLabels, fieldsFromLabeledText, mergeParsedFieldMaps, normalizeParsedFields } from '@/lib/normalizeParsedFields';
 import { extractPdfImages } from '@/lib/pdf/extractPdfImages';
-import { extractBankMetricsFromText, hasBankMetrics } from '@/lib/pdf/extractBankMetrics';
+import { extractBankMetricsFromText, hasBankMetrics, reconcileBankMetrics } from '@/lib/pdf/extractBankMetrics';
 
 export const runtime     = 'nodejs';
 export const maxDuration = 120;
@@ -81,12 +81,12 @@ JSON schema (all fields optional, only include fields that have a value):
 const BANK_PROMPT = `You are a financial analyst extracting data from a business bank statement for MCA underwriting.
 Extract EVERY metric you can. Return ONLY a raw JSON object — no markdown fences.
 
-Look at: CHECKING SUMMARY / account summary boxes first (Previous Balance, Plus N Deposits totaling, New Balance), then daily balances, NSF/overdraft fees, AND the transaction list.
-Frost / community-bank layout:
-- PREVIOUS BALANCE → openingBalance
-- PLUS N DEPOSITS/OTHER CREDITS TOTALING → totalDeposits, depositCount, monthlyRevenue
-- LESS OTHER WITHDRAWALS/DEBITS TOTALING → totalWithdrawals
-- NEW BALANCE → endingBalance
+Look at the account / activity / checking summary box first (whatever the bank calls it), then daily balances, NSF/overdraft fees, AND the transaction list.
+- Previous / beginning / opening balance → openingBalance
+- Total deposits / credits → totalDeposits, depositCount, monthlyRevenue
+- Total withdrawals / debits → totalWithdrawals only. Never copy this into endingBalance, even when printed as a negative.
+- Ending / new / closing balance → endingBalance. This is the statement's ending cash, not withdrawals.
+If opening + deposits − |withdrawals| equals a printed ending balance, use that ending balance.
 
 MCA positions: scan ACH withdrawals / debits for merchant-cash-advance or factoring funders
 (Rapid, OnDeck, Kapitus, Credibly, National Funding, Forward Financing, Libertas, Pearl, Everest,
@@ -410,16 +410,8 @@ export async function POST(request: Request) {
     forcedType === 'bank_statement' || forcedType === 'bank' || forcedType === 'statement';
   const forceApp = forcedType === 'application' || forcedType === 'app';
 
-  const fromClientText = (!forceApp && pageText) ? extractBankMetricsFromText(pageText) : {};
-  if ((forceBank || isBankStatement('', pageText)) && hasBankMetrics(fromClientText)) {
-    return NextResponse.json({
-      fields: normalizeParsedFields(fromClientText),
-      documentType: 'bank_statement',
-    });
-  }
-
   let visionFields: Record<string, string> = {};
-  if (pageFiles.length && !hasBankMetrics(fromClientText)) {
+  if (pageFiles.length) {
     const prompt = forceApp ? APP_PROMPT : BANK_PROMPT;
     const images: { mime: string; buffer: Buffer }[] = [];
     for (const page of pageFiles.slice(0, 6)) {
@@ -429,6 +421,7 @@ export async function POST(request: Request) {
       });
     }
     visionFields = normalizeParsedFields(await extractWithVisionImages(images, prompt));
+    if (!forceApp) visionFields = reconcileBankMetrics(visionFields);
     console.log(`[parse-application] page vision extracted ${Object.keys(visionFields).length} field(s):`, Object.keys(visionFields));
     if (!attachmentId && !filePath && !file) {
       return NextResponse.json({
@@ -541,8 +534,8 @@ export async function POST(request: Request) {
   let fields: Record<string, string> = {};
 
   const usableLayer = layerText.replace(/\s/g, '').length >= 100;
-  const seed = mergeParsedFieldMaps(fromSummary, visionFields);
-  const needAi = !isBank || !hasBankMetrics(seed);
+  // Bank statements always go to AI. Regex is a fallback, not a reason to skip the model.
+  const needAi = !isBank || !hasBankMetrics(visionFields);
 
   if (isImage && needAi) {
     fields = await extractWithVisionAI(buffer, filename, prompt);
@@ -552,7 +545,7 @@ export async function POST(request: Request) {
     if (images.length) {
       fields = await extractWithVisionImages(images, prompt);
     }
-    const afterVision = mergeParsedFieldMaps(fromSummary, visionFields, fields);
+    const afterVision = mergeParsedFieldMaps(visionFields, fields);
     if (!hasBankMetrics(afterVision) && usableLayer) {
       fields = mergeParsedFieldMaps(fields, await extractWithTextAI(layerText, prompt));
     }
@@ -563,8 +556,9 @@ export async function POST(request: Request) {
   }
 
   const fromLabels = fieldsFromLabeledText(textContent);
-  fields = mergeParsedFieldMaps(fromSummary, visionFields, fields, fromLabels);
+  fields = mergeParsedFieldMaps(visionFields, fields, fromSummary, fromLabels);
   fields = normalizeParsedFields(fields);
+  if (isBank) fields = reconcileBankMetrics(fields);
 
   console.log(`[parse-application] Extracted ${Object.keys(fields).length} field(s):`, Object.keys(fields));
 

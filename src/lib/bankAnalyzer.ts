@@ -3,6 +3,8 @@
  * and compact copies for JSON persistence (omit large series).
  */
 
+import { reconcileBankMetrics } from '@/lib/pdf/extractBankMetrics';
+
 export type BankStatementAnalysisSnapshot = {
   analyzedAt: string;
   ai_assisted?: boolean;
@@ -290,10 +292,16 @@ export function parseStatementMonths(raw: unknown): StatementMonth[] {
     if (!row || typeof row !== 'object') continue;
     const r = row as Record<string, unknown>;
     const month = String(r.month ?? r.statementMonth ?? '').trim();
-    const totalDeposits = coerceNumber(r.totalDeposits ?? r.revenue ?? r.monthlyRevenue);
-    const endingBalance = coerceNumber(r.endingBalance ?? r.endBal);
+    const reconciled = reconcileBankMetrics({
+      openingBalance: r.openingBalance != null ? String(r.openingBalance) : '',
+      endingBalance: r.endingBalance != null ? String(r.endingBalance) : (r.endBal != null ? String(r.endBal) : ''),
+      totalDeposits: r.totalDeposits != null ? String(r.totalDeposits) : (r.revenue != null ? String(r.revenue) : (r.monthlyRevenue != null ? String(r.monthlyRevenue) : '')),
+      totalWithdrawals: r.totalWithdrawals != null ? String(r.totalWithdrawals) : '',
+    });
+    const totalDeposits = coerceNumber(reconciled.totalDeposits ?? r.totalDeposits ?? r.revenue ?? r.monthlyRevenue);
+    const endingBalance = coerceNumber(reconciled.endingBalance ?? r.endingBalance ?? r.endBal);
     if (totalDeposits == null && endingBalance == null) continue;
-    const opening = coerceNumber(r.openingBalance);
+    const opening = coerceNumber(reconciled.openingBalance ?? r.openingBalance);
     const ending = endingBalance;
     const adb = coerceNumber(r.avgDailyBalance)
       ?? (opening != null && ending != null ? Math.round(((opening + ending) / 2) * 100) / 100 : null);
@@ -318,19 +326,24 @@ export function parseStatementMonths(raw: unknown): StatementMonth[] {
 }
 
 export function statementMonthFromFields(fields: Record<string, unknown>): StatementMonth | null {
+  const str: Record<string, string> = {};
+  for (const [k, v] of Object.entries(fields)) {
+    if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') str[k] = String(v);
+  }
+  const r = reconcileBankMetrics(str);
   return parseStatementMonths([{
-    month: fields.statementMonth,
-    accountNumber: fields.accountNumber,
-    bankName: fields.bankName,
-    openingBalance: fields.openingBalance,
-    endingBalance: fields.endingBalance,
-    totalDeposits: fields.totalDeposits ?? fields.monthlyRevenue,
-    totalWithdrawals: fields.totalWithdrawals,
-    avgDailyBalance: fields.avgDailyBalance,
-    depositCount: fields.depositCount ?? fields.depositsCount,
-    nsfCount: fields.nsfCount,
-    negativeDays: fields.negativeDays,
-    largestDeposit: fields.largestDeposit,
+    month: r.statementMonth || fields.statementMonth,
+    accountNumber: r.accountNumber || fields.accountNumber,
+    bankName: r.bankName || fields.bankName,
+    openingBalance: r.openingBalance,
+    endingBalance: r.endingBalance,
+    totalDeposits: r.totalDeposits || r.monthlyRevenue,
+    totalWithdrawals: r.totalWithdrawals,
+    avgDailyBalance: r.avgDailyBalance,
+    depositCount: r.depositCount || r.depositsCount,
+    nsfCount: r.nsfCount,
+    negativeDays: r.negativeDays,
+    largestDeposit: r.largestDeposit,
   }])[0] ?? null;
 }
 
@@ -492,9 +505,14 @@ export function mapParsedBankFieldsToUd(fields: Record<string, unknown>): Record
     const requested = requestedAmountFromMonthlyRevenue(ud.monthlyRevenue);
     if (requested != null) ud.requestedAmount = requested;
   } else {
-    const ending = coerceNumber(fields.endingBalance);
-    const opening = coerceNumber(fields.openingBalance);
-    const deposits = coerceNumber(fields.totalDeposits ?? fields.monthlyRevenue);
+    const scalars: Record<string, string> = {};
+    for (const [k, v] of Object.entries(fields)) {
+      if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') scalars[k] = String(v);
+    }
+    const reconciled = reconcileBankMetrics(scalars);
+    const ending = coerceNumber(reconciled.endingBalance);
+    const opening = coerceNumber(reconciled.openingBalance);
+    const deposits = coerceNumber(reconciled.totalDeposits ?? reconciled.monthlyRevenue);
     const adb = coerceNumber(fields.avgDailyBalance)
       ?? (opening != null && ending != null ? Math.round(((opening + ending) / 2) * 100) / 100 : null);
     const nsf = coerceNumber(fields.nsfCount);

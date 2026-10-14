@@ -2,11 +2,16 @@ import { getAIClient, GROK_MODEL, GROK_VISION_MODELS } from '@/lib/ai';
 import { loadPdfjsNode } from '@/lib/pdf/loadPdfjsNode';
 import { mergeParsedFieldMaps, normalizeParsedFields } from '@/lib/normalizeParsedFields';
 import { extractPdfImages } from '@/lib/pdf/extractPdfImages';
-import { extractBankMetricsFromText, hasBankMetrics } from '@/lib/pdf/extractBankMetrics';
+import { extractBankMetricsFromText, hasBankMetrics, reconcileBankMetrics } from '@/lib/pdf/extractBankMetrics';
 
 const BANK_PROMPT = `You are a financial analyst extracting data from a business bank statement for MCA underwriting.
 Extract EVERY metric you can. Return ONLY a raw JSON object — no markdown fences.
-Read CHECKING SUMMARY / account summary first: Previous Balance, Plus N Deposits totaling, New Balance.
+Read the account / activity / checking summary box first, whatever the bank calls it.
+- Previous / beginning / opening balance → openingBalance
+- Total deposits / credits → totalDeposits and monthlyRevenue
+- Total withdrawals / debits → totalWithdrawals only. Never copy this into endingBalance, even when printed as a negative.
+- Ending / new / closing balance → endingBalance. This is the statement's ending cash, not withdrawals.
+If opening + deposits − |withdrawals| equals a printed ending balance, use that ending balance.
 {
   "company": "",
   "bankName": "",
@@ -151,7 +156,7 @@ async function extractWithVision(
           content: [
             {
               type: 'text',
-              text: `File: ${filename}. Read the CHECKING SUMMARY / previous-new balance box on these pages. You MUST fill totalDeposits, monthlyRevenue, openingBalance, endingBalance, statementMonth (YYYY-MM). Digits only for money.`,
+              text: `File: ${filename}. Read the account summary box on these pages. endingBalance is the ending/new/closing balance only — never withdrawals/debits. You MUST fill totalDeposits, monthlyRevenue, openingBalance, endingBalance, totalWithdrawals, statementMonth (YYYY-MM). Digits only for money.`,
             },
             ...pages.map(img => ({
               type: 'image_url',
@@ -210,20 +215,15 @@ export async function analyzeStoredBankPdf(
     extractBankMetricsFromText(layer),
     extractBankMetricsFromText(raw),
   );
-  if (hasBankMetrics(fromText)) {
-    console.log(`[analyze-bank] ${filename}: summary box`, Object.keys(fromText));
-    return normalizeParsedFields(fromText);
-  }
 
   const images = await extractPdfImages(buffer, loadPdfjs);
-  console.log(`[analyze-bank] ${filename}: images=${images.length}`);
-  const vision = images.length ? await extractWithVision(images, filename) : {};
-  const merged = mergeParsedFieldMaps(fromText, vision);
-  if (hasBankMetrics(merged)) return normalizeParsedFields(merged);
-
-  if (layer.replace(/\s/g, '').length >= 40) {
-    const ai = await extractWithTextAI(layer);
-    return normalizeParsedFields(mergeParsedFieldMaps(merged, ai));
+  console.log(`[analyze-bank] ${filename}: images=${images.length} textKeys=${Object.keys(fromText).join(',')}`);
+  let ai: Record<string, string> = {};
+  if (images.length) ai = await extractWithVision(images, filename);
+  if (!hasBankMetrics(ai) && layer.replace(/\s/g, '').length >= 40) {
+    ai = mergeParsedFieldMaps(ai, await extractWithTextAI(layer));
   }
-  return normalizeParsedFields(merged);
+
+  // AI first; regex only fills keys the model left blank, then identity-check ending vs withdrawals.
+  return reconcileBankMetrics(normalizeParsedFields(mergeParsedFieldMaps(ai, fromText)));
 }

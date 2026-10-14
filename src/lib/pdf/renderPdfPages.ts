@@ -1,6 +1,6 @@
 'use client';
 
-import { extractBankMetricsFromText, hasBankMetrics } from '@/lib/pdf/extractBankMetrics';
+import { extractBankMetricsFromText } from '@/lib/pdf/extractBankMetrics';
 
 async function loadPdfJs() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -12,20 +12,6 @@ async function loadPdfJs() {
   lib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
   w.__pdfjsLib = lib;
   return lib;
-}
-
-async function loadTesseract(): Promise<{ recognize: (img: HTMLCanvasElement, lang: string) => Promise<{ data: { text: string } }> }> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const w = window as any;
-  if (w.Tesseract) return w.Tesseract;
-  await new Promise<void>((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error('Could not load page OCR'));
-    document.head.appendChild(script);
-  });
-  return w.Tesseract;
 }
 
 function pagesToRender(numPages: number, maxPages: number): number[] {
@@ -92,7 +78,7 @@ export type BankPdfRead = {
   pages: File[];
 };
 
-/** One PDF load: text layer, then last-page render + OCR if the summary is only in the image. */
+/** One PDF load: text layer plus first/last page images for AI vision. */
 export async function readBankStatementPdf(
   data: ArrayBuffer,
   opts?: { fileName?: string },
@@ -112,38 +98,19 @@ export async function readBankStatementPdf(
   }
   const text = parts.join('\n\n').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
   const fromText = extractBankMetricsFromText(text);
-  if (hasBankMetrics(fromText)) {
-    return { text, fields: fromText, pages: [] };
-  }
 
   const stem = (opts?.fileName || 'statement').replace(/\.[^.]+$/, '') || 'statement';
   const indices = pagesToRender(pdf.numPages, 2);
   const pages: File[] = [];
-  const canvases: HTMLCanvasElement[] = [];
   for (const i of indices) {
     const page = await pdf.getPage(i);
     const canvas = await renderPageCanvas(page);
     if (!canvas) continue;
-    canvases.push(canvas);
     const file = await canvasToFile(canvas, `${stem}-p${i}.jpg`);
     if (file) pages.push(file);
   }
 
-  let ocrText = '';
-  try {
-    const tesseract = await loadTesseract();
-    for (const canvas of [...canvases].reverse()) {
-      const result = await tesseract.recognize(canvas, 'eng');
-      if (result?.data?.text) ocrText += `\n${result.data.text}`;
-      if (hasBankMetrics(extractBankMetricsFromText(ocrText))) break;
-    }
-  } catch (err) {
-    console.warn('Statement page OCR failed', err);
-  }
-
-  const combined = [text, ocrText].filter(Boolean).join('\n\n');
-  const fields = extractBankMetricsFromText(combined);
-  return { text: combined, fields, pages };
+  return { text, fields: fromText, pages };
 }
 
 export async function extractPdfText(data: ArrayBuffer): Promise<string> {

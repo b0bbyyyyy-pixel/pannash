@@ -57,13 +57,11 @@ export type CasperOutboxRow = {
   error?: string | null;
 };
 
-/** 70% 45s–2.5min, 30% 2.5–5min, plus ~1s per 20 characters. */
+/** 45s–2.5min, plus ~1s per 20 characters, hard-capped at 2.5min. */
 export function outboxDelayMs(text: string): number {
-  const base = Math.random() < 0.7
-    ? 45_000 + Math.random() * (150_000 - 45_000)
-    : 150_000 + Math.random() * (300_000 - 150_000);
+  const base = 45_000 + Math.random() * (150_000 - 45_000);
   const typing = Math.floor(String(text || '').length / 20) * 1000;
-  return Math.round(base + typing);
+  return Math.min(150_000, Math.round(base + typing));
 }
 
 /** @deprecated Use outboxDelayMs — replies are scheduled, not slept in-request. */
@@ -140,12 +138,21 @@ export async function enqueueCasperOutbox(
   supabase: any,
   args: EnqueueOutboxArgs,
 ): Promise<{ id: string | null; sendAt: string; cancelled: number }> {
+  const existing = await getPendingOutboxForLead(supabase, {
+    userId: args.userId,
+    leadId: args.leadId,
+  });
   const cancelled = await cancelPendingOutbox(supabase, {
     leadId: args.leadId,
     userId: args.userId,
   });
 
-  const sendAt = new Date(Date.now() + outboxDelayMs(args.body)).toISOString();
+  let sendAtMs = Date.now() + outboxDelayMs(args.body);
+  if (existing?.send_at) {
+    const prev = new Date(existing.send_at).getTime();
+    if (Number.isFinite(prev) && prev > Date.now()) sendAtMs = Math.min(sendAtMs, prev);
+  }
+  const sendAt = new Date(sendAtMs).toISOString();
   const row = {
     user_id: args.userId,
     lead_id: args.leadId,
