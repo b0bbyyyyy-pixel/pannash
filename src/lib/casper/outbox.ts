@@ -103,6 +103,26 @@ export async function cancelPendingOutbox(
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function getPendingOutboxForLead(
+  supabase: any,
+  args: { userId: string; leadId: string },
+): Promise<{ id: string; body: string; send_at: string; created_at: string } | null> {
+  try {
+    const { data, error } = await supabase
+      .from('casper_outbox')
+      .select('id, body, send_at, created_at')
+      .eq('user_id', args.userId)
+      .eq('lead_id', args.leadId)
+      .eq('status', 'pending')
+      .maybeSingle();
+    if (error || !data) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
 export type EnqueueOutboxArgs = {
   userId: string;
   leadId: string;

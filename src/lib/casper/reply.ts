@@ -8,7 +8,7 @@ import {
 import { emailApplicationToLead } from '@/lib/casper/emailApplication';
 import { leadInAiFullPacks } from '@/lib/casper/fullPacks';
 import { extractEmailFromSms, runUpdateLeadEmailTool } from '@/lib/casper/updateLeadEmail';
-import { cancelPendingOutbox, enqueueCasperOutbox, kickOutboxPump } from '@/lib/casper/outbox';
+import { cancelPendingOutbox, enqueueCasperOutbox, getPendingOutboxForLead, kickOutboxPump } from '@/lib/casper/outbox';
 import { logCasperRun, upsertCasperLeadState } from '@/lib/casper/runs';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
 import { sendTwilioSms } from '@/lib/telephony/sms';
@@ -160,6 +160,21 @@ export async function runCasperInboundSms(
       inputSummary: args.body.slice(0, 200),
     });
     return { replied: false, reason: 'already_replied' };
+  }
+
+  const lastInboundAt = (thread ?? []).find((m: { direction: string }) => m.direction === 'inbound')?.created_at;
+  const existing = await getPendingOutboxForLead(supabase, { userId: args.userId, leadId: args.lead.id });
+  if (existing) {
+    const inboundMs = lastInboundAt ? new Date(lastInboundAt).getTime() : 0;
+    const queuedMs = new Date(existing.created_at).getTime();
+    if (!inboundMs || inboundMs <= queuedMs + 2000) {
+      return {
+        replied: true,
+        reason: 'scheduled',
+        body: existing.body,
+        send_at: existing.send_at,
+      };
+    }
   }
 
   await cancelPendingOutbox(supabase, { leadId: args.lead.id, userId: args.userId });

@@ -596,13 +596,16 @@ export default function InboxClient({
     try {
       const res = await fetch('/api/casper/outbox');
       const json = await res.json();
-      const next: Record<string, { send_at: string; body: string }> = {};
-      for (const row of Array.isArray(json.pending) ? json.pending : []) {
-        if (row.lead_id && row.send_at) {
-          next[row.lead_id] = { send_at: row.send_at, body: String(row.body || '') };
+      if (!res.ok || !Array.isArray(json.pending)) return;
+      setOutboxByLead(prev => {
+        const next = { ...prev };
+        for (const row of json.pending) {
+          if (row.lead_id && row.send_at) {
+            next[row.lead_id] = { send_at: row.send_at, body: String(row.body || '') };
+          }
         }
-      }
-      setOutboxByLead(next);
+        return next;
+      });
     } catch {
       /* table may not exist yet */
     }
@@ -672,15 +675,16 @@ export default function InboxClient({
     });
   }, [pulse, loadLeads, selectedLeadId]);
 
-  // If the inbound webhook timed out, kick Casper from the open thread.
-  // Retry a few times — a 401 during auth rate-limit used to leave this bubble stuck.
+  // One kick per inbound. Retries must not cancel a queued draft.
+  const casperKickedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (!selectedLeadId || !casperWaiting || !lastThreadMsg || scheduledSendAt) return;
+    if (!selectedLeadId || !casperWaiting || !lastThreadMsg) return;
+    const key = `${selectedLeadId}:${lastThreadMsg.id}`;
+    if (scheduledSendAt || casperKickedRef.current.has(key)) return;
     setCasperSkip(null);
-    let tries = 0;
-    const kick = () => {
-      if (tries >= 3) return;
-      tries += 1;
+    const t = window.setTimeout(() => {
+      if (casperKickedRef.current.has(key)) return;
+      casperKickedRef.current.add(key);
       fetch('/api/casper/reply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -694,21 +698,18 @@ export default function InboxClient({
               ...prev,
               [selectedLeadId]: { send_at: json.send_at, body: String(json.body || '') },
             }));
-          } else if (json.reason && json.reason !== 'already_running') {
+          } else if (json.reason && json.reason !== 'already_running' && json.reason !== 'scheduled') {
+            casperKickedRef.current.delete(key);
             setCasperSkip(String(json.reason));
           }
           void loadOutbox();
-          void loadMessages(selectedLeadId, { quiet: true });
         })
-        .catch(() => {});
-    };
-    const first = window.setTimeout(kick, 400);
-    const again = window.setInterval(kick, 15_000);
-    return () => {
-      window.clearTimeout(first);
-      window.clearInterval(again);
-    };
-  }, [selectedLeadId, casperWaiting, lastThreadMsg?.id, scheduledSendAt, loadMessages, loadOutbox]);
+        .catch(() => {
+          casperKickedRef.current.delete(key);
+        });
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [selectedLeadId, casperWaiting, lastThreadMsg?.id, scheduledSendAt, loadOutbox]);
 
   // Keep the thread pinned to newest only if the user is already at the bottom
   // (or just opened/sent). Polling must not yank the view while reading history.
