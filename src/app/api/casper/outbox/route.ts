@@ -53,7 +53,6 @@ export async function GET(req: NextRequest) {
     const user = await getRequestUser(supabase);
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    await processDueCasperOutbox(supabase, user.id);
     const pending = await listPendingOutbox(supabase, user.id);
     return NextResponse.json({ pending });
   } catch (err) {

@@ -57,11 +57,13 @@ export type CasperOutboxRow = {
   error?: string | null;
 };
 
-/** 45s–2.5min, plus ~1s per 20 characters, hard-capped at 2.5min. */
+/** 30s–90s, plus ~1s per 20 characters, hard-capped at 90s. */
 export function outboxDelayMs(text: string): number {
-  const base = 45_000 + Math.random() * (150_000 - 45_000);
+  const min = 30_000;
+  const max = 90_000;
+  const base = min + Math.random() * (max - min);
   const typing = Math.floor(String(text || '').length / 20) * 1000;
-  return Math.min(150_000, Math.round(base + typing));
+  return Math.min(max, Math.round(base + typing));
 }
 
 /** @deprecated Use outboxDelayMs — replies are scheduled, not slept in-request. */
@@ -292,15 +294,45 @@ async function clearReplyingIfIdle(supabase: any, row: CasperOutboxRow, handedOf
   });
 }
 
+function sameSmsBody(a: string, b: string) {
+  return String(a || '').replace(/\s+/g, ' ').trim() === String(b || '').replace(/\s+/g, ' ').trim();
+}
+
+/** First writer to flip pending → sent owns the Twilio send. Others no-op. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function claimPendingOutbox(supabase: any, id: string): Promise<CasperOutboxRow | null> {
+  const { data, error } = await supabase
+    .from('casper_outbox')
+    .update({ status: 'sent' })
+    .eq('id', id)
+    .eq('status', 'pending')
+    .select('*')
+    .maybeSingle();
+  if (error) {
+    console.error('[casper] claim outbox', error);
+    return null;
+  }
+  return (data as CasperOutboxRow) || null;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function recentlySentSameSms(supabase: any, row: CasperOutboxRow): Promise<boolean> {
+  const since = new Date(Date.now() - 180_000).toISOString();
+  const { data } = await supabase
+    .from('inbox_messages')
+    .select('body')
+    .eq('lead_id', row.lead_id)
+    .eq('direction', 'outbound')
+    .gte('created_at', since)
+    .order('created_at', { ascending: false })
+    .limit(8);
+  return (data ?? []).some((m: { body?: string }) => sameSmsBody(String(m.body || ''), row.body));
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function sendOneOutbox(supabase: any, raw: CasperOutboxRow): Promise<{ sent: boolean; reason?: string }> {
-  const { data: fresh } = await supabase
-    .from('casper_outbox')
-    .select('*')
-    .eq('id', raw.id)
-    .maybeSingle();
-  const row = (fresh || raw) as CasperOutboxRow;
-  if (row.status !== 'pending') return { sent: false, reason: row.status };
+  const row = await claimPendingOutbox(supabase, raw.id);
+  if (!row) return { sent: false, reason: 'already_claimed' };
 
   const gate = await outboxStillAllowed(supabase, row);
   if (!gate.ok) {
@@ -338,6 +370,24 @@ async function sendOneOutbox(supabase: any, raw: CasperOutboxRow): Promise<{ sen
     });
     await clearReplyingIfIdle(supabase, row, row.phase === 'handed_off');
     return { sent: false, reason: 'no_twilio' };
+  }
+
+  if (await recentlySentSameSms(supabase, row)) {
+    await markOutbox(supabase, row.id, 'cancelled', 'duplicate_body');
+    await logCasperRun(supabase, {
+      userId: row.user_id,
+      leadId: row.lead_id,
+      trigger: 'outbox',
+      status: 'ok',
+      thinking: row.thinking,
+      actions: [...(Array.isArray(row.actions) ? row.actions : []), { type: 'sms', cancelled: true, reason: 'duplicate_body' }],
+      model: row.model,
+      inputSummary: row.input_summary,
+      outputSummary: row.body,
+      error: 'duplicate_body',
+    });
+    await clearReplyingIfIdle(supabase, row, row.phase === 'handed_off');
+    return { sent: false, reason: 'duplicate_body' };
   }
 
   let sid: string | null = null;
@@ -390,7 +440,6 @@ async function sendOneOutbox(supabase: any, raw: CasperOutboxRow): Promise<{ sen
     return { sent: false, reason: sendError || 'send_failed' };
   }
 
-  await markOutbox(supabase, row.id, 'sent', null);
   await clearReplyingIfIdle(supabase, row, row.phase === 'handed_off');
   return { sent: true };
 }
