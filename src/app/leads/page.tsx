@@ -272,7 +272,6 @@ export default async function LeadsPage({
   // Suppress unused-warning for server actions we keep for completeness
   void deleteLead;
   void deleteList;
-  void deleteListWithLeads;
 
   return (
     <div className="min-h-screen bg-[#fafafa]">
@@ -298,12 +297,12 @@ export default async function LeadsPage({
             leads={campaignLeads}
             campaignName={selectedList?.name || 'Campaign'}
             listId={selectedListId}
+            deleteCampaign={deleteListWithLeads}
           />
         ) : (
           <CampaignRenameWrapperComponent
             campaigns={campaigns}
             renameCampaign={renameCampaign}
-            deleteCampaign={deleteListWithLeads}
           />
         )}
       </main>

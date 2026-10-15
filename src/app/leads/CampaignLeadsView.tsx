@@ -53,6 +53,7 @@ interface Props {
   leads: CampaignLead[];
   campaignName: string;
   listId: string;
+  deleteCampaign?: (formData: FormData) => Promise<void>;
 }
 
 function relativeTime(dateStr: string | null | undefined): string {
@@ -135,7 +136,7 @@ function listedRevenue(notes: string | null | undefined): string {
   return '';
 }
 
-export default function CampaignLeadsView({ leads: initialLeads, campaignName, listId }: Props) {
+export default function CampaignLeadsView({ leads: initialLeads, campaignName, listId, deleteCampaign }: Props) {
   const router = useRouter();
   const [leads, setLeads] = useState<CampaignLead[]>(initialLeads);
   const [search, setSearch] = useState('');
@@ -143,6 +144,8 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
   const [pipelineMoving, setPipelineMoving] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; lead: CampaignLead } | null>(null);
   const contextRef = useRef<HTMLDivElement>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   // ---- SMS drip state ----
   const [dripJob, setDripJob] = useState<DripJob | null>(null);
@@ -450,6 +453,18 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
             >
               Upload
             </button>
+            {deleteCampaign ? (
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(true)}
+                className="text-[#c4c4c4] hover:text-red-500 transition-colors"
+                title="Delete campaign"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </button>
+            ) : null}
           </div>
         </div>
       </div>
@@ -701,6 +716,44 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
           onStarted={async () => { setShowRunSms(false); await refreshDrip(); }}
         />
       )}
+
+      {confirmDelete && deleteCampaign ? (
+        <>
+          <div className="fixed inset-0 bg-black/40 z-[80]" onClick={() => setConfirmDelete(false)} />
+          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[81] bg-white rounded-2xl shadow-2xl p-6 w-80">
+            <h3 className="text-sm font-bold text-[#1a1a1a] mb-2">Delete campaign?</h3>
+            <p className="text-xs text-[#9b9b9b] mb-5">This will permanently delete {campaignName} and all its leads. This cannot be undone.</p>
+            <div className="flex gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(false)}
+                className="px-4 py-2 text-sm text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={async () => {
+                  setDeleting(true);
+                  const formData = new FormData();
+                  formData.set('listId', listId);
+                  try {
+                    await deleteCampaign(formData);
+                  } catch {
+                    /* server action may redirect */
+                  }
+                  router.push('/leads');
+                  router.refresh();
+                }}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600 rounded-lg transition-colors disabled:opacity-50"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }
