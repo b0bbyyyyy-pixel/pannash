@@ -143,7 +143,7 @@ export default function Navbar({ userName }: NavbarProps) {
             {showDropdown && (
               <div className="absolute right-0 top-full mt-2 w-64 bg-white border border-[#e5e5e5] rounded-md shadow-lg py-2">
                 <Link
-                  href={dripJob?.list_id ? `/leads?list=${dripJob.list_id}` : '/leads'}
+                  href="/leads"
                   className="flex items-center gap-2 px-4 py-2.5 text-sm text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors"
                   onClick={() => setShowDropdown(false)}
                 >
