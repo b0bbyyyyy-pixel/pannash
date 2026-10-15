@@ -56,25 +56,25 @@ export async function GET(req: NextRequest) {
       .maybeSingle();
     if (!list) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-    let leadRes = await supabase
-      .from('leads')
-      .select('id, sms_sent_at, sms_opt_out, in_pipeline, lead_status, underwriting_data')
-      .eq('list_id', listId);
-    if (leadRes.error) {
-      leadRes = await supabase
-        .from('leads')
-        .select('id, sms_sent_at, sms_opt_out, lead_status, underwriting_data')
-        .eq('list_id', listId);
-    }
-
-    const leadRows = (leadRes.data ?? []) as {
+    type LeadRow = {
       id: string;
       sms_sent_at?: string | null;
       sms_opt_out?: boolean | null;
       in_pipeline?: boolean | null;
       lead_status?: string | null;
       underwriting_data?: unknown;
-    }[];
+    };
+    const full = await supabase
+      .from('leads')
+      .select('id, sms_sent_at, sms_opt_out, in_pipeline, lead_status, underwriting_data')
+      .eq('list_id', listId);
+    const slim = full.error
+      ? await supabase
+          .from('leads')
+          .select('id, sms_sent_at, sms_opt_out, lead_status, underwriting_data')
+          .eq('list_id', listId)
+      : null;
+    const leadRows = ((slim ?? full).data ?? []) as LeadRow[];
     const leadIds = leadRows.map(l => l.id);
     const textedIds = new Set(leadRows.filter(l => l.sms_sent_at).map(l => l.id));
     const optOuts = leadRows.filter(l => l.sms_opt_out).length;
