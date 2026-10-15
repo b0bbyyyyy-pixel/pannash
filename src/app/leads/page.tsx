@@ -41,6 +41,30 @@ export default async function LeadsPage({
     .eq('user_id', user.id)
     .order('created_at', { ascending: false });
 
+  const inboundRes = await supabase
+    .from('inbox_conversations')
+    .select('lead_id, last_inbound_at, last_direction')
+    .eq('user_id', user.id)
+    .or('last_inbound_at.not.is.null,last_direction.eq.inbound')
+    .limit(10000);
+
+  let inboundRows = inboundRes.data as { lead_id: string; last_inbound_at?: string | null; last_direction?: string | null }[] | null;
+  if (inboundRes.error) {
+    const retry = await supabase
+      .from('inbox_conversations')
+      .select('lead_id, last_direction')
+      .eq('user_id', user.id)
+      .eq('last_direction', 'inbound')
+      .limit(10000);
+    inboundRows = retry.data as typeof inboundRows;
+  }
+
+  const repliedIds = new Set(
+    (inboundRows ?? [])
+      .filter(c => c.last_inbound_at || c.last_direction === 'inbound')
+      .map(c => c.lead_id),
+  );
+
   const campaignStats = await Promise.all(
     (leadLists || []).map(async (list) => {
       const { data: stats } = await supabase
@@ -51,7 +75,8 @@ export default async function LeadsPage({
       const smsCount = stats?.filter((l) => l.sms_sent_at).length || 0;
       const callCount = stats?.filter((l) => l.call_made_at).length || 0;
       const touchedCount = stats?.filter((l) => l.sms_sent_at || l.call_made_at).length || 0;
-      return { listId: list.id, total, smsCount, callCount, touchedCount };
+      const replyCount = stats?.filter((l) => l.sms_sent_at && repliedIds.has(l.id)).length || 0;
+      return { listId: list.id, total, smsCount, callCount, touchedCount, replyCount };
     })
   );
 
@@ -61,6 +86,7 @@ export default async function LeadsPage({
       smsCount: 0,
       callCount: 0,
       touchedCount: 0,
+      replyCount: 0,
     };
     return {
       id: list.id,
@@ -70,6 +96,7 @@ export default async function LeadsPage({
       smsCount: stats.smsCount,
       callCount: stats.callCount,
       touchedCount: stats.touchedCount,
+      replyCount: stats.replyCount,
     };
   });
 

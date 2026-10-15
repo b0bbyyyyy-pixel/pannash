@@ -22,6 +22,7 @@ export interface Campaign {
   smsCount: number;
   callCount: number;
   touchedCount: number;
+  replyCount: number;
 }
 
 interface Props {
@@ -94,11 +95,12 @@ export default function CampaignTable({ campaigns, onRename, onDelete }: Props) 
       <table className="w-full">
         <thead>
           <tr className="border-b border-[#f5f5f5]">
+            <th className="text-[11px] font-bold text-[#9b9b9b] uppercase tracking-wider px-4 py-2 text-left">Created</th>
             <th className="text-[11px] font-bold text-[#9b9b9b] uppercase tracking-wider px-4 py-2 text-left">Campaign</th>
             <th className="text-[11px] font-bold text-[#9b9b9b] uppercase tracking-wider px-4 py-2 text-left">Total</th>
             <th className="text-[11px] font-bold text-[#9b9b9b] uppercase tracking-wider px-4 py-2 text-left">Outreach</th>
+            <th className="text-[11px] font-bold text-[#9b9b9b] uppercase tracking-wider px-4 py-2 text-left">Response</th>
             <th className="text-[11px] font-bold text-[#9b9b9b] uppercase tracking-wider px-4 py-2 text-left">Progress</th>
-            <th className="text-[11px] font-bold text-[#9b9b9b] uppercase tracking-wider px-4 py-2 text-left">Created</th>
             <th className="px-4 py-2"></th>
           </tr>
         </thead>
@@ -111,6 +113,11 @@ export default function CampaignTable({ campaigns, onRename, onDelete }: Props) 
                 onClick={() => router.push(`/leads?list=${campaign.id}`)}
                 className="border-b border-[#f5f5f5] hover:bg-[#fafafa] cursor-pointer transition-colors last:border-b-0"
               >
+                {/* Created date */}
+                <td className="px-4 py-2">
+                  <span className="text-sm text-[#9b9b9b]">{formatDate(campaign.created_at)}</span>
+                </td>
+
                 {/* Campaign name */}
                 <td className="px-4 py-2" onClick={(e) => e.stopPropagation()}>
                   <div className="flex items-center gap-2">
@@ -190,6 +197,22 @@ export default function CampaignTable({ campaigns, onRename, onDelete }: Props) 
                   </div>
                 </td>
 
+                {/* Response rate vs texts sent */}
+                <td className="px-4 py-2">
+                  {campaign.smsCount > 0 ? (
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-sm text-[#1a1a1a] font-medium">
+                        {Math.round((campaign.replyCount / campaign.smsCount) * 100)}%
+                      </span>
+                      <span className="text-[11px] text-[#9b9b9b] font-medium whitespace-nowrap">
+                        {campaign.replyCount}/{campaign.smsCount}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="text-sm text-[#c4c4c4]">—</span>
+                  )}
+                </td>
+
                 {/* Progress bar */}
                 <td className="px-4 py-2 min-w-[120px]">
                   <div className="flex items-center gap-2">
@@ -203,11 +226,6 @@ export default function CampaignTable({ campaigns, onRename, onDelete }: Props) 
                       {campaign.touchedCount}/{campaign.total}
                     </span>
                   </div>
-                </td>
-
-                {/* Created date */}
-                <td className="px-4 py-2">
-                  <span className="text-sm text-[#9b9b9b]">{formatDate(campaign.created_at)}</span>
                 </td>
 
                 {/* Actions */}
