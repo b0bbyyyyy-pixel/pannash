@@ -26,6 +26,15 @@ type Insights = {
     replyRate: number;
   }[];
   failures: { error: string; count: number }[];
+  topStates?: { state: string; label: string; replies: number; share: number }[];
+  topAreaCodes?: {
+    areaCode: string;
+    city: string | null;
+    state: string | null;
+    replies: number;
+    share: number;
+  }[];
+  topIndustries?: { industry: string; replies: number; share: number }[];
 };
 
 function pct(part: number, whole: number) {
@@ -41,6 +50,36 @@ function Row({ label, value, hint }: { label: string; value: string | number; hi
         {value}
         {hint ? <span className="ml-2 text-[11px] text-[#9b9b9b]">{hint}</span> : null}
       </span>
+    </div>
+  );
+}
+
+function RankedList({
+  title,
+  empty,
+  rows,
+}: {
+  title: string;
+  empty: string;
+  rows: { label: string; replies: number; share: number }[];
+}) {
+  return (
+    <div>
+      <div className="text-[11px] font-semibold uppercase tracking-wider text-[#9b9b9b] mb-2">{title}</div>
+      {rows.length === 0 ? (
+        <p className="text-sm text-[#9b9b9b]">{empty}</p>
+      ) : (
+        <div className="divide-y divide-[#f0f0f0]">
+          {rows.map(row => (
+            <Row
+              key={row.label}
+              label={row.label}
+              value={row.replies}
+              hint={`${row.share}% of replies`}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -191,6 +230,36 @@ export default function CampaignInsightsModal({
                   </div>
                 )}
               </div>
+
+              <RankedList
+                title="Top states"
+                empty="No state data on replies yet."
+                rows={(data.topStates ?? []).map(s => ({
+                  label: s.label,
+                  replies: s.replies,
+                  share: s.share,
+                }))}
+              />
+
+              <RankedList
+                title="Top area codes"
+                empty="No area-code data on replies yet."
+                rows={(data.topAreaCodes ?? []).map(a => ({
+                  label: a.city && a.state ? `${a.areaCode} · ${a.city}, ${a.state}` : a.areaCode,
+                  replies: a.replies,
+                  share: a.share,
+                }))}
+              />
+
+              <RankedList
+                title="Top industries"
+                empty="No industry signal from company names yet."
+                rows={(data.topIndustries ?? []).map(i => ({
+                  label: i.industry,
+                  replies: i.replies,
+                  share: i.share,
+                }))}
+              />
 
               {data.failures.length > 0 ? (
                 <div>

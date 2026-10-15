@@ -444,6 +444,34 @@ const areaCodeDatabase: AreaCodeData[] = [
   { areaCode: '307', city: 'Cheyenne', state: 'WY', timezone: 'America/Denver' },
 ];
 
+export const US_STATE_NAMES: Record<string, string> = {
+  AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California',
+  CO: 'Colorado', CT: 'Connecticut', DC: 'Washington DC', DE: 'Delaware', FL: 'Florida',
+  GA: 'Georgia', HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana',
+  IA: 'Iowa', KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine',
+  MD: 'Maryland', MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi',
+  MO: 'Missouri', MT: 'Montana', NE: 'Nebraska', NV: 'Nevada', NH: 'New Hampshire',
+  NJ: 'New Jersey', NM: 'New Mexico', NY: 'New York', NC: 'North Carolina', ND: 'North Dakota',
+  OH: 'Ohio', OK: 'Oklahoma', OR: 'Oregon', PA: 'Pennsylvania', PR: 'Puerto Rico',
+  RI: 'Rhode Island', SC: 'South Carolina', SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas',
+  UT: 'Utah', VT: 'Vermont', VA: 'Virginia', WA: 'Washington', WV: 'West Virginia',
+  WI: 'Wisconsin', WY: 'Wyoming',
+};
+
+export function extractNanpAreaCode(phoneNumber: string | null | undefined): string | null {
+  if (!phoneNumber) return null;
+  const digits = phoneNumber.replace(/\D/g, '');
+  if (digits.length === 11 && digits.startsWith('1')) return digits.substring(1, 4);
+  if (digits.length === 10) return digits.substring(0, 3);
+  return null;
+}
+
+export function lookupAreaCode(areaCode: string): { city: string; state: string } | null {
+  const row = areaCodeDatabase.find(data => data.areaCode === areaCode);
+  if (!row) return null;
+  return { city: row.city, state: row.state };
+}
+
 export interface PhoneLocationInfo {
   city: string;
   state: string;
@@ -453,24 +481,9 @@ export interface PhoneLocationInfo {
 }
 
 export function getPhoneLocation(phoneNumber: string | null, userTimezone: string = 'America/New_York'): PhoneLocationInfo | null {
-  if (!phoneNumber) return null;
-  
-  // Extract just the digits
-  const digits = phoneNumber.replace(/\D/g, '');
-  
-  // Extract area code (first 3 digits after country code if present)
-  let areaCode = '';
-  if (digits.length === 11 && digits.startsWith('1')) {
-    // US number with country code
-    areaCode = digits.substring(1, 4);
-  } else if (digits.length === 10) {
-    // US number without country code
-    areaCode = digits.substring(0, 3);
-  } else {
-    return null; // Invalid or non-US number
-  }
-  
-  // Look up area code in database
+  const areaCode = extractNanpAreaCode(phoneNumber);
+  if (!areaCode) return null;
+
   const locationData = areaCodeDatabase.find(data => data.areaCode === areaCode);
   
   if (!locationData) {

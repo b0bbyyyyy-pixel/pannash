@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { classifyReply } from '@/lib/smsDrip/classifyReply';
+import { industryFromCompany } from '@/lib/smsDrip/industryFromCompany';
 import { tallyDripSends } from '@/lib/smsDrip/tally';
+import { extractNanpAreaCode, lookupAreaCode, US_STATE_NAMES } from '@/lib/phoneLocation';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,6 +30,22 @@ function matchesStatus(names: Set<string>, want: string) {
   if (isDocsInStatus(want)) return [...names].some(n => isDocsInStatus(n));
   const w = want.trim().toLowerCase();
   return [...names].some(n => n.trim().toLowerCase() === w);
+}
+
+function bump(map: Map<string, number>, key: string) {
+  map.set(key, (map.get(key) ?? 0) + 1);
+}
+
+function topCounts(map: Map<string, number>, total: number, limit = 8) {
+  return [...map.entries()]
+    .filter(([, count]) => count > 0)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([key, replies]) => ({
+      key,
+      replies,
+      share: total ? Math.round((replies / total) * 100) : 0,
+    }));
 }
 
 async function getClient() {
@@ -58,6 +76,8 @@ export async function GET(req: NextRequest) {
 
     type LeadRow = {
       id: string;
+      phone?: string | null;
+      company?: string | null;
       sms_sent_at?: string | null;
       sms_opt_out?: boolean | null;
       in_pipeline?: boolean | null;
@@ -66,12 +86,12 @@ export async function GET(req: NextRequest) {
     };
     const full = await supabase
       .from('leads')
-      .select('id, sms_sent_at, sms_opt_out, in_pipeline, lead_status, underwriting_data')
+      .select('id, phone, company, sms_sent_at, sms_opt_out, in_pipeline, lead_status, underwriting_data')
       .eq('list_id', listId);
     const slim = full.error
       ? await supabase
           .from('leads')
-          .select('id, sms_sent_at, sms_opt_out, lead_status, underwriting_data')
+          .select('id, phone, company, sms_sent_at, sms_opt_out, lead_status, underwriting_data')
           .eq('list_id', listId)
       : null;
     const leadRows = ((slim ?? full).data ?? []) as LeadRow[];
@@ -230,6 +250,45 @@ export async function GET(req: NextRequest) {
     const sent = textedIds.size;
     const replies = repliedIds.size;
 
+    const byState = new Map<string, number>();
+    const byArea = new Map<string, number>();
+    const byIndustry = new Map<string, number>();
+    const byLead = new Map(leadRows.map(l => [l.id, l]));
+    for (const id of repliedIds) {
+      const lead = byLead.get(id);
+      if (!lead) continue;
+      const areaCode = extractNanpAreaCode(lead.phone);
+      if (areaCode) {
+        bump(byArea, areaCode);
+        const loc = lookupAreaCode(areaCode);
+        if (loc) bump(byState, loc.state);
+      }
+      const industry = industryFromCompany(lead.company, lead.underwriting_data);
+      if (industry) bump(byIndustry, industry);
+    }
+
+    const topStates = topCounts(byState, replies, 5).map(row => ({
+      state: row.key,
+      label: US_STATE_NAMES[row.key] || row.key,
+      replies: row.replies,
+      share: row.share,
+    }));
+    const topAreaCodes = topCounts(byArea, replies, 5).map(row => {
+      const loc = lookupAreaCode(row.key);
+      return {
+        areaCode: row.key,
+        city: loc?.city ?? null,
+        state: loc?.state ?? null,
+        replies: row.replies,
+        share: row.share,
+      };
+    });
+    const topIndustries = topCounts(byIndustry, replies).map(row => ({
+      industry: row.key,
+      replies: row.replies,
+      share: row.share,
+    }));
+
     return NextResponse.json({
       name: list.name,
       leads: leadRows.length,
@@ -247,6 +306,9 @@ export async function GET(req: NextRequest) {
       mix,
       templates: templateRows,
       failures,
+      topStates,
+      topAreaCodes,
+      topIndustries,
     });
   } catch (err) {
     console.error('[campaign-insights]', err);
