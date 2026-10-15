@@ -79,23 +79,8 @@ export default function Navbar({ userName }: NavbarProps) {
             </Link>
           </div>
 
-          {/* Right Side - Phone popup + Agent popup + Calendar popup + Settings menu */}
+          {/* Right Side - Agent popup + Calendar popup + Settings menu */}
           <div className="relative flex items-center gap-4">
-            {/* Phone icon → live keypad popup */}
-            <button
-              onClick={() => { webphone.dialPadOpen ? webphone.closeDialPad() : webphone.openDialPad(); setShowAgent(false); setShowCalendar(false); setShowBilling(false); setShowVault(false); setShowDropdown(false); }}
-              className="focus:outline-none hover:opacity-70 transition-opacity"
-              title="Phone"
-            >
-              <img
-                src="/images/icons/phone-handset.png"
-                alt="Phone"
-                width={18}
-                height={18}
-                className="w-[18px] h-[18px]"
-              />
-            </button>
-
             {/* Agent icon → popup */}
             <button
               onClick={() => { setShowAgent(true); webphone.closeDialPad(); setShowCalendar(false); setShowBilling(false); setShowVault(false); setShowDropdown(false); }}
@@ -144,6 +129,20 @@ export default function Navbar({ userName }: NavbarProps) {
             {/* Settings Dropdown */}
             {showDropdown && (
               <div className="absolute right-0 top-full mt-2 w-56 bg-white border border-[#e5e5e5] rounded-md shadow-lg py-2">
+                <button
+                  type="button"
+                  className="block w-full text-left px-4 py-2.5 text-sm text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors"
+                  onClick={() => {
+                    setShowDropdown(false);
+                    setShowAgent(false);
+                    setShowCalendar(false);
+                    setShowBilling(false);
+                    setShowVault(false);
+                    webphone.openDialPad();
+                  }}
+                >
+                  Phone
+                </button>
                 <Link
                   href="/settings/connections"
                   className="block px-4 py-2.5 text-sm text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors"

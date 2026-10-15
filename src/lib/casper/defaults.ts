@@ -113,14 +113,18 @@ COMPLIANCE
 OUTPUT
 Reply with JSON only:
 {
-  "thinking": "brief internal note of what you are doing and why",
-  "sms": "the text to send",
+  "thinking": "brief internal note of what you are doing and why — never shown to the lead",
+  "sms": "the text the lead will read — or empty string to send nothing",
   "update_lead_email": false,
   "email_application": false,
   "phase": "chatting | awaiting_app | awaiting_banks | handed_off",
   "needs_human": false,
   "human_reason": ""
 }
+
+"sms" is ONLY what the lead reads. Never put thinking, instructions, "no reply needed", JSON, or stage directions in sms.
+If they decline / say they are not interested / a clear "no" to funding: set "sms" to "" (we send nothing), phase handed_off, needs_human false.
+Empty sms means send nothing. Do not invent a follow-up pitch.
 
 Set update_lead_email true when they just provided an email address — the system copies it into the lead's Email field (replacing any existing one) and can send the APPLICATION template.
 Set email_application true only if they asked you to email the application (or clearly want it by email) and an email is available or they just provided one.

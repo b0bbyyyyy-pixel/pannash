@@ -14,6 +14,7 @@ import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
 import { sendTwilioSms } from '@/lib/telephony/sms';
 import { getTwilioCreds } from '@/lib/telephony/twilio';
 import { sendCasperPing } from '@/lib/casper/ping';
+import { isClearSmsDecline, isUnsendableCasperSms } from '@/lib/casper/smsGuard';
 
 export { humanDelayMs, outboxDelayMs } from '@/lib/casper/outbox';
 
@@ -179,6 +180,25 @@ export async function runCasperInboundSms(
 
   await cancelPendingOutbox(supabase, { leadId: args.lead.id, userId: args.userId });
 
+  if (isClearSmsDecline(args.body)) {
+    await logCasperRun(supabase, {
+      userId: args.userId,
+      leadId: args.lead.id,
+      trigger: 'inbound_sms',
+      status: 'ok',
+      thinking: 'Lead declined — no SMS sent',
+      error: 'declined_no_reply',
+      inputSummary: args.body.slice(0, 200),
+    });
+    await upsertCasperLeadState(supabase, {
+      leadId: args.lead.id,
+      userId: args.userId,
+      phase: 'handed_off',
+      pausedReason: 'declined',
+    });
+    return { replied: false, reason: 'declined' };
+  }
+
   await upsertCasperLeadState(supabase, {
     leadId: args.lead.id,
     userId: args.userId,
@@ -208,7 +228,8 @@ Thread:
 ${history || '(no prior thread)'}
 
 Lead just texted: "${args.body}"
-If they sent more than one text since your last reply, cover all of them in a single SMS. Do not write a separate reply per message.`,
+If they sent more than one text since your last reply, cover all of them in a single SMS. Do not write a separate reply per message.
+If they declined or a reply would only be an internal note, set "sms" to "". Empty sms sends nothing. Never text "no reply needed" or thinking.`,
         },
       ],
       temperature: 0.6,
@@ -235,7 +256,7 @@ If they sent more than one text since your last reply, cover all of them in a si
 
   const actions: unknown[] = [];
   let sms = (parsed.sms || '').trim().slice(0, 480);
-  if (!sms) sms = 'Thanks — can you send the completed application and last 3–6 months of bank statements when you get a chance?';
+  if (isUnsendableCasperSms(sms, parsed.thinking)) sms = '';
 
   let sentApplication = false;
   if (caps.update_lead_email) {
@@ -312,6 +333,28 @@ If they sent more than one text since your last reply, cover all of them in a si
     : (parsed.phase && ['chatting', 'awaiting_app', 'awaiting_banks', 'handed_off'].includes(parsed.phase)
       ? parsed.phase
       : ((state?.phase as CasperPhase) || 'chatting'));
+
+  if (!sms) {
+    actions.push({ type: 'sms', skipped: true, reason: 'no_sms' });
+    await logCasperRun(supabase, {
+      userId: args.userId,
+      leadId: args.lead.id,
+      trigger: 'inbound_sms',
+      status: 'ok',
+      thinking: parsed.thinking,
+      actions,
+      model: GROK_MINI_MODEL,
+      inputSummary: args.body.slice(0, 240),
+      error: 'no_sms',
+    });
+    await upsertCasperLeadState(supabase, {
+      leadId: args.lead.id,
+      userId: args.userId,
+      phase,
+      pausedReason: phase === 'handed_off' ? (parsed.human_reason || 'handed_off') : null,
+    });
+    return { replied: false, reason: 'no_sms' };
+  }
 
   const toPhone = args.from || args.lead.phone || '';
   const creds = await getTwilioCreds(supabase, args.userId);
