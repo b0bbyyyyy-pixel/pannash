@@ -2,11 +2,32 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import ManualDialPanel from '@/app/dialer/ManualDialPanel';
 import { useWebPhone } from '@/components/webphone/WebPhone';
 import BillingClient from '@/app/settings/billing/BillingClient';
 import DocumentVault from '@/components/DocumentVault';
+import { usePolling } from '@/lib/sync/usePolling';
+
+type DripJobSummary = {
+  id: string;
+  list_id: string;
+  status: string;
+  sent_count: number;
+  total_count: number;
+  created_at?: string;
+  updated_at?: string;
+};
+
+function newestActiveDrip(jobs: DripJobSummary[]) {
+  const active = jobs.filter(j => j.status === 'active');
+  active.sort((a, b) => {
+    const ta = new Date(a.created_at || a.updated_at || 0).getTime();
+    const tb = new Date(b.created_at || b.updated_at || 0).getTime();
+    return tb - ta;
+  });
+  return active[0] ?? null;
+}
 
 interface NavbarProps {
   userName: string;
@@ -21,8 +42,24 @@ export default function Navbar({ userName }: NavbarProps) {
   const [showBilling, setShowBilling] = useState(false);
   const [showVault, setShowVault] = useState(false);
   const webphone = useWebPhone();
+  const [dripJob, setDripJob] = useState<DripJobSummary | null>(null);
 
-  const isActive = (path: string) => pathname === path || pathname?.startsWith(path + '/');
+  const loadDrip = useCallback(async () => {
+    try {
+      const res = await fetch('/api/sms/drip', { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json() as { jobs?: DripJobSummary[] };
+      setDripJob(newestActiveDrip(data.jobs ?? []));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  usePolling(loadDrip, dripJob ? 10_000 : 45_000);
+
+  useEffect(() => {
+    if (showDropdown) void loadDrip();
+  }, [showDropdown, loadDrip]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -54,30 +91,6 @@ export default function Navbar({ userName }: NavbarProps) {
               Gostwrk
             </span>
           </Link>
-
-          {/* Center Links */}
-          <div className="flex items-center space-x-12">
-            <Link
-              href="/inbox"
-              className={`text-sm font-medium transition-colors ${
-                isActive('/inbox')
-                  ? 'text-[#1a1a1a]'
-                  : 'text-[#6b6b6b] hover:text-[#1a1a1a]'
-              }`}
-            >
-              Inbox
-            </Link>
-            <Link
-              href="/leads"
-              className={`text-sm font-medium transition-colors ${
-                isActive('/leads')
-                  ? 'text-[#1a1a1a]'
-                  : 'text-[#6b6b6b] hover:text-[#1a1a1a]'
-              }`}
-            >
-              Leads
-            </Link>
-          </div>
 
           {/* Right Side - Agent popup + Calendar popup + Settings menu */}
           <div className="relative flex items-center gap-4">
@@ -128,7 +141,29 @@ export default function Navbar({ userName }: NavbarProps) {
 
             {/* Settings Dropdown */}
             {showDropdown && (
-              <div className="absolute right-0 top-full mt-2 w-56 bg-white border border-[#e5e5e5] rounded-md shadow-lg py-2">
+              <div className="absolute right-0 top-full mt-2 w-64 bg-white border border-[#e5e5e5] rounded-md shadow-lg py-2">
+                <Link
+                  href={dripJob?.list_id ? `/leads?list=${dripJob.list_id}` : '/leads'}
+                  className="flex items-center gap-2 px-4 py-2.5 text-sm text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors"
+                  onClick={() => setShowDropdown(false)}
+                >
+                  <span>Campaign</span>
+                  {dripJob ? (
+                    <span className="ml-auto flex items-center gap-1.5 min-w-0">
+                      <span className="w-11 h-1 rounded-full bg-gray-100 overflow-hidden shrink-0">
+                        <span
+                          className="block h-full rounded-full bg-gradient-to-r from-gray-300 to-gray-800"
+                          style={{
+                            width: `${Math.min(100, Math.round(((dripJob.sent_count || 0) / Math.max(1, dripJob.total_count || 0)) * 100))}%`,
+                          }}
+                        />
+                      </span>
+                      <span className="text-[10px] text-[#9b9b9b] font-medium tabular-nums whitespace-nowrap">
+                        {dripJob.sent_count}/{dripJob.total_count}
+                      </span>
+                    </span>
+                  ) : null}
+                </Link>
                 <button
                   type="button"
                   className="block w-full text-left px-4 py-2.5 text-sm text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors"

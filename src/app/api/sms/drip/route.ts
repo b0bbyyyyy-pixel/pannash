@@ -30,13 +30,13 @@ export async function GET(req: NextRequest) {
     if (!listId) {
       let { data: jobs, error } = await supabase
         .from('sms_drip_jobs')
-        .select('id, list_id, status, sent_count, total_count, next_send_at, pause_reason')
+        .select('id, list_id, status, sent_count, total_count, next_send_at, pause_reason, created_at, updated_at')
         .eq('user_id', user.id)
         .in('status', ['active', 'paused']);
       if (error) {
         const retry = await supabase
           .from('sms_drip_jobs')
-          .select('id, list_id, status, sent_count, total_count, next_send_at')
+          .select('id, list_id, status, sent_count, total_count, next_send_at, created_at, updated_at')
           .eq('user_id', user.id)
           .in('status', ['active', 'paused']);
         jobs = retry.data as typeof jobs;
