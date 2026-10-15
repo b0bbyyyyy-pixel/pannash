@@ -203,7 +203,7 @@ async function liveActivity(supabase: SbClient, userId: string) {
       .limit(20);
     for (const run of runs ?? []) {
       const acts = Array.isArray(run.actions) ? run.actions : [];
-      const sent = acts.some(a => {
+      const sent = acts.some((a: unknown) => {
         if (!a || typeof a !== 'object') return false;
         const row = a as { type?: string; sent?: boolean };
         return (row.type === 'application_sent' || row.type === 'email_application') && row.sent === true;
