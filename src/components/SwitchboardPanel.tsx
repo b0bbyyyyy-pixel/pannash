@@ -34,7 +34,7 @@ export default function SwitchboardPanel({
   autoCall: _autoCall,
   dialerOpen: _dialerOpen,
   phoneStatus: _phoneStatus,
-  aiOn: _aiOn = false,
+  aiOn = false,
 }: {
   autoCall: boolean;
   dialerOpen: boolean;
@@ -53,10 +53,17 @@ export default function SwitchboardPanel({
   const dripRef = useRef({ sent: 0, failed: 0, active: false, primed: false });
   const pulsePrimed = useRef(false);
   const visibleRef = useRef(true);
+  const aiOnRef = useRef(aiOn);
+  aiOnRef.current = aiOn;
 
   const applyFrozen = useCallback(() => {
     const visible = visibleRef.current && (typeof document === 'undefined' || !document.hidden);
-    engineRef.current.setActivity({ frozen: !visible });
+    engineRef.current.setActivity({
+      frozen: !visible,
+      campaignLive: visible && dripRef.current.active,
+      aiLive: visible && aiOnRef.current,
+    });
+    if (visible && (aiOnRef.current || dripRef.current.active)) kickRef.current();
   }, []);
 
   const kick = useCallback(() => {
@@ -139,7 +146,7 @@ export default function SwitchboardPanel({
       };
       applyFrozen();
       engineRef.current.setComposing(!!data.composing);
-      if (data.composing) kick();
+      if (data.composing || drip.active) kick();
 
       if (!first) {
         const sentDelta = Math.max(0, drip.sent - prev.sent);
@@ -175,6 +182,10 @@ export default function SwitchboardPanel({
 
   usePolling(loadCounts, 45_000, true, true);
   usePolling(loadLive, 5_000, true, true);
+
+  useEffect(() => {
+    applyFrozen();
+  }, [aiOn, applyFrozen]);
 
   useEffect(() => {
     applyFrozen();

@@ -37,6 +37,12 @@ type Live = {
   r: number;
 };
 
+type Scan = {
+  born: number;
+  duration: number;
+  sigma: number;
+};
+
 const WASH_FUNDED = { r: 228, g: 224, b: 216 };
 const WASH_APPROVED = { r: 238, g: 235, b: 228 };
 const WASH_DOCS = { r: 246, g: 244, b: 239 };
@@ -45,6 +51,7 @@ const WASH_MIN_SHARE = 0.06;
 const REST = { r: 148, g: 160, b: 148 };
 const RULE = { r: 168, g: 162, b: 148 };
 const FLASH = { r: 118, g: 122, b: 114 };
+const GLOW = { r: 255, g: 253, b: 248 };
 const DOT_SUBMITTED = { r: 148, g: 146, b: 138 };
 const DOT_APPROVAL = { r: 148, g: 144, b: 118 };
 const DOT_FUNDED = { r: 148, g: 144, b: 132 };
@@ -70,6 +77,11 @@ const FLASH_PEAK = 0.78;
 const FLASH_R = 2.45;
 const REST_R = 1.15;
 const PERSIST_R = 1.3;
+const SCAN_MS = 5200;
+const SCAN_GAP_MS = 600;
+const AI_CYCLE_MS = 5800;
+const AI_PULSE_MS = 3000;
+const AI_SIGMA = 1.7;
 
 function hash(n: number) {
   let x = n | 0;
@@ -115,13 +127,18 @@ export class SwitchboardEngine {
   cells: Cell[] = [];
   persist: Partial<Record<PersistKind, number[]>> = {};
   live: Live[] = [];
+  scan: Scan | null = null;
   counts: SwitchboardCounts = { funded: 0, offers: 0, docsIn: 0, prospects: 0, submitted: 0, approvals: 0, day: 1, daysInMonth: 31 };
   lastDraw = 0;
+  nextScan = 0;
   liveFrozen = false;
   composing = false;
   nextComposeAt = 0;
   burstUntil = 0;
   nextBurstAt = 0;
+  campaignLive = false;
+  aiLive = false;
+  aiT0 = 0;
   intensity: FlashIntensity = 'normal';
 
   setSize(w: number, h: number) {
@@ -147,12 +164,30 @@ export class SwitchboardEngine {
     }
   }
 
-  setActivity(opts: { frozen: boolean }) {
+  setActivity(opts: { frozen: boolean; campaignLive?: boolean; aiLive?: boolean }) {
     this.liveFrozen = opts.frozen;
     if (opts.frozen) {
       this.composing = false;
       this.burstUntil = 0;
       this.live = [];
+      this.scan = null;
+      this.nextScan = 0;
+      this.aiT0 = 0;
+      this.campaignLive = false;
+      this.aiLive = false;
+      return;
+    }
+    if (opts.campaignLive != null) {
+      if (!opts.campaignLive) {
+        this.scan = null;
+        this.nextScan = 0;
+      }
+      this.campaignLive = opts.campaignLive;
+    }
+    if (opts.aiLive != null) {
+      if (opts.aiLive && !this.aiLive) this.aiT0 = performance.now();
+      if (!opts.aiLive) this.aiT0 = 0;
+      this.aiLive = opts.aiLive;
     }
   }
 
@@ -196,6 +231,7 @@ export class SwitchboardEngine {
   }
 
   busy(now = performance.now()) {
+    if (this.campaignLive || this.aiLive) return true;
     if (this.liveFrozen || this.intensity === 'off') return this.live.some(b => now < b.born + b.life);
     if (this.composing) return true;
     if (now < this.burstUntil) return true;
@@ -405,9 +441,52 @@ export class SwitchboardEngine {
     }
   }
 
+  private waveAt(c: number, r: number, now: number) {
+    const scan = this.scan;
+    if (!scan || !this.cols) return 0;
+    const u = clamp((now - scan.born) / scan.duration, 0, 1);
+    const pad = scan.sigma * 2.2;
+    const head = u * (this.cols * this.rows + pad * 2) - pad;
+    const d = r * this.cols + c - head;
+    const g = Math.exp(-(d * d) / (2 * scan.sigma * scan.sigma));
+    const edge = u < 0.06 ? u / 0.06 : u > 0.94 ? (1 - u) / 0.06 : 1;
+    return g * edge;
+  }
+
+  /** Soft ring from the center out to the edges. 0 at rest. */
+  private aiAt(c: number, r: number, now: number) {
+    if (!this.aiLive || this.liveFrozen || !this.cols || !this.rows || !this.aiT0) return 0;
+    const phase = (now - this.aiT0) % AI_CYCLE_MS;
+    const u = phase / AI_PULSE_MS;
+    if (u >= 1) return 0;
+    const cx = (this.cols - 1) / 2;
+    const cy = (this.rows - 1) / 2;
+    const maxR = Math.hypot(cx, cy);
+    const d = Math.hypot(c - cx, r - cy);
+    const head = u * (maxR + AI_SIGMA * 2.2);
+    const x = d - head;
+    const g = Math.exp(-(x * x) / (2 * AI_SIGMA * AI_SIGMA));
+    const fade = u < 0.08 ? u / 0.08 : u > 0.8 ? (1 - u) / 0.2 : 1;
+    return g * fade;
+  }
+
   private advance(now: number) {
     this.live = this.live.filter(b => now < b.born + b.life + 40);
     if (this.liveFrozen) return;
+
+    if (this.campaignLive && this.cells.length) {
+      if (!this.scan && now >= this.nextScan) {
+        this.scan = { born: now, duration: SCAN_MS, sigma: 5.6 };
+      }
+      if (this.scan && now - this.scan.born >= this.scan.duration) {
+        this.scan = null;
+        this.nextScan = now + SCAN_GAP_MS;
+      }
+    } else {
+      this.scan = null;
+    }
+
+    if (this.intensity === 'off') return;
 
     if (now < this.burstUntil && now >= this.nextBurstAt) {
       const roll = hash(Math.floor(now / 7)) % 5;
@@ -474,9 +553,21 @@ export class SwitchboardEngine {
       else liveAt.set(b.i, [b]);
     }
 
+    if (this.scan || this.aiLive) {
+      for (const cell of this.cells) {
+        const g = Math.max(this.waveAt(cell.c, cell.r, now), this.aiAt(cell.c, cell.r, now));
+        if (g < 0.05) continue;
+        ctx.beginPath();
+        ctx.fillStyle = rgba(GLOW, g * 0.2 * decay);
+        ctx.arc(cell.x, cell.y, 5.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
     for (const cell of this.cells) {
       const p = persist.get(cell.i);
       const lives = liveAt.get(cell.i);
+      const g = Math.max(this.waveAt(cell.c, cell.r, now), this.aiAt(cell.c, cell.r, now));
       let r = REST_R;
       let col = REST;
       let a = 0.2 * decay;
@@ -493,6 +584,14 @@ export class SwitchboardEngine {
         r = PERSIST_R;
         col = DOT_FUNDED;
         a = 0.55 * decay;
+      }
+
+      if (g > 0.04) {
+        const persistMix = p ? 0.48 : 1;
+        const mix = Math.min(1, g * persistMix);
+        col = mixRgb(col, GLOW, mix);
+        if (!p) r = Math.max(r, REST_R + g * 1.55);
+        a = Math.max(a, (0.22 + g * 0.78) * decay);
       }
 
       if (lives?.length) {
