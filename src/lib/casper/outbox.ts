@@ -4,7 +4,7 @@ import { leadInAiFullPacks } from '@/lib/casper/fullPacks';
 import { logCasperRun, upsertCasperLeadState } from '@/lib/casper/runs';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
 import { isSmsStopBody } from '@/lib/leads/dnc';
-import { isClearSmsDecline, isUnsendableCasperSms } from '@/lib/casper/smsGuard';
+import { casperSmsToSend, isClearSmsDecline } from '@/lib/casper/smsGuard';
 import { sendTwilioSms } from '@/lib/telephony/sms';
 import { getTwilioCreds, publicAppUrl } from '@/lib/telephony/twilio';
 
@@ -255,7 +255,7 @@ async function outboxStillAllowed(supabase: any, row: CasperOutboxRow): Promise<
 
   if (lastIn && isSmsStopBody(lastIn.body)) return { ok: false, reason: 'opt_out' };
   if (lastIn && isClearSmsDecline(lastIn.body)) return { ok: false, reason: 'declined' };
-  if (isUnsendableCasperSms(row.body)) return { ok: false, reason: 'no_sms' };
+  if (!casperSmsToSend(row.body)) return { ok: false, reason: 'no_sms' };
 
   // Newer inbound than this draft — inbound handler should have replaced us.
   if (lastIn && new Date(lastIn.created_at).getTime() > new Date(row.created_at).getTime() + 2000) {

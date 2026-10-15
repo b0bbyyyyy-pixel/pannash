@@ -14,7 +14,7 @@ import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
 import { sendTwilioSms } from '@/lib/telephony/sms';
 import { getTwilioCreds } from '@/lib/telephony/twilio';
 import { sendCasperPing } from '@/lib/casper/ping';
-import { isClearSmsDecline, isUnsendableCasperSms } from '@/lib/casper/smsGuard';
+import { casperSmsToSend, isClearSmsDecline, isUnsendableCasperSms } from '@/lib/casper/smsGuard';
 
 export { humanDelayMs, outboxDelayMs } from '@/lib/casper/outbox';
 
@@ -40,7 +40,9 @@ function parseMission(raw: string | null | undefined): MissionJson {
       // fall through
     }
   }
-  return { sms: text.slice(0, 320), thinking: 'plain-text fallback' };
+  const fallback = text.slice(0, 320);
+  if (isUnsendableCasperSms(fallback)) return { sms: '', thinking: 'plain-text fallback' };
+  return { sms: fallback, thinking: 'plain-text fallback' };
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -255,8 +257,7 @@ If they declined or a reply would only be an internal note, set "sms" to "". Emp
   }
 
   const actions: unknown[] = [];
-  let sms = (parsed.sms || '').trim().slice(0, 480);
-  if (isUnsendableCasperSms(sms, parsed.thinking)) sms = '';
+  let sms = casperSmsToSend(String(parsed.sms ?? ''), parsed.thinking);
 
   let sentApplication = false;
   if (caps.update_lead_email) {
