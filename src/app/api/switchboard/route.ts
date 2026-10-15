@@ -164,12 +164,64 @@ async function liveActivity(supabase: SbClient, userId: string) {
     failed += failRes.count ?? 0;
   }
 
+  const sinceIso = since;
+  let composing = false;
+  try {
+    const { data: pending } = await supabase
+      .from('casper_outbox')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('status', 'pending')
+      .limit(1);
+    composing = (pending ?? []).length > 0;
+  } catch {
+    composing = false;
+  }
+  if (!composing) {
+    try {
+      const thinkSince = new Date(Date.now() - 120_000).toISOString();
+      const { data: thinking } = await supabase
+        .from('casper_lead_state')
+        .select('lead_id')
+        .eq('user_id', userId)
+        .in('paused_reason', ['thinking', 'replying'])
+        .gt('updated_at', thinkSince)
+        .limit(1);
+      composing = (thinking ?? []).length > 0;
+    } catch {
+      composing = false;
+    }
+  }
+
+  const emails: { at: string }[] = [];
+  try {
+    const { data: runs } = await supabase
+      .from('casper_runs')
+      .select('created_at, actions')
+      .eq('user_id', userId)
+      .gt('created_at', sinceIso)
+      .limit(20);
+    for (const run of runs ?? []) {
+      const acts = Array.isArray(run.actions) ? run.actions : [];
+      const sent = acts.some(a => {
+        if (!a || typeof a !== 'object') return false;
+        const row = a as { type?: string; sent?: boolean };
+        return (row.type === 'application_sent' || row.type === 'email_application') && row.sent === true;
+      });
+      if (sent && run.created_at) emails.push({ at: String(run.created_at) });
+    }
+  } catch {
+    /* optional */
+  }
+
   return {
     drip: { active: jobs.length > 0, sent, failed },
     inbound: (inboundRows ?? []).map((r: { lead_id: string; last_message_at: string | null }) => ({
       leadId: r.lead_id,
       at: r.last_message_at,
     })),
+    composing,
+    emails,
   };
 }
 

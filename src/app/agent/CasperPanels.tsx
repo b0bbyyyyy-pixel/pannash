@@ -8,6 +8,14 @@ import {
   DEFAULT_REPLY_DELAY,
   type CasperCapabilities,
 } from '@/lib/casper/defaults';
+import {
+  DEFAULT_FLASH_INTENSITY,
+  FLASH_INTENSITIES,
+  parseFlashIntensity,
+  readFlashIntensity,
+  writeFlashIntensity,
+  type FlashIntensity,
+} from '@/lib/switchboard/prefs';
 
 type CasperRun = {
   id: string;
@@ -580,6 +588,79 @@ export function PingPanel() {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+const FLASH_LABELS: Record<FlashIntensity, { title: string; hint: string }> = {
+  off: { title: 'Off', hint: 'No event flashes. Status color groups stay.' },
+  soft: { title: 'Soft', hint: 'Quieter single-dot flashes for texts, emails, and status changes.' },
+  normal: { title: 'Normal', hint: 'The default quiet-board pace from the reference animation.' },
+  strong: { title: 'Strong', hint: 'Brighter, faster flashes — still the same dots, just more of them.' },
+};
+
+export function SwitchboardSettingsPanel() {
+  const [intensity, setIntensity] = useState<FlashIntensity>(DEFAULT_FLASH_INTENSITY);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setIntensity(readFlashIntensity());
+    fetch('/api/settings/casper')
+      .then(r => r.json())
+      .then(d => setIntensity(parseFlashIntensity(d.switchboard_flash_intensity ?? d)))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const save = async (next: FlashIntensity) => {
+    setIntensity(next);
+    writeFlashIntensity(next);
+    setSaving(true);
+    try {
+      const res = await fetch('/api/settings/casper', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ switchboard_flash_intensity: next }),
+      });
+      const json = await res.json();
+      if (json.switchboard_flash_intensity) {
+        const saved = parseFlashIntensity(json.switchboard_flash_intensity);
+        setIntensity(saved);
+        writeFlashIntensity(saved);
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return <p className="text-sm text-gray-400 py-12 text-center">Loading switchboard…</p>;
+  }
+
+  return (
+    <div className="bg-white border border-[#e5e5e5] rounded-2xl p-5">
+      <h3 className="text-sm font-semibold text-[#1a1a1a] mb-1">Event flashes</h3>
+      <p className="text-[11px] text-gray-400 mb-4">
+        Intensity of the dots that light when a text comes in, Casper is writing, an application is emailed, or a status changes.
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        {FLASH_INTENSITIES.map((id) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => save(id)}
+            disabled={saving}
+            className={`px-3 py-1.5 rounded-lg text-sm transition-colors disabled:opacity-50 ${
+              intensity === id
+                ? 'bg-[#1a1a1a] text-white font-medium'
+                : 'text-gray-600 bg-[#f5f5f5] hover:bg-[#ececec]'
+            }`}
+          >
+            {FLASH_LABELS[id].title}
+          </button>
+        ))}
+      </div>
+      <p className="text-[11px] text-gray-500 mt-3">{FLASH_LABELS[intensity].hint}</p>
     </div>
   );
 }

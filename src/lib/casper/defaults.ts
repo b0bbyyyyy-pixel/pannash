@@ -1,3 +1,5 @@
+import { parseFlashIntensity, type FlashIntensity } from '@/lib/switchboard/prefs';
+
 export const CASPER_MISSION = 'collect_app_and_banks';
 
 export type CasperCapabilities = {
@@ -67,13 +69,18 @@ export function parseReplyDelay(raw: unknown): CasperReplyDelay {
   return { minSec: min, maxSec: max };
 }
 
-/** Keep toggle flags and reply-delay seconds together in casper_capabilities JSON. */
-export function persistCapabilities(raw: unknown, delay?: CasperReplyDelay): Record<string, unknown> {
+/** Keep toggle flags, reply-delay, and switchboard prefs together in casper_capabilities JSON. */
+export function persistCapabilities(
+  raw: unknown,
+  delay?: CasperReplyDelay,
+  flashIntensity?: FlashIntensity,
+): Record<string, unknown> {
   const d = delay ?? parseReplyDelay(raw);
   return {
     ...mergeCapabilities(raw),
     reply_delay_min_sec: d.minSec,
     reply_delay_max_sec: d.maxSec,
+    switchboard_flash_intensity: flashIntensity ?? parseFlashIntensity(raw),
   };
 }
 

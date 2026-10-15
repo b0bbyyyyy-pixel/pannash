@@ -207,7 +207,7 @@ export default function ThreadScreen() {
                 <p className="py-2 text-center text-[12px] font-medium text-[#8E8E93]">{dayStamp(msg.created_at)}</p>
               )}
               <div className={`mb-1 flex ${out ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[78%] ${out ? 'items-end' : 'items-start'} flex flex-col`}>
+                <div className={`max-w-[78%] min-w-0 ${out ? 'items-end' : 'items-start'} flex flex-col`}>
                   {photos.map((photo, photoIndex) => (
                     <InboundPhoto
                       key={`${msg.id}-${photoIndex}`}
@@ -225,7 +225,7 @@ export default function ThreadScreen() {
                   ))}
                   {caption ? (
                   <div
-                    className={`px-3 py-2 text-[17px] leading-snug ${
+                    className={`px-3 py-2 text-[17px] leading-snug whitespace-pre-wrap break-words [overflow-wrap:anywhere] max-w-full ${
                       out
                         ? 'rounded-[18px] bg-[#34C759] text-white'
                         : 'rounded-[18px] bg-[#E9E9EB] text-black'

@@ -15,5 +15,8 @@ export async function saveLeadStatusWrite(opts: {
     body: JSON.stringify({ leadId: opts.leadId, field: 'lead_status', value: opts.status }),
   });
   const json = await res.json().catch(() => ({})) as { underwriting_data?: Record<string, unknown> };
+  if (typeof window !== 'undefined' && res.ok) {
+    window.dispatchEvent(new CustomEvent('gostwrk-board', { detail: { kind: 'status' } }));
+  }
   return { underwritingData: json.underwriting_data ?? opts.underwritingData ?? undefined };
 }

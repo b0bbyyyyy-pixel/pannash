@@ -278,7 +278,6 @@ export function DialerCard({
 }) {
   const [copied, setCopied] = useState(false);
   const [showText, setShowText] = useState(false);
-  const [notesExpanded, setNotesExpanded] = useState(false);
   const [leadNotes, setLeadNotes] = useState(lead.notes || '');
   const [savingNotes, setSavingNotes] = useState(false);
   // Derive city/state/timezone from the phone's area code
@@ -330,7 +329,6 @@ export function DialerCard({
     setSelected(null);
     setPipelineChoice(null);
     setNotes('');
-    setNotesExpanded(false);
     setLeadNotes(lead.notes || '');
   }, [lead.id]);
 
@@ -633,9 +631,9 @@ export function DialerCard({
         {compact && (
           <Link
             href="/dialer"
-            className="shrink-0 text-[11px] font-medium text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors"
+            className="shrink-0 text-[11px] font-medium text-[#c4c4c4] hover:text-[#9b9b9b] transition-colors"
           >
-            Expand
+            Full page
           </Link>
         )}
       </div>
@@ -662,15 +660,14 @@ export function DialerCard({
       )}
 
       {/* Lead notes */}
-      <textarea
+      <input
+        type="text"
         value={leadNotes}
         onChange={e => setLeadNotes(e.target.value)}
-        onFocus={() => setNotesExpanded(true)}
         onBlur={() => { void saveLeadNotes(); }}
         placeholder="Notes"
-        rows={notesExpanded || leadNotes.length > 80 ? (compact ? 5 : 7) : (compact ? 2 : 3)}
-        className={`w-full resize-y bg-[#f9f9f9] text-[#1a1a1a] placeholder:text-[#c4c4c4] focus:outline-none focus:ring-1 focus:ring-[#e5e5e5] ${
-          compact ? 'rounded-lg px-2.5 py-1.5 mb-3 text-[11px]' : 'rounded-xl px-4 py-3 mb-6 text-sm'
+        className={`w-full bg-[#f9f9f9] text-[#1a1a1a] placeholder:text-[#c4c4c4] focus:outline-none focus:ring-1 focus:ring-[#e5e5e5] ${
+          compact ? 'rounded-lg px-2.5 py-1.5 mb-3 text-[11px] h-8' : 'rounded-xl px-4 py-2 mb-6 text-sm h-10'
         }`}
       />
       {savingNotes && (

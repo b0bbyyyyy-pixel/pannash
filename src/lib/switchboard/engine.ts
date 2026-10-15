@@ -1,3 +1,5 @@
+import type { FlashIntensity } from '@/lib/switchboard/prefs';
+
 export type SwitchboardCounts = {
   funded: number;
   offers: number;
@@ -17,7 +19,12 @@ export type BlipKind =
   | 'smsDone'
   | 'smsReply'
   | 'text'
+  | 'email'
+  | 'status'
+  | 'ai'
   | 'idle';
+
+export type FlashZone = 'any' | 'upper';
 
 type Cell = { i: number; x: number; y: number; c: number; r: number };
 
@@ -30,50 +37,39 @@ type Live = {
   r: number;
 };
 
-type Line = { a: number; b: number; born: number; life: number };
-
-type Traveler = {
-  path: number[];
-  step: number;
-  nextAt: number;
-  kind: BlipKind;
-  hopMs: number;
-};
-
-type Scan = {
-  born: number;
-  duration: number;
-  sigma: number;
-};
-
 const WASH_FUNDED = { r: 228, g: 224, b: 216 };
 const WASH_APPROVED = { r: 238, g: 235, b: 228 };
 const WASH_DOCS = { r: 246, g: 244, b: 239 };
 const WASH_SUBMITTED = { r: 252, g: 251, b: 248 };
 const WASH_MIN_SHARE = 0.06;
-const OFF = { r: 148, g: 160, b: 148 };
+const REST = { r: 148, g: 160, b: 148 };
 const RULE = { r: 168, g: 162, b: 148 };
-const FUNDED = { r: 74, g: 74, b: 74 };
+const FLASH = { r: 118, g: 122, b: 114 };
 const DOT_SUBMITTED = { r: 148, g: 146, b: 138 };
 const DOT_APPROVAL = { r: 148, g: 144, b: 118 };
 const DOT_FUNDED = { r: 148, g: 144, b: 132 };
 
 type PersistKind = 'prospect' | 'submitted' | 'approval' | 'funded';
-type WashBand = { key: PersistKind; n: number; wash: { r: number; g: number; b: number }; y: number; h: number };
-const LINE = { r: 150, g: 144, b: 118 };
-const GLOW = { r: 255, g: 253, b: 248 };
+type WashBand = {
+  key: PersistKind;
+  n: number;
+  wash: { r: number; g: number; b: number };
+  y: number;
+  h: number;
+  row0: number;
+  row1: number;
+};
 
 const GAP = 13;
 const PAD_X = 22;
 const PAD_Y = 18;
-const MAX_LIVE = 56;
-const MAX_LINES = 18;
+const MAX_LIVE = 40;
 const FPS_MS = 33;
-const SCAN_MS = 5200;
-const SCAN_GAP_MS = 600;
-const AI_CYCLE_MS = 5800;
-const AI_PULSE_MS = 3000;
-const AI_SIGMA = 1.7;
+const FLASH_LIFE = 920;
+const FLASH_PEAK = 0.78;
+const FLASH_R = 2.45;
+const REST_R = 1.15;
+const PERSIST_R = 1.3;
 
 function hash(n: number) {
   let x = n | 0;
@@ -94,52 +90,21 @@ function distCells(a: Cell, b: Cell) {
   return Math.abs(a.c - b.c) + Math.abs(a.r - b.r);
 }
 
-function lifeFor(kind: BlipKind) {
-  switch (kind) {
-    case 'declined': return 280;
-    case 'smsFail': return 260;
-    case 'sms': return 720;
-    case 'smsDone': return 560;
-    case 'smsReply': return 1100;
-    case 'call': return 320;
-    case 'text': return 520;
-    case 'idle': return 280;
-  }
+function mixRgb(
+  a: { r: number; g: number; b: number },
+  b: { r: number; g: number; b: number },
+  t: number,
+) {
+  const u = clamp(t, 0, 1);
+  return {
+    r: Math.round(a.r + (b.r - a.r) * u),
+    g: Math.round(a.g + (b.g - a.g) * u),
+    b: Math.round(a.b + (b.b - a.b) * u),
+  };
 }
 
-function peakFor(kind: BlipKind) {
-  switch (kind) {
-    case 'declined': return 0.55;
-    case 'smsFail': return 0.32;
-    case 'sms': return 0.78;
-    case 'smsDone': return 0.5;
-    case 'smsReply': return 0.92;
-    case 'call': return 0.62;
-    case 'text': return 0.42;
-    case 'idle': return 0.18;
-  }
-}
-
-function radiusFor(kind: BlipKind) {
-  switch (kind) {
-    case 'smsReply': return 2.55;
-    case 'call': return 1.75;
-    case 'sms': return 2.05;
-    case 'smsDone': return 1.85;
-    case 'declined': return 1.6;
-    default: return 1.3;
-  }
-}
-
-function colorFor(kind: BlipKind) {
-  switch (kind) {
-    case 'smsReply': return FUNDED;
-    case 'call': return { r: 110, g: 128, b: 112 };
-    case 'sms': return { r: 118, g: 148, b: 108 };
-    case 'smsFail': return { r: 120, g: 120, b: 118 };
-    case 'declined': return { r: 140, g: 128, b: 118 };
-    default: return OFF;
-  }
+function zoneFor(_kind: BlipKind): FlashZone {
+  return 'upper';
 }
 
 export class SwitchboardEngine {
@@ -150,19 +115,14 @@ export class SwitchboardEngine {
   cells: Cell[] = [];
   persist: Partial<Record<PersistKind, number[]>> = {};
   live: Live[] = [];
-  lines: Line[] = [];
-  traveler: Traveler | null = null;
-  scan: Scan | null = null;
   counts: SwitchboardCounts = { funded: 0, offers: 0, docsIn: 0, prospects: 0, submitted: 0, approvals: 0, day: 1, daysInMonth: 31 };
   lastDraw = 0;
-  nextIdle = 0;
-  nextTravel = 0;
-  nextScan = 0;
-  liveFrozen = true;
-  dialerLive = false;
-  campaignLive = false;
-  aiLive = false;
-  aiT0 = 0;
+  liveFrozen = false;
+  composing = false;
+  nextComposeAt = 0;
+  burstUntil = 0;
+  nextBurstAt = 0;
+  intensity: FlashIntensity = 'normal';
 
   setSize(w: number, h: number) {
     const nw = Math.max(1, Math.floor(w));
@@ -187,50 +147,70 @@ export class SwitchboardEngine {
     }
   }
 
-  setActivity(opts: { frozen: boolean; dialerLive: boolean; campaignLive: boolean; aiLive: boolean }) {
+  setActivity(opts: { frozen: boolean }) {
     this.liveFrozen = opts.frozen;
-    this.dialerLive = opts.dialerLive;
-    this.campaignLive = opts.campaignLive;
-    if (opts.aiLive && !this.aiLive) this.aiT0 = performance.now();
-    if (!opts.aiLive) this.aiT0 = 0;
-    this.aiLive = opts.aiLive;
-    if (opts.frozen || !opts.dialerLive) this.traveler = null;
-    if (opts.frozen || !opts.campaignLive) {
-      this.scan = null;
-      this.nextScan = 0;
+    if (opts.frozen) {
+      this.composing = false;
+      this.burstUntil = 0;
+      this.live = [];
+    }
+  }
+
+  setComposing(on: boolean) {
+    if (this.intensity === 'off') {
+      this.composing = false;
+      this.nextComposeAt = 0;
+      return;
+    }
+    if (on && !this.composing) this.nextComposeAt = performance.now();
+    if (!on) this.nextComposeAt = 0;
+    this.composing = on;
+  }
+
+  setIntensity(next: FlashIntensity) {
+    this.intensity = next;
+    if (next === 'off') {
+      this.composing = false;
+      this.burstUntil = 0;
+      this.live = [];
     }
   }
 
   pulse(kind: BlipKind, n = 1) {
-    if (this.liveFrozen && kind !== 'idle') return;
-    if (kind === 'sms' || kind === 'smsFail' || kind === 'smsDone') return;
+    if (this.liveFrozen || this.intensity === 'off') return;
     const now = performance.now();
-    const spawned: number[] = [];
-    for (let k = 0; k < n; k++) {
-      const i = this.pickFree(hash(now * 1000 + k + kind.length * 17 + this.live.length));
-      if (i < 0) continue;
-      this.pushLive({
-        i,
-        kind,
-        born: now + k * 28,
-        life: lifeFor(kind),
-        peak: peakFor(kind),
-        r: radiusFor(kind),
-      });
-      spawned.push(i);
-    }
-    if (spawned.length >= 2) {
-      this.pushLine(spawned[0], spawned[1], now, 280);
-    } else if (spawned.length === 1) {
-      const related = this.findRelated(kind, spawned[0], now);
-      if (related >= 0) this.pushLine(spawned[0], related, now, 260);
+    const zone = zoneFor(kind);
+    const count = this.intensity === 'soft' ? 1 : this.intensity === 'strong' ? Math.max(2, n) : n;
+    for (let k = 0; k < count; k++) {
+      this.spawn(now + k * 70, kind, zone, hash(now * 1000 + k * 31 + kind.length));
     }
   }
 
+  /** Higher-rate version of the same flashes for 1–2 seconds. */
+  burst(ms = 1500) {
+    if (this.liveFrozen || this.intensity === 'off') return;
+    const now = performance.now();
+    const dur = this.intensity === 'soft' ? Math.min(ms, 800) : this.intensity === 'strong' ? Math.max(ms, 2000) : ms;
+    this.burstUntil = Math.max(this.burstUntil, now + dur);
+    if (this.nextBurstAt < now) this.nextBurstAt = now;
+  }
+
+  busy(now = performance.now()) {
+    if (this.liveFrozen || this.intensity === 'off') return this.live.some(b => now < b.born + b.life);
+    if (this.composing) return true;
+    if (now < this.burstUntil) return true;
+    return this.live.some(b => now < b.born + b.life);
+  }
+
   tick(now: number, ctx: CanvasRenderingContext2D) {
-    if (now - this.lastDraw < FPS_MS) return;
+    if (now - this.lastDraw < FPS_MS) return this.busy(now);
     this.lastDraw = now;
     this.advance(now);
+    this.draw(ctx);
+    return this.busy(now);
+  }
+
+  drawNow(ctx: CanvasRenderingContext2D) {
     this.draw(ctx);
   }
 
@@ -245,8 +225,8 @@ export class SwitchboardEngine {
     for (let r = 0; r < this.rows; r++) {
       for (let c = 0; c < this.cols; c++) {
         const i = r * this.cols + c;
-        const jx = ((hash(i + 3) % 5) - 2) * 0.18;
-        const jy = ((hash(i + 9) % 5) - 2) * 0.18;
+        const jx = ((hash(i + 3) % 5) - 2) * 0.12;
+        const jy = ((hash(i + 9) % 5) - 2) * 0.12;
         this.cells.push({ i, c, r, x: ox + c * GAP + jx, y: oy + r * GAP + jy });
       }
     }
@@ -262,20 +242,41 @@ export class SwitchboardEngine {
     const total = layers.reduce((s, l) => s + l.n, 0);
     const extra = 1 - WASH_MIN_SHARE * layers.length;
     const shares = layers.map(l => WASH_MIN_SHARE + extra * (total > 0 ? l.n / total : 0.25));
-    const heights = shares.map(s => Math.round(s * this.h));
-    let delta = this.h - heights.reduce((s, h) => s + h, 0);
-    let grow = 0;
-    for (let i = 1; i < layers.length; i++) {
-      if (layers[i].n > layers[grow].n) grow = i;
-    }
-    heights[grow] += delta;
+    const rowCounts = this.splitRows(shares);
+    const innerH = this.h - PAD_Y * 2;
+    const oy = PAD_Y + (innerH - Math.max(0, this.rows - 1) * GAP) / 2;
+    let row0 = 0;
     let y = 0;
     return layers.map((l, i) => {
-      const h = Math.max(1, heights[i]);
-      const band = { ...l, y, h };
-      y += h;
+      const rc = rowCounts[i] ?? 0;
+      const row1 = row0 + rc;
+      const split = i === layers.length - 1
+        ? this.h
+        : oy + (row1 - 0.5) * GAP;
+      const band = { ...l, y, h: Math.max(0, split - y), row0, row1 };
+      y = split;
+      row0 = row1;
       return band;
     });
+  }
+
+  private splitRows(shares: number[]) {
+    const rows = Math.max(0, this.rows);
+    const left = shares.length;
+    if (!rows || !left) return shares.map(() => 0);
+    const raw = shares.map(s => Math.max(1, Math.round(s * rows)));
+    let delta = rows - raw.reduce((s, n) => s + n, 0);
+    let grow = 0;
+    for (let i = 1; i < raw.length; i++) {
+      if (shares[i] > shares[grow]) grow = i;
+    }
+    raw[grow] += delta;
+    for (let i = 0; i < raw.length; i++) {
+      if (raw[i] < 1) raw[i] = 1;
+    }
+    delta = rows - raw.reduce((s, n) => s + n, 0);
+    raw[grow] = Math.max(1, raw[grow] + delta);
+    return raw;
   }
 
   private placePersistent() {
@@ -289,14 +290,13 @@ export class SwitchboardEngine {
         next[band.key] = [];
         continue;
       }
-      const y1 = i === bands.length - 1 ? this.h + 1 : band.y + band.h;
-      next[band.key] = this.placeInBand(band.n, band.y, y1, 17 + i * 41, used);
+      next[band.key] = this.placeInBand(band.n, band.row0, band.row1, 17 + i * 41, used);
     }
     this.persist = next;
   }
 
-  private placeInBand(count: number, y0: number, y1: number, salt: number, used: Set<number>) {
-    const pool = this.cells.filter(c => c.y >= y0 && c.y < y1 && !used.has(c.i));
+  private placeInBand(count: number, row0: number, row1: number, salt: number, used: Set<number>) {
+    const pool = this.cells.filter(c => c.r >= row0 && c.r < row1 && !used.has(c.i));
     const out: number[] = [];
     if (!pool.length || count <= 0) return out;
     const cap = Math.min(count, pool.length);
@@ -341,185 +341,90 @@ export class SwitchboardEngine {
     return s;
   }
 
-  private pickFree(seed: number) {
+  private pool(zone: FlashZone) {
     const used = this.occupied();
-    const total = this.cells.length;
-    if (!total) return -1;
-    for (let n = 0; n < 24; n++) {
-      const i = (seed + n * 17) % total;
-      if (!used.has(i)) return i;
-    }
-    return seed % total;
+    const y1 = zone === 'upper' ? this.h * 0.58 : this.h;
+    return this.cells.filter(c => c.y <= y1 && !used.has(c.i));
   }
 
-  private pushLive(blip: Live) {
-    this.live.push(blip);
+  private pick(seed: number, zone: FlashZone, avoid: Set<number>) {
+    const pool = this.pool(zone).filter(c => !avoid.has(c.i));
+    if (!pool.length) return -1;
+    return pool[seed % pool.length].i;
+  }
+
+  private spawn(born: number, kind: BlipKind, zone: FlashZone, seed: number, avoid?: Set<number>) {
+    const i = this.pick(seed, zone, avoid ?? new Set());
+    if (i < 0) return -1;
+    const look = this.flashLook();
+    this.live.push({
+      i,
+      kind,
+      born,
+      life: look.life,
+      peak: look.peak,
+      r: look.r,
+    });
     if (this.live.length > MAX_LIVE) this.live.splice(0, this.live.length - MAX_LIVE);
+    return i;
   }
 
-  private pushLine(a: number, b: number, now: number, life: number) {
-    if (a === b) return;
-    this.lines.push({ a, b, born: now, life });
-    if (this.lines.length > MAX_LINES) this.lines.splice(0, this.lines.length - MAX_LINES);
+  private flashLook() {
+    if (this.intensity === 'soft') return { life: 720, peak: 0.42, r: 1.85 };
+    if (this.intensity === 'strong') return { life: 1100, peak: 0.95, r: 2.8 };
+    return { life: FLASH_LIFE, peak: FLASH_PEAK, r: FLASH_R };
   }
 
-  private findRelated(kind: BlipKind, self: number, now: number) {
-    const want = kind === 'smsReply' ? new Set<BlipKind>(['sms', 'smsReply'])
-      : kind === 'sms' || kind === 'smsFail' || kind === 'smsDone' ? new Set<BlipKind>(['sms', 'smsReply', 'smsFail'])
-      : kind === 'call' ? new Set<BlipKind>(['call'])
-      : kind === 'text' ? new Set<BlipKind>(['text', 'smsReply'])
-      : null;
-    if (!want) return -1;
-    let best = -1;
-    let bestAge = Infinity;
-    for (const b of this.live) {
-      if (b.i === self || !want.has(b.kind)) continue;
-      const age = now - b.born;
-      if (age < 0 || age > 700) continue;
-      if (age < bestAge) {
-        bestAge = age;
-        best = b.i;
-      }
+  private spawnCluster(now: number, kind: BlipKind) {
+    if (this.intensity === 'soft') {
+      this.spawn(now, kind, 'upper', hash(now));
+      return;
     }
-    return best;
-  }
-
-  private waveAt(c: number, r: number, now: number) {
-    const scan = this.scan;
-    if (!scan || !this.cols) return 0;
-    const u = clamp((now - scan.born) / scan.duration, 0, 1);
-    const pad = scan.sigma * 2.2;
-    const head = u * (this.cols * this.rows + pad * 2) - pad;
-    const pos = r * this.cols + c;
-    const s2 = 2 * scan.sigma * scan.sigma;
-    const g0 = Math.exp(-((pos - head) ** 2) / s2);
-    const g1 = Math.exp(-((pos - this.cols - head) ** 2) / s2);
-    const edge = u < 0.06 ? u / 0.06 : u > 0.94 ? (1 - u) / 0.06 : 1;
-    return Math.max(g0, g1) * edge;
-  }
-
-  /** Soft ring from the center out to the edges. 0 at rest. */
-  private aiAt(c: number, r: number, now: number) {
-    if (!this.aiLive || this.liveFrozen || !this.cols || !this.rows || !this.aiT0) return 0;
-    const phase = (now - this.aiT0) % AI_CYCLE_MS;
-    const u = phase / AI_PULSE_MS;
-    if (u >= 1) return 0;
-    const cx = (this.cols - 1) / 2;
-    const cy = (this.rows - 1) / 2;
-    const maxR = Math.hypot(cx, cy);
-    const d = Math.hypot(c - cx, r - cy);
-    const head = u * (maxR + AI_SIGMA * 2.2);
-    const x = d - head;
-    const g = Math.exp(-(x * x) / (2 * AI_SIGMA * AI_SIGMA));
-    const fade = u < 0.08 ? u / 0.08 : u > 0.8 ? (1 - u) / 0.2 : 1;
-    return g * fade;
-  }
-
-  private stepTraveler(t: Traveler, now: number) {
-    if (now < t.nextAt) return false;
-    const i = t.path[t.step];
-    if (i != null) {
-      this.pushLive({
-        i,
-        kind: t.kind,
-        born: now,
-        life: t.kind === 'sms' ? 190 : lifeFor(t.kind),
-        peak: t.kind === 'sms' ? 0.72 : peakFor(t.kind),
-        r: t.kind === 'sms' ? 1.85 : radiusFor(t.kind),
+    const seed = hash(Math.floor(now));
+    const first = this.spawn(now, kind, 'upper', seed);
+    if (first < 0) return;
+    const cell = this.cells[first];
+    if (!cell) return;
+    const avoid = new Set([first]);
+    const y1 = this.h * 0.58;
+    const near = this.cells.filter(c => c.i !== first && c.y <= y1 && distCells(c, cell) >= 1 && distCells(c, cell) <= 2);
+    const extra = 1 + (seed % 2);
+    for (let n = 0; n < extra && near.length; n++) {
+      const pick = near[(seed + n * 11) % near.length];
+      if (avoid.has(pick.i)) continue;
+      avoid.add(pick.i);
+      const look = this.flashLook();
+      this.live.push({
+        i: pick.i,
+        kind,
+        born: now + 50 + n * 60,
+        life: look.life,
+        peak: look.peak,
+        r: look.r,
       });
-      if (t.step > 0) this.pushLine(t.path[t.step - 1], i, now, 160);
     }
-    t.step += 1;
-    t.nextAt = now + t.hopMs;
-    return t.step >= t.path.length;
   }
 
   private advance(now: number) {
     this.live = this.live.filter(b => now < b.born + b.life + 40);
-    this.lines = this.lines.filter(l => now < l.born + l.life);
+    if (this.liveFrozen) return;
 
-    if (!this.liveFrozen && this.dialerLive) {
-      if (!this.traveler && now >= this.nextTravel) {
-        this.traveler = this.makeTraveler(now, 'call', 70);
-        this.nextTravel = now + 1400 + (hash(Math.floor(now)) % 900);
+    if (now < this.burstUntil && now >= this.nextBurstAt) {
+      const roll = hash(Math.floor(now / 7)) % 5;
+      if (this.intensity === 'strong' || (this.intensity === 'normal' && roll === 0)) {
+        this.spawnCluster(now, 'status');
+      } else {
+        this.spawn(now, 'status', 'upper', hash(now));
       }
-      if (this.traveler && this.stepTraveler(this.traveler, now)) this.traveler = null;
-    } else {
-      this.traveler = null;
+      const gap = this.intensity === 'soft' ? 200 : this.intensity === 'strong' ? 70 : 110;
+      this.nextBurstAt = now + gap + (hash(Math.floor(now)) % 70);
     }
 
-    if (!this.liveFrozen && this.campaignLive && this.cells.length) {
-      if (!this.scan && now >= this.nextScan) {
-        this.scan = { born: now, duration: SCAN_MS, sigma: 5.6 };
-      }
-      if (this.scan && now - this.scan.born >= this.scan.duration) {
-        this.scan = null;
-        this.nextScan = now + SCAN_GAP_MS;
-      }
-    } else {
-      this.scan = null;
+    if (this.composing && now >= this.nextComposeAt) {
+      this.spawn(now, 'ai', 'upper', hash(now + 19));
+      const gap = this.intensity === 'soft' ? 720 : this.intensity === 'strong' ? 260 : 420;
+      this.nextComposeAt = now + gap + (hash(Math.floor(now / 3)) % 260);
     }
-
-    const idle = !this.dialerLive && !this.campaignLive && !this.aiLive && !this.liveFrozen;
-    if (idle) {
-      if (!this.nextIdle) this.nextIdle = now + 4500;
-      if (now >= this.nextIdle) {
-        this.pulse('idle', 1);
-        this.nextIdle = now + 4500 + (hash(Math.floor(now)) % 3500);
-      }
-    }
-  }
-
-  private makeTraveler(now: number, kind: BlipKind = 'call', hopMs = 70): Traveler {
-    const mode = hash(Math.floor(now / 13)) % 3;
-    const path: number[] = [];
-    if (mode === 1 && this.rows > 4) {
-      const col = hash(Math.floor(now / 29)) % this.cols;
-      const start = hash(Math.floor(now / 17)) % Math.max(1, this.rows - 5);
-      const len = 5 + (hash(col + start) % 4);
-      const dir = (hash(col * 11 + start) & 1) === 0 ? 1 : -1;
-      const r0 = dir < 0 ? Math.min(this.rows - 1, start + len) : start;
-      for (let n = 0; n < len; n++) {
-        const rr = r0 + dir * n;
-        if (rr < 0 || rr >= this.rows) break;
-        path.push(rr * this.cols + col);
-      }
-    } else if (mode === 2 && this.cols > 6 && this.rows > 4) {
-      const row = hash(Math.floor(now / 80)) % this.rows;
-      const start = hash(Math.floor(now / 17)) % Math.max(1, this.cols - 5);
-      const across = 4 + (hash(row + start) % 4);
-      const dir = (hash(row * 13 + start) & 1) === 0 ? 1 : -1;
-      let c = dir < 0 ? Math.min(this.cols - 1, start + across) : start;
-      for (let n = 0; n < across; n++) {
-        const cc = c + dir * n;
-        if (cc < 0 || cc >= this.cols) break;
-        path.push(row * this.cols + cc);
-        c = cc;
-      }
-      const last = path[path.length - 1];
-      if (last != null) {
-        const cc = last % this.cols;
-        const rr = Math.floor(last / this.cols);
-        const vdir = rr < this.rows / 2 ? 1 : -1;
-        for (let n = 1; n <= 3; n++) {
-          const r2 = rr + vdir * n;
-          if (r2 < 0 || r2 >= this.rows) break;
-          path.push(r2 * this.cols + cc);
-        }
-      }
-    } else {
-      const row = hash(Math.floor(now / 80)) % this.rows;
-      const start = hash(Math.floor(now / 17)) % Math.max(1, this.cols - 6);
-      const len = 6 + (hash(row + start) % 5);
-      const dir = (hash(row * 13 + start) & 1) === 0 ? 1 : -1;
-      const c0 = dir < 0 ? Math.min(this.cols - 1, start + len) : start;
-      for (let n = 0; n < len; n++) {
-        const cc = c0 + dir * n;
-        if (cc < 0 || cc >= this.cols) break;
-        path.push(row * this.cols + cc);
-      }
-    }
-    return { path, step: 0, nextAt: now, kind, hopMs };
   }
 
   private decay() {
@@ -569,82 +474,38 @@ export class SwitchboardEngine {
       else liveAt.set(b.i, [b]);
     }
 
-    ctx.lineWidth = 0.5;
-    for (const line of this.lines) {
-      const ca = this.cells[line.a];
-      const cb = this.cells[line.b];
-      if (!ca || !cb) continue;
-      const t = clamp((now - line.born) / line.life, 0, 1);
-      const a = (t < 0.2 ? t / 0.2 : 1 - (t - 0.2) / 0.8) * 0.32 * decay;
-      ctx.strokeStyle = rgba(LINE, a);
-      ctx.beginPath();
-      ctx.moveTo(ca.x, ca.y);
-      ctx.lineTo(cb.x, cb.y);
-      ctx.stroke();
-    }
-
-    if (this.scan || this.aiLive) {
-      for (const cell of this.cells) {
-        const sms = this.waveAt(cell.c, cell.r, now);
-        const ai = this.aiAt(cell.c, cell.r, now);
-        const g = Math.max(sms, ai);
-        if (g < 0.05) continue;
-        ctx.beginPath();
-        ctx.fillStyle = rgba(GLOW, g * 0.2 * decay);
-        ctx.arc(cell.x, cell.y, 5.8, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-
     for (const cell of this.cells) {
       const p = persist.get(cell.i);
       const lives = liveAt.get(cell.i);
-      const sms = this.waveAt(cell.c, cell.r, now);
-      const ai = this.aiAt(cell.c, cell.r, now);
-      const g = Math.max(sms, ai);
-      let r = 1.15;
-      let col = OFF;
+      let r = REST_R;
+      let col = REST;
       let a = 0.2 * decay;
 
       if (p === 'submitted') {
-        r = 1.3;
+        r = PERSIST_R;
         col = DOT_SUBMITTED;
         a = 0.55 * decay;
       } else if (p === 'approval') {
-        r = 1.3;
+        r = PERSIST_R;
         col = DOT_APPROVAL;
         a = 0.55 * decay;
       } else if (p === 'funded') {
-        r = 1.3;
+        r = PERSIST_R;
         col = DOT_FUNDED;
         a = 0.55 * decay;
-      }
-
-      if (g > 0.04) {
-        const persistMix = p ? 0.48 : 1;
-        const mix = Math.min(1, g * persistMix);
-        col = {
-          r: Math.round(col.r + (GLOW.r - col.r) * mix),
-          g: Math.round(col.g + (GLOW.g - col.g) * mix),
-          b: Math.round(col.b + (GLOW.b - col.b) * mix),
-        };
-        if (!p) r = Math.max(r, 1.15 + g * 1.55);
-        a = Math.max(a, (0.22 + g * 0.78) * decay);
       }
 
       if (lives?.length) {
         let best = 0;
         for (const b of lives) {
           const t = clamp((now - b.born) / b.life, 0, 1);
-          const env = t < 0.15 ? t / 0.15 : 1 - (t - 0.15) / 0.85;
+          const env = t < 0.22 ? t / 0.22 : 1 - (t - 0.22) / 0.78;
           const v = b.peak * env;
-          if (v > best) {
-            best = v;
-            col = colorFor(b.kind);
-            r = Math.max(r, b.r);
-          }
+          if (v > best) best = v;
         }
-        a = Math.max(a, best * decay);
+        col = mixRgb(col, FLASH, best);
+        r = Math.max(r, REST_R + (FLASH_R - REST_R) * best);
+        a = Math.max(a, (0.35 + best * 0.6) * decay);
       }
 
       ctx.beginPath();

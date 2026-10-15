@@ -370,6 +370,7 @@ export default function ScheduleEmailModal({ lead: initialLead, onClose, onSent 
       }
       setSuccessMsg(`Sent to ${d.to || lead.email}`);
       onSent?.();
+      window.dispatchEvent(new CustomEvent('gostwrk-board', { detail: { kind: 'email' } }));
       bodyRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
     } catch {
       setSendError('Network error — email was not sent.');

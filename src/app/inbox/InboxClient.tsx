@@ -1391,7 +1391,7 @@ export default function InboxClient({
             {/* Messages */}
             <div
               ref={threadScrollerRef}
-              className="flex-1 overflow-y-auto px-6 py-4 space-y-1"
+              className="flex-1 overflow-y-auto overflow-x-hidden px-6 py-4 space-y-1"
               onScroll={e => {
                 const el = e.currentTarget;
                 stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 96;
@@ -1427,7 +1427,7 @@ export default function InboxClient({
                           key={msg.id}
                           className={`flex ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}
                         >
-                          <div className={`max-w-[72%] ${msg.direction === 'outbound' ? 'items-end' : 'items-start'} flex flex-col gap-0.5`}>
+                          <div className={`max-w-[72%] min-w-0 ${msg.direction === 'outbound' ? 'items-end' : 'items-start'} flex flex-col gap-0.5`}>
                             {photos.map((photo, photoIndex) => (
                               <InboundPhoto
                                 key={`${msg.id}-${photoIndex}`}
@@ -1447,7 +1447,7 @@ export default function InboxClient({
                             ))}
                             {caption ? (
                             <div
-                              className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
+                              className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] max-w-full ${
                                 msg.direction === 'outbound'
                                   ? 'bg-black text-white rounded-br-sm'
                                   : 'bg-[#f0f0f0] text-[#1a1a1a] rounded-bl-sm'

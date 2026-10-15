@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
-import { ActivityPanel, BrainPanel, CapabilitiesPanel, PingPanel } from '@/app/agent/CasperPanels';
+import { ActivityPanel, BrainPanel, CapabilitiesPanel, PingPanel, SwitchboardSettingsPanel } from '@/app/agent/CasperPanels';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -374,7 +374,7 @@ const FILTER_LABELS: Record<string, string> = {
   stalled: 'Quiet',
 };
 
-type Panel = 'activity' | 'brain' | 'capabilities' | 'ping' | 'queue';
+type Panel = 'activity' | 'brain' | 'capabilities' | 'ping' | 'queue' | 'switchboard';
 
 const PANEL_LABELS: { id: Panel; label: string }[] = [
   { id: 'activity', label: 'Activity' },
@@ -382,6 +382,7 @@ const PANEL_LABELS: { id: Panel; label: string }[] = [
   { id: 'capabilities', label: 'Capabilities' },
   { id: 'ping', label: 'Ping' },
   { id: 'queue', label: 'Queue' },
+  { id: 'switchboard', label: 'Switchboard' },
 ];
 
 export default function AgentClient() {
@@ -692,6 +693,7 @@ export default function AgentClient() {
           {panel === 'brain' && <BrainPanel />}
           {panel === 'capabilities' && <CapabilitiesPanel />}
           {panel === 'ping' && <PingPanel />}
+          {panel === 'switchboard' && <SwitchboardSettingsPanel />}
 
           {panel === 'queue' && briefing && <BriefingPanel text={briefing} onClose={() => setBriefing(null)} />}
 
