@@ -1449,7 +1449,7 @@ export default function InboxClient({
                             <div
                               className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
                                 msg.direction === 'outbound'
-                                  ? 'bg-blue-500 text-white rounded-br-sm'
+                                  ? 'bg-black text-white rounded-br-sm'
                                   : 'bg-[#f0f0f0] text-[#1a1a1a] rounded-bl-sm'
                               } ${receipt === 'failed' ? 'opacity-60' : ''}`}
                             >
@@ -1462,8 +1462,8 @@ export default function InboxClient({
                                 <>
                                   {receipt === 'queued' && <span className="text-[10px] text-gray-300">sending…</span>}
                                   {receipt === 'sent' && <span className="text-[10px] text-gray-400">✓ sent</span>}
-                                  {receipt === 'delivered' && <span className="text-[10px] text-blue-400">✓✓ delivered</span>}
-                                  {receipt === 'read' && <span className="text-[10px] text-blue-500">✓✓ Read</span>}
+                                  {receipt === 'delivered' && <span className="text-[10px] text-black">✓✓ delivered</span>}
+                                  {receipt === 'read' && <span className="text-[10px] text-black">✓✓ Read</span>}
                                   {receipt === 'failed' && (
                                     <span className="text-[10px] text-red-500">
                                       ✕ failed
@@ -1485,7 +1485,7 @@ export default function InboxClient({
                 <div className="flex justify-end mt-2">
                   <div className="max-w-[72%] flex flex-col items-end gap-0.5">
                     <div className={`px-4 py-2.5 rounded-2xl rounded-br-sm text-sm leading-relaxed ${
-                      scheduledBody ? 'bg-blue-500/70 text-white' : 'bg-blue-500/80 text-white'
+                      scheduledBody ? 'bg-black/70 text-white' : 'bg-black/80 text-white'
                     }`}>
                       {scheduledBody ? (
                         scheduledBody

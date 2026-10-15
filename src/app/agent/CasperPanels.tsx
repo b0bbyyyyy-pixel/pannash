@@ -5,6 +5,7 @@ import { usePolling } from '@/lib/sync/usePolling';
 import {
   DEFAULT_CASPER_CAPABILITIES,
   DEFAULT_CASPER_SYSTEM_PROMPT,
+  DEFAULT_REPLY_DELAY,
   type CasperCapabilities,
 } from '@/lib/casper/defaults';
 
@@ -205,6 +206,93 @@ const CAP_ITEMS: { key: keyof CasperCapabilities; label: string; future?: boolea
   { key: 'propose_deals', label: 'Propose deals', future: true },
 ];
 
+function ReplyDelayCard() {
+  const [minSec, setMinSec] = useState(DEFAULT_REPLY_DELAY.minSec);
+  const [maxSec, setMaxSec] = useState(DEFAULT_REPLY_DELAY.maxSec);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [savedNote, setSavedNote] = useState('');
+
+  useEffect(() => {
+    fetch('/api/settings/casper')
+      .then(r => r.json())
+      .then(d => {
+        const min = Number(d.reply_delay?.min_sec);
+        const max = Number(d.reply_delay?.max_sec);
+        if (Number.isFinite(min)) setMinSec(min);
+        if (Number.isFinite(max)) setMaxSec(max);
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  const save = async (nextMin = minSec, nextMax = maxSec) => {
+    setSaving(true);
+    setSavedNote('');
+    try {
+      const res = await fetch('/api/settings/casper', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reply_delay: { min_sec: nextMin, max_sec: nextMax } }),
+      });
+      const json = await res.json();
+      if (json.reply_delay) {
+        setMinSec(json.reply_delay.min_sec);
+        setMaxSec(json.reply_delay.max_sec);
+        setSavedNote('Saved');
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return null;
+
+  return (
+    <div className="bg-white border border-[#e5e5e5] rounded-2xl p-5 mb-4">
+      <h3 className="text-sm font-semibold text-[#1a1a1a] mb-1">Reply delay</h3>
+      <p className="text-[11px] text-gray-400 mb-4">
+        How long Casper waits after a lead texts before sending. Each reply picks a random time in this range.
+      </p>
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Min seconds</span>
+          <input
+            type="number"
+            min={5}
+            max={600}
+            value={minSec}
+            onChange={e => setMinSec(Number(e.target.value))}
+            className="w-24 rounded-xl border border-[#e5e5e5] px-3 py-2 text-sm text-[#1a1a1a]"
+          />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Max seconds</span>
+          <input
+            type="number"
+            min={5}
+            max={600}
+            value={maxSec}
+            onChange={e => setMaxSec(Number(e.target.value))}
+            className="w-24 rounded-xl border border-[#e5e5e5] px-3 py-2 text-sm text-[#1a1a1a]"
+          />
+        </label>
+        <button
+          type="button"
+          onClick={() => save()}
+          disabled={saving}
+          className="px-4 py-2 bg-[#1a1a1a] text-white text-xs font-semibold rounded-xl disabled:opacity-50"
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+        {savedNote && <span className="text-[11px] text-emerald-600">{savedNote}</span>}
+      </div>
+      <p className="text-[11px] text-gray-500 mt-3">
+        Next replies wait {Math.min(minSec, maxSec)}–{Math.max(minSec, maxSec)} seconds.
+      </p>
+    </div>
+  );
+}
+
 export function CapabilitiesPanel() {
   const [caps, setCaps] = useState<CasperCapabilities>(DEFAULT_CASPER_CAPABILITIES);
   const [loading, setLoading] = useState(true);
@@ -237,6 +325,8 @@ export function CapabilitiesPanel() {
   if (loading) return <p className="text-sm text-gray-400 py-12 text-center">Loading capabilities…</p>;
 
   return (
+    <div>
+    <ReplyDelayCard />
     <div className="bg-white border border-[#e5e5e5] rounded-2xl p-5">
       <h3 className="text-sm font-semibold text-[#1a1a1a] mb-1">Capabilities</h3>
       <p className="text-[11px] text-gray-400 mb-4">Only enabled steps may run. Waterfall / propose / upload persist but do not run yet.</p>
@@ -255,6 +345,7 @@ export function CapabilitiesPanel() {
           </label>
         ))}
       </div>
+    </div>
     </div>
   );
 }

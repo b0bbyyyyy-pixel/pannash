@@ -6,6 +6,8 @@ import {
   DEFAULT_CASPER_CAPABILITIES,
   DEFAULT_CASPER_SYSTEM_PROMPT,
   mergeCapabilities,
+  parseReplyDelay,
+  persistCapabilities,
 } from '@/lib/casper/defaults';
 
 export const dynamic = 'force-dynamic';
@@ -62,10 +64,12 @@ export async function GET() {
     // column not added yet
   }
 
+  const delay = parseReplyDelay(data?.casper_capabilities);
   return NextResponse.json({
     enabled: !!data?.casper_enabled,
     system_prompt: prompt,
     capabilities: mergeCapabilities(data?.casper_capabilities),
+    reply_delay: { min_sec: delay.minSec, max_sec: delay.maxSec },
     mission: data?.casper_mission || CASPER_MISSION,
     updated_at: data?.updated_at ?? null,
     paused_leads: pausedLeads,
@@ -89,11 +93,18 @@ export async function POST(req: NextRequest) {
   if ('enabled' in body) payload.casper_enabled = !!body.enabled;
   if ('system_prompt' in body) payload.casper_system_prompt = String(body.system_prompt ?? '');
   if ('mission' in body) payload.casper_mission = String(body.mission || CASPER_MISSION);
-  if ('capabilities' in body) {
-    payload.casper_capabilities = mergeCapabilities({
+  if ('capabilities' in body || 'reply_delay' in body) {
+    const merged = {
       ...mergeCapabilities(existing?.casper_capabilities),
       ...(body.capabilities && typeof body.capabilities === 'object' ? body.capabilities : {}),
-    });
+      ...((existing?.casper_capabilities && typeof existing.casper_capabilities === 'object')
+        ? existing.casper_capabilities as Record<string, unknown>
+        : {}),
+    };
+    const delay = 'reply_delay' in body
+      ? parseReplyDelay(body.reply_delay)
+      : parseReplyDelay(merged);
+    payload.casper_capabilities = persistCapabilities(merged, delay);
   }
 
   const { error } = existing
@@ -118,10 +129,12 @@ export async function POST(req: NextRequest) {
     .eq('user_id', user.id)
     .maybeSingle();
 
+  const delay = parseReplyDelay(fresh?.casper_capabilities);
   return NextResponse.json({
     enabled: !!fresh?.casper_enabled,
     system_prompt: fresh?.casper_system_prompt || DEFAULT_CASPER_SYSTEM_PROMPT,
     capabilities: mergeCapabilities(fresh?.casper_capabilities),
+    reply_delay: { min_sec: delay.minSec, max_sec: delay.maxSec },
     mission: fresh?.casper_mission || CASPER_MISSION,
     updated_at: fresh?.updated_at ?? null,
   });

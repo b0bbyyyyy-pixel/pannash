@@ -292,7 +292,7 @@ export default function QuickTextPopup({
                     <div
                       className={`px-2.5 py-1.5 text-[12px] leading-snug ${
                         msg.direction === 'outbound'
-                          ? 'bg-blue-500 text-white'
+                          ? 'bg-black text-white'
                           : 'bg-[#f0f0f0] text-[#1a1a1a]'
                       } ${r === 'failed' ? 'opacity-60' : ''}`}
                     >
@@ -304,8 +304,8 @@ export default function QuickTextPopup({
                         <>
                           {r === 'queued' && <span className="text-[9px] text-gray-300">sending…</span>}
                           {r === 'sent' && <span className="text-[9px] text-gray-400">sent</span>}
-                          {r === 'delivered' && <span className="text-[9px] text-blue-400">delivered</span>}
-                          {r === 'read' && <span className="text-[9px] text-blue-500">Read</span>}
+                          {r === 'delivered' && <span className="text-[9px] text-black">delivered</span>}
+                          {r === 'read' && <span className="text-[9px] text-black">Read</span>}
                           {r === 'failed' && <span className="text-[9px] text-red-500">failed</span>}
                         </>
                       )}

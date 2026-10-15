@@ -44,6 +44,39 @@ export function mergeCapabilities(raw: unknown): CasperCapabilities {
   };
 }
 
+export type CasperReplyDelay = { minSec: number; maxSec: number };
+
+export const DEFAULT_REPLY_DELAY: CasperReplyDelay = { minSec: 30, maxSec: 90 };
+
+export function parseReplyDelay(raw: unknown): CasperReplyDelay {
+  const obj = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
+  const nested = obj.reply_delay && typeof obj.reply_delay === 'object'
+    ? obj.reply_delay as Record<string, unknown>
+    : obj;
+  let min = Number(nested.reply_delay_min_sec ?? nested.min_sec ?? nested.minSec ?? obj.reply_delay_min_sec);
+  let max = Number(nested.reply_delay_max_sec ?? nested.max_sec ?? nested.maxSec ?? obj.reply_delay_max_sec);
+  if (!Number.isFinite(min)) min = DEFAULT_REPLY_DELAY.minSec;
+  if (!Number.isFinite(max)) max = DEFAULT_REPLY_DELAY.maxSec;
+  min = Math.round(Math.min(600, Math.max(5, min)));
+  max = Math.round(Math.min(600, Math.max(5, max)));
+  if (max < min) {
+    const swap = min;
+    min = max;
+    max = swap;
+  }
+  return { minSec: min, maxSec: max };
+}
+
+/** Keep toggle flags and reply-delay seconds together in casper_capabilities JSON. */
+export function persistCapabilities(raw: unknown, delay?: CasperReplyDelay): Record<string, unknown> {
+  const d = delay ?? parseReplyDelay(raw);
+  return {
+    ...mergeCapabilities(raw),
+    reply_delay_min_sec: d.minSec,
+    reply_delay_max_sec: d.maxSec,
+  };
+}
+
 export const DEFAULT_CASPER_SYSTEM_PROMPT = `You are Casper, AI co-pilot for Robert Gulinello at One Funding / Meadow Lake. You text MCA (merchant cash advance) leads on Robert's behalf.
 
 WHO YOU ARE

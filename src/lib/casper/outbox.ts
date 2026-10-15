@@ -1,5 +1,5 @@
 import { casperEffectiveForLead } from '@/lib/casper/allow';
-import { mergeCapabilities, type CasperPhase } from '@/lib/casper/defaults';
+import { mergeCapabilities, parseReplyDelay, type CasperPhase, type CasperReplyDelay } from '@/lib/casper/defaults';
 import { leadInAiFullPacks } from '@/lib/casper/fullPacks';
 import { logCasperRun, upsertCasperLeadState } from '@/lib/casper/runs';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
@@ -57,11 +57,15 @@ export type CasperOutboxRow = {
   error?: string | null;
 };
 
-/** 30s–90s, plus ~1s per 20 characters, hard-capped at 90s. */
-export function outboxDelayMs(text: string): number {
-  const min = 30_000;
-  const max = 90_000;
-  const base = min + Math.random() * (max - min);
+/** Random wait between the saved min/max, plus ~1s per 20 characters, capped at max. */
+export function outboxDelayMs(text: string, delay?: CasperReplyDelay): number {
+  const range = parseReplyDelay({
+    reply_delay_min_sec: delay?.minSec,
+    reply_delay_max_sec: delay?.maxSec,
+  });
+  const min = range.minSec * 1000;
+  const max = range.maxSec * 1000;
+  const base = min + Math.random() * Math.max(0, max - min);
   const typing = Math.floor(String(text || '').length / 20) * 1000;
   return Math.min(max, Math.round(base + typing));
 }
@@ -149,7 +153,14 @@ export async function enqueueCasperOutbox(
     userId: args.userId,
   });
 
-  let sendAtMs = Date.now() + outboxDelayMs(args.body);
+  const { data: settings } = await supabase
+    .from('user_settings')
+    .select('casper_capabilities')
+    .eq('user_id', args.userId)
+    .maybeSingle();
+  const delay = parseReplyDelay(settings?.casper_capabilities);
+
+  let sendAtMs = Date.now() + outboxDelayMs(args.body, delay);
   if (existing?.send_at) {
     const prev = new Date(existing.send_at).getTime();
     if (Number.isFinite(prev) && prev > Date.now()) sendAtMs = Math.min(sendAtMs, prev);
