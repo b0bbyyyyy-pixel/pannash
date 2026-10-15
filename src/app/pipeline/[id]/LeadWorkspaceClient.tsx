@@ -865,7 +865,7 @@ export default function LeadWorkspaceClient({
   // ── Underwriting save ────────────────────────────────────────────────────────
   const handleUnderwritingSave = async (data: Record<string, unknown>) => {
     const currentUd = (lead.underwriting_data || {}) as Record<string, unknown>;
-    const payload = {
+    const payload: Record<string, unknown> = {
       ...data,
       statusHistory: data.statusHistory ?? currentUd.statusHistory,
       fileEvents: data.fileEvents ?? currentUd.fileEvents,
