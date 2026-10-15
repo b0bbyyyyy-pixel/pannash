@@ -1,4 +1,5 @@
 import { stopCampaignDripForLead } from '@/lib/inbox/promoteCampaignReply';
+import { appendStatusHistory } from '@/lib/leads/fileActivity';
 
 const DOCS_IN_FROM = new Set([
   '',
@@ -32,13 +33,21 @@ export async function maybeMarkDocsIn(
 
   const { data: lead } = await supabase
     .from('leads')
-    .select('lead_status, stage')
+    .select('lead_status, stage, underwriting_data')
     .eq('id', opts.leadId)
     .eq('user_id', opts.userId)
     .maybeSingle();
 
   const current = String(lead?.lead_status || lead?.stage || '').trim();
   if (!DOCS_IN_FROM.has(current)) return false;
+
+  await appendStatusHistory(supabase, {
+    userId: opts.userId,
+    leadId: opts.leadId,
+    status: 'Docs In',
+    prev: lead?.lead_status,
+    underwritingData: lead?.underwriting_data,
+  });
 
   await supabase
     .from('leads')

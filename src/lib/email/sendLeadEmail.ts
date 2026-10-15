@@ -3,6 +3,7 @@ import { google } from 'googleapis';
 import { refreshGmailToken, isTokenExpired } from '@/lib/gmail-refresh';
 import { appendEmailSignature } from '@/lib/email-signature';
 import { resolveFromHeader } from '@/lib/email-from';
+import { appendEmailSent } from '@/lib/leads/fileActivity';
 
 export type SendLeadEmailResult = {
   sent: boolean;
@@ -72,6 +73,12 @@ export async function sendLeadEmail(
       .update({ last_contact: new Date().toISOString() })
       .eq('id', args.leadId)
       .eq('user_id', args.userId);
+    await appendEmailSent(supabase, {
+      userId: args.userId,
+      leadId: args.leadId,
+      to: to,
+      subject: args.subject,
+    });
   };
 
   const { data: emailConns } = await supabase

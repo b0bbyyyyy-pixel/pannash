@@ -567,6 +567,7 @@ export default function PipelineClient({ leads, userId, compact = false, initial
     const { underwritingData } = await saveLeadStatusWrite({
       leadId: lead.id,
       status: val,
+      prevStatus: lead.lead_status,
       underwritingData: lead.underwriting_data,
     });
     const patch = {

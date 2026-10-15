@@ -33,6 +33,7 @@ interface LeadForEmail {
 interface ScheduleEmailModalProps {
   lead: LeadForEmail;
   onClose: () => void;
+  onSent?: () => void;
 }
 
 // ── Placeholder replacement ───────────────────────────────────────────────────
@@ -115,7 +116,7 @@ function replacePlaceholdersWithExamples(text: string): string {
 }
 
 // ── Modal ─────────────────────────────────────────────────────────────────────
-export default function ScheduleEmailModal({ lead: initialLead, onClose }: ScheduleEmailModalProps) {
+export default function ScheduleEmailModal({ lead: initialLead, onClose, onSent }: ScheduleEmailModalProps) {
   const [lead, setLead] = useState(initialLead);
   const [emailDraft, setEmailDraft] = useState(initialLead.email || '');
   const [emailSaving, setEmailSaving] = useState(false);
@@ -368,6 +369,7 @@ export default function ScheduleEmailModal({ lead: initialLead, onClose }: Sched
         return;
       }
       setSuccessMsg(`Sent to ${d.to || lead.email}`);
+      onSent?.();
       bodyRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
     } catch {
       setSendError('Network error — email was not sent.');

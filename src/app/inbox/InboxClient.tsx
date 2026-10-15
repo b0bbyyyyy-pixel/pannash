@@ -1365,8 +1365,8 @@ export default function InboxClient({
                           ? 'Casper is off for this lead — click to allow'
                           : 'Global Casper is off — click to turn Casper on for this lead only'
                     }
-                    className={`text-[10px] font-medium transition-colors ${
-                      leadCasperOn ? 'text-[#1a1a1a]' : 'text-red-500'
+                    className={`text-[10px] font-medium transition-colors focus:outline-none ${
+                      leadCasperOn ? 'text-[#7d9b6e]' : 'text-[#c4c4c4]'
                     }`}
                   >
                     Casper

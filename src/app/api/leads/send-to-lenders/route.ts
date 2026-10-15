@@ -3,6 +3,7 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import nodemailer from 'nodemailer';
 import { resolveFromHeader } from '@/lib/email-from';
+import { logLeadStatusChange } from '@/lib/leads/fileActivity';
 
 export const runtime  = 'nodejs';
 export const dynamic  = 'force-dynamic';
@@ -169,6 +170,7 @@ export async function POST(request: Request) {
 
   // ── Auto-trigger: if any sent successfully, always advance status to "Submitted"
   if (sent > 0) {
+    await logLeadStatusChange(supabase, { userId: user.id, leadId, status: 'Submitted' });
     await supabase
       .from('leads')
       .update({ lead_status: 'Submitted' })

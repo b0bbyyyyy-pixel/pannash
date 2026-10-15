@@ -1,0 +1,177 @@
+import { createServerClient } from '@supabase/ssr';
+import { cookies } from 'next/headers';
+import { NextRequest, NextResponse } from 'next/server';
+
+export const dynamic = 'force-dynamic';
+
+export type LeadActivityEvent = {
+  at: string;
+  title: string;
+  detail?: string;
+  source: string;
+};
+
+function acts(raw: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(raw)
+    ? raw.filter((a): a is Record<string, unknown> => !!a && typeof a === 'object')
+    : [];
+}
+
+function casperEvent(run: Record<string, unknown>): LeadActivityEvent | null {
+  const list = acts(run.actions);
+  const at = String(run.created_at || '');
+  if (!at) return null;
+  for (const a of list) {
+    const kind = String(a.type || '');
+    if (kind === 'application_sent' && a.sent !== false) {
+      return {
+        at,
+        title: 'Application emailed',
+        detail: String(a.to || a.summary || '').trim() || undefined,
+        source: 'casper',
+      };
+    }
+    if (kind === 'update_lead_email' && a.updated) {
+      return {
+        at,
+        title: 'Email updated',
+        detail: [a.old, a.next].filter(Boolean).join(' → ') || undefined,
+        source: 'casper',
+      };
+    }
+  }
+  return null;
+}
+
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id: leadId } = await params;
+  const cookieStore = await cookies();
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { cookies: { get: (n) => cookieStore.get(n)?.value, set: () => {}, remove: () => {} } },
+  );
+
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const { data: lead } = await supabase
+    .from('leads')
+    .select('id, created_at, underwriting_data')
+    .eq('id', leadId)
+    .eq('user_id', user.id)
+    .maybeSingle();
+  if (!lead) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+  const events: LeadActivityEvent[] = [];
+  if (lead.created_at) {
+    events.push({ at: lead.created_at, title: 'Lead created', source: 'lead' });
+  }
+
+  const ud = (lead.underwriting_data || {}) as Record<string, unknown>;
+  if (Array.isArray(ud.statusHistory)) {
+    for (const row of ud.statusHistory) {
+      if (!row || typeof row !== 'object') continue;
+      const r = row as { at?: string; status?: string; prev?: string };
+      if (!r.at || !r.status) continue;
+      events.push({
+        at: r.at,
+        title: 'Status updated',
+        detail: r.prev ? `${r.prev} → ${r.status}` : r.status,
+        source: 'status',
+      });
+    }
+  }
+  if (ud.fundedAt) {
+    events.push({ at: String(ud.fundedAt), title: 'Marked funded', source: 'status' });
+  }
+  if (Array.isArray(ud.fileEvents)) {
+    for (const row of ud.fileEvents) {
+      if (!row || typeof row !== 'object') continue;
+      const r = row as { at?: string; title?: string; detail?: string };
+      if (!r.at || !r.title) continue;
+      events.push({
+        at: r.at,
+        title: r.title,
+        detail: r.detail,
+        source: /email|application/i.test(r.title) ? 'casper' : 'lead',
+      });
+    }
+  }
+
+  const [{ data: files }, { data: runs }, { data: history }, { data: submissions }] = await Promise.all([
+    supabase
+      .from('lead_attachments')
+      .select('file_name, column_field, created_at')
+      .eq('lead_id', leadId)
+      .order('created_at', { ascending: false })
+      .limit(80),
+    supabase
+      .from('casper_runs')
+      .select('actions, created_at')
+      .eq('user_id', user.id)
+      .eq('lead_id', leadId)
+      .order('created_at', { ascending: false })
+      .limit(80),
+    supabase
+      .from('contact_history')
+      .select('notes, contact_date')
+      .eq('user_id', user.id)
+      .eq('lead_id', leadId)
+      .order('contact_date', { ascending: false })
+      .limit(40),
+    supabase
+      .from('lender_submissions')
+      .select('lender_name, status, created_at')
+      .eq('user_id', user.id)
+      .eq('lead_id', leadId)
+      .order('created_at', { ascending: false })
+      .limit(40),
+  ]);
+
+  for (const file of files ?? []) {
+    const name = String(file.file_name || 'Document');
+    const bucket = String(file.column_field || '').replace(/_/g, ' ');
+    events.push({
+      at: file.created_at,
+      title: 'Document uploaded',
+      detail: bucket ? `${name} · ${bucket}` : name,
+      source: 'docs',
+    });
+  }
+
+  for (const run of runs ?? []) {
+    const ev = casperEvent(run as Record<string, unknown>);
+    if (ev) events.push(ev);
+  }
+
+  for (const row of history ?? []) {
+    const notes = String(row.notes || '').trim();
+    if (!notes || !row.contact_date) continue;
+    const emailed = /application/i.test(notes);
+    const emailUpdated = /email updated|updated email/i.test(notes);
+    if (!emailed && !emailUpdated) continue;
+    events.push({
+      at: row.contact_date,
+      title: emailed ? 'Application emailed' : 'Email updated',
+      detail: notes,
+      source: 'contact',
+    });
+  }
+
+  for (const sub of submissions ?? []) {
+    const lender = String(sub.lender_name || 'lender').trim();
+    events.push({
+      at: sub.created_at,
+      title: 'Submitted to lenders',
+      detail: sub.status ? `${lender} · ${sub.status}` : lender,
+      source: 'lenders',
+    });
+  }
+
+  events.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+  return NextResponse.json({ events: events.slice(0, 80) });
+}

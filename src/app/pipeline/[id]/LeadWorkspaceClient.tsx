@@ -864,7 +864,12 @@ export default function LeadWorkspaceClient({
 
   // ── Underwriting save ────────────────────────────────────────────────────────
   const handleUnderwritingSave = async (data: Record<string, unknown>) => {
-    const payload = { ...data };
+    const currentUd = (lead.underwriting_data || {}) as Record<string, unknown>;
+    const payload = {
+      ...data,
+      statusHistory: data.statusHistory ?? currentUd.statusHistory,
+      fileEvents: data.fileEvents ?? currentUd.fileEvents,
+    };
     if (payload.isFunded && !payload.fundedAt) payload.fundedAt = new Date().toISOString();
     await fetch('/api/leads/underwriting', {
       method: 'PUT',
@@ -908,11 +913,12 @@ export default function LeadWorkspaceClient({
     }
   };
 
-  // ── Status / temperature / assigned save ────────────────────────────────────
+  // ── Status / assigned save ──────────────────────────────────────────────────
   const saveLeadStatus = async (val: string) => {
     const { underwritingData } = await saveLeadStatusWrite({
       leadId: lead.id,
       status: val,
+      prevStatus: lead.lead_status,
       underwritingData: lead.underwriting_data,
     });
     setLead(prev => ({
@@ -925,16 +931,6 @@ export default function LeadWorkspaceClient({
       ...(val && val !== 'New Lead' && val.toUpperCase() !== 'DNC' ? { in_pipeline: true } : {}),
       ...(underwritingData ? { underwriting_data: underwritingData } : {}),
     });
-  };
-
-  const saveTemperature = async (val: string) => {
-    await fetch('/api/leads/pipeline', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ leadId: lead.id, field: 'temperature', value: val }),
-    });
-    setLead(prev => ({ ...prev, temperature: val }));
-    postLeadPatch(lead.id, { temperature: val });
   };
 
   const saveAssignedTo = async (val: string) => {
@@ -1816,7 +1812,8 @@ export default function LeadWorkspaceClient({
           )}
 
           {surfaceTab === 'status' && (
-            <div>
+            <div className="grid grid-cols-1 lg:grid-cols-[minmax(260px,380px)_1fr] gap-4 items-start">
+              <div>
               <Section title="Status & Ownership">
                 <div className="flex items-center gap-2 py-2 border-b border-[#f5f5f5]">
                   <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0">Lead Status</span>
@@ -1867,25 +1864,6 @@ export default function LeadWorkspaceClient({
                 )}
 
                 <div className="flex items-start gap-2 py-2 border-b border-[#f5f5f5]">
-                  <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0 pt-1">Temperature</span>
-                  <div className="flex gap-1">
-                    {(['Hot', 'Warm', 'Cold'] as const).map(t => (
-                      <button
-                        key={t}
-                        onClick={() => saveTemperature(t)}
-                        className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                          lead.temperature === t
-                            ? t === 'Hot' ? 'bg-red-100 text-red-700' : t === 'Warm' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
-                            : 'bg-[#f5f5f5] text-[#6b6b6b] hover:bg-[#ebebeb]'
-                        }`}
-                      >
-                        {t}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-2 py-2 border-b border-[#f5f5f5]">
                   <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0 pt-0.5">Assigned To</span>
                   <AssignedToField value={lead.assigned_to} onSave={saveAssignedTo} />
                 </div>
@@ -1894,34 +1872,6 @@ export default function LeadWorkspaceClient({
                   <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0 pt-0.5">Created By</span>
                   <span className="text-sm text-[#6b6b6b]">{userName}</span>
                 </div>
-              </Section>
-
-              <Section title="Lead">
-                <Field label="Lead ID" value={lead.id} readOnly />
-                {campaignName ? <Field label="Campaign" value={campaignName} readOnly /> : <Field label="Campaign" value={null} readOnly />}
-                <div className="flex items-center gap-2 py-2">
-                  <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0">Lookup</span>
-                  <button
-                    onClick={() => setSosOpen(o => !o)}
-                    className="px-2.5 py-1 rounded text-xs font-medium bg-[#1a1a1a] text-white hover:bg-[#333]"
-                  >
-                    SOS
-                  </button>
-                  <button
-                    onClick={() => {
-                      const q = encodeURIComponent(`"${businessName}" ${sosState} reviews`);
-                      window.open(`https://www.google.com/search?q=${q}`, '_blank', 'noopener,noreferrer');
-                    }}
-                    className="px-2.5 py-1 rounded text-xs font-medium bg-[#1a1a1a] text-white hover:bg-[#333]"
-                  >
-                    Google
-                  </button>
-                </div>
-              </Section>
-
-              <Section title="Meta">
-                <Field label="Created At"  value={fmtDate(lead.created_at)}  readOnly />
-                <Field label="Updated At"  value={fmtDate(lead.updated_at)}  readOnly />
               </Section>
 
               <Section title="Notes">
@@ -1939,11 +1889,14 @@ export default function LeadWorkspaceClient({
                   {notesSaving ? 'Saving…' : 'Save Notes'}
                 </button>
               </Section>
+              </div>
 
               <Section title="Updates">
                 <LeadUpdatesTimeline
+                  leadId={lead.id}
                   createdAt={lead.created_at}
                   lastContact={lead.last_contact}
+                  refreshKey={`${lead.lead_status || ''}:${lead.last_contact || ''}:${lead.updated_at || ''}:${docCount}`}
                 />
               </Section>
             </div>
@@ -2037,6 +1990,10 @@ export default function LeadWorkspaceClient({
             underwriting_data: lead.underwriting_data,
           }}
           onClose={() => setShowEmailModal(false)}
+          onSent={() => {
+            const now = new Date().toISOString();
+            setLead(prev => ({ ...prev, last_contact: now, updated_at: now }));
+          }}
         />
       )}
 

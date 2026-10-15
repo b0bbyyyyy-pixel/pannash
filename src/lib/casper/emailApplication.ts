@@ -2,6 +2,7 @@ import nodemailer from 'nodemailer';
 import { applicationFileName, buildFundingApplication } from '@/lib/fundingApplication';
 import { buildFundingApplicationPdf } from '@/lib/fundingApplicationPdf';
 import { resolveFromHeader } from '@/lib/email-from';
+import { appendEmailSent } from '@/lib/leads/fileActivity';
 
 export type EmailAppResult = {
   sent: boolean;
@@ -63,6 +64,13 @@ export async function emailApplicationToLead(
     subject: 'Funding application — One Funding',
     html: `<p>Hi,</p><p>Attached is the funding application for ${company}. Please complete it and send it back along with the last 3–6 months of business bank statements.</p><p>Robert Gulinello<br/>One Funding</p>`,
     attachments: [{ filename: fileName, content: Buffer.from(pdf), contentType: 'application/pdf' }],
+  });
+
+  await appendEmailSent(supabase, {
+    userId: args.userId,
+    leadId: String(args.lead.id || ''),
+    to: email,
+    subject: 'Funding application — One Funding',
   });
 
   return { sent: true, fileName };

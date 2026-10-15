@@ -2,6 +2,7 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
 import { isCampaignInboxLead, stopCampaignDripForLead } from '@/lib/inbox/promoteCampaignReply';
+import { appendStatusHistory } from '@/lib/leads/fileActivity';
 
 // PATCH /api/leads/pipeline
 // Body: { leadId: string } — sets in_pipeline = true
@@ -43,12 +44,26 @@ export async function PATCH(req: NextRequest) {
       }
 
       const patch: Record<string, unknown> = { [field]: value };
+      let underwritingData: Record<string, unknown> | undefined;
       if (field === 'lead_status') {
         patch.last_contact = new Date().toISOString();
         const status = String(value ?? '').trim();
         if (status && status !== 'New Lead' && status.toUpperCase() !== 'DNC') {
           patch.in_pipeline = true;
         }
+        const { data: current } = await supabase
+          .from('leads')
+          .select('lead_status, underwriting_data')
+          .eq('id', leadId)
+          .eq('user_id', user.id)
+          .maybeSingle();
+        underwritingData = await appendStatusHistory(supabase, {
+          userId: user.id,
+          leadId,
+          status,
+          prev: current?.lead_status,
+          underwritingData: current?.underwriting_data,
+        });
       }
 
       const { error } = await supabase
@@ -72,7 +87,7 @@ export async function PATCH(req: NextRequest) {
         }
       }
 
-      return NextResponse.json({ success: true });
+      return NextResponse.json({ success: true, underwriting_data: underwritingData });
     }
 
     // Default: move to pipeline — also set status to "New Lead" if not already set

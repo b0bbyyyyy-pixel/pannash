@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import { logLeadStatusChange } from '@/lib/leads/fileActivity';
 
 export const dynamic = 'force-dynamic';
 
@@ -62,20 +63,20 @@ export async function PATCH(request: Request) {
   if (status && data?.lead_id) {
     const leadId = data.lead_id;
     if (status === 'Approved') {
-      // Any approval → lead becomes Approved
+      await logLeadStatusChange(supabase, { userId: user.id, leadId, status: 'Approved' });
       await supabase.from('leads').update({ lead_status: 'Approved' }).eq('id', leadId).eq('user_id', user.id);
     } else if (status === 'Needs Docs') {
-      // Lender needs more docs → lead status
       const { data: lr } = await supabase.from('leads').select('lead_status').eq('id', leadId).eq('user_id', user.id).single();
       const safeStatuses = new Set(['Approved', 'Funded', 'Contract Signed', 'Contract In', 'Contract Out', 'All Declined/Final']);
       if (!safeStatuses.has(lr?.lead_status || '')) {
+        await logLeadStatusChange(supabase, { userId: user.id, leadId, status: 'Needs More Docs' });
         await supabase.from('leads').update({ lead_status: 'Needs More Docs' }).eq('id', leadId).eq('user_id', user.id);
       }
     } else if (status === 'Declined') {
-      // Check if ALL submissions for this lead are now declined
       const { data: allSubs } = await supabase.from('lender_submissions').select('status').eq('lead_id', leadId).eq('user_id', user.id);
       const allDeclined = allSubs && allSubs.length > 0 && allSubs.every(s => s.status === 'Declined' || s.status === 'Failed');
       if (allDeclined) {
+        await logLeadStatusChange(supabase, { userId: user.id, leadId, status: 'All Declined/Final' });
         await supabase.from('leads').update({ lead_status: 'All Declined/Final' }).eq('id', leadId).eq('user_id', user.id);
       }
     }

@@ -6,6 +6,7 @@ import nodemailer from 'nodemailer';
 import { refreshGmailToken, isTokenExpired } from '@/lib/gmail-refresh';
 import { appendEmailSignature } from '@/lib/email-signature';
 import { resolveFromHeader } from '@/lib/email-from';
+import { appendEmailSent } from '@/lib/leads/fileActivity';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -112,6 +113,12 @@ export async function POST(req: NextRequest) {
         .update({ last_contact: new Date().toISOString() })
         .eq('id', lead.id)
         .eq('user_id', user.id);
+      await appendEmailSent(supabase, {
+        userId: user.id,
+        leadId: lead.id,
+        to: lead.email,
+        subject,
+      });
     };
 
     const { data: emailConns } = await supabase
