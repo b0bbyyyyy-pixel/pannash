@@ -166,19 +166,20 @@ export async function GET(req: NextRequest) {
 
     const jobList = jobs ?? [];
     const latest = jobList[0] ?? null;
-    let sends: { lead_id: string; sms_status: string; template_index?: number | null; error?: string | null }[] = [];
+    type SendRow = { lead_id: string; sms_status: string; template_index?: number | null; error?: string | null };
+    let sends: SendRow[] = [];
     if (latest) {
-      let sendRes = await supabase
+      const sendFull = await supabase
         .from('sms_drip_sends')
         .select('lead_id, sms_status, template_index, error')
         .eq('job_id', latest.id);
-      if (sendRes.error) {
-        sendRes = await supabase
-          .from('sms_drip_sends')
-          .select('lead_id, sms_status, error')
-          .eq('job_id', latest.id);
-      }
-      sends = (sendRes.data ?? []) as typeof sends;
+      const sendSlim = sendFull.error
+        ? await supabase
+            .from('sms_drip_sends')
+            .select('lead_id, sms_status, error')
+            .eq('job_id', latest.id)
+        : null;
+      sends = ((sendSlim ?? sendFull).data ?? []) as SendRow[];
     }
 
     const tally = tallyDripSends(sends);
