@@ -6,6 +6,7 @@ import { getTwilioCreds } from '@/lib/telephony/twilio';
 import { sendTwilioSms } from '@/lib/telephony/sms';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
 import { notifyUserAlert } from '@/lib/notify/userAlert';
+import { isCarrierBlockError } from '@/lib/smsDrip/carrierBlock';
 
 export async function POST(req: NextRequest) {
   try {
@@ -202,16 +203,20 @@ export async function POST(req: NextRequest) {
 
         const campaignId = item.campaign_id;
         if (campaignId) {
-          const { data: recent } = await supabase
-            .from('sms_queue')
-            .select('status')
-            .eq('campaign_id', campaignId)
-            .in('status', ['sent', 'failed'])
-            .order('updated_at', { ascending: false })
-            .limit(3);
-          const streak = (recent ?? []).findIndex((r: { status: string }) => r.status !== 'failed');
-          const failStreak = streak === -1 ? (recent ?? []).length : streak;
-          if (failStreak >= 3) {
+          const carrierBlock = isCarrierBlockError(err.message);
+          let failStreak = 0;
+          if (!carrierBlock) {
+            const { data: recent } = await supabase
+              .from('sms_queue')
+              .select('status')
+              .eq('campaign_id', campaignId)
+              .in('status', ['sent', 'failed'])
+              .order('updated_at', { ascending: false })
+              .limit(3);
+            const streak = (recent ?? []).findIndex((r: { status: string }) => r.status !== 'failed');
+            failStreak = streak === -1 ? (recent ?? []).length : streak;
+          }
+          if (carrierBlock || failStreak >= 3) {
             const { data: paused } = await supabase
               .from('campaigns')
               .update({ status: 'paused' })
@@ -220,15 +225,20 @@ export async function POST(req: NextRequest) {
               .select('id, name')
               .maybeSingle();
             if (paused) {
+              const name = paused.name || 'SMS campaign';
               await notifyUserAlert(supabase, {
                 userId: user.id,
                 email: user.email,
                 title: 'Campaign paused',
-                body: `${paused.name || 'SMS campaign'} stopped after 3 failed texts in a row. Last error: ${err.message}`,
+                body: carrierBlock
+                  ? `${name} stopped because a carrier blocked a message (spam filter). Last error: ${err.message}`
+                  : `${name} stopped after 3 failed texts in a row. Last error: ${err.message}`,
                 url: `/campaigns/${campaignId}`,
                 tag: `sms-queue-pause-${campaignId}`,
               });
-              errors.push('Paused after 3 failed texts in a row');
+              errors.push(carrierBlock
+                ? 'Paused — carrier blocked this message'
+                : 'Paused after 3 failed texts in a row');
               break;
             }
           }

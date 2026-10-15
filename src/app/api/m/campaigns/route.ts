@@ -4,6 +4,7 @@ import { getTwilioCreds } from '@/lib/telephony/twilio';
 import { sendTwilioSms } from '@/lib/telephony/sms';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
 import { notifyUserAlert } from '@/lib/notify/userAlert';
+import { isCarrierBlockError } from '@/lib/smsDrip/carrierBlock';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -90,6 +91,7 @@ export async function POST(req: NextRequest) {
   let failed = 0;
   let streak = 0;
   let stopped = false;
+  let lastError: string | null = null;
   for (const lead of targets) {
     const body = renderTemplate(text, lead);
     try {
@@ -108,32 +110,38 @@ export async function POST(req: NextRequest) {
       if (result.status === 'failed') {
         failed += 1;
         streak += 1;
+        lastError = result.error ?? 'Send failed';
       } else {
         sent += 1;
         streak = 0;
+        lastError = null;
       }
     } catch (err) {
       failed += 1;
       streak += 1;
+      lastError = err instanceof Error ? err.message : 'Twilio error';
       await recordOutboundInboxSms(supabase, {
         userId: user.id,
         leadId: lead.id,
         toPhone: lead.phone,
         body,
         status: 'failed',
-        errorMessage: err instanceof Error ? err.message : 'Twilio error',
+        errorMessage: lastError,
         sentBy: 'user',
         bumpLastMessageAt: false,
       });
     }
-    if (streak >= 3) {
+    const carrierBlock = isCarrierBlockError(lastError);
+    if (carrierBlock || streak >= 3) {
       stopped = true;
       const remaining = targets.length - sent - failed;
       await notifyUserAlert(supabase, {
         userId: user.id,
         email: user.email,
         title: 'Campaign paused',
-        body: `${list.name || 'SMS campaign'} stopped after 3 failed texts in a row.${remaining > 0 ? ` ${remaining} not sent.` : ''}`,
+        body: carrierBlock
+          ? `${list.name || 'SMS campaign'} stopped because a carrier blocked a message (spam filter). Last error: ${lastError}`
+          : `${list.name || 'SMS campaign'} stopped after 3 failed texts in a row.${remaining > 0 ? ` ${remaining} not sent.` : ''}`,
         url: `/leads?list=${listId}`,
         tag: `m-campaign-pause-${listId}`,
       });

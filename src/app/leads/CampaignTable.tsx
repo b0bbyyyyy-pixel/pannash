@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useMemo } from 'react';
 import { usePolling } from '@/lib/sync/usePolling';
 import { useRouter } from 'next/navigation';
+import { dripPauseChipLabel } from '@/lib/smsDrip/carrierBlock';
 
 interface DripJobSummary {
   id: string;
@@ -166,7 +167,7 @@ export default function CampaignTable({ campaigns, onRename, onDelete }: Props) 
                       if (job?.status === 'paused') {
                         return (
                           <span className="text-[11px] text-amber-600 font-medium whitespace-nowrap">
-                            {job.pause_reason ? 'Paused after 3 failures' : 'Paused'} · {job.sent_count}/{job.total_count}
+                            {dripPauseChipLabel(job.pause_reason)} · {job.sent_count}/{job.total_count}
                           </span>
                         );
                       }

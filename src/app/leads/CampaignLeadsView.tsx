@@ -9,6 +9,7 @@ import QuickTextPopup from '@/components/QuickTextPopup';
 import { zoneForLocation, formatLocal } from '@/lib/smsDrip/timezones';
 import UploadForm from './UploadForm';
 import { formatDripTally, tallyDripSends } from '@/lib/smsDrip/tally';
+import { dripPauseBanner, dripPauseChipLabel } from '@/lib/smsDrip/carrierBlock';
 
 interface DripJob {
   id: string;
@@ -400,7 +401,7 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
                   Resume
                 </button>
                 <span className="text-[11px] text-amber-700 font-medium tabular-nums">
-                  {failsafePause ? 'Paused after 3 failed texts' : 'Paused'} · {dripTallyLabel}
+                  {failsafePause ? dripPauseChipLabel(dripJob.pause_reason) : 'Paused'} · {dripTallyLabel}
                 </span>
                 <button
                   onClick={() => setShowRunSms(true)}
@@ -453,14 +454,17 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
         </div>
       </div>
 
-      {dripJob?.status === 'paused' && failsafePause && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          Sending stopped after 3 failed texts in a row. Fix the message or list, then Resume.
-          {dripJob.pause_reason?.includes('(') ? (
-            <span className="mt-1 block text-xs text-amber-800/80">{dripJob.pause_reason}</span>
-          ) : null}
-        </div>
-      )}
+      {dripJob?.status === 'paused' && failsafePause && (() => {
+        const banner = dripPauseBanner(dripJob.pause_reason);
+        return (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            {banner.title}
+            {banner.detail ? (
+              <span className="mt-1 block text-xs text-amber-800/80">{banner.detail}</span>
+            ) : null}
+          </div>
+        );
+      })()}
 
       {/* Table */}
       <div className="bg-white border border-[#ebebeb] rounded-xl overflow-hidden">

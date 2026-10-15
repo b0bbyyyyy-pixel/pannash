@@ -1,4 +1,5 @@
 import { notifyUserAlert } from '@/lib/notify/userAlert';
+import { isCarrierBlockError } from '@/lib/smsDrip/carrierBlock';
 
 export const DRIP_FAIL_STREAK = 3;
 
@@ -46,7 +47,52 @@ async function campaignName(supabase: any, listId: string) {
   return (data?.name as string | undefined)?.trim() || 'SMS campaign';
 }
 
-/** Pause the drip if the last 3 attempted texts all failed. Alert once. */
+type PauseAlert = {
+  reason: string;
+  consecutiveFailures: number;
+  body: (name: string) => string;
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function pauseDripAndAlert(
+  supabase: any,
+  jobId: string,
+  email: string | null | undefined,
+  alert: PauseAlert,
+): Promise<PauseResult> {
+  const paused = await updateJob(supabase, jobId, {
+    status: 'paused',
+    pause_reason: alert.reason,
+    consecutive_failures: alert.consecutiveFailures,
+    next_send_at: null,
+    updated_at: new Date().toISOString(),
+  }, true);
+
+  if (!paused) return { paused: false };
+
+  const name = await campaignName(supabase, paused.list_id);
+  await notifyUserAlert(supabase, {
+    userId: paused.user_id,
+    email,
+    title: 'Campaign paused',
+    body: alert.body(name),
+    url: `/leads?list=${paused.list_id}`,
+    tag: `drip-pause-${jobId}`,
+  });
+
+  return { paused: true };
+}
+
+function carrierBlockAlert(lastError?: string | null): PauseAlert {
+  const detail = lastError?.trim() || '30007: Carrier blocked this message (content / spam filter).';
+  return {
+    reason: `Carrier blocked this message (${detail})`,
+    consecutiveFailures: 1,
+    body: name => `${name} stopped because a carrier blocked a message (spam filter). Last error: ${detail}`,
+  };
+}
+
+/** Pause on the first 30007, or after 3 failed texts in a row. Alert once. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function maybePauseDripAfterFailures(
   supabase: any,
@@ -54,6 +100,10 @@ export async function maybePauseDripAfterFailures(
   lastError?: string | null,
   email?: string | null,
 ): Promise<PauseResult> {
+  if (isCarrierBlockError(lastError)) {
+    return pauseDripAndAlert(supabase, jobId, email, carrierBlockAlert(lastError));
+  }
+
   const { data: recent, error } = await supabase
     .from('sms_drip_sends')
     .select('sms_status')
@@ -86,28 +136,14 @@ export async function maybePauseDripAfterFailures(
     ? `${DRIP_FAIL_STREAK} failed texts in a row (${lastError})`
     : `${DRIP_FAIL_STREAK} failed texts in a row`;
 
-  const paused = await updateJob(supabase, jobId, {
-    status: 'paused',
-    pause_reason: reason,
-    consecutive_failures: DRIP_FAIL_STREAK,
-    next_send_at: null,
-    updated_at: new Date().toISOString(),
-  }, true);
-
-  if (!paused) return { paused: false };
-
-  const name = await campaignName(supabase, paused.list_id);
-  const detail = lastError ? ` Last error: ${lastError}` : '';
-  await notifyUserAlert(supabase, {
-    userId: paused.user_id,
-    email,
-    title: 'Campaign paused',
-    body: `${name} stopped after ${DRIP_FAIL_STREAK} failed texts in a row.${detail}`,
-    url: `/leads?list=${paused.list_id}`,
-    tag: `drip-pause-${jobId}`,
+  return pauseDripAndAlert(supabase, jobId, email, {
+    reason,
+    consecutiveFailures: DRIP_FAIL_STREAK,
+    body: name => {
+      const detail = lastError ? ` Last error: ${lastError}` : '';
+      return `${name} stopped after ${DRIP_FAIL_STREAK} failed texts in a row.${detail}`;
+    },
   });
-
-  return { paused: true };
 }
 
 /** Record a real send attempt (not a skip) and pause if the fail streak hits 3. */
@@ -147,7 +183,7 @@ export async function finishDripAttempt(
 
 /**
  * Carrier rejections (30005 / 30007) often land after Twilio already accepted the text.
- * Flip that drip send to failed and pause on a streak of 3.
+ * Flip that drip send to failed. 30007 pauses immediately; other failures pause on a streak of 3.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function onDripDeliveryFailed(
