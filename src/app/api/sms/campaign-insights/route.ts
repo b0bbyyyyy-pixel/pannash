@@ -133,6 +133,10 @@ function chunk<T>(arr: T[], size: number) {
   return out;
 }
 
+function asRows<T>(data: unknown): T[] {
+  return Array.isArray(data) ? (data as T[]) : [];
+}
+
 async function overviewInsights(
   supabase: Awaited<ReturnType<typeof getClient>>,
   userId: string,
@@ -199,7 +203,7 @@ async function overviewInsights(
         continue;
       }
       if (res.error) break;
-      const rows = (res.data ?? []) as SendRow[];
+      const rows = asRows<SendRow>(res.data);
       sends.push(...rows);
       if (rows.length < 1000) break;
     }
@@ -227,10 +231,10 @@ async function overviewInsights(
     if (full.error && leadCols.includes('in_pipeline')) {
       leadCols = 'id, list_id, phone, company, sms_opt_out, lead_status, underwriting_data';
       const slim = await supabase.from('leads').select(leadCols).in('id', slice);
-      leadRows.push(...((slim.data ?? []) as LeadRow[]));
+      leadRows.push(...asRows<LeadRow>(slim.data));
       continue;
     }
-    leadRows.push(...((full.data ?? []) as LeadRow[]));
+    leadRows.push(...asRows<LeadRow>(full.data));
   }
   const byLead = new Map(leadRows.map(l => [l.id, l]));
 
