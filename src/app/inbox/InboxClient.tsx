@@ -221,15 +221,16 @@ export default function InboxClient({
   const [dbSetupRequired, setDbSetupRequired] = useState(false);
 
   // List picker state
-  const [showListPicker, setShowListPicker] = useState(false);
   const [listPickerData, setListPickerData] = useState<{ lists: LeadList[]; countMap: Record<string, number> } | null>(null);
   const [loadingListPicker, setLoadingListPicker] = useState(false);
   const [activeListName, setActiveListName] = useState<string | null>(null);
   const [activeListId, setActiveListId] = useState<string | null>(null);
   const [loadingListLeads, setLoadingListLeads] = useState(false);
-  const [pickerAnchor, setPickerAnchor] = useState<{ top: number; left: number } | null>(null);
-  const listPickerRef = useRef<HTMLDivElement>(null);
-  const listPickerBtnRef = useRef<HTMLButtonElement>(null);
+  const [activeStatus, setActiveStatus] = useState<string | null>(null);
+  const [showStatusPicker, setShowStatusPicker] = useState(false);
+  const [statusAnchor, setStatusAnchor] = useState<{ top: number; left: number } | null>(null);
+  const statusPickerBtnRef = useRef<HTMLButtonElement>(null);
+  const activeStatusRef = useRef<string | null>(null);
 
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(initialLeadId);
   const activeListNameRef = useRef<string | null>(null);
@@ -237,6 +238,7 @@ export default function InboxClient({
   const loadSeqRef = useRef(0);
   const draftsRef = useRef<Record<string, string>>({});
   useEffect(() => { activeListNameRef.current = activeListName; }, [activeListName]);
+  useEffect(() => { activeStatusRef.current = activeStatus; }, [activeStatus]);
   useEffect(() => { selectedLeadIdRef.current = selectedLeadId; }, [selectedLeadId]);
   const [messages, setMessages] = useState<InboxMessage[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -364,8 +366,8 @@ export default function InboxClient({
 
   const initialConvsRef = useRef(true);
   const loadLeads = useCallback(async () => {
-    // A campaign list is open — don't overwrite it with the replies-only inbox
-    if (activeListNameRef.current && !debouncedSearch.trim()) return;
+    // A campaign list or status filter is open — don't overwrite it with the replies-only inbox
+    if ((activeListNameRef.current || activeStatusRef.current) && !debouncedSearch.trim()) return;
     try {
       const params = new URLSearchParams();
       const pinId = liveCallPinRef.current || selectedLeadIdRef.current || initialLeadId;
@@ -379,8 +381,8 @@ export default function InboxClient({
         return;
       }
       const data = await res.json();
-      // Campaign opened while this inbox fetch was in flight
-      if (activeListNameRef.current && !debouncedSearch.trim()) return;
+      // Campaign or status filter opened while this inbox fetch was in flight
+      if ((activeListNameRef.current || activeStatusRef.current) && !debouncedSearch.trim()) return;
       setLeads(prev => {
         const incoming = (data.leads ?? []) as InboxLead[];
         const pin = liveCallPinRef.current || selectedLeadIdRef.current;
@@ -411,6 +413,10 @@ export default function InboxClient({
       activeListNameRef.current = null;
       setActiveListName(null);
       setActiveListId(null);
+    }
+    if (activeStatusRef.current) {
+      activeStatusRef.current = null;
+      setActiveStatus(null);
     }
     const already = selectedLeadIdRef.current === id;
     selectedLeadIdRef.current = id;
@@ -473,6 +479,14 @@ export default function InboxClient({
           setLeads(prev => prev.filter(l => l.id !== d.id));
           if (selectedLeadIdRef.current === d.id) setSelectedLeadId(null);
           return;
+        }
+        if (statusTouched && activeStatusRef.current) {
+          const nextStatus = String(patch.lead_status ?? '').trim();
+          if (nextStatus && nextStatus !== activeStatusRef.current) {
+            setLeads(prev => prev.filter(l => l.id !== d.id));
+            if (selectedLeadIdRef.current === d.id) setSelectedLeadId(null);
+            return;
+          }
         }
         setLeads(prev => sortRail(prev.map(l => l.id === d.id ? { ...l, ...patch } as InboxLead : l)));
       }
@@ -697,7 +711,7 @@ export default function InboxClient({
         reloadedMissingRef.current.add(key);
         missing = true;
       }
-      if (missing && !activeListNameRef.current) void loadLeads();
+      if (missing && !activeListNameRef.current && !activeStatusRef.current) void loadLeads();
       return sortRail(next);
     });
   }, [pulse, loadLeads, selectedLeadId]);
@@ -857,13 +871,7 @@ export default function InboxClient({
   usePolling(loadLeads, 120_000, true, false);
 
   // ── List picker: open + fetch ───────────────────────────────────────────────
-  const openListPicker = async () => {
-    const next = !showListPicker;
-    setShowListPicker(next);
-    if (next && listPickerBtnRef.current) {
-      const rect = listPickerBtnRef.current.getBoundingClientRect();
-      setPickerAnchor({ top: rect.bottom + 6, left: rect.left });
-    }
+  const ensureCampaignsLoaded = async () => {
     if (listPickerData) return;
     setLoadingListPicker(true);
     try {
@@ -889,11 +897,13 @@ export default function InboxClient({
 
   // ── Load leads from a list ─────────────────────────────────────────────────
   const loadListLeads = async (list: LeadList) => {
-    setShowListPicker(false);
+    setShowStatusPicker(false);
     setLoadingListLeads(true);
     activeListNameRef.current = list.name;
     setActiveListName(list.name);
     setActiveListId(list.id);
+    activeStatusRef.current = null;
+    setActiveStatus(null);
     setSelectedLeadId(null);
     setMessages([]);
     setConversationId(null);
@@ -923,6 +933,47 @@ export default function InboxClient({
         conversation: null,
       }));
       setLeads(listLeads);
+    } finally {
+      setLoadingListLeads(false);
+    }
+  };
+
+  const clearRailFilter = () => {
+    activeListNameRef.current = null;
+    setActiveListName(null);
+    setActiveListId(null);
+    activeStatusRef.current = null;
+    setActiveStatus(null);
+    setShowStatusPicker(false);
+    setLoadingLeads(true);
+    loadLeads();
+  };
+
+  const openStatusPicker = () => {
+    const next = !showStatusPicker;
+    setShowStatusPicker(next);
+    if (next && statusPickerBtnRef.current) {
+      const rect = statusPickerBtnRef.current.getBoundingClientRect();
+      setStatusAnchor({ top: rect.bottom + 6, left: rect.left });
+    }
+  };
+
+  const loadStatusLeads = async (status: string) => {
+    setShowStatusPicker(false);
+    setLoadingListLeads(true);
+    activeStatusRef.current = status;
+    setActiveStatus(status);
+    activeListNameRef.current = null;
+    setActiveListName(null);
+    setActiveListId(null);
+    setSelectedLeadId(null);
+    setMessages([]);
+    setConversationId(null);
+    try {
+      const res = await fetch(`/api/inbox/conversations?status=${encodeURIComponent(status)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setLeads(sortInboxLeads((data.leads ?? []) as InboxLead[]));
     } finally {
       setLoadingListLeads(false);
     }
@@ -1200,34 +1251,39 @@ export default function InboxClient({
               Pipeline
             </button>
 
-            <div className="relative flex-shrink-0" ref={listPickerRef}>
+            <div className="relative flex-shrink-0">
               <button
-                ref={listPickerBtnRef}
-                onClick={openListPicker}
-                title="Load a campaign"
-                className={`flex items-center gap-1 text-[11px] font-medium bg-transparent border-0 p-0 shadow-none rounded-none transition-colors ${
-                  activeListName ? 'text-[#1a1a1a]' : 'text-[#6b6b6b] hover:text-[#1a1a1a]'
+                ref={statusPickerBtnRef}
+                type="button"
+                onClick={openStatusPicker}
+                title="Filter by status"
+                className={`flex items-center gap-0.5 text-[11px] font-medium bg-transparent border-0 p-0 shadow-none rounded-none transition-colors ${
+                  activeStatus || activeListName ? 'text-[#1a1a1a]' : 'text-[#6b6b6b] hover:text-[#1a1a1a]'
                 }`}
               >
                 {activeListName ? (
                   <span className="max-w-[88px] truncate">{activeListName}</span>
-                ) : 'Campaign'}
+                ) : activeStatus ? (
+                  <span className="max-w-[88px] truncate">{activeStatus}</span>
+                ) : 'Status'}
+                <svg className="w-2.5 h-2.5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
               </button>
 
-              {showListPicker && pickerAnchor && (
-                <ListPickerDropdown
-                  anchor={pickerAnchor}
-                  data={listPickerData}
-                  loading={loadingListPicker}
-                  onSelect={loadListLeads}
-                  onClear={activeListName ? () => {
-                    activeListNameRef.current = null;
-                    setActiveListName(null);
-                    setActiveListId(null);
-                    setShowListPicker(false);
-                    loadLeads();
-                  } : undefined}
-                  onClose={() => setShowListPicker(false)}
+              {showStatusPicker && statusAnchor && (
+                <StatusPickerDropdown
+                  anchor={statusAnchor}
+                  statuses={dbStatuses}
+                  active={activeStatus}
+                  campaigns={listPickerData}
+                  campaignsLoading={loadingListPicker}
+                  activeListName={activeListName}
+                  onSelect={loadStatusLeads}
+                  onOpenCampaigns={ensureCampaignsLoaded}
+                  onSelectCampaign={loadListLeads}
+                  onClear={activeStatus || activeListName ? clearRailFilter : undefined}
+                  onClose={() => setShowStatusPicker(false)}
                 />
               )}
             </div>
@@ -1244,7 +1300,13 @@ export default function InboxClient({
           ) : leads.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
               <p className="text-sm text-gray-400">
-                {search ? 'No leads match your search' : 'No leads with phone numbers'}
+                {search
+                  ? 'No leads match your search'
+                  : activeStatus
+                    ? `No leads with status ${activeStatus}`
+                    : activeListName
+                      ? 'No leads in this campaign'
+                      : 'No leads with phone numbers'}
               </p>
             </div>
           ) : (
@@ -1968,22 +2030,33 @@ export default function InboxClient({
 
 // ── List picker dropdown ───────────────────────────────────────────────────────
 
-function ListPickerDropdown({
+function StatusPickerDropdown({
   anchor,
-  data,
-  loading,
+  statuses,
+  active,
+  campaigns,
+  campaignsLoading,
+  activeListName,
   onSelect,
+  onOpenCampaigns,
+  onSelectCampaign,
   onClear,
   onClose,
 }: {
   anchor: { top: number; left: number };
-  data: { lists: LeadList[]; countMap: Record<string, number> } | null;
-  loading: boolean;
-  onSelect: (list: LeadList) => void;
+  statuses: DBStatus[];
+  active: string | null;
+  campaigns: { lists: LeadList[]; countMap: Record<string, number> } | null;
+  campaignsLoading: boolean;
+  activeListName: string | null;
+  onSelect: (status: string) => void;
+  onOpenCampaigns: () => void;
+  onSelectCampaign: (list: LeadList) => void;
   onClear?: () => void;
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const [view, setView] = useState<'status' | 'campaign'>(activeListName ? 'campaign' : 'status');
 
   useEffect(() => {
     const handle = (e: MouseEvent) => {
@@ -1996,55 +2069,105 @@ function ListPickerDropdown({
   const style: React.CSSProperties = {
     position: 'fixed',
     top: anchor.top,
-    left: Math.max(8, anchor.left - 160),
+    left: Math.max(8, Math.min(anchor.left, (typeof window !== 'undefined' ? window.innerWidth : 400) - 248)),
     zIndex: 9999,
     width: 240,
   };
 
-  if (loading) {
-    return (
-      <div ref={ref} style={style} className="bg-white border border-[#e5e5e5] rounded-xl shadow-xl p-4">
-        <p className="text-xs text-gray-400 text-center">Loading campaigns…</p>
-      </div>
-    );
-  }
-
-  if (!data || data.lists.length === 0) {
-    return (
-      <div ref={ref} style={style} className="bg-white border border-[#e5e5e5] rounded-xl shadow-xl p-4">
-        <p className="text-xs text-gray-400 text-center">No campaigns yet</p>
-      </div>
-    );
-  }
-
   return (
-    <div ref={ref} style={style} className="bg-white border border-[#e5e5e5] rounded-xl shadow-xl overflow-hidden">
-      {/* ~5 rows visible; scroll for older campaigns */}
-      <div className="max-h-[180px] overflow-y-auto py-1">
-        {onClear && (
+    <div ref={ref} style={style} className="bg-white border border-[#e5e5e5] rounded-xl shadow-xl overflow-hidden flex flex-col max-h-[320px]">
+      {view === 'campaign' ? (
+        <>
           <button
-            onClick={onClear}
-            className="w-full text-left px-3 py-2 text-xs font-medium text-[#6b6b6b] hover:bg-[#f5f5f5]"
+            type="button"
+            onClick={() => setView('status')}
+            className="flex-shrink-0 w-full text-left px-3 py-2 text-xs font-medium text-[#6b6b6b] hover:bg-[#f5f5f5] border-b border-[#f0f0f0]"
           >
-            Back to Inbox
+            ← Status
           </button>
-        )}
-        {data.lists.map(list => {
-          const c = data.countMap[list.id] ?? 0;
-          return (
-            <button
-              key={list.id}
-              onClick={() => onSelect(list)}
-              className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-[#f5f5f5]"
-            >
-              <span className="text-xs text-[#1a1a1a] truncate">{list.name}</span>
-              {c > 0 && (
-                <span className="text-[10px] text-gray-400 flex-shrink-0">{c}</span>
-              )}
-            </button>
-          );
-        })}
-      </div>
+          <div className="overflow-y-auto py-1 min-h-0 flex-1">
+            {onClear && activeListName ? (
+              <button
+                type="button"
+                onClick={onClear}
+                className="w-full text-left px-3 py-2 text-xs font-medium text-[#6b6b6b] hover:bg-[#f5f5f5]"
+              >
+                Back to Inbox
+              </button>
+            ) : null}
+            {campaignsLoading ? (
+              <p className="px-3 py-2 text-xs text-gray-400">Loading campaigns…</p>
+            ) : !campaigns || campaigns.lists.length === 0 ? (
+              <p className="px-3 py-2 text-xs text-gray-400">No campaigns yet</p>
+            ) : (
+              campaigns.lists.map(list => {
+                const c = campaigns.countMap[list.id] ?? 0;
+                return (
+                  <button
+                    key={list.id}
+                    type="button"
+                    onClick={() => onSelectCampaign(list)}
+                    className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-[#f5f5f5] ${
+                      activeListName === list.name ? 'bg-[#f5f5f5]' : ''
+                    }`}
+                  >
+                    <span className="text-xs text-[#1a1a1a] truncate">{list.name}</span>
+                    {c > 0 && (
+                      <span className="text-[10px] text-gray-400 flex-shrink-0">{c}</span>
+                    )}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="overflow-y-auto py-1 min-h-0 flex-1">
+            {onClear && (
+              <button
+                type="button"
+                onClick={onClear}
+                className="w-full text-left px-3 py-2 text-xs font-medium text-[#6b6b6b] hover:bg-[#f5f5f5]"
+              >
+                Back to Inbox
+              </button>
+            )}
+            {statuses.length === 0 ? (
+              <p className="px-3 py-2 text-xs text-gray-400">No statuses yet</p>
+            ) : (
+              statuses.map(s => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => onSelect(s.name)}
+                  className={`w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[#f5f5f5] ${
+                    active === s.name ? 'bg-[#f5f5f5]' : ''
+                  }`}
+                >
+                  <span
+                    className="h-2 w-2 rounded-full flex-shrink-0"
+                    style={{ background: s.color || s.bg_color }}
+                  />
+                  <span className="text-xs text-[#1a1a1a] truncate">{s.name}</span>
+                </button>
+              ))
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              onOpenCampaigns();
+              setView('campaign');
+            }}
+            className={`flex-shrink-0 w-full text-left px-3 py-2.5 text-xs font-medium border-t border-[#e5e5e5] hover:bg-[#f5f5f5] ${
+              activeListName ? 'text-[#1a1a1a] bg-[#fafafa]' : 'text-[#1a1a1a]'
+            }`}
+          >
+            Campaign
+          </button>
+        </>
+      )}
     </div>
   );
 }

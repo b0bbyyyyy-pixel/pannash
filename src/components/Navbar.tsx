@@ -8,6 +8,7 @@ import { useWebPhone } from '@/components/webphone/WebPhone';
 import BillingClient from '@/app/settings/billing/BillingClient';
 import DocumentVault from '@/components/DocumentVault';
 import { usePolling } from '@/lib/sync/usePolling';
+import type { BillingCredits } from '@/lib/billing/credits';
 
 type DripJobSummary = {
   id: string;
@@ -18,6 +19,12 @@ type DripJobSummary = {
   created_at?: string;
   updated_at?: string;
 };
+
+function compactMoney(amount: number | null): string {
+  if (amount == null || !Number.isFinite(amount)) return '—';
+  if (amount >= 100) return `$${Math.round(amount)}`;
+  return `$${amount.toFixed(2)}`;
+}
 
 function newestActiveDrip(jobs: DripJobSummary[]) {
   const active = jobs.filter(j => j.status === 'active');
@@ -43,6 +50,7 @@ export default function Navbar({ userName }: NavbarProps) {
   const [showVault, setShowVault] = useState(false);
   const webphone = useWebPhone();
   const [dripJob, setDripJob] = useState<DripJobSummary | null>(null);
+  const [billingPeek, setBillingPeek] = useState<{ twilio: number | null; xai: number | null } | null>(null);
 
   const loadDrip = useCallback(async () => {
     try {
@@ -57,9 +65,26 @@ export default function Navbar({ userName }: NavbarProps) {
 
   usePolling(loadDrip, dripJob ? 10_000 : 45_000);
 
+  const loadBillingPeek = useCallback(async () => {
+    try {
+      const res = await fetch('/api/settings/billing', { credentials: 'include', cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json() as BillingCredits;
+      setBillingPeek({
+        twilio: data.twilio?.status === 'ok' ? data.twilio.remaining : null,
+        xai: data.xai?.status === 'ok' ? data.xai.remaining : null,
+      });
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   useEffect(() => {
-    if (showDropdown) void loadDrip();
-  }, [showDropdown, loadDrip]);
+    if (showDropdown) {
+      void loadDrip();
+      if (!billingPeek) void loadBillingPeek();
+    }
+  }, [showDropdown, loadDrip, loadBillingPeek, billingPeek]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -92,23 +117,8 @@ export default function Navbar({ userName }: NavbarProps) {
             </span>
           </Link>
 
-          {/* Right Side - Agent popup + Calendar popup + Settings menu */}
+          {/* Right Side - Calendar popup + Settings menu */}
           <div className="relative flex items-center gap-4">
-            {/* Agent icon → popup */}
-            <button
-              onClick={() => { setShowAgent(true); webphone.closeDialPad(); setShowCalendar(false); setShowBilling(false); setShowVault(false); setShowDropdown(false); }}
-              className="focus:outline-none hover:opacity-70 transition-opacity"
-              title="Agent"
-            >
-              <img
-                src="/images/icons/agent-icon.png"
-                alt="Agent"
-                width={22}
-                height={22}
-                className="w-[22px] h-[22px]"
-              />
-            </button>
-
             {/* Calendar icon → popup */}
             <button
               onClick={() => { setShowCalendar(true); setShowAgent(false); setShowBilling(false); setShowVault(false); webphone.closeDialPad(); setShowDropdown(false); }}
@@ -141,7 +151,7 @@ export default function Navbar({ userName }: NavbarProps) {
 
             {/* Settings Dropdown */}
             {showDropdown && (
-              <div className="absolute right-0 top-full mt-2 w-64 bg-white border border-[#e5e5e5] rounded-md shadow-lg py-2">
+              <div className="absolute right-0 top-full mt-2 w-72 bg-white border border-[#e5e5e5] rounded-md shadow-lg py-2">
                 <Link
                   href="/leads"
                   className="flex items-center gap-2 px-4 py-2.5 text-sm text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors"
@@ -178,6 +188,20 @@ export default function Navbar({ userName }: NavbarProps) {
                 >
                   Phone
                 </button>
+                <button
+                  type="button"
+                  className="block w-full text-left px-4 py-2.5 text-sm text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors"
+                  onClick={() => {
+                    setShowDropdown(false);
+                    setShowAgent(true);
+                    setShowCalendar(false);
+                    setShowBilling(false);
+                    setShowVault(false);
+                    webphone.closeDialPad();
+                  }}
+                >
+                  Agent
+                </button>
                 <Link
                   href="/settings/connections"
                   className="block px-4 py-2.5 text-sm text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors"
@@ -187,7 +211,7 @@ export default function Navbar({ userName }: NavbarProps) {
                 </Link>
                 <button
                   type="button"
-                  className="block w-full text-left px-4 py-2.5 text-sm text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors"
+                  className="flex w-full items-center gap-2 px-4 py-2.5 text-sm text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors"
                   onClick={() => {
                     setShowBilling(true);
                     setShowVault(false);
@@ -197,7 +221,13 @@ export default function Navbar({ userName }: NavbarProps) {
                     webphone.closeDialPad();
                   }}
                 >
-                  Billing
+                  <span>Billing</span>
+                  {billingPeek ? (
+                    <span className="ml-auto flex items-center gap-2 min-w-0 text-[10px] text-[#9b9b9b] font-medium tabular-nums">
+                      <span title="Twilio">Twilio {compactMoney(billingPeek.twilio)}</span>
+                      <span title="xAI">xAI {compactMoney(billingPeek.xai)}</span>
+                    </span>
+                  ) : null}
                 </button>
                 <button
                   type="button"

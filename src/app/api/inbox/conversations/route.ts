@@ -34,6 +34,7 @@ export async function GET(req: NextRequest) {
 
     const pinLeadId = req.nextUrl.searchParams.get('leadId');
     const q = req.nextUrl.searchParams.get('q')?.trim() ?? '';
+    const statusFilter = req.nextUrl.searchParams.get('status')?.trim() ?? '';
     const initial = req.nextUrl.searchParams.get('initial') === '1';
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -67,6 +68,21 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ leads: [], phoneConnection: null, dbError: error.message });
       }
       list = (hits ?? []).filter(isInboxLead).slice(0, LIMIT);
+    } else if (statusFilter) {
+      const { data: hits, error } = await selectLeads((cols) =>
+        supabase
+          .from('leads')
+          .select(cols)
+          .eq('user_id', user.id)
+          .eq('lead_status', statusFilter)
+          .order('last_contact', { ascending: false, nullsFirst: false })
+          .limit(200)
+      );
+      if (error) {
+        console.error('[inbox/conversations] status error:', error.message);
+        return NextResponse.json({ leads: [], phoneConnection: null, dbError: error.message });
+      }
+      list = (hits ?? []).filter(l => String((l as { phone?: string | null }).phone ?? '').trim());
     } else {
       // Main inbox = people who texted back (including replies that never got last_inbound_at).
       try {
@@ -178,7 +194,7 @@ export async function GET(req: NextRequest) {
         doc_count: docCountByLead[String(lead.id)] ?? 0,
       };
     }).filter(lead => {
-      if (q || (pinLeadId && lead.id === pinLeadId)) return true;
+      if (q || statusFilter || (pinLeadId && lead.id === pinLeadId)) return true;
       const conv = lead.conversation as { last_message_preview?: string | null; last_inbound_at?: string | null; last_direction?: string | null; last_message_at?: string | null } | null;
       const preview = conv?.last_message_preview ?? '';
       const hasInbound = !!(conv?.last_inbound_at || conv?.last_direction === 'inbound');
