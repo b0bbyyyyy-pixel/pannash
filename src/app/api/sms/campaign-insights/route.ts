@@ -85,6 +85,155 @@ type ConvRow = {
   last_message_preview?: string | null;
 };
 
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function safeTz(raw: string | null) {
+  const tz = (raw || '').trim() || 'America/New_York';
+  try {
+    Intl.DateTimeFormat('en-US', { timeZone: tz }).format(new Date());
+    return tz;
+  } catch {
+    return 'America/New_York';
+  }
+}
+
+function formatHourLabel(hour: number) {
+  const h = hour % 12 || 12;
+  return `${h} ${hour < 12 ? 'AM' : 'PM'}`;
+}
+
+function hourRangeLabel(start: number, width: number) {
+  return `${formatHourLabel(start)}–${formatHourLabel((start + width) % 24)}`;
+}
+
+function zonedHourAndDay(iso: string, tz: string): { hour: number; day: number } | null {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      weekday: 'short',
+      hour: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(date);
+    let hour = Number(parts.find(p => p.type === 'hour')?.value);
+    if (hour === 24) hour = 0;
+    if (!Number.isFinite(hour) || hour < 0 || hour > 23) return null;
+    const wd = parts.find(p => p.type === 'weekday')?.value ?? '';
+    const day = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(wd);
+    if (day < 0) return null;
+    return { hour, day };
+  } catch {
+    return null;
+  }
+}
+
+function collectReplyIsos(
+  repliedIds: Set<string>,
+  convs: ConvRow[],
+  firstAt?: Map<string, string>,
+) {
+  const lastAt = new Map<string, string>();
+  for (const c of convs) {
+    if (c.last_inbound_at) lastAt.set(c.lead_id, c.last_inbound_at);
+  }
+  const times: string[] = [];
+  for (const id of repliedIds) {
+    const iso = firstAt?.get(id) || lastAt.get(id);
+    if (iso) times.push(iso);
+  }
+  return times;
+}
+
+function timeInsights(
+  tz: string,
+  replyIsos: string[],
+  leadRows: LeadRow[],
+  repliedIds: Set<string>,
+) {
+  const hourCounts = Array.from({ length: 24 }, () => 0);
+  const dayCounts = Array.from({ length: 7 }, () => 0);
+  let counted = 0;
+  for (const iso of replyIsos) {
+    const z = zonedHourAndDay(iso, tz);
+    if (!z) continue;
+    hourCounts[z.hour] += 1;
+    dayCounts[z.day] += 1;
+    counted += 1;
+  }
+
+  const hours = hourCounts.map((replies, hour) => ({
+    hour,
+    label: formatHourLabel(hour),
+    replies,
+    share: counted ? Math.round((replies / counted) * 100) : 0,
+  }));
+  const days = dayCounts.map((replies, day) => ({
+    day,
+    label: WEEKDAYS[day],
+    short: WEEKDAYS[day].slice(0, 3),
+    replies,
+    share: counted ? Math.round((replies / counted) * 100) : 0,
+  }));
+
+  const peakHour = hours.reduce((best, row) => (row.replies > best.replies ? row : best), hours[0]);
+  const peakDay = days.reduce((best, row) => (row.replies > best.replies ? row : best), days[0]);
+
+  let windowStart = 0;
+  let windowSum = 0;
+  for (let i = 0; i < 24; i++) {
+    let sum = 0;
+    for (let w = 0; w < 3; w++) sum += hourCounts[(i + w) % 24];
+    if (sum > windowSum) {
+      windowSum = sum;
+      windowStart = i;
+    }
+  }
+
+  const sendBuckets = Array.from({ length: 24 }, () => ({ sent: 0, replies: 0 }));
+  for (const lead of leadRows) {
+    if (!lead.sms_sent_at) continue;
+    const z = zonedHourAndDay(lead.sms_sent_at, tz);
+    if (!z) continue;
+    sendBuckets[z.hour].sent += 1;
+    if (repliedIds.has(lead.id)) sendBuckets[z.hour].replies += 1;
+  }
+  const minSent = 10;
+  const bestSendHours = sendBuckets
+    .map((row, hour) => ({
+      hour,
+      label: formatHourLabel(hour),
+      sent: row.sent,
+      replies: row.replies,
+      replyRate: row.sent ? Math.round((row.replies / row.sent) * 100) : 0,
+    }))
+    .filter(row => row.sent >= minSent)
+    .sort((a, b) => b.replyRate - a.replyRate || b.replies - a.replies)
+    .slice(0, 5);
+
+  return {
+    timezone: tz,
+    counted,
+    peakHour: peakHour.replies
+      ? { label: peakHour.label, replies: peakHour.replies, share: peakHour.share }
+      : null,
+    peakWindow: windowSum
+      ? {
+          label: hourRangeLabel(windowStart, 3),
+          replies: windowSum,
+          share: counted ? Math.round((windowSum / counted) * 100) : 0,
+        }
+      : null,
+    peakDay: peakDay.replies
+      ? { label: peakDay.label, replies: peakDay.replies, share: peakDay.share }
+      : null,
+    hours,
+    topHours: [...hours].filter(h => h.replies > 0).sort((a, b) => b.replies - a.replies).slice(0, 5),
+    days,
+    bestSendHours,
+  };
+}
+
 function geoAndIndustry(leadRows: LeadRow[], repliedIds: Set<string>, replies: number) {
   const byState = new Map<string, number>();
   const byArea = new Map<string, number>();
@@ -141,6 +290,7 @@ async function overviewInsights(
   supabase: Awaited<ReturnType<typeof getClient>>,
   userId: string,
   daysRaw: string | null,
+  tz: string,
 ) {
   const days = daysRaw === 'all' ? null : Math.min(365, Math.max(1, Number(daysRaw) || 30));
   const since = days ? new Date(Date.now() - days * 86_400_000).toISOString() : null;
@@ -324,6 +474,25 @@ async function overviewInsights(
   const sent = textedIds.size;
   const replies = repliedIds.size;
   const geo = geoAndIndustry(leadRows, repliedIds, replies);
+  let replyIsos = collectReplyIsos(repliedIds, convs);
+  if (!replyIsos.length && repliedIds.size) {
+    const firstAt = new Map<string, string>();
+    for (const slice of chunk([...repliedIds].slice(0, 800), 250)) {
+      const { data: msgs, error } = await supabase
+        .from('inbox_messages')
+        .select('lead_id, created_at')
+        .in('lead_id', slice)
+        .eq('direction', 'inbound')
+        .order('created_at', { ascending: true })
+        .limit(800);
+      if (error) break;
+      for (const m of msgs ?? []) {
+        if (m.lead_id && m.created_at && !firstAt.has(m.lead_id)) firstAt.set(m.lead_id, m.created_at);
+      }
+    }
+    replyIsos = collectReplyIsos(repliedIds, convs, firstAt);
+  }
+  const replyTimes = timeInsights(tz, replyIsos, leadRows, repliedIds);
 
   return NextResponse.json({
     name: days ? `Last ${days} days` : 'All time',
@@ -343,6 +512,7 @@ async function overviewInsights(
     mix,
     templates: templateRows,
     failures,
+    replyTimes,
     ...geo,
   });
 }
@@ -353,8 +523,9 @@ export async function GET(req: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+    const tz = safeTz(req.nextUrl.searchParams.get('tz'));
     const listId = req.nextUrl.searchParams.get('listId');
-    if (!listId) return overviewInsights(supabase, user.id, req.nextUrl.searchParams.get('days'));
+    if (!listId) return overviewInsights(supabase, user.id, req.nextUrl.searchParams.get('days'), tz);
 
     const { data: list } = await supabase
       .from('lead_lists')
@@ -436,6 +607,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    const firstAt = new Map<string, string>();
     if (repliedIds.size) {
       const ids = [...repliedIds].slice(0, 400);
       const { data: msgs } = await supabase
@@ -446,6 +618,8 @@ export async function GET(req: NextRequest) {
         .order('created_at', { ascending: true });
       const first = new Map<string, string>();
       for (const m of msgs ?? []) {
+        if (!m.lead_id) continue;
+        if (m.created_at && !firstAt.has(m.lead_id)) firstAt.set(m.lead_id, m.created_at);
         if (!first.has(m.lead_id) && m.body) first.set(m.lead_id, m.body);
       }
       for (const [id, body] of first) previewByLead.set(id, body);
@@ -531,6 +705,12 @@ export async function GET(req: NextRequest) {
     const replies = repliedIds.size;
 
     const { topStates, topAreaCodes, topIndustries } = geoAndIndustry(leadRows, repliedIds, replies);
+    const replyTimes = timeInsights(
+      tz,
+      collectReplyIsos(repliedIds, convs, firstAt),
+      leadRows,
+      repliedIds,
+    );
 
     return NextResponse.json({
       name: list.name,
@@ -549,6 +729,7 @@ export async function GET(req: NextRequest) {
       mix,
       templates: templateRows,
       failures,
+      replyTimes,
       topStates,
       topAreaCodes,
       topIndustries,

@@ -36,6 +36,17 @@ type Insights = {
     share: number;
   }[];
   topIndustries?: { industry: string; replies: number; share: number }[];
+  replyTimes?: {
+    timezone: string;
+    counted: number;
+    peakHour: { label: string; replies: number; share: number } | null;
+    peakWindow: { label: string; replies: number; share: number } | null;
+    peakDay: { label: string; replies: number; share: number } | null;
+    hours: { hour: number; label: string; replies: number; share: number }[];
+    topHours: { label: string; replies: number; share: number }[];
+    days: { day: number; label: string; short: string; replies: number; share: number }[];
+    bestSendHours: { label: string; sent: number; replies: number; replyRate: number }[];
+  };
 };
 
 function pct(part: number, whole: number) {
@@ -51,6 +62,55 @@ function Row({ label, value, hint }: { label: string; value: string | number; hi
         {value}
         {hint ? <span className="ml-2 text-[11px] text-[#9b9b9b]">{hint}</span> : null}
       </span>
+    </div>
+  );
+}
+
+function HourStrip({ hours }: { hours: { hour: number; label: string; replies: number }[] }) {
+  const max = Math.max(0, ...hours.map(h => h.replies));
+  return (
+    <div>
+      <div className="flex items-end gap-[3px] h-14">
+        {hours.map(h => (
+          <div
+            key={h.hour}
+            title={`${h.label} · ${h.replies} ${h.replies === 1 ? 'reply' : 'replies'}`}
+            className="flex-1 min-w-0 rounded-sm bg-[#1a1a1a]"
+            style={{
+              height: max ? `${Math.max(h.replies ? 10 : 4, (h.replies / max) * 100)}%` : '4px',
+              opacity: h.replies ? 1 : 0.12,
+            }}
+          />
+        ))}
+      </div>
+      <div className="mt-1 flex justify-between text-[10px] text-[#9b9b9b]">
+        <span>12 AM</span>
+        <span>6 AM</span>
+        <span>12 PM</span>
+        <span>6 PM</span>
+      </div>
+    </div>
+  );
+}
+
+function DayStrip({ days }: { days: { label: string; short: string; replies: number; share: number }[] }) {
+  const max = Math.max(0, ...days.map(d => d.replies));
+  return (
+    <div className="grid grid-cols-7 gap-1.5">
+      {days.map(d => (
+        <div key={d.label} className="text-center" title={`${d.label} · ${d.replies} (${d.share}%)`}>
+          <div className="flex h-10 items-end">
+            <div
+              className="w-full rounded-sm bg-[#1a1a1a]"
+              style={{
+                height: max ? `${Math.max(d.replies ? 12 : 4, (d.replies / max) * 100)}%` : '4px',
+                opacity: d.replies ? 1 : 0.12,
+              }}
+            />
+          </div>
+          <div className="mt-1 text-[10px] text-[#9b9b9b]">{d.short.slice(0, 2)}</div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -100,14 +160,21 @@ export default function CampaignInsightsModal({
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState('Docs In');
   const [days, setDays] = useState<'30' | '60' | '90' | 'all'>('30');
+  const [tz] = useState(() => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
+    } catch {
+      return 'America/New_York';
+    }
+  });
 
   useEffect(() => {
     let dead = false;
     setData(null);
     setError(null);
     const url = overview
-      ? `/api/sms/campaign-insights?days=${days}`
-      : `/api/sms/campaign-insights?listId=${encodeURIComponent(listId || '')}`;
+      ? `/api/sms/campaign-insights?days=${days}&tz=${encodeURIComponent(tz)}`
+      : `/api/sms/campaign-insights?listId=${encodeURIComponent(listId || '')}&tz=${encodeURIComponent(tz)}`;
     const ctrl = new AbortController();
     const timer = window.setTimeout(() => ctrl.abort(), 25_000);
     fetch(url, { cache: 'no-store', signal: ctrl.signal })
@@ -132,7 +199,7 @@ export default function CampaignInsightsModal({
       })
       .finally(() => window.clearTimeout(timer));
     return () => { dead = true; ctrl.abort(); };
-  }, [listId, overview, days]);
+  }, [listId, overview, days, tz]);
 
   const mixTotal = data ? data.mix.positive + data.mix.negative + data.mix.opt_out + data.mix.other : 0;
   const statusCount = data ? (data.statusCounts[status] ?? 0) : 0;
@@ -242,6 +309,71 @@ export default function CampaignInsightsModal({
                   </div>
                 )}
               </div>
+
+              {data.replyTimes && data.replyTimes.counted > 0 ? (
+                <div>
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-[#9b9b9b] mb-2">
+                    When replies come in
+                  </div>
+                  <p className="text-sm text-[#1a1a1a]">
+                    {data.replyTimes.peakHour
+                      ? `Most replies at ${data.replyTimes.peakHour.label}`
+                      : 'Reply times'}
+                    {data.replyTimes.peakWindow
+                      ? ` · busiest stretch ${data.replyTimes.peakWindow.label}`
+                      : ''}
+                  </p>
+                  {data.replyTimes.peakDay ? (
+                    <p className="text-[11px] text-[#9b9b9b] mt-0.5">
+                      Strongest day: {data.replyTimes.peakDay.label}
+                      {' · '}
+                      {data.replyTimes.peakDay.replies} replies
+                    </p>
+                  ) : null}
+                  <div className="mt-3">
+                    <HourStrip hours={data.replyTimes.hours} />
+                  </div>
+                  <div className="mt-3">
+                    <DayStrip days={data.replyTimes.days} />
+                  </div>
+                  <div className="mt-2 divide-y divide-[#f0f0f0]">
+                    {data.replyTimes.topHours.map(row => (
+                      <Row
+                        key={row.label}
+                        label={row.label}
+                        value={row.replies}
+                        hint={`${row.share}% of replies`}
+                      />
+                    ))}
+                  </div>
+                  <p className="mt-2 text-[11px] text-[#9b9b9b]">Times in {data.replyTimes.timezone.replace(/_/g, ' ')}</p>
+                </div>
+              ) : data.replies > 0 ? (
+                <div>
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-[#9b9b9b] mb-2">
+                    When replies come in
+                  </div>
+                  <p className="text-sm text-[#9b9b9b]">No reply timestamps yet.</p>
+                </div>
+              ) : null}
+
+              {data.replyTimes?.bestSendHours?.length ? (
+                <div>
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-[#9b9b9b] mb-2">
+                    Best hours to text
+                  </div>
+                  <div className="divide-y divide-[#f0f0f0]">
+                    {data.replyTimes.bestSendHours.map(row => (
+                      <Row
+                        key={row.label}
+                        label={row.label}
+                        value={`${row.replyRate}%`}
+                        hint={`${row.replies} of ${row.sent} sent`}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : null}
 
               <div>
                 <div className="text-[11px] font-semibold uppercase tracking-wider text-[#9b9b9b] mb-2">Opening texts</div>
