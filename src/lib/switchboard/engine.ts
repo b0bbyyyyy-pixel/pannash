@@ -304,7 +304,7 @@ export class SwitchboardEngine {
   private splitPersistRows(sub: number, app: number, fun: number): [number, number, number] {
     const weights = [Math.max(0, sub), Math.max(0, app), Math.max(0, fun)];
     const maxPersist = Math.max(0, Math.floor(this.rows * 0.4));
-    const mins = weights.map(w => (w > 0 ? 2 : 0));
+    const mins: number[] = weights.map(w => (w > 0 ? 2 : 0));
     const minTotal = mins.reduce((s, n) => s + n, 0);
     let out: number[];
     if (minTotal >= maxPersist) {
