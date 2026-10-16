@@ -312,6 +312,14 @@ export default function InboxClient({
     return rem ? `Sends in ${m}m ${rem}s` : `Sends in ${m}m`;
   })() : null;
   const webphone = useWebPhone();
+  const liveCallPin =
+    (webphone.status === 'in-call' || !!webphone.incomingFrom)
+      ? webphone.activeLead?.id ?? null
+      : null;
+  const liveCallPinRef = useRef<string | null>(null);
+  liveCallPinRef.current = liveCallPin;
+  const sortRail = (list: InboxLead[], pin?: string | null) =>
+    sortInboxLeads(list, liveCallPinRef.current || pin);
   const router = useRouter();
   const pathname = usePathname();
   const [dialerOpen, setDialerOpen] = useState(false);
@@ -360,7 +368,7 @@ export default function InboxClient({
     if (activeListNameRef.current && !debouncedSearch.trim()) return;
     try {
       const params = new URLSearchParams();
-      const pinId = selectedLeadIdRef.current || initialLeadId;
+      const pinId = liveCallPinRef.current || selectedLeadIdRef.current || initialLeadId;
       if (pinId) params.set('leadId', pinId);
       if (debouncedSearch.trim()) params.set('q', debouncedSearch.trim());
       if (initialConvsRef.current) params.set('initial', '1');
@@ -375,12 +383,12 @@ export default function InboxClient({
       if (activeListNameRef.current && !debouncedSearch.trim()) return;
       setLeads(prev => {
         const incoming = (data.leads ?? []) as InboxLead[];
-        const pin = selectedLeadIdRef.current;
+        const pin = liveCallPinRef.current || selectedLeadIdRef.current;
         if (pin && !incoming.some(l => l.id === pin)) {
           const keep = prev.find(l => l.id === pin);
-          if (keep) return sortInboxLeads([keep, ...incoming]);
+          if (keep) return sortRail([keep, ...incoming], pin);
         }
-        return sortInboxLeads(incoming);
+        return sortRail(incoming, pin);
       });
       if (data.phoneConnection) setPhoneConn(data.phoneConnection);
       else if (initialConvsRef.current) setPhoneConn(null);
@@ -394,6 +402,25 @@ export default function InboxClient({
   }, [initialLeadId, debouncedSearch]);
 
   useEffect(() => { loadLeads(); }, [loadLeads]);
+
+  // Incoming / in-call lead → select them, pin to top, open the thread.
+  useEffect(() => {
+    const id = liveCallPin;
+    if (!id) return;
+    if (activeListNameRef.current) {
+      activeListNameRef.current = null;
+      setActiveListName(null);
+      setActiveListId(null);
+    }
+    const already = selectedLeadIdRef.current === id;
+    selectedLeadIdRef.current = id;
+    if (!already) setSelectedLeadId(id);
+    setLeads(prev => {
+      if (already && prev[0]?.id === id) return prev;
+      return sortInboxLeads(prev, id);
+    });
+    void loadLeads();
+  }, [liveCallPin, loadLeads]);
 
   // Inbox owns the single iframe: Pipeline list ↔ Lead Info swap, never nest.
   useEffect(() => {
@@ -447,7 +474,7 @@ export default function InboxClient({
           if (selectedLeadIdRef.current === d.id) setSelectedLeadId(null);
           return;
         }
-        setLeads(prev => sortInboxLeads(prev.map(l => l.id === d.id ? { ...l, ...patch } as InboxLead : l)));
+        setLeads(prev => sortRail(prev.map(l => l.id === d.id ? { ...l, ...patch } as InboxLead : l)));
       }
     };
     window.addEventListener('message', onMsg);
@@ -515,7 +542,7 @@ export default function InboxClient({
       if (data.conversationId) setConversationId(data.conversationId);
 
       const last = merged[merged.length - 1];
-      setLeads(prev => sortInboxLeads(prev.map(l => {
+      setLeads(prev => sortRail(prev.map(l => {
         if (l.id !== leadId) return l;
         const prevAt = Date.parse(l.conversation?.last_message_at ?? '') || 0;
         const nextAt = last ? Date.parse(last.created_at) || 0 : 0;
@@ -671,7 +698,7 @@ export default function InboxClient({
         missing = true;
       }
       if (missing && !activeListNameRef.current) void loadLeads();
-      return sortInboxLeads(next);
+      return sortRail(next);
     });
   }, [pulse, loadLeads, selectedLeadId]);
 
@@ -803,7 +830,7 @@ export default function InboxClient({
               void loadLeads();
               return prev;
             }
-            return sortInboxLeads(prev.map(l =>
+            return sortRail(prev.map(l =>
               l.id === leadId
                 ? {
                     ...l,
@@ -950,7 +977,7 @@ export default function InboxClient({
         }
         // Update conversation preview in lead list
         const preview = body.length > 100 ? body.slice(0, 97) + '…' : body;
-        setLeads(prev => sortInboxLeads(prev.map(l =>
+        setLeads(prev => sortRail(prev.map(l =>
           l.id === sendLeadId
             ? {
                 ...l,

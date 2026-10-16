@@ -188,7 +188,7 @@ export async function GET(req: NextRequest) {
       return hasInbound;
     });
 
-    const mergedSorted = sortInboxLeads(merged);
+    const mergedSorted = sortInboxLeads(merged, pinLeadId);
 
     let phoneConn = null;
     if (initial) {

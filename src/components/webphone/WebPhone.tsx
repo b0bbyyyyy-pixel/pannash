@@ -41,6 +41,7 @@ interface WebPhoneContextValue {
   sendDigits: (digits: string) => void;
   acceptIncoming: () => void;
   rejectIncoming: () => void;
+  activeLead: { id: string; name: string; company?: string | null } | null;
   dialPadOpen: boolean;
   dialPadNumber: string;
   fromNumber: string | null;
@@ -203,6 +204,7 @@ function LeadCardOverlay({
 
 export default function WebPhoneProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() ?? '';
+  const router = useRouter();
   const onMobileText = pathname.startsWith('/m');
   const [status, setStatus] = useState<PhoneStatus>('offline');
   const [activeNumber, setActiveNumber] = useState<string | null>(null);
@@ -222,6 +224,9 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   const deviceRef = useRef<Device | null>(null);
   const callRef = useRef<Call | null>(null);
   const incomingRef = useRef<Call | null>(null);
+  const matchedLeadRef = useRef<MatchedLead | null>(null);
+  matchedLeadRef.current = matchedLead;
+  const incomingSessionRef = useRef(false);
   const initStarted = useRef(false);
   const showLeadCardRef = useRef(false);
   showLeadCardRef.current = showLeadCard;
@@ -253,6 +258,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
 
   const resetCallState = useCallback(() => {
     stopRingback();
+    incomingSessionRef.current = false;
     callRef.current = null;
     setActiveNumber(null);
     setActiveName(null);
@@ -335,6 +341,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
 
         device.on('incoming', (call: Call) => {
           incomingRef.current = call;
+          incomingSessionRef.current = true;
           const from = call.parameters.From ?? 'Unknown';
           setIncomingFrom(from);
           const paramId = customParam(call, 'leadId');
@@ -369,6 +376,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
           }
           call.on('cancel', () => {
             incomingRef.current = null;
+            incomingSessionRef.current = false;
             setIncomingFrom(null);
             if (!showLeadCardRef.current) setMatchedLead(null);
           });
@@ -485,6 +493,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     const call = incomingRef.current;
     if (!call) return;
     incomingRef.current = null;
+    incomingSessionRef.current = true;
     const from = call.parameters.From ?? null;
     setActiveNumber(from);
     setActiveName(prev => prev || customParam(call, 'leadName'));
@@ -498,12 +507,28 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   const rejectIncoming = useCallback(() => {
     incomingRef.current?.reject();
     incomingRef.current = null;
+    incomingSessionRef.current = false;
     setIncomingFrom(null);
     if (!showLeadCardRef.current) {
       setMatchedLead(null);
       setActiveName(null);
     }
   }, []);
+
+  // Incoming caller (ring or after Answer) → Inbox so you can text and edit notes.
+  useEffect(() => {
+    if (onMobileText || !matchedLead?.id) return;
+    const ringing = !!incomingFrom;
+    const liveIncoming = status === 'in-call' && incomingSessionRef.current;
+    if (!ringing && !liveIncoming) return;
+    const target = `/inbox?leadId=${encodeURIComponent(matchedLead.id)}`;
+    if (typeof window !== 'undefined') {
+      const here = window.location.pathname === '/inbox'
+        && new URLSearchParams(window.location.search).get('leadId') === matchedLead.id;
+      if (here) return;
+    }
+    router.push(target);
+  }, [matchedLead?.id, incomingFrom, status, onMobileText, router]);
 
   const openDialPad = useCallback((number?: string) => {
     setDialPadNumber(number ? number.replace(/[^\d+*#]/g, '') : '');
@@ -527,6 +552,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     ready: status !== 'offline',
     activeNumber, activeName, incomingFrom, muted, error,
     connect, hangup, toggleMute, sendDigits, acceptIncoming, rejectIncoming,
+    activeLead: matchedLead,
     dialPadOpen, dialPadNumber, fromNumber, openDialPad, closeDialPad,
   };
 
@@ -593,14 +619,17 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
         <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-[100]">
           <div className="bg-[#1a1a1a] text-white rounded-2xl shadow-2xl px-5 py-3 flex items-center gap-4">
             <div className="min-w-0">
-              <p className="max-w-[180px] truncate text-sm font-semibold">
+              <p className="max-w-[280px] truncate text-sm font-semibold">
                 {matchedLead?.name || activeName || fmtNumber(activeNumber)}
               </p>
+              {matchedLead?.company && (
+                <p className="max-w-[280px] truncate text-xs text-white/80">{matchedLead.company}</p>
+              )}
               <p className="text-xs text-white/60">
                 {status === 'connecting' && 'Connecting…'}
                 {status === 'ringing' && 'Ringing…'}
                 {status === 'in-call' && (elapsed ?? 'Connected')}
-                {matchedLead?.company ? ` · ${matchedLead.company}` : ''}
+                {(matchedLead || activeName) && activeNumber ? ` · ${fmtNumber(activeNumber)}` : ''}
               </p>
             </div>
 
