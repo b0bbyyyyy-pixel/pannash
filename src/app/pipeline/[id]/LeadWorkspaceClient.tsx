@@ -195,11 +195,136 @@ function Field({
   );
 }
 
-function SnapRow({ label, value }: { label: string; value: string }) {
+function parseSnapNumber(raw: string): number | null {
+  const cleaned = raw.replace(/[$,\s]/g, '').trim();
+  if (!cleaned) return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+
+function SnapRow({
+  label,
+  value,
+  editValue,
+  wide = false,
+  onSave,
+}: {
+  label: string;
+  value: string;
+  editValue?: string;
+  wide?: boolean;
+  onSave: (val: string) => Promise<void> | void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [editVal, setEditVal] = useState(editValue ?? '');
+  const [saving, setSaving] = useState(false);
+
+  const start = () => {
+    setEditVal(editValue ?? '');
+    setEditing(true);
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try { await onSave(editVal); } finally {
+      setSaving(false);
+      setEditing(false);
+    }
+  };
+
   return (
     <div className="flex items-start justify-between gap-3 py-1.5 border-b border-[#f5f5f5] last:border-b-0">
       <span className="text-xs text-[#9b9b9b] min-w-0 pt-0.5">{label}</span>
-      <span className="text-sm text-[#1a1a1a] text-right break-words min-w-0">{value}</span>
+      {editing ? (
+        <input
+          type="text"
+          value={editVal}
+          onChange={e => setEditVal(e.target.value)}
+          onBlur={handleSave}
+          onKeyDown={e => { if (e.key === 'Enter') void handleSave(); if (e.key === 'Escape') setEditing(false); }}
+          autoFocus
+          className={`${wide ? 'w-[9.5rem]' : 'w-[6.75rem]'} px-1.5 py-0.5 text-sm text-right border border-[#e5e5e5] rounded focus:outline-none focus:ring-1 focus:ring-[#1a1a1a]`}
+        />
+      ) : (
+        <span
+          className="text-sm text-[#1a1a1a] text-right break-words min-w-0 cursor-pointer hover:underline underline-offset-2 decoration-dotted"
+          title="Click to edit"
+          onClick={start}
+        >
+          {saving ? '…' : value}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function SnapTibRow({
+  label,
+  months,
+  onSave,
+}: {
+  label: string;
+  months: number | null;
+  onSave: (months: number | null) => Promise<void> | void;
+}) {
+  const total = Number(months) || 0;
+  const [editing, setEditing] = useState(false);
+  const [years, setYears] = useState(Math.floor(total / 12));
+  const [mos, setMos] = useState(total % 12);
+  const [saving, setSaving] = useState(false);
+  const display = months == null || months === 0 ? '—' : `${Math.floor(total / 12)}y ${total % 12}m`;
+
+  const start = () => {
+    setYears(Math.floor(total / 12));
+    setMos(total % 12);
+    setEditing(true);
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const next = (Number(years) || 0) * 12 + (Number(mos) || 0);
+      await onSave(next || null);
+    } finally {
+      setSaving(false);
+      setEditing(false);
+    }
+  };
+
+  return (
+    <div className="flex items-start justify-between gap-3 py-1.5 border-b border-[#f5f5f5] last:border-b-0">
+      <span className="text-xs text-[#9b9b9b] min-w-0 pt-0.5">{label}</span>
+      {editing ? (
+        <div className="flex items-center gap-1">
+          <input
+            type="number"
+            min={0}
+            value={years}
+            onChange={e => setYears(Number(e.target.value) || 0)}
+            className="w-10 px-1 py-0.5 text-sm text-right border border-[#e5e5e5] rounded focus:outline-none focus:ring-1 focus:ring-[#1a1a1a]"
+          />
+          <span className="text-[10px] text-[#9b9b9b]">y</span>
+          <input
+            type="number"
+            min={0}
+            max={11}
+            value={mos}
+            onChange={e => setMos(Number(e.target.value) || 0)}
+            onKeyDown={e => { if (e.key === 'Enter') void handleSave(); if (e.key === 'Escape') setEditing(false); }}
+            className="w-10 px-1 py-0.5 text-sm text-right border border-[#e5e5e5] rounded focus:outline-none focus:ring-1 focus:ring-[#1a1a1a]"
+          />
+          <span className="text-[10px] text-[#9b9b9b]">m</span>
+          <button type="button" onClick={() => void handleSave()} className="text-[10px] text-[#1a1a1a] font-medium">Save</button>
+        </div>
+      ) : (
+        <span
+          className="text-sm text-[#1a1a1a] text-right cursor-pointer hover:underline underline-offset-2 decoration-dotted"
+          title="Click to edit"
+          onClick={start}
+        >
+          {saving ? '…' : display}
+        </span>
+      )}
     </div>
   );
 }
@@ -608,6 +733,36 @@ export default function LeadWorkspaceClient({
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lead.id, lead.underwriting_data]);
+
+  const saveUdPatch = useCallback(async (
+    patch: Record<string, unknown>,
+    extra?: { value?: number | null },
+  ) => {
+    const currentUd = (lead.underwriting_data || {}) as Record<string, unknown>;
+    const updatedUd = { ...currentUd, ...patch };
+    const res = await fetch('/api/leads/underwriting', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ leadId: lead.id, underwritingData: updatedUd }),
+    });
+    if (!res.ok) return;
+    if (extra && Object.prototype.hasOwnProperty.call(extra, 'value')) {
+      await fetch('/api/leads/update-crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadId: lead.id, field: 'value', value: extra.value }),
+      });
+    }
+    setLead(prev => ({
+      ...prev,
+      underwriting_data: updatedUd,
+      ...(extra && Object.prototype.hasOwnProperty.call(extra, 'value') ? { value: extra.value } : {}),
+    }));
+    postLeadPatch(lead.id, {
+      underwriting_data: updatedUd,
+      ...(extra && Object.prototype.hasOwnProperty.call(extra, 'value') ? { value: extra.value } : {}),
+    });
   }, [lead.id, lead.underwriting_data]);
 
   // ── Save bank analysis snapshot to underwriting_data ────────────────────────
@@ -1503,7 +1658,6 @@ export default function LeadWorkspaceClient({
               if (flagOn(ud.hasOtherMCALoans)) return 'Yes';
               return '—';
             })();
-            const tibVal = derivedTIB != null ? `${Math.floor(derivedTIB / 12)}y ${derivedTIB % 12}m` : '—';
             const po = projectedOffer;
             const rsColor = !po ? '#9b9b9b' : po.riskScore >= 70 ? '#15803d' : po.riskScore >= 50 ? '#a16207' : '#b91c1c';
             return (
@@ -1511,18 +1665,86 @@ export default function LeadWorkspaceClient({
             <aside className="w-[300px] flex-shrink-0 min-w-0 overflow-x-hidden overflow-y-auto border-r border-[#e5e5e5] bg-[#fafafa] px-3 py-3 space-y-3">
               <div className="bg-white border border-[#ececec] rounded-xl px-3 py-2.5">
                 <p className="text-[11px] font-semibold text-[#9b9b9b] uppercase tracking-wider mb-1">Deal Snapshot</p>
-                <SnapRow label="Requested" value={money(lead.value ?? ud.requestedAmount)} />
-                <SnapRow label="Avg monthly revenue" value={money(ud.monthlyRevenue)} />
-                <SnapRow label="Avg daily balance" value={money(ud.avgDailyBalance)} />
-                <SnapRow label="Ending balance" value={money(ud.endingBalance)} />
-                <SnapRow label="Deposits / mo" value={snapCount(ud.depositsCount)} />
-                <SnapRow label="NSFs (3 mo)" value={snapCount(ud.nsfCount)} />
-                <SnapRow label="MCA positions" value={mcaPosVal} />
-                <SnapRow label="Time in business" value={tibVal} />
-                <SnapRow label="Credit score" value={ud.creditScore != null && ud.creditScore !== '' ? String(ud.creditScore) : '—'} />
-                <SnapRow label="Industry" value={str(ud.industry) || '—'} />
-                <SnapRow label="State" value={str(ud.businessState) || '—'} />
-                <SnapRow label="Use of funds" value={str(ud.purposeOfFunds) || '—'} />
+                <p className="text-[10px] text-[#9b9b9b] mb-1">Click a value to correct OCR</p>
+                <SnapRow
+                  label="Requested"
+                  value={money(lead.value ?? ud.requestedAmount)}
+                  editValue={lead.value != null || ud.requestedAmount != null ? String(lead.value ?? ud.requestedAmount ?? '') : ''}
+                  onSave={v => saveUdPatch({ requestedAmount: parseSnapNumber(v) }, { value: parseSnapNumber(v) })}
+                />
+                <SnapRow
+                  label="Avg monthly revenue"
+                  value={money(ud.monthlyRevenue)}
+                  editValue={ud.monthlyRevenue != null && ud.monthlyRevenue !== '' ? String(ud.monthlyRevenue) : ''}
+                  onSave={v => saveUdPatch({ monthlyRevenue: parseSnapNumber(v) })}
+                />
+                <SnapRow
+                  label="Avg daily balance"
+                  value={money(ud.avgDailyBalance)}
+                  editValue={ud.avgDailyBalance != null && ud.avgDailyBalance !== '' ? String(ud.avgDailyBalance) : ''}
+                  onSave={v => saveUdPatch({ avgDailyBalance: parseSnapNumber(v) })}
+                />
+                <SnapRow
+                  label="Ending balance"
+                  value={money(ud.endingBalance)}
+                  editValue={ud.endingBalance != null && ud.endingBalance !== '' ? String(ud.endingBalance) : ''}
+                  onSave={v => saveUdPatch({ endingBalance: parseSnapNumber(v) })}
+                />
+                <SnapRow
+                  label="Deposits / mo"
+                  value={snapCount(ud.depositsCount)}
+                  editValue={ud.depositsCount != null && ud.depositsCount !== '' ? String(ud.depositsCount) : ''}
+                  onSave={v => saveUdPatch({ depositsCount: parseSnapNumber(v) })}
+                />
+                <SnapRow
+                  label="NSFs (3 mo)"
+                  value={snapCount(ud.nsfCount)}
+                  editValue={ud.nsfCount != null && ud.nsfCount !== '' ? String(ud.nsfCount) : ''}
+                  onSave={v => saveUdPatch({ nsfCount: parseSnapNumber(v) })}
+                />
+                <SnapRow
+                  label="MCA positions"
+                  value={mcaPosVal}
+                  editValue={ud.mcaPositionCount != null && ud.mcaPositionCount !== '' ? String(ud.mcaPositionCount) : (mcaPositions.length ? String(mcaPositions.length) : '')}
+                  onSave={v => {
+                    const n = parseSnapNumber(v);
+                    return saveUdPatch({
+                      mcaPositionCount: n,
+                      hasOtherMCALoans: (n ?? 0) > 0,
+                    });
+                  }}
+                />
+                <SnapTibRow
+                  label="Time in business"
+                  months={derivedTIB}
+                  onSave={m => saveUdPatch({ timeInBusiness: m })}
+                />
+                <SnapRow
+                  label="Credit score"
+                  value={ud.creditScore != null && ud.creditScore !== '' ? String(ud.creditScore) : '—'}
+                  editValue={ud.creditScore != null && ud.creditScore !== '' ? String(ud.creditScore) : ''}
+                  onSave={v => saveUdPatch({ creditScore: parseSnapNumber(v) })}
+                />
+                <SnapRow
+                  label="Industry"
+                  value={str(ud.industry) || '—'}
+                  editValue={str(ud.industry) || ''}
+                  wide
+                  onSave={v => saveUdPatch({ industry: v.trim() || null })}
+                />
+                <SnapRow
+                  label="State"
+                  value={str(ud.businessState) || '—'}
+                  editValue={str(ud.businessState) || ''}
+                  onSave={v => saveUdPatch({ businessState: v.trim().toUpperCase() || null })}
+                />
+                <SnapRow
+                  label="Use of funds"
+                  value={str(ud.purposeOfFunds) || '—'}
+                  editValue={str(ud.purposeOfFunds) || ''}
+                  wide
+                  onSave={v => saveUdPatch({ purposeOfFunds: v.trim() || null })}
+                />
                 {snapFlags.length > 0 && (
                   <p className="mt-2 text-[11px] text-[#6b6b6b]">
                     {snapFlags.map((f, i) => (
