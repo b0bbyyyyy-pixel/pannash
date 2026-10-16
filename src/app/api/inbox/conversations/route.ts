@@ -82,7 +82,7 @@ export async function GET(req: NextRequest) {
         console.error('[inbox/conversations] status error:', error.message);
         return NextResponse.json({ leads: [], phoneConnection: null, dbError: error.message });
       }
-      list = (hits ?? []).filter(l => String((l as { phone?: string | null }).phone ?? '').trim());
+      list = (hits ?? []).filter((l: Record<string, unknown>) => String(l.phone ?? '').trim());
     } else {
       // Main inbox = people who texted back (including replies that never got last_inbound_at).
       try {
