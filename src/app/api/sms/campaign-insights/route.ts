@@ -145,65 +145,74 @@ async function overviewInsights(
   const days = daysRaw === 'all' ? null : Math.min(365, Math.max(1, Number(daysRaw) || 30));
   const since = days ? new Date(Date.now() - days * 86_400_000).toISOString() : null;
 
+  const leadRows: LeadRow[] = [];
+  for (let from = 0; from < 20_000; from += 1000) {
+    let q = supabase
+      .from('leads')
+      .select('id, list_id, phone, company, sms_sent_at, sms_opt_out, in_pipeline, lead_status, underwriting_data')
+      .eq('user_id', userId)
+      .not('list_id', 'is', null)
+      .not('sms_sent_at', 'is', null)
+      .range(from, from + 999);
+    if (since) q = q.gte('sms_sent_at', since);
+    const full = await q;
+    if (full.error) {
+      let q2 = supabase
+        .from('leads')
+        .select('id, list_id, phone, company, sms_sent_at, sms_opt_out, lead_status, underwriting_data')
+        .eq('user_id', userId)
+        .not('list_id', 'is', null)
+        .not('sms_sent_at', 'is', null)
+        .range(from, from + 999);
+      if (since) q2 = q2.gte('sms_sent_at', since);
+      const slim = await q2;
+      const rows = asRows<LeadRow>(slim.data);
+      leadRows.push(...rows);
+      if (rows.length < 1000) break;
+      continue;
+    }
+    const rows = asRows<LeadRow>(full.data);
+    leadRows.push(...rows);
+    if (rows.length < 1000) break;
+  }
+
+  const textedIds = new Set(leadRows.map(l => l.id));
+  const byLead = new Map(leadRows.map(l => [l.id, l]));
+
   const { data: jobs } = await supabase
     .from('sms_drip_jobs')
-    .select('id, templates, created_at, list_id, status')
+    .select('id, templates, created_at, updated_at, list_id, status')
     .eq('user_id', userId)
     .neq('status', 'cancelled')
-    .limit(200);
+    .limit(500);
   const jobList = (jobs ?? []).filter(j => {
     if (!since) return true;
-    if (j.status === 'active') return true;
-    return String(j.created_at ?? '') >= since;
+    if (j.status === 'active' || j.status === 'paused') return true;
+    const created = String(j.created_at ?? '');
+    const updated = String((j as { updated_at?: string }).updated_at ?? '');
+    return created >= since || updated >= since;
   });
   const jobTpl = new Map<string, string[]>();
   for (const j of jobList) {
     jobTpl.set(j.id, Array.isArray(j.templates) ? j.templates as string[] : []);
   }
 
-  const empty = {
-    name: days ? `Last ${days} days` : 'All time',
-    campaigns: 0,
-    leads: 0,
-    sent: 0,
-    replies: 0,
-    replyRate: 0,
-    optOuts: 0,
-    pipeline: 0,
-    statuses: ['Docs In'],
-    statusCounts: { 'Docs In': 0 },
-    failed: 0,
-    skipped: 0,
-    pending: 0,
-    jobStatus: null as string | null,
-    mix: { positive: 0, negative: 0, opt_out: 0, other: 0 },
-    templates: [] as { index: number; preview: string; sent: number; replies: number; optOuts: number; replyRate: number }[],
-    failures: [] as { error: string; count: number }[],
-    topStates: [] as { state: string; label: string; replies: number; share: number }[],
-    topAreaCodes: [] as { areaCode: string; city: string | null; state: string | null; replies: number; share: number }[],
-    topIndustries: [] as { industry: string; replies: number; share: number }[],
-  };
-  if (!jobList.length) return NextResponse.json(empty);
-
   const sends: SendRow[] = [];
-  let sendCols = 'lead_id, job_id, sms_status, template_index, error, sent_at';
   for (const slice of chunk(jobList.map(j => j.id), 25)) {
-    for (let from = 0; from < 4000; from += 1000) {
-      let q = supabase.from('sms_drip_sends').select(sendCols).in('job_id', slice).range(from, from + 999);
-      if (since && sendCols.includes('sent_at')) q = q.gte('sent_at', since);
-      const res = await q;
-      if (res.error && sendCols.includes('sent_at')) {
-        sendCols = 'lead_id, job_id, sms_status, template_index, error';
-        from -= 1000;
-        continue;
-      }
-      if (res.error && sendCols.includes('template_index')) {
-        sendCols = 'lead_id, job_id, sms_status, error';
-        from -= 1000;
-        continue;
-      }
-      if (res.error) break;
-      const rows = asRows<SendRow>(res.data);
+    for (let from = 0; from < 8000; from += 1000) {
+      const sendFull = await supabase
+        .from('sms_drip_sends')
+        .select('lead_id, job_id, sms_status, template_index, error, sent_at')
+        .in('job_id', slice)
+        .range(from, from + 999);
+      const sendSlim = sendFull.error
+        ? await supabase
+            .from('sms_drip_sends')
+            .select('lead_id, job_id, sms_status, error')
+            .in('job_id', slice)
+            .range(from, from + 999)
+        : null;
+      const rows = asRows<SendRow>((sendSlim ?? sendFull).data);
       sends.push(...rows);
       if (rows.length < 1000) break;
     }
@@ -212,37 +221,12 @@ async function overviewInsights(
   const sendsInRange = sends.filter(s => {
     if (!since) return true;
     if (s.sent_at) return s.sent_at >= since;
-    const job = jobList.find(j => j.id === s.job_id);
-    return !!(job?.created_at && String(job.created_at) >= since);
+    return textedIds.has(s.lead_id);
   });
-
-  const textedIds = new Set(
-    sendsInRange
-      .filter(s => s.sms_status === 'sent' || s.sms_status === 'delivered' || s.sms_status === 'replied')
-      .map(s => s.lead_id)
-      .filter(Boolean),
-  );
-  const leadIds = [...textedIds];
-
-  const leadRows: LeadRow[] = [];
-  let leadCols = 'id, list_id, phone, company, sms_opt_out, in_pipeline, lead_status, underwriting_data';
-  for (const slice of chunk(leadIds, 200)) {
-    const full = await supabase.from('leads').select(leadCols).in('id', slice);
-    if (full.error && leadCols.includes('in_pipeline')) {
-      leadCols = 'id, list_id, phone, company, sms_opt_out, lead_status, underwriting_data';
-      const slim = await supabase.from('leads').select(leadCols).in('id', slice);
-      leadRows.push(...asRows<LeadRow>(slim.data));
-      continue;
-    }
-    leadRows.push(...asRows<LeadRow>(full.data));
-  }
-  const byLead = new Map(leadRows.map(l => [l.id, l]));
 
   const optOuts = leadRows.filter(l => l.sms_opt_out).length;
   const pipeline = leadRows.filter(l => l.in_pipeline || /prospect|pipeline/i.test(String(l.lead_status ?? ''))).length;
-  const campaignCount = new Set(
-    [...jobList.map(j => j.list_id), ...leadRows.map(l => l.list_id)].filter(Boolean),
-  ).size;
+  const campaignCount = new Set(leadRows.map(l => l.list_id).filter(Boolean)).size;
 
   const { data: statusRows } = await supabase
     .from('lead_statuses')
