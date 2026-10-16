@@ -7,6 +7,7 @@ import CampaignTable, { Campaign } from './CampaignTable';
 import CampaignLeadsView, { CampaignLead } from './CampaignLeadsView';
 import CampaignRenameWrapperComponent from './CampaignRenameWrapper';
 import NewCampaignModal from './NewCampaignModal';
+import CampaignOverviewInsights from './CampaignOverviewInsights';
 
 export default async function LeadsPage({
   searchParams,
@@ -287,7 +288,10 @@ export default async function LeadsPage({
           </div>
 
           {!selectedListId && (
-            <NewCampaignModal createCampaign={createCampaignNamed} />
+            <div className="flex items-center gap-4">
+              <CampaignOverviewInsights />
+              <NewCampaignModal createCampaign={createCampaignNamed} />
+            </div>
           )}
         </div>
 

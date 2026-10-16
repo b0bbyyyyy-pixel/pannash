@@ -47,7 +47,6 @@ const WASH_FUNDED = { r: 228, g: 224, b: 216 };
 const WASH_APPROVED = { r: 238, g: 235, b: 228 };
 const WASH_DOCS = { r: 246, g: 244, b: 239 };
 const WASH_SUBMITTED = { r: 252, g: 251, b: 248 };
-const WASH_MIN_SHARE = 0.06;
 const REST = { r: 148, g: 160, b: 148 };
 const RULE = { r: 168, g: 162, b: 148 };
 const FLASH = { r: 118, g: 122, b: 114 };
@@ -157,6 +156,7 @@ export class SwitchboardEngine {
     if (
       prev.prospects !== next.prospects ||
       prev.submitted !== next.submitted ||
+      prev.docsIn !== next.docsIn ||
       prev.approvals !== next.approvals ||
       prev.funded !== next.funded
     ) {
@@ -271,14 +271,17 @@ export class SwitchboardEngine {
   private washBands(): WashBand[] {
     const layers: { key: PersistKind; n: number; wash: { r: number; g: number; b: number } }[] = [
       { key: 'prospect', n: Math.max(0, this.counts.prospects), wash: WASH_SUBMITTED },
-      { key: 'submitted', n: Math.max(0, this.counts.submitted), wash: WASH_DOCS },
+      { key: 'submitted', n: Math.max(0, this.counts.docsIn) + Math.max(0, this.counts.submitted), wash: WASH_DOCS },
       { key: 'approval', n: Math.max(0, this.counts.approvals), wash: WASH_APPROVED },
       { key: 'funded', n: Math.max(0, this.counts.funded), wash: WASH_FUNDED },
     ];
-    const total = layers.reduce((s, l) => s + l.n, 0);
-    const extra = 1 - WASH_MIN_SHARE * layers.length;
-    const shares = layers.map(l => WASH_MIN_SHARE + extra * (total > 0 ? l.n / total : 0.25));
-    const rowCounts = this.splitRows(shares);
+    const persistRows = this.splitPersistRows(layers[1].n, layers[2].n, layers[3].n);
+    const rowCounts = [
+      Math.max(0, this.rows - persistRows.reduce((s, n) => s + n, 0)),
+      persistRows[0],
+      persistRows[1],
+      persistRows[2],
+    ];
     const innerH = this.h - PAD_Y * 2;
     const oy = PAD_Y + (innerH - Math.max(0, this.rows - 1) * GAP) / 2;
     let row0 = 0;
@@ -288,7 +291,9 @@ export class SwitchboardEngine {
       const row1 = row0 + rc;
       const split = i === layers.length - 1
         ? this.h
-        : oy + (row1 - 0.5) * GAP;
+        : rc > 0
+          ? oy + (row1 - 0.5) * GAP
+          : y;
       const band = { ...l, y, h: Math.max(0, split - y), row0, row1 };
       y = split;
       row0 = row1;
@@ -296,23 +301,47 @@ export class SwitchboardEngine {
     });
   }
 
-  private splitRows(shares: number[]) {
-    const rows = Math.max(0, this.rows);
-    const left = shares.length;
-    if (!rows || !left) return shares.map(() => 0);
-    const raw = shares.map(s => Math.max(1, Math.round(s * rows)));
-    let delta = rows - raw.reduce((s, n) => s + n, 0);
-    let grow = 0;
-    for (let i = 1; i < raw.length; i++) {
-      if (shares[i] > shares[grow]) grow = i;
+  private splitPersistRows(sub: number, app: number, fun: number): [number, number, number] {
+    const weights = [Math.max(0, sub), Math.max(0, app), Math.max(0, fun)];
+    const maxPersist = Math.max(0, Math.floor(this.rows * 0.4));
+    const mins = weights.map(w => (w > 0 ? 2 : 0));
+    const minTotal = mins.reduce((s, n) => s + n, 0);
+    let out: number[];
+    if (minTotal >= maxPersist) {
+      out = this.apportion(weights, maxPersist).map((n, i) => (weights[i] > 0 ? Math.max(1, n) : 0));
+    } else {
+      const extras = this.apportion(weights, maxPersist - minTotal);
+      out = mins.map((m, i) => m + (extras[i] ?? 0));
     }
-    raw[grow] += delta;
-    for (let i = 0; i < raw.length; i++) {
-      if (raw[i] < 1) raw[i] = 1;
+    if (app > fun && fun > 0 && out[1] < out[2] + 2) {
+      const bump = out[2] + 2 - out[1];
+      out[1] += bump;
+      const keep = weights[0] > 0 ? 2 : 0;
+      const take = Math.min(bump, Math.max(0, out[0] - keep));
+      out[0] -= take;
     }
-    delta = rows - raw.reduce((s, n) => s + n, 0);
-    raw[grow] = Math.max(1, raw[grow] + delta);
-    return raw;
+    return [out[0] ?? 0, out[1] ?? 0, out[2] ?? 0];
+  }
+
+  private apportion(weights: number[], total: number): number[] {
+    const out = weights.map(() => 0);
+    const seats = Math.max(0, Math.round(total));
+    if (seats <= 0) return out;
+    const sum = weights.reduce((s, w) => s + Math.max(0, w), 0);
+    if (sum <= 0) return out;
+    const exact = weights.map(w => (Math.max(0, w) / sum) * seats);
+    for (let i = 0; i < weights.length; i++) out[i] = Math.floor(exact[i]);
+    let left = seats - out.reduce((s, n) => s + n, 0);
+    const order = exact
+      .map((x, i) => ({ i, frac: x - Math.floor(x), w: weights[i] }))
+      .filter(x => x.w > 0)
+      .sort((a, b) => b.frac - a.frac || b.w - a.w);
+    for (const item of order) {
+      if (left <= 0) break;
+      out[item.i] += 1;
+      left -= 1;
+    }
+    return out;
   }
 
   private placePersistent() {

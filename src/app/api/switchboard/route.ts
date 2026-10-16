@@ -24,8 +24,6 @@ const PROSPECT_STATUSES = [
   'Docs Requested',
   'Missing Docs/info',
   'Needs More Docs',
-  'Docs In',
-  'Docs Received',
 ];
 const SUBMITTED_STATUSES = [
   'Submitted',
@@ -35,9 +33,9 @@ const SUBMITTED_STATUSES = [
 ];
 const APPROVAL_STATUSES = [
   'Offers/Follow up',
+  'Pre-Qualified',
   'Approved',
   'Conditionally Approved',
-  'Pre-Qualified',
   'Contract Sent',
   'Contract In',
   'Contract Signed',
@@ -113,7 +111,7 @@ async function fundedThisMonth(supabase: SbClient, userId: string, month: string
       const status = String(lead.lead_status ?? '').trim();
       const isFunded = isTruthy(ud.isFunded) || /^funded$/i.test(status);
       if (!isFunded) continue;
-      const fundedMonth = monthOf(ud.fundedAt) || monthOf(ud.lastUpdated);
+      const fundedMonth = monthOf(ud.fundedAt);
       if (fundedMonth === month) funded += 1;
     }
     if (rows.length < pageSize) break;

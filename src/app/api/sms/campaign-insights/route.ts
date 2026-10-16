@@ -57,6 +57,308 @@ async function getClient() {
   );
 }
 
+type LeadRow = {
+  id: string;
+  list_id?: string | null;
+  phone?: string | null;
+  company?: string | null;
+  sms_sent_at?: string | null;
+  sms_opt_out?: boolean | null;
+  in_pipeline?: boolean | null;
+  lead_status?: string | null;
+  underwriting_data?: unknown;
+};
+
+type SendRow = {
+  lead_id: string;
+  job_id?: string | null;
+  sms_status: string;
+  template_index?: number | null;
+  error?: string | null;
+  sent_at?: string | null;
+};
+
+type ConvRow = {
+  lead_id: string;
+  last_inbound_at?: string | null;
+  last_direction?: string | null;
+  last_message_preview?: string | null;
+};
+
+function geoAndIndustry(leadRows: LeadRow[], repliedIds: Set<string>, replies: number) {
+  const byState = new Map<string, number>();
+  const byArea = new Map<string, number>();
+  const byIndustry = new Map<string, number>();
+  const byLead = new Map(leadRows.map(l => [l.id, l]));
+  for (const id of repliedIds) {
+    const lead = byLead.get(id);
+    if (!lead) continue;
+    const areaCode = extractNanpAreaCode(lead.phone);
+    if (areaCode) {
+      bump(byArea, areaCode);
+      const loc = lookupAreaCode(areaCode);
+      if (loc) bump(byState, loc.state);
+    }
+    const industry = industryFromCompany(lead.company, lead.underwriting_data);
+    if (industry) bump(byIndustry, industry);
+  }
+  return {
+    topStates: topCounts(byState, replies, 5).map(row => ({
+      state: row.key,
+      label: US_STATE_NAMES[row.key] || row.key,
+      replies: row.replies,
+      share: row.share,
+    })),
+    topAreaCodes: topCounts(byArea, replies, 5).map(row => {
+      const loc = lookupAreaCode(row.key);
+      return {
+        areaCode: row.key,
+        city: loc?.city ?? null,
+        state: loc?.state ?? null,
+        replies: row.replies,
+        share: row.share,
+      };
+    }),
+    topIndustries: topCounts(byIndustry, replies).map(row => ({
+      industry: row.key,
+      replies: row.replies,
+      share: row.share,
+    })),
+  };
+}
+
+function chunk<T>(arr: T[], size: number) {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+async function overviewInsights(
+  supabase: Awaited<ReturnType<typeof getClient>>,
+  userId: string,
+  daysRaw: string | null,
+) {
+  const days = daysRaw === 'all' ? null : Math.min(365, Math.max(1, Number(daysRaw) || 30));
+  const since = days ? new Date(Date.now() - days * 86_400_000).toISOString() : null;
+
+  const { data: jobs } = await supabase
+    .from('sms_drip_jobs')
+    .select('id, templates, created_at, list_id, status')
+    .eq('user_id', userId)
+    .neq('status', 'cancelled')
+    .limit(200);
+  const jobList = (jobs ?? []).filter(j => {
+    if (!since) return true;
+    if (j.status === 'active') return true;
+    return String(j.created_at ?? '') >= since;
+  });
+  const jobTpl = new Map<string, string[]>();
+  for (const j of jobList) {
+    jobTpl.set(j.id, Array.isArray(j.templates) ? j.templates as string[] : []);
+  }
+
+  const empty = {
+    name: days ? `Last ${days} days` : 'All time',
+    campaigns: 0,
+    leads: 0,
+    sent: 0,
+    replies: 0,
+    replyRate: 0,
+    optOuts: 0,
+    pipeline: 0,
+    statuses: ['Docs In'],
+    statusCounts: { 'Docs In': 0 },
+    failed: 0,
+    skipped: 0,
+    pending: 0,
+    jobStatus: null as string | null,
+    mix: { positive: 0, negative: 0, opt_out: 0, other: 0 },
+    templates: [] as { index: number; preview: string; sent: number; replies: number; optOuts: number; replyRate: number }[],
+    failures: [] as { error: string; count: number }[],
+    topStates: [] as { state: string; label: string; replies: number; share: number }[],
+    topAreaCodes: [] as { areaCode: string; city: string | null; state: string | null; replies: number; share: number }[],
+    topIndustries: [] as { industry: string; replies: number; share: number }[],
+  };
+  if (!jobList.length) return NextResponse.json(empty);
+
+  const sends: SendRow[] = [];
+  let sendCols = 'lead_id, job_id, sms_status, template_index, error, sent_at';
+  for (const slice of chunk(jobList.map(j => j.id), 25)) {
+    for (let from = 0; from < 4000; from += 1000) {
+      let q = supabase.from('sms_drip_sends').select(sendCols).in('job_id', slice).range(from, from + 999);
+      if (since && sendCols.includes('sent_at')) q = q.gte('sent_at', since);
+      const res = await q;
+      if (res.error && sendCols.includes('sent_at')) {
+        sendCols = 'lead_id, job_id, sms_status, template_index, error';
+        from -= 1000;
+        continue;
+      }
+      if (res.error && sendCols.includes('template_index')) {
+        sendCols = 'lead_id, job_id, sms_status, error';
+        from -= 1000;
+        continue;
+      }
+      if (res.error) break;
+      const rows = (res.data ?? []) as SendRow[];
+      sends.push(...rows);
+      if (rows.length < 1000) break;
+    }
+  }
+
+  const sendsInRange = sends.filter(s => {
+    if (!since) return true;
+    if (s.sent_at) return s.sent_at >= since;
+    const job = jobList.find(j => j.id === s.job_id);
+    return !!(job?.created_at && String(job.created_at) >= since);
+  });
+
+  const textedIds = new Set(
+    sendsInRange
+      .filter(s => s.sms_status === 'sent' || s.sms_status === 'delivered' || s.sms_status === 'replied')
+      .map(s => s.lead_id)
+      .filter(Boolean),
+  );
+  const leadIds = [...textedIds];
+
+  const leadRows: LeadRow[] = [];
+  let leadCols = 'id, list_id, phone, company, sms_opt_out, in_pipeline, lead_status, underwriting_data';
+  for (const slice of chunk(leadIds, 200)) {
+    const full = await supabase.from('leads').select(leadCols).in('id', slice);
+    if (full.error && leadCols.includes('in_pipeline')) {
+      leadCols = 'id, list_id, phone, company, sms_opt_out, lead_status, underwriting_data';
+      const slim = await supabase.from('leads').select(leadCols).in('id', slice);
+      leadRows.push(...((slim.data ?? []) as LeadRow[]));
+      continue;
+    }
+    leadRows.push(...((full.data ?? []) as LeadRow[]));
+  }
+  const byLead = new Map(leadRows.map(l => [l.id, l]));
+
+  const optOuts = leadRows.filter(l => l.sms_opt_out).length;
+  const pipeline = leadRows.filter(l => l.in_pipeline || /prospect|pipeline/i.test(String(l.lead_status ?? ''))).length;
+  const campaignCount = new Set(
+    [...jobList.map(j => j.list_id), ...leadRows.map(l => l.list_id)].filter(Boolean),
+  ).size;
+
+  const { data: statusRows } = await supabase
+    .from('lead_statuses')
+    .select('name, sort_order')
+    .eq('user_id', userId)
+    .order('sort_order', { ascending: true });
+  const statuses = (statusRows ?? []).map(s => String(s.name || '').trim()).filter(Boolean);
+  if (!statuses.some(n => /^docs in$/i.test(n))) statuses.unshift('Docs In');
+
+  const statusCounts: Record<string, number> = {};
+  for (const name of statuses) statusCounts[name] = 0;
+  for (const lead of leadRows) {
+    const names = statusNamesForLead(lead.lead_status, lead.underwriting_data);
+    for (const name of statuses) {
+      if (matchesStatus(names, name)) statusCounts[name] += 1;
+    }
+  }
+
+  const inboundRes = await supabase
+    .from('inbox_conversations')
+    .select('lead_id, last_inbound_at, last_direction, last_message_preview')
+    .eq('user_id', userId)
+    .or('last_inbound_at.not.is.null,last_direction.eq.inbound')
+    .limit(10000);
+  let convs: ConvRow[] = [];
+  if (inboundRes.error) {
+    const retry = await supabase
+      .from('inbox_conversations')
+      .select('lead_id, last_direction, last_message_preview')
+      .eq('user_id', userId)
+      .eq('last_direction', 'inbound')
+      .limit(10000);
+    convs = (retry.data ?? []) as ConvRow[];
+  } else {
+    convs = (inboundRes.data ?? []) as ConvRow[];
+  }
+
+  const repliedIds = new Set<string>();
+  for (const c of convs) {
+    if (!textedIds.has(c.lead_id)) continue;
+    if (c.last_inbound_at || c.last_direction === 'inbound') repliedIds.add(c.lead_id);
+  }
+  for (const s of sendsInRange) {
+    if (s.sms_status === 'replied' && s.lead_id) repliedIds.add(s.lead_id);
+  }
+
+  const previewByLead = new Map<string, string>();
+  for (const c of convs) {
+    if (c.last_message_preview && repliedIds.has(c.lead_id)) {
+      previewByLead.set(c.lead_id, c.last_message_preview);
+    }
+  }
+
+  const mix = { positive: 0, negative: 0, opt_out: 0, other: 0 };
+  for (const id of repliedIds) mix[classifyReply(previewByLead.get(id))] += 1;
+
+  const tally = tallyDripSends(sendsInRange);
+  const byTpl = new Map<string, { sent: number; replies: number; optOuts: number }>();
+  for (const s of sendsInRange) {
+    if (s.sms_status !== 'sent' && s.sms_status !== 'delivered' && s.sms_status !== 'replied') continue;
+    const body = (jobTpl.get(s.job_id ?? '')?.[s.template_index ?? 0] || '').trim() || 'Template';
+    const key = body.length > 90 ? `${body.slice(0, 90)}…` : body;
+    let row = byTpl.get(key);
+    if (!row) {
+      row = { sent: 0, replies: 0, optOuts: 0 };
+      byTpl.set(key, row);
+    }
+    row.sent += 1;
+    if (repliedIds.has(s.lead_id)) row.replies += 1;
+    if (byLead.get(s.lead_id)?.sms_opt_out) row.optOuts += 1;
+  }
+  const templateRows = [...byTpl.entries()]
+    .map(([preview, row], index) => ({
+      index,
+      preview,
+      sent: row.sent,
+      replies: row.replies,
+      optOuts: row.optOuts,
+      replyRate: row.sent ? Math.round((row.replies / row.sent) * 100) : 0,
+    }))
+    .sort((a, b) => b.replyRate - a.replyRate || b.sent - a.sent)
+    .slice(0, 8);
+
+  const failMap = new Map<string, number>();
+  for (const s of sendsInRange) {
+    if (s.sms_status !== 'failed' || !s.error) continue;
+    const key = s.error.split('\n')[0].slice(0, 120);
+    failMap.set(key, (failMap.get(key) ?? 0) + 1);
+  }
+  const failures = [...failMap.entries()]
+    .map(([error, count]) => ({ error, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5);
+
+  const sent = textedIds.size;
+  const replies = repliedIds.size;
+  const geo = geoAndIndustry(leadRows, repliedIds, replies);
+
+  return NextResponse.json({
+    name: days ? `Last ${days} days` : 'All time',
+    campaigns: campaignCount,
+    leads: leadRows.length,
+    sent,
+    replies,
+    replyRate: sent ? Math.round((replies / sent) * 100) : 0,
+    optOuts,
+    pipeline,
+    statuses,
+    statusCounts,
+    failed: tally.failed,
+    skipped: tally.skipped,
+    pending: tally.pending,
+    jobStatus: null,
+    mix,
+    templates: templateRows,
+    failures,
+    ...geo,
+  });
+}
+
 export async function GET(req: NextRequest) {
   try {
     const supabase = await getClient();
@@ -64,7 +366,7 @@ export async function GET(req: NextRequest) {
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const listId = req.nextUrl.searchParams.get('listId');
-    if (!listId) return NextResponse.json({ error: 'listId required' }, { status: 400 });
+    if (!listId) return overviewInsights(supabase, user.id, req.nextUrl.searchParams.get('days'));
 
     const { data: list } = await supabase
       .from('lead_lists')
@@ -74,16 +376,6 @@ export async function GET(req: NextRequest) {
       .maybeSingle();
     if (!list) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-    type LeadRow = {
-      id: string;
-      phone?: string | null;
-      company?: string | null;
-      sms_sent_at?: string | null;
-      sms_opt_out?: boolean | null;
-      in_pipeline?: boolean | null;
-      lead_status?: string | null;
-      underwriting_data?: unknown;
-    };
     const full = await supabase
       .from('leads')
       .select('id, phone, company, sms_sent_at, sms_opt_out, in_pipeline, lead_status, underwriting_data')
@@ -250,44 +542,7 @@ export async function GET(req: NextRequest) {
     const sent = textedIds.size;
     const replies = repliedIds.size;
 
-    const byState = new Map<string, number>();
-    const byArea = new Map<string, number>();
-    const byIndustry = new Map<string, number>();
-    const byLead = new Map(leadRows.map(l => [l.id, l]));
-    for (const id of repliedIds) {
-      const lead = byLead.get(id);
-      if (!lead) continue;
-      const areaCode = extractNanpAreaCode(lead.phone);
-      if (areaCode) {
-        bump(byArea, areaCode);
-        const loc = lookupAreaCode(areaCode);
-        if (loc) bump(byState, loc.state);
-      }
-      const industry = industryFromCompany(lead.company, lead.underwriting_data);
-      if (industry) bump(byIndustry, industry);
-    }
-
-    const topStates = topCounts(byState, replies, 5).map(row => ({
-      state: row.key,
-      label: US_STATE_NAMES[row.key] || row.key,
-      replies: row.replies,
-      share: row.share,
-    }));
-    const topAreaCodes = topCounts(byArea, replies, 5).map(row => {
-      const loc = lookupAreaCode(row.key);
-      return {
-        areaCode: row.key,
-        city: loc?.city ?? null,
-        state: loc?.state ?? null,
-        replies: row.replies,
-        share: row.share,
-      };
-    });
-    const topIndustries = topCounts(byIndustry, replies).map(row => ({
-      industry: row.key,
-      replies: row.replies,
-      share: row.share,
-    }));
+    const { topStates, topAreaCodes, topIndustries } = geoAndIndustry(leadRows, repliedIds, replies);
 
     return NextResponse.json({
       name: list.name,

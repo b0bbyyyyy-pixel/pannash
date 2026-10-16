@@ -26,6 +26,7 @@ type Insights = {
     replyRate: number;
   }[];
   failures: { error: string; count: number }[];
+  campaigns?: number;
   topStates?: { state: string; label: string; replies: number; share: number }[];
   topAreaCodes?: {
     areaCode: string;
@@ -87,21 +88,29 @@ function RankedList({
 export default function CampaignInsightsModal({
   listId,
   campaignName,
+  overview = false,
   onClose,
 }: {
-  listId: string;
-  campaignName: string;
+  listId?: string;
+  campaignName?: string;
+  overview?: boolean;
   onClose: () => void;
 }) {
   const [data, setData] = useState<Insights | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState('Docs In');
+  const [days, setDays] = useState<'30' | '60' | '90' | 'all'>('30');
 
   useEffect(() => {
     let dead = false;
     setData(null);
     setError(null);
-    fetch(`/api/sms/campaign-insights?listId=${encodeURIComponent(listId)}`, { cache: 'no-store' })
+    const url = overview
+      ? `/api/sms/campaign-insights?days=${days}`
+      : `/api/sms/campaign-insights?listId=${encodeURIComponent(listId || '')}`;
+    const ctrl = new AbortController();
+    const timer = window.setTimeout(() => ctrl.abort(), 25_000);
+    fetch(url, { cache: 'no-store', signal: ctrl.signal })
       .then(async res => {
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || 'Could not load insights');
@@ -113,9 +122,17 @@ export default function CampaignInsightsModal({
         const docs = (d.statuses ?? []).find(n => /^docs in$/i.test(n));
         setStatus(docs || d.statuses?.[0] || 'Docs In');
       })
-      .catch(err => { if (!dead) setError(err instanceof Error ? err.message : 'Could not load insights'); });
-    return () => { dead = true; };
-  }, [listId]);
+      .catch(err => {
+        if (dead) return;
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          setError('Insights took too long. Try a shorter range.');
+          return;
+        }
+        setError(err instanceof Error ? err.message : 'Could not load insights');
+      })
+      .finally(() => window.clearTimeout(timer));
+    return () => { dead = true; ctrl.abort(); };
+  }, [listId, overview, days]);
 
   const mixTotal = data ? data.mix.positive + data.mix.negative + data.mix.opt_out + data.mix.other : 0;
   const statusCount = data ? (data.statusCounts[status] ?? 0) : 0;
@@ -131,7 +148,20 @@ export default function CampaignInsightsModal({
         <div className="flex items-start justify-between px-5 py-4 border-b border-[#f0f0f0] shrink-0">
           <div>
             <h3 className="font-bold text-[#1a1a1a]">Campaign insights</h3>
-            <p className="text-xs text-[#6b6b6b] mt-0.5">{data?.name || campaignName}</p>
+            {overview ? (
+              <select
+                value={days}
+                onChange={e => setDays(e.target.value as typeof days)}
+                className="mt-1 text-xs text-[#6b6b6b] bg-transparent border-0 border-b border-[#e5e5e5] py-0.5 pr-4 focus:outline-none focus:border-[#1a1a1a]"
+              >
+                <option value="30">Last 30 days</option>
+                <option value="60">Last 60 days</option>
+                <option value="90">Last 90 days</option>
+                <option value="all">All time</option>
+              </select>
+            ) : (
+              <p className="text-xs text-[#6b6b6b] mt-0.5">{data?.name || campaignName}</p>
+            )}
           </div>
           <button
             type="button"
@@ -155,7 +185,13 @@ export default function CampaignInsightsModal({
           {data ? (
             <>
               <div className="divide-y divide-[#f0f0f0]">
-                <Row label="Sent" value={data.sent} hint={`${data.leads} in list`} />
+                <Row
+                  label="Sent"
+                  value={data.sent}
+                  hint={overview
+                    ? `${data.campaigns ?? 0} campaign${(data.campaigns ?? 0) === 1 ? '' : 's'}`
+                    : `${data.leads} in list`}
+                />
                 <Row label="Replied" value={`${data.replyRate}%`} hint={`${data.replies} of ${data.sent || 0}`} />
                 <Row label="Opted out" value={data.optOuts} hint={pct(data.optOuts, data.sent)} />
                 <Row label="Failed" value={data.failed} />
@@ -210,7 +246,11 @@ export default function CampaignInsightsModal({
               <div>
                 <div className="text-[11px] font-semibold uppercase tracking-wider text-[#9b9b9b] mb-2">Opening texts</div>
                 {data.templates.length === 0 ? (
-                  <p className="text-sm text-[#9b9b9b]">No drip templates recorded for this campaign yet.</p>
+                  <p className="text-sm text-[#9b9b9b]">
+                    {overview
+                      ? 'No drip templates recorded in this range yet.'
+                      : 'No drip templates recorded for this campaign yet.'}
+                  </p>
                 ) : (
                   <div className="space-y-2">
                     {data.templates.map((t, i) => (
