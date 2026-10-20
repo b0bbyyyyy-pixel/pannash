@@ -9,6 +9,7 @@ import { isSmsStopBody, markLeadDnc } from '@/lib/leads/dnc';
 import { markOutboundReadAfterReply } from '@/lib/inbox/markOutboundRead';
 import { findUserByPingPhone, recordPingMessage } from '@/lib/casper/ping';
 import { runCasperPingReply } from '@/lib/casper/pingReply';
+import { findLeadByPhone as findPreferredLeadByPhone } from '@/lib/leads/findByPhone';
 
 export const maxDuration = 60;
 
@@ -147,7 +148,8 @@ export async function POST(req: NextRequest) {
     const conn = (conns ?? []).find(c => last10(c.phone_number) === to10) ?? conns?.[0] ?? null;
     const userId = conn?.user_id ?? null;
 
-    const lead = await findLeadByPhone(from, userId);
+    const preferred = userId ? await findPreferredLeadByPhone(supabase, from, userId) : null;
+    const lead = preferred || await findLeadByPhone(from, userId);
 
     if (!lead) {
       console.log(`[SMS Webhook] No lead for From=${from} To=${to} user=${userId ?? 'none'}`);

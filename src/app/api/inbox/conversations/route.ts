@@ -3,6 +3,8 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { isSmsStopBody } from '@/lib/leads/dnc';
 import { inboxActivityMs, sortInboxLeads } from '@/lib/inbox/sortInboxLeads';
+import { dedupeInboxLeadsByPhone, pickPreferredDuplicate } from '@/lib/inbox/dedupeInboxLeads';
+import { last10 } from '@/lib/leads/findByPhone';
 import { countAttachmentsByLead } from '@/lib/leads/attachmentCounts';
 import { getRequestUser } from '@/lib/auth/getRequestUser';
 
@@ -142,11 +144,48 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    if (pinLeadId && !list.some(l => l.id === pinLeadId)) {
+    let resolvedPin = pinLeadId;
+    if (pinLeadId) {
       const { data: pinned } = await selectLeads((cols) =>
         supabase.from('leads').select(cols).eq('id', pinLeadId).eq('user_id', user.id).maybeSingle()
       );
-      if (pinned) list.unshift(pinned as Record<string, unknown>);
+      const pinRow = pinned as Record<string, unknown> | null;
+      const pinPhone = last10(String(pinRow?.phone ?? ''));
+      if (pinRow && pinPhone.length === 10) {
+        const { data: siblings } = await selectLeads((cols) =>
+          supabase
+            .from('leads')
+            .select(cols)
+            .eq('user_id', user.id)
+            .ilike('phone', `%${pinPhone}%`)
+            .limit(20)
+        );
+        const samePhone = (siblings ?? []).filter((l: Record<string, unknown>) => last10(String(l.phone ?? '')) === pinPhone);
+        if (samePhone.length > 1) {
+          const sibIds = samePhone.map(l => String(l.id));
+          let sibConvs: Record<string, unknown>[] = [];
+          try {
+            const extra = await supabase
+              .from('inbox_conversations')
+              .select(CONV_COLS)
+              .eq('user_id', user.id)
+              .in('lead_id', sibIds);
+            sibConvs = extra.error ? [] : (extra.data ?? []);
+          } catch { /* ignore */ }
+          const convByLead = new Map(sibConvs.map(c => [String(c.lead_id), c]));
+          const ranked = samePhone.map(l => ({
+            ...l,
+            conversation: convByLead.get(String(l.id)) ?? null,
+          }));
+          const best = pickPreferredDuplicate(ranked);
+          if (best?.id) resolvedPin = String(best.id);
+          if (best && !list.some(l => l.id === best.id)) list.unshift(best);
+        } else if (!list.some(l => l.id === pinLeadId)) {
+          list.unshift(pinRow);
+        }
+      } else if (pinRow && !list.some(l => l.id === pinLeadId)) {
+        list.unshift(pinRow);
+      }
       if (list.length > LIMIT) list = list.slice(0, LIMIT + 1);
     }
 
@@ -194,7 +233,7 @@ export async function GET(req: NextRequest) {
         doc_count: docCountByLead[String(lead.id)] ?? 0,
       };
     }).filter(lead => {
-      if (q || statusFilter || (pinLeadId && lead.id === pinLeadId)) return true;
+      if (q || statusFilter || (resolvedPin && lead.id === resolvedPin)) return true;
       const conv = lead.conversation as { last_message_preview?: string | null; last_inbound_at?: string | null; last_direction?: string | null; last_message_at?: string | null } | null;
       const preview = conv?.last_message_preview ?? '';
       const hasInbound = !!(conv?.last_inbound_at || conv?.last_direction === 'inbound');
@@ -204,7 +243,8 @@ export async function GET(req: NextRequest) {
       return hasInbound;
     });
 
-    const mergedSorted = sortInboxLeads(merged, pinLeadId);
+    const mergedDeduped = (q || statusFilter) ? merged : dedupeInboxLeadsByPhone(merged);
+    const mergedSorted = sortInboxLeads(mergedDeduped, resolvedPin);
 
     let phoneConn = null;
     if (initial) {

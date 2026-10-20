@@ -25,6 +25,7 @@ import LeadActionsMenu, { type LeadActionId } from '@/components/LeadActionsMenu
 import dynamic from 'next/dynamic';
 import { isCampaignInboxLead } from '@/lib/inbox/promoteCampaignReply';
 import { sortInboxLeads } from '@/lib/inbox/sortInboxLeads';
+import { dedupeInboxLeadsByPhone } from '@/lib/inbox/dedupeInboxLeads';
 import { applyLeadStateMsg, resolveMenuDots, type LeadMenuState } from '@/lib/leads/menuComplete';
 import { useSync } from '@/lib/sync/SyncProvider';
 import { usePolling } from '@/lib/sync/usePolling';
@@ -383,15 +384,15 @@ export default function InboxClient({
       const data = await res.json();
       // Campaign or status filter opened while this inbox fetch was in flight
       if ((activeListNameRef.current || activeStatusRef.current) && !debouncedSearch.trim()) return;
-      setLeads(prev => {
-        const incoming = (data.leads ?? []) as InboxLead[];
-        const pin = liveCallPinRef.current || selectedLeadIdRef.current;
-        if (pin && !incoming.some(l => l.id === pin)) {
-          const keep = prev.find(l => l.id === pin);
-          if (keep) return sortRail([keep, ...incoming], pin);
-        }
-        return sortRail(incoming, pin);
-      });
+      const incoming = (data.leads ?? []) as InboxLead[];
+      const pin = liveCallPinRef.current || selectedLeadIdRef.current;
+      let nextPin = pin;
+      if (pin && !incoming.some(l => l.id === pin) && incoming[0]) {
+        nextPin = incoming[0].id;
+        selectedLeadIdRef.current = nextPin;
+        setSelectedLeadId(nextPin);
+      }
+      setLeads(sortRail(dedupeInboxLeadsByPhone(incoming), nextPin));
       if (data.phoneConnection) setPhoneConn(data.phoneConnection);
       else if (initialConvsRef.current) setPhoneConn(null);
       initialConvsRef.current = false;
