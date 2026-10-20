@@ -160,9 +160,11 @@ export async function GET(req: NextRequest) {
             .ilike('phone', `%${pinPhone}%`)
             .limit(20)
         );
-        const samePhone = (siblings ?? []).filter((l: Record<string, unknown>) => last10(String(l.phone ?? '')) === pinPhone);
+        const samePhone = ((siblings ?? []) as Record<string, unknown>[]).filter(
+          (l: Record<string, unknown>) => last10(String(l.phone ?? '')) === pinPhone,
+        );
         if (samePhone.length > 1) {
-          const sibIds = samePhone.map(l => String(l.id));
+          const sibIds = samePhone.map((l: Record<string, unknown>) => String(l.id));
           let sibConvs: Record<string, unknown>[] = [];
           try {
             const extra = await supabase
@@ -172,8 +174,8 @@ export async function GET(req: NextRequest) {
               .in('lead_id', sibIds);
             sibConvs = extra.error ? [] : (extra.data ?? []);
           } catch { /* ignore */ }
-          const convByLead = new Map(sibConvs.map(c => [String(c.lead_id), c]));
-          const ranked = samePhone.map(l => ({
+          const convByLead = new Map(sibConvs.map((c: Record<string, unknown>) => [String(c.lead_id), c]));
+          const ranked = samePhone.map((l: Record<string, unknown>) => ({
             ...l,
             conversation: convByLead.get(String(l.id)) ?? null,
           }));
