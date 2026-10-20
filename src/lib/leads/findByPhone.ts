@@ -1,5 +1,8 @@
-import { toE164 } from '@/lib/dialer/e164';
 import { pickPreferredDuplicate } from '@/lib/inbox/dedupeInboxLeads';
+import { countAttachmentsByLead } from '@/lib/leads/attachmentCounts';
+import { last10, phoneKeys, phoneVariants, phonesOverlap, normPersonName } from '@/lib/leads/phone';
+
+export { last10, phoneKeys, phoneVariants, phonesOverlap, normPersonName };
 
 export type LeadByPhone = {
   id: string;
@@ -12,16 +15,6 @@ export type LeadByPhone = {
   lead_status?: string | null;
   last_contact?: string | null;
 };
-
-export function last10(raw: string | null | undefined): string {
-  return String(raw ?? '').replace(/\D/g, '').slice(-10);
-}
-
-export function phoneVariants(raw: string): string[] {
-  const e164 = toE164(raw);
-  const d = last10(raw);
-  return [...new Set([raw, e164, d, d ? `+1${d}` : '', d ? `1${d}` : ''].filter(Boolean))] as string[];
-}
 
 const LEAD_COLS = 'id, name, company, email, phone, phone_e164, in_pipeline, lead_status, last_contact';
 const LEAD_COLS_SLIM = 'id, name, company, email, phone, phone_e164';
@@ -58,8 +51,10 @@ async function attachInboundFlags(supabase: any, leads: LeadByPhone[]): Promise<
   for (const row of data ?? []) {
     if (row?.lead_id) byLead.set(row.lead_id, row);
   }
+  const docs = await countAttachmentsByLead(supabase, ids);
   return leads.map(l => ({
     ...l,
+    doc_count: docs[l.id] ?? 0,
     conversation: byLead.get(l.id) ?? null,
   })) as LeadByPhone[];
 }
@@ -90,7 +85,7 @@ export async function findLeadByPhone(
     const all = await selectLeadMatches(supabase, (cols: string) =>
       supabase.from('leads').select(cols).eq('user_id', userId).or('phone.not.is.null,phone_e164.not.is.null')
     );
-    unique = all.filter(l => last10(l.phone) === digits || last10(l.phone_e164) === digits);
+    unique = all.filter(l => phonesOverlap(l.phone, phone) || phonesOverlap(l.phone_e164, phone));
   }
 
   if (!unique.length) return null;
@@ -98,4 +93,60 @@ export async function findLeadByPhone(
 
   const ranked = await attachInboundFlags(supabase, unique);
   return pickPreferredDuplicate(ranked);
+}
+
+/** Same-phone copies of a lead — Inbox threads sometimes land on the leftover campaign row. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function findSiblingLeadIds(
+  supabase: any,
+  userId: string,
+  leadId: string,
+): Promise<string[]> {
+  const { data: lead } = await supabase
+    .from('leads')
+    .select('id, phone, phone_e164, name')
+    .eq('id', leadId)
+    .eq('user_id', userId)
+    .maybeSingle();
+  const keys = phoneKeys(lead?.phone).concat(phoneKeys(lead?.phone_e164));
+  const name = String(lead?.name ?? '').trim();
+  const variants = [...new Set(keys.flatMap(k => phoneVariants(k)))];
+
+  const hits: { id: string; phone?: string | null; phone_e164?: string | null; name?: string | null }[] = [];
+  if (variants.length) {
+    const byPhone = await supabase
+      .from('leads')
+      .select('id, phone, phone_e164, name')
+      .eq('user_id', userId)
+      .in('phone', variants)
+      .limit(40);
+    hits.push(...(byPhone.data ?? []));
+  }
+  const { data: pipeline } = await supabase
+    .from('leads')
+    .select('id, phone, phone_e164, name')
+    .eq('user_id', userId)
+    .eq('in_pipeline', true)
+    .limit(400);
+  hits.push(...(pipeline ?? []));
+  if (name) {
+    const byName = await supabase
+      .from('leads')
+      .select('id, phone, phone_e164, name')
+      .eq('user_id', userId)
+      .ilike('name', name)
+      .limit(20);
+    hits.push(...(byName.data ?? []));
+  }
+
+  const wantName = normPersonName(name);
+  const ids = [...new Map(hits.map(r => [String(r.id), r])).values()]
+    .filter(r =>
+      phonesOverlap(r.phone, lead?.phone) ||
+      phonesOverlap(r.phone_e164, lead?.phone) ||
+      phonesOverlap(r.phone, lead?.phone_e164) ||
+      (wantName.length >= 10 && normPersonName(r.name) === wantName)
+    )
+    .map(r => String(r.id));
+  return ids.includes(leadId) ? ids : [leadId, ...ids];
 }

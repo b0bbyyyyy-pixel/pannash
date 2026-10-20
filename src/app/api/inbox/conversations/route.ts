@@ -3,8 +3,8 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { isSmsStopBody } from '@/lib/leads/dnc';
 import { inboxActivityMs, sortInboxLeads } from '@/lib/inbox/sortInboxLeads';
-import { dedupeInboxLeadsByPhone, pickPreferredDuplicate } from '@/lib/inbox/dedupeInboxLeads';
-import { last10 } from '@/lib/leads/findByPhone';
+import { dedupeInboxLeadsByPhone, groupDuplicateLeads, mergeBestConversation, pickDisplayDuplicate } from '@/lib/inbox/dedupeInboxLeads';
+import { last10, normPersonName } from '@/lib/leads/phone';
 import { countAttachmentsByLead } from '@/lib/leads/attachmentCounts';
 import { getRequestUser } from '@/lib/auth/getRequestUser';
 
@@ -17,9 +17,9 @@ function escapeIlike(s: string) {
   return s.replace(/[%_\\]/g, '\\$&');
 }
 
-function isInboxLead(l: { phone?: string | null; in_pipeline?: boolean; month_key?: string | null; list_id?: string | null }) {
-  if (!l.phone) return false;
-  return l.in_pipeline === true || (!!l.month_key && !l.list_id);
+function orIlike(col: string, raw: string) {
+  const inner = escapeIlike(raw).replace(/"/g, '\\"');
+  return `${col}.ilike."%${inner}%"`;
 }
 
 export async function GET(req: NextRequest) {
@@ -33,6 +33,7 @@ export async function GET(req: NextRequest) {
 
     const user = await getRequestUser(supabase);
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const userId = user.id;
 
     const pinLeadId = req.nextUrl.searchParams.get('leadId');
     const q = req.nextUrl.searchParams.get('q')?.trim() ?? '';
@@ -54,13 +55,15 @@ export async function GET(req: NextRequest) {
     let convs: Record<string, unknown>[] = [];
 
     if (q) {
-      const safe = escapeIlike(q);
+      const digits = q.replace(/\D/g, '');
+      const parts = ['name', 'company', 'email', 'phone'].map(col => orIlike(col, q));
+      if (digits.length >= 4) parts.push(`phone.ilike."%${digits}%"`);
       const { data: hits, error } = await selectLeads((cols) =>
         supabase
           .from('leads')
           .select(cols)
           .eq('user_id', user.id)
-          .or(`name.ilike.%${safe}%,company.ilike.%${safe}%,phone.ilike.%${safe}%`)
+          .or(parts.join(','))
           .order('last_contact', { ascending: false, nullsFirst: false })
           .limit(80)
       );
@@ -69,7 +72,15 @@ export async function GET(req: NextRequest) {
         console.error('[inbox/conversations] search error:', error.message);
         return NextResponse.json({ leads: [], phoneConnection: null, dbError: error.message });
       }
-      list = (hits ?? []).filter(isInboxLead).slice(0, LIMIT);
+      list = (hits ?? [])
+        .filter((l: Record<string, unknown>) => String(l.phone ?? '').trim())
+        .filter((l: Record<string, unknown>) => {
+          if (digits.length < 4) return true;
+          const phone = last10(String(l.phone ?? ''));
+          const name = `${l.name ?? ''} ${l.company ?? ''} ${l.email ?? ''}`.toLowerCase();
+          return name.includes(q.toLowerCase()) || phone.includes(digits) || String(l.phone ?? '').includes(q);
+        })
+        .slice(0, LIMIT);
     } else if (statusFilter) {
       const { data: hits, error } = await selectLeads((cols) =>
         supabase
@@ -127,6 +138,47 @@ export async function GET(req: NextRequest) {
         if (isSmsStopBody(preview)) return false;
         return true;
       });
+
+      // Pipeline threads whose last SMS is outbound never had last_inbound_at —
+      // they still belong on Inbox (docs / Submitted live on that copy).
+      try {
+        const { data: pipeLeads } = await supabase
+          .from('leads')
+          .select('id')
+          .eq('user_id', user.id)
+          .eq('in_pipeline', true)
+          .limit(200);
+        const seen = new Set(convs.map(c => String(c.lead_id)));
+        const extraIds = ((pipeLeads ?? []) as { id: string }[])
+          .map(l => String(l.id))
+          .filter(id => id && !seen.has(id));
+        for (let i = 0; i < extraIds.length; i += 80) {
+          const chunk = extraIds.slice(i, i + 80);
+          let extra = await supabase
+            .from('inbox_conversations')
+            .select(CONV_COLS)
+            .eq('user_id', user.id)
+            .in('lead_id', chunk)
+            .not('last_message_at', 'is', null);
+          if (extra.error) {
+            extra = await supabase
+              .from('inbox_conversations')
+              .select('*')
+              .eq('user_id', user.id)
+              .in('lead_id', chunk)
+              .not('last_message_at', 'is', null);
+          }
+          for (const c of extra.data ?? []) {
+            const id = String(c.lead_id ?? '');
+            if (!id || seen.has(id)) continue;
+            convs.push(c);
+            seen.add(id);
+          }
+        }
+      } catch {
+        // ignore
+      }
+
       convs.sort((a, b) => {
         const aT = inboxActivityMs({ conversation: a });
         const bT = inboxActivityMs({ conversation: b });
@@ -144,58 +196,69 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    let resolvedPin = pinLeadId;
-    if (pinLeadId) {
+    // Pipeline + same-name copies — Autova phones are often stored garbled
+    // so last-10 ilike misses Autovova Auto Transport.
+    async function loadSiblingPool(seed: Record<string, unknown>[]) {
+      const { data: pipeline } = await selectLeads((cols) =>
+        supabase.from('leads').select(cols).eq('user_id', userId).eq('in_pipeline', true).limit(400)
+      );
+      const names = [...new Set(
+        seed.map(l => String(l.name ?? '').trim()).filter(n => normPersonName(n).length >= 10)
+      )];
+      const named: Record<string, unknown>[] = [];
+      for (const name of names.slice(0, 25)) {
+        const { data } = await selectLeads((cols) =>
+          supabase.from('leads').select(cols).eq('user_id', userId).ilike('name', name).limit(20)
+        );
+        named.push(...((data ?? []) as Record<string, unknown>[]));
+      }
+      const byId = new Map<string, Record<string, unknown>>();
+      for (const row of [...seed, ...((pipeline ?? []) as Record<string, unknown>[]), ...named]) {
+        const id = String(row.id ?? '');
+        if (id) byId.set(id, row);
+      }
+      return [...byId.values()];
+    }
+
+    let resolvedPin = q ? null : pinLeadId;
+    if (resolvedPin) {
       const { data: pinned } = await selectLeads((cols) =>
         supabase.from('leads').select(cols).eq('id', pinLeadId).eq('user_id', user.id).maybeSingle()
       );
       const pinRow = pinned as Record<string, unknown> | null;
-      const pinPhone = last10(String(pinRow?.phone ?? ''));
-      if (pinRow && pinPhone.length === 10) {
-        const { data: siblings } = await selectLeads((cols) =>
-          supabase
-            .from('leads')
-            .select(cols)
+      if (pinRow) {
+        const pool = await loadSiblingPool([pinRow, ...list]);
+        const sibIds = pool.map(l => String(l.id));
+        let sibConvs: Record<string, unknown>[] = [];
+        try {
+          const extra = await supabase
+            .from('inbox_conversations')
+            .select(CONV_COLS)
             .eq('user_id', user.id)
-            .ilike('phone', `%${pinPhone}%`)
-            .limit(20)
-        );
-        const samePhone = ((siblings ?? []) as Record<string, unknown>[]).filter(
-          (l: Record<string, unknown>) => last10(String(l.phone ?? '')) === pinPhone,
-        );
-        if (samePhone.length > 1) {
-          const sibIds = samePhone.map((l: Record<string, unknown>) => String(l.id));
-          let sibConvs: Record<string, unknown>[] = [];
-          try {
-            const extra = await supabase
-              .from('inbox_conversations')
-              .select(CONV_COLS)
-              .eq('user_id', user.id)
-              .in('lead_id', sibIds);
-            sibConvs = extra.error ? [] : (extra.data ?? []);
-          } catch { /* ignore */ }
-          const convByLead = new Map(sibConvs.map((c: Record<string, unknown>) => [String(c.lead_id), c]));
-          const ranked = samePhone.map((l: Record<string, unknown>) => ({
-            ...l,
-            id: String(l.id ?? ''),
-            phone: (l.phone as string | null) ?? null,
-            in_pipeline: (l.in_pipeline as boolean | null) ?? null,
-            lead_status: (l.lead_status as string | null) ?? null,
-            last_contact: (l.last_contact as string | null) ?? null,
-            conversation: (convByLead.get(String(l.id)) ?? null) as {
-              last_inbound_at?: string | null;
-              last_direction?: string | null;
-              last_message_at?: string | null;
-            } | null,
-          }));
-          const best = pickPreferredDuplicate(ranked);
-          if (best?.id) resolvedPin = String(best.id);
-          if (best && !list.some(l => l.id === best.id)) list.unshift(best);
-        } else if (!list.some(l => l.id === pinLeadId)) {
-          list.unshift(pinRow);
-        }
-      } else if (pinRow && !list.some(l => l.id === pinLeadId)) {
-        list.unshift(pinRow);
+            .in('lead_id', sibIds);
+          sibConvs = extra.error ? [] : (extra.data ?? []);
+        } catch { /* ignore */ }
+        const convByLead = new Map(sibConvs.map((c: Record<string, unknown>) => [String(c.lead_id), c]));
+        const pinDocs = await countAttachmentsByLead(supabase, sibIds);
+        const ranked = pool.map((l: Record<string, unknown>) => ({
+          ...l,
+          id: String(l.id ?? ''),
+          name: (l.name as string | null) ?? null,
+          phone: (l.phone as string | null) ?? null,
+          in_pipeline: (l.in_pipeline as boolean | null) ?? null,
+          lead_status: (l.lead_status as string | null) ?? null,
+          last_contact: (l.last_contact as string | null) ?? null,
+          doc_count: pinDocs[String(l.id)] ?? 0,
+          conversation: (convByLead.get(String(l.id)) ?? null) as {
+            last_inbound_at?: string | null;
+            last_direction?: string | null;
+            last_message_at?: string | null;
+          } | null,
+        }));
+        const group = groupDuplicateLeads(ranked).find(g => g.some(l => String(l.id) === String(pinRow.id))) ?? ranked.filter(l => String(l.id) === String(pinRow.id));
+        const best = group.length ? mergeBestConversation(pickDisplayDuplicate(group), group) : pinRow;
+        if (best?.id) resolvedPin = String(best.id);
+        if (best && !list.some(l => l.id === best.id)) list.unshift(best);
       }
       if (list.length > LIMIT) list = list.slice(0, LIMIT + 1);
     }
@@ -237,6 +300,7 @@ export async function GET(req: NextRequest) {
         ...lead,
         id: lead.id,
         phone: (lead.phone as string) || '',
+        in_pipeline: lead.in_pipeline ?? null,
         sms_opt_out: optOut,
         casper_enabled: lead.casper_enabled ?? null,
         conversation: convMap[String(lead.id)] ?? null,
@@ -251,10 +315,62 @@ export async function GET(req: NextRequest) {
       if (hasInbound && isSmsStopBody(preview)) return false;
       const dnc = !!(lead.sms_opt_out) || String(lead.lead_status ?? '').toUpperCase() === 'DNC';
       if (dnc) return false;
-      return hasInbound;
+      return hasInbound || (!!lead.in_pipeline && !!conv?.last_message_at);
     });
 
-    const mergedDeduped = (q || statusFilter) ? merged : dedupeInboxLeadsByPhone(merged);
+    let resolved = merged;
+    if (!q && !statusFilter && resolved.length) {
+      const pool = await loadSiblingPool(resolved);
+      const allSibIds = pool.map(l => String(l.id)).filter(Boolean);
+      const missingSibIds = allSibIds.filter(id => !convMap[id]);
+      if (missingSibIds.length) {
+        try {
+          let extraQ = await supabase
+            .from('inbox_conversations')
+            .select(CONV_COLS)
+            .eq('user_id', user.id)
+            .in('lead_id', missingSibIds);
+          if (extraQ.error) {
+            extraQ = await supabase
+              .from('inbox_conversations')
+              .select('*')
+              .eq('user_id', user.id)
+              .in('lead_id', missingSibIds);
+          }
+          for (const c of extraQ.data ?? []) convMap[String(c.lead_id)] = c;
+        } catch { /* ignore */ }
+      }
+      const sibDocs = allSibIds.length ? await countAttachmentsByLead(supabase, allSibIds) : {};
+      for (const [id, n] of Object.entries(sibDocs)) docCountByLead[id] = n;
+      const ranked = pool.map((l: Record<string, unknown>) => ({
+        ...l,
+        id: String(l.id ?? ''),
+        name: (l.name as string | null) ?? null,
+        phone: (l.phone as string | null) ?? null,
+        in_pipeline: (l.in_pipeline as boolean | null) ?? null,
+        lead_status: (l.lead_status as string | null) ?? null,
+        last_contact: (l.last_contact as string | null) ?? null,
+        doc_count: docCountByLead[String(l.id)] ?? Number(l.doc_count) ?? 0,
+        conversation: convMap[String(l.id)] ?? null,
+      }));
+      const inboxIds = new Set(resolved.map(l => String(l.id)));
+      const next: Record<string, unknown>[] = [];
+      const seen = new Set<string>();
+      for (const group of groupDuplicateLeads(ranked)) {
+        if (!group.some(l => inboxIds.has(String(l.id)))) continue;
+        const best = mergeBestConversation(pickDisplayDuplicate(group), group);
+        const id = String(best.id);
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const existing = resolved.find(l => String(l.id) === id);
+        next.push(existing
+          ? { ...existing, ...best, conversation: best.conversation ?? existing.conversation, doc_count: best.doc_count ?? existing.doc_count }
+          : { ...best });
+      }
+      resolved = next;
+    }
+
+    const mergedDeduped = (q || statusFilter) ? resolved : dedupeInboxLeadsByPhone(resolved);
     const mergedSorted = sortInboxLeads(mergedDeduped, resolvedPin);
 
     let phoneConn = null;

@@ -372,7 +372,7 @@ export default function InboxClient({
     try {
       const params = new URLSearchParams();
       const pinId = liveCallPinRef.current || selectedLeadIdRef.current || initialLeadId;
-      if (pinId) params.set('leadId', pinId);
+      if (pinId && !debouncedSearch.trim()) params.set('leadId', pinId);
       if (debouncedSearch.trim()) params.set('q', debouncedSearch.trim());
       if (initialConvsRef.current) params.set('initial', '1');
       const qs = params.toString() ? `?${params}` : '';
@@ -387,12 +387,18 @@ export default function InboxClient({
       const incoming = (data.leads ?? []) as InboxLead[];
       const pin = liveCallPinRef.current || selectedLeadIdRef.current;
       let nextPin = pin;
-      if (pin && !incoming.some(l => l.id === pin) && incoming[0]) {
-        nextPin = incoming[0].id;
-        selectedLeadIdRef.current = nextPin;
-        setSelectedLeadId(nextPin);
+      if (pin && !incoming.some(l => l.id === pin)) {
+        const preferred = incoming[0];
+        if (preferred) {
+          nextPin = preferred.id;
+          selectedLeadIdRef.current = nextPin;
+          setSelectedLeadId(nextPin);
+        }
       }
-      setLeads(sortRail(dedupeInboxLeadsByPhone(incoming), nextPin));
+      setLeads(sortRail(
+        debouncedSearch.trim() ? incoming : dedupeInboxLeadsByPhone(incoming),
+        nextPin,
+      ));
       if (data.phoneConnection) setPhoneConn(data.phoneConnection);
       else if (initialConvsRef.current) setPhoneConn(null);
       initialConvsRef.current = false;

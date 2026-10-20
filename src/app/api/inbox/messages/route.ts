@@ -6,6 +6,7 @@ import { refreshSmsStatuses, fetchTwilioSmsBody } from '@/lib/telephony/sms';
 import { backfillInboundPhotos } from '@/lib/inbox/saveInboundMms';
 import { isPlaceholderSmsBody, recoverOutboundSmsBody } from '@/lib/inbox/recordOutboundSms';
 import { getRequestUser } from '@/lib/auth/getRequestUser';
+import { findSiblingLeadIds } from '@/lib/leads/findByPhone';
 
 export async function GET(req: NextRequest) {
   try {
@@ -70,16 +71,35 @@ export async function GET(req: NextRequest) {
 
     if (!conv) return NextResponse.json({ messages: [], conversationId: null });
 
+    const siblingIds = await findSiblingLeadIds(supabase, user.id, leadId).catch(() => [leadId]);
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let messages: any[] = [];
     try {
-      const { data } = await supabase
+      const byLead = await supabase
         .from('inbox_messages')
         .select('*')
-        .eq('conversation_id', conv.id)
+        .in('lead_id', siblingIds)
         .order('created_at', { ascending: false })
         .limit(300);
-      messages = (data ?? []).slice().reverse();
+      const rows = byLead.error
+        ? (await supabase
+            .from('inbox_messages')
+            .select('*')
+            .eq('conversation_id', conv.id)
+            .order('created_at', { ascending: false })
+            .limit(300)).data
+        : byLead.data;
+      const seen = new Set<string>();
+      messages = (rows ?? [])
+        .filter((m: { id?: string; twilio_sid?: string | null }) => {
+          const key = String(m.twilio_sid || m.id || '');
+          if (!key || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .slice()
+        .reverse();
     } catch {
       // Table not yet created
     }
