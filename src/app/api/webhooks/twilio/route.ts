@@ -156,7 +156,7 @@ export async function POST(req: NextRequest) {
       return emptyTwiml();
     }
 
-    const ownerId = userId || lead.user_id;
+    const ownerId = userId || String((lead as { user_id?: string | null }).user_id ?? '');
     const stopped = isSmsStopBody(body);
 
     if (stopped) {
@@ -322,7 +322,7 @@ export async function POST(req: NextRequest) {
       .maybeSingle();
 
     const target = fullLead || lead;
-    if (target.sms_opt_out) {
+    if ((target as { sms_opt_out?: boolean | null }).sms_opt_out) {
       return emptyTwiml();
     }
 

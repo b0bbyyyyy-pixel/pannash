@@ -177,7 +177,16 @@ export async function GET(req: NextRequest) {
           const convByLead = new Map(sibConvs.map((c: Record<string, unknown>) => [String(c.lead_id), c]));
           const ranked = samePhone.map((l: Record<string, unknown>) => ({
             ...l,
-            conversation: convByLead.get(String(l.id)) ?? null,
+            id: String(l.id ?? ''),
+            phone: (l.phone as string | null) ?? null,
+            in_pipeline: (l.in_pipeline as boolean | null) ?? null,
+            lead_status: (l.lead_status as string | null) ?? null,
+            last_contact: (l.last_contact as string | null) ?? null,
+            conversation: (convByLead.get(String(l.id)) ?? null) as {
+              last_inbound_at?: string | null;
+              last_direction?: string | null;
+              last_message_at?: string | null;
+            } | null,
           }));
           const best = pickPreferredDuplicate(ranked);
           if (best?.id) resolvedPin = String(best.id);
