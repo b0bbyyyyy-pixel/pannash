@@ -10,6 +10,7 @@ import { markOutboundReadAfterReply } from '@/lib/inbox/markOutboundRead';
 import { findUserByPingPhone, recordPingMessage } from '@/lib/casper/ping';
 import { runCasperPingReply } from '@/lib/casper/pingReply';
 import { findLeadByPhone as findPreferredLeadByPhone } from '@/lib/leads/findByPhone';
+import { extractEmailFromSms, runUpdateLeadEmailTool } from '@/lib/casper/updateLeadEmail';
 
 export const maxDuration = 60;
 
@@ -176,6 +177,20 @@ export async function POST(req: NextRequest) {
         stopped,
       });
     } catch { /* ignore */ }
+
+    if (!stopped && extractEmailFromSms(storedBody).email) {
+      try {
+        await runUpdateLeadEmailTool(supabase, {
+          userId: ownerId,
+          lead,
+          body: storedBody,
+          sendApplication: false,
+          source: 'sms',
+        });
+      } catch (err) {
+        console.error('[SMS Webhook] save emailed from text:', err);
+      }
+    }
 
     // Fallback write if the SQL function isn't installed yet
     if (rpcOk) {

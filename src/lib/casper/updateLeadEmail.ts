@@ -1,30 +1,9 @@
 import { fillLeadPlaceholders } from '@/lib/email/fillLeadPlaceholders';
 import { sendLeadEmail } from '@/lib/email/sendLeadEmail';
+import { extractEmailFromSms } from '@/lib/leads/extractEmailFromSms';
 
-const EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
-const LOOKS_LIKE_EMAIL = /@|\b[\w.+-]+\s+at\s+[\w.-]+\s*dot\s*\w+/i;
-
-export type ExtractedEmail = { email?: string; invalid: boolean };
-
-export function extractEmailFromSms(raw: string): ExtractedEmail {
-  const text = String(raw || '');
-  const matches = text.match(EMAIL_RE) ?? [];
-  const cleaned = matches.map(m => m.trim().toLowerCase().replace(/[.,;:!?)]+$/g, ''));
-  const valid = cleaned.find(isValidEmail);
-  if (valid) return { email: valid, invalid: false };
-  if (LOOKS_LIKE_EMAIL.test(text) || cleaned.length > 0) return { invalid: true };
-  return { invalid: false };
-}
-
-export function isValidEmail(value: string): boolean {
-  const email = value.trim().toLowerCase();
-  if (email.length < 6 || email.length > 254) return false;
-  if (email.includes('..') || email.startsWith('.') || email.endsWith('.')) return false;
-  const m = email.match(/^([a-z0-9._%+\-]+)@([a-z0-9.\-]+)\.([a-z]{2,})$/);
-  if (!m) return false;
-  if (!m[1] || !m[2] || m[2].startsWith('-') || m[2].endsWith('-')) return false;
-  return true;
-}
+export { extractEmailFromSms, isValidEmail } from '@/lib/leads/extractEmailFromSms';
+export type { ExtractedEmail } from '@/lib/leads/extractEmailFromSms';
 
 export type UpdateLeadEmailResult = {
   updated: boolean;
@@ -52,6 +31,7 @@ export async function runUpdateLeadEmailTool(
     };
     body: string;
     sendApplication: boolean;
+    source?: 'sms' | 'casper';
   },
 ): Promise<UpdateLeadEmailResult> {
   const found = extractEmailFromSms(args.body);
@@ -77,19 +57,32 @@ export async function runUpdateLeadEmailTool(
     return { updated: false, invalid: false, actions };
   }
 
-  const old = (args.lead.email || '').trim() || null;
+  const { data: current } = await supabase
+    .from('leads')
+    .select('email, notes, underwriting_data')
+    .eq('id', args.lead.id)
+    .maybeSingle();
+
+  const old = (current?.email || args.lead.email || '').trim() || null;
   const next = found.email;
   const sameEmail = (old || '').toLowerCase() === next;
+  const ud = {
+    ...((current?.underwriting_data && typeof current.underwriting_data === 'object')
+      ? current.underwriting_data as Record<string, unknown>
+      : {}),
+    email_from_sms: true,
+  };
 
   if (!sameEmail) {
-    const line = `[Casper] Email updated: ${old || '(none)'} → ${next}`;
-    const notes = args.lead.notes?.trim()
-      ? `${args.lead.notes.trim()}\n${line}`
+    const tag = args.source === 'sms' ? 'SMS' : 'Casper';
+    const line = `[${tag}] Email updated: ${old || '(none)'} → ${next}`;
+    const notes = (current?.notes || args.lead.notes || '').trim()
+      ? `${String(current?.notes || args.lead.notes || '').trim()}\n${line}`
       : line;
 
     const { error } = await supabase
       .from('leads')
-      .update({ email: next, notes })
+      .update({ email: next, notes, underwriting_data: ud })
       .eq('id', args.lead.id)
       .eq('user_id', args.userId);
 
@@ -119,6 +112,12 @@ export async function runUpdateLeadEmailTool(
       next,
       summary: `Email updated: ${old || '(none)'} -> ${next}`,
     });
+  } else {
+    await supabase
+      .from('leads')
+      .update({ underwriting_data: ud })
+      .eq('id', args.lead.id)
+      .eq('user_id', args.userId);
   }
 
   if (!args.sendApplication) {

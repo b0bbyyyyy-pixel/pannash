@@ -299,6 +299,7 @@ export async function GET(req: NextRequest) {
       return {
         ...lead,
         id: lead.id,
+        email: (lead.email as string) || '',
         phone: (lead.phone as string) || '',
         in_pipeline: lead.in_pipeline ?? null,
         sms_opt_out: optOut,
@@ -306,6 +307,7 @@ export async function GET(req: NextRequest) {
         conversation: convMap[String(lead.id)] ?? null,
         lead_status: (optOut ? 'DNC' : lead.lead_status) ?? null,
         doc_count: docCountByLead[String(lead.id)] ?? 0,
+        email_from_sms: !!((lead as { underwriting_data?: { email_from_sms?: boolean } | null }).underwriting_data?.email_from_sms),
       };
     }).filter(lead => {
       if (q || statusFilter || (resolvedPin && lead.id === resolvedPin)) return true;

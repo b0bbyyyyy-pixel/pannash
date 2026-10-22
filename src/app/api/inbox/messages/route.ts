@@ -7,6 +7,7 @@ import { backfillInboundPhotos } from '@/lib/inbox/saveInboundMms';
 import { isPlaceholderSmsBody, recoverOutboundSmsBody } from '@/lib/inbox/recordOutboundSms';
 import { getRequestUser } from '@/lib/auth/getRequestUser';
 import { findSiblingLeadIds } from '@/lib/leads/findByPhone';
+import { extractEmailFromSms, runUpdateLeadEmailTool } from '@/lib/casper/updateLeadEmail';
 
 export async function GET(req: NextRequest) {
   try {
@@ -170,6 +171,29 @@ export async function GET(req: NextRequest) {
           }
         }
       }
+    }
+
+    const inboundWithEmail = [...messages].reverse().find((m: { direction?: string; body?: string }) =>
+      m.direction === 'inbound' && extractEmailFromSms(String(m.body || '')).email
+    );
+    if (inboundWithEmail?.body) {
+      try {
+        const { data: lead } = await supabase
+          .from('leads')
+          .select('id, email, notes, name, phone, company')
+          .eq('id', leadId)
+          .eq('user_id', user.id)
+          .maybeSingle();
+        if (lead) {
+          await runUpdateLeadEmailTool(supabase, {
+            userId: user.id,
+            lead,
+            body: String(inboundWithEmail.body),
+            sendApplication: false,
+            source: 'sms',
+          });
+        }
+      } catch { /* ignore */ }
     }
 
     return NextResponse.json({ messages, conversationId: conv.id });

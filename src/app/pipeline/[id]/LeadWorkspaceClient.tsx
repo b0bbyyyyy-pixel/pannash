@@ -98,6 +98,7 @@ function Field({
   valueStyle,
   startEditKey = 0,
   onEditStarted,
+  savedFromSms = false,
 }: {
   label: string;
   value: string | null | undefined;
@@ -108,6 +109,7 @@ function Field({
   valueStyle?: React.CSSProperties;
   startEditKey?: number;
   onEditStarted?: () => void;
+  savedFromSms?: boolean;
 }) {
   const [editing, setEditing]   = useState(false);
   const [editVal, setEditVal]   = useState(value || '');
@@ -169,6 +171,12 @@ function Field({
           >
             {masked && !revealed ? <span className="text-[#9b9b9b]">{display}</span> : display}
           </span>
+          {savedFromSms && value ? (
+            <svg className="w-3 h-3 text-black shrink-0" viewBox="0 0 16 16" fill="none" aria-label="Saved from text">
+              <title>Saved from text</title>
+              <path d="M3.2 8.4l3.1 3.2 6.5-7.2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          ) : null}
           {masked && value && (
             <button
               type="button"
@@ -711,7 +719,21 @@ export default function LeadWorkspaceClient({
         body: JSON.stringify({ leadId: lead.id, field, value }),
       });
       if (res.ok) {
-        setLead(prev => ({ ...prev, [field]: value }));
+        setLead(prev => {
+          if (field !== 'email') return { ...prev, [field]: value };
+          const ud = { ...(prev.underwriting_data || {}) };
+          delete ud.email_from_sms;
+          return { ...prev, email: String(value ?? ''), underwriting_data: ud };
+        });
+        if (field === 'email') {
+          const ud = { ...(lead.underwriting_data || {}) };
+          delete ud.email_from_sms;
+          fetch('/api/leads/underwriting', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ leadId: lead.id, underwritingData: ud }),
+          }).catch(() => {});
+        }
       }
     } else {
       const currentUd = (lead.underwriting_data || {}) as Record<string, unknown>;
@@ -1862,7 +1884,7 @@ export default function LeadWorkspaceClient({
                   startEditKey={nameEditKey > consumedEditKeyRef.current ? nameEditKey : 0}
                   onEditStarted={() => { consumedEditKeyRef.current = nameEditKey; }}
                 />
-                <Field label="Email"      value={lead.email}   onSave={v => saveField('email', v)}  type="email" />
+                <Field label="Email"      value={lead.email}   onSave={v => saveField('email', v)}  type="email" savedFromSms={!!(lead.underwriting_data as { email_from_sms?: boolean } | undefined)?.email_from_sms} />
                 <Field label="Mobile"     value={lead.phone}   onSave={v => saveField('phone', v)}  type="tel" />
               </Section>
 

@@ -29,6 +29,8 @@ import { dedupeInboxLeadsByPhone } from '@/lib/inbox/dedupeInboxLeads';
 import { applyLeadStateMsg, resolveMenuDots, type LeadMenuState } from '@/lib/leads/menuComplete';
 import { useSync } from '@/lib/sync/SyncProvider';
 import { usePolling } from '@/lib/sync/usePolling';
+import { extractEmailFromSms } from '@/lib/leads/extractEmailFromSms';
+import SmsEmailCheck from '@/components/SmsEmailCheck';
 
 const DocumentsModal = dynamic(() => import('@/components/DocumentsModal'), { ssr: false });
 const ScheduleEmailModal = dynamic(() => import('@/components/ScheduleEmailModal'), { ssr: false });
@@ -50,6 +52,7 @@ interface InboxLead {
   company: string | null;
   phone: string;
   email?: string | null;
+  email_from_sms?: boolean | null;
   value?: number | string | null;
   underwriting_data?: Record<string, unknown> | null;
   doc_count?: number;
@@ -563,6 +566,11 @@ export default function InboxClient({
       if (data.conversationId) setConversationId(data.conversationId);
 
       const last = merged[merged.length - 1];
+      const smsEmail = [...merged].reverse().find(m => {
+        if (m.direction !== 'inbound') return false;
+        return !!extractEmailFromSms(m.body || '').email;
+      });
+      const capturedEmail = smsEmail ? extractEmailFromSms(smsEmail.body || '').email : undefined;
       setLeads(prev => sortRail(prev.map(l => {
         if (l.id !== leadId) return l;
         const prevAt = Date.parse(l.conversation?.last_message_at ?? '') || 0;
@@ -570,6 +578,7 @@ export default function InboxClient({
         const bump = !!(last && nextAt >= prevAt);
         return {
           ...l,
+          ...(capturedEmail ? { email: capturedEmail, email_from_sms: true } : {}),
           conversation: {
             id: l.conversation?.id ?? data.conversationId ?? '',
             last_message_at: bump ? last.created_at : (l.conversation?.last_message_at ?? null),
@@ -1406,6 +1415,13 @@ export default function InboxClient({
                     {selectedLead.phone ? (
                       <PhoneLocHover phone={selectedLead.phone} userTz={userTz} formatted={fmt(selectedLead.phone)} />
                     ) : null}
+                    {selectedLead.email && (
+                      <span className="inline-flex items-center gap-1 ml-1.5">
+                        {selectedLead.company || selectedLead.phone ? ' · ' : ''}
+                        {selectedLead.email}
+                        {selectedLead.email_from_sms ? <SmsEmailCheck /> : null}
+                      </span>
+                    )}
                   </span>
                   {selectedLead.phone && (
                     <button
@@ -1518,6 +1534,12 @@ export default function InboxClient({
                         const receipt = outboundSmsReceipt(msg, messages);
                         const photos = (msg.media_items ?? []).filter(item => item?.sid || item?.path);
                         const caption = msg.body === 'Attachment: 1 Photo' && photos.length ? '' : msg.body;
+                        const inboundEmail = msg.direction === 'inbound' ? extractEmailFromSms(caption || '').email : undefined;
+                        const emailPushed = !!(
+                          inboundEmail &&
+                          selectedLead?.email &&
+                          inboundEmail === selectedLead.email.trim().toLowerCase()
+                        );
                         return (
                         <div
                           key={msg.id}
@@ -1542,6 +1564,7 @@ export default function InboxClient({
                               />
                             ))}
                             {caption ? (
+                            <div className="flex items-end gap-1.5 max-w-full">
                             <div
                               className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] max-w-full ${
                                 msg.direction === 'outbound'
@@ -1550,6 +1573,8 @@ export default function InboxClient({
                               } ${receipt === 'failed' ? 'opacity-60' : ''}`}
                             >
                               {caption}
+                            </div>
+                            {emailPushed ? <SmsEmailCheck /> : null}
                             </div>
                             ) : null}
                             <div className={`flex items-center gap-1.5 px-1 ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}>

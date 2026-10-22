@@ -12,6 +12,7 @@ export default {
         sans: ['var(--font-barlow)', 'var(--font-inter)', 'system-ui', 'sans-serif'],
         serif: ['var(--font-crimson)', 'Georgia', 'serif'],
         script: ['var(--font-dancing)', 'cursive'],
+        mono: ['var(--font-roboto-mono)', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
       colors: {
         ald: {
