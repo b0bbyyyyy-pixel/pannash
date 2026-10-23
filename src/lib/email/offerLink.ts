@@ -76,7 +76,7 @@ function htmlToText(html: string) {
     .trim();
 }
 
-async function fetchOne(url: string) {
+async function fetchOne(url: string): Promise<string> {
   const tries = [url];
   if (url.startsWith('http://')) tries.push(`https://${url.slice('http://'.length)}`);
   for (const target of tries) {
