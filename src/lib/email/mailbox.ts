@@ -224,7 +224,7 @@ export async function listMailbox(
     const ids = (listed.data.messages ?? []).map(m => m.id).filter((id): id is string => !!id);
     const messages = (
       await Promise.all(
-        ids.map(async id => {
+        ids.map(async (id): Promise<MailListItem | null> => {
           try {
             const got = await gmail.users.messages.get({
               userId: 'me',
