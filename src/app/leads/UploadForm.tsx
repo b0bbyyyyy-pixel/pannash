@@ -1518,8 +1518,10 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
       if (parseErr) { setMessage(parseErr); setSheetsLoading(false); return; }
       if (!res.ok) { setMessage(String(json.error || 'Failed to fetch sheet')); setSheetsLoading(false); return; }
 
-      setRawSheetsCsv(json.csv); // store for optional AI re-parse
-      const sheetRows = parseSheetCsv(json.csv);
+      const csv = typeof json.csv === 'string' ? json.csv : '';
+      if (!csv) { setMessage('Sheet appears empty'); setSheetsLoading(false); return; }
+      setRawSheetsCsv(csv); // store for optional AI re-parse
+      const sheetRows = parseSheetCsv(csv);
       if (sheetRows.length === 0) { setMessage('Sheet appears empty'); setSheetsLoading(false); return; }
 
       const firstRow = sheetRows[0];
