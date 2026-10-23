@@ -2,15 +2,17 @@ import { getAIClient, GROK_MODEL, GROK_VISION_MODELS } from '@/lib/ai';
 import { loadPdfjsNode } from '@/lib/pdf/loadPdfjsNode';
 import { mergeParsedFieldMaps, normalizeParsedFields } from '@/lib/normalizeParsedFields';
 import { extractPdfImages } from '@/lib/pdf/extractPdfImages';
-import { extractBankMetricsFromText, hasBankMetrics, reconcileBankMetrics } from '@/lib/pdf/extractBankMetrics';
+import { extractCcittStatementPages } from '@/lib/pdf/extractCcittPages';
+import { extractBankMetricsFromText, hasBankMetrics, reconcileBankMetrics, statementMonthFromFilename } from '@/lib/pdf/extractBankMetrics';
 
 const BANK_PROMPT = `You are a financial analyst extracting data from a business bank statement for MCA underwriting.
 Extract EVERY metric you can. Return ONLY a raw JSON object — no markdown fences.
 Read the account / activity / checking summary box first, whatever the bank calls it.
 - Previous / beginning / opening balance → openingBalance
-- Total deposits / credits → totalDeposits and monthlyRevenue
-- Total withdrawals / debits → totalWithdrawals only. Never copy this into endingBalance, even when printed as a negative.
+- Total deposits / credits / "Deposits / Misc Credits" → totalDeposits and monthlyRevenue. The count before the dollar amount is depositCount.
+- Total withdrawals / debits / "Withdrawals / Misc Debits" → totalWithdrawals only. Never copy this into endingBalance, even when printed as a negative.
 - Ending / new / closing balance → endingBalance. This is the statement's ending cash, not withdrawals.
+- ImageCentre / Generations Bank summaries print Beginning Balance, Deposits / Misc Credits, Withdrawals / Misc Debits, Ending Balance in one block.
 If opening + deposits − |withdrawals| equals a printed ending balance, use that ending balance.
 {
   "company": "",
@@ -216,8 +218,9 @@ export async function analyzeStoredBankPdf(
     extractBankMetricsFromText(raw),
   );
 
-  const images = await extractPdfImages(buffer, loadPdfjs);
-  console.log(`[analyze-bank] ${filename}: images=${images.length} textKeys=${Object.keys(fromText).join(',')}`);
+  const ccitt = await extractCcittStatementPages(buffer, 2);
+  const images = ccitt.length ? ccitt : await extractPdfImages(buffer, loadPdfjs);
+  console.log(`[analyze-bank] ${filename}: images=${images.length} ccitt=${ccitt.length} textKeys=${Object.keys(fromText).join(',')}`);
   let ai: Record<string, string> = {};
   if (images.length) ai = await extractWithVision(images, filename);
   if (!hasBankMetrics(ai) && layer.replace(/\s/g, '').length >= 40) {
@@ -225,5 +228,10 @@ export async function analyzeStoredBankPdf(
   }
 
   // AI first; regex only fills keys the model left blank, then identity-check ending vs withdrawals.
-  return reconcileBankMetrics(normalizeParsedFields(mergeParsedFieldMaps(ai, fromText)));
+  const merged = reconcileBankMetrics(normalizeParsedFields(mergeParsedFieldMaps(ai, fromText)));
+  if (!merged.statementMonth) {
+    const fromName = statementMonthFromFilename(filename);
+    if (fromName) merged.statementMonth = fromName;
+  }
+  return merged;
 }

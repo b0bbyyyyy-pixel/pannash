@@ -5,6 +5,13 @@ export type PdfImage = { mime: string; buffer: Buffer };
 const MAX_IMAGES = 6;
 const MIN_JPEG = 12_000;
 
+function isRealJpeg(buf: Buffer) {
+  if (buf.length < 20) return false;
+  if (buf[0] !== 0xff || buf[1] !== 0xd8 || buf[2] !== 0xff) return false;
+  const marker = buf[3];
+  return marker === 0xe0 || marker === 0xe1 || marker === 0xdb || marker === 0xc0 || marker === 0xc2 || marker === 0xc4;
+}
+
 /** Pull embedded JPEGs from a scanned PDF — largest pages first (summary is often last). */
 export function extractEmbeddedJpegs(pdf: Buffer): PdfImage[] {
   const found: PdfImage[] = [];
@@ -15,7 +22,9 @@ export function extractEmbeddedJpegs(pdf: Buffer): PdfImage[] {
       while (j < pdf.length - 1) {
         if (pdf[j] === 0xff && pdf[j + 1] === 0xd9) {
           const slice = pdf.subarray(i, j + 2);
-          if (slice.length >= MIN_JPEG) found.push({ mime: 'image/jpeg', buffer: Buffer.from(slice) });
+          if (slice.length >= MIN_JPEG && isRealJpeg(slice)) {
+            found.push({ mime: 'image/jpeg', buffer: Buffer.from(slice) });
+          }
           i = j + 2;
           break;
         }

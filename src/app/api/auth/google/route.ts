@@ -45,18 +45,27 @@ export async function GET(req: NextRequest) {
     '/settings/connections'
   );
 
+  const kind = req.nextUrl.searchParams.get('kind') === 'read' ? 'read' : 'send';
+  const purpose = kind === 'read' ? 'gmail_read' : 'gmail';
+  const scope = kind === 'read'
+    ? [
+        'https://www.googleapis.com/auth/gmail.readonly',
+        'https://www.googleapis.com/auth/userinfo.email',
+      ].join(' ')
+    : [
+        'https://www.googleapis.com/auth/gmail.send',
+        'https://www.googleapis.com/auth/userinfo.email',
+      ].join(' ');
+
   const state = Buffer.from(
-    JSON.stringify({ redirectAfter, userId: user.id, purpose: 'gmail' })
+    JSON.stringify({ redirectAfter, userId: user.id, purpose })
   ).toString('base64url');
 
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: callbackUrl,
     response_type: 'code',
-    scope: [
-      'https://www.googleapis.com/auth/gmail.send',
-      'https://www.googleapis.com/auth/userinfo.email',
-    ].join(' '),
+    scope,
     access_type: 'offline',
     prompt: 'consent',
     state,

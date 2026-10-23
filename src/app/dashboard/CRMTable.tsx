@@ -7,6 +7,7 @@ import { getPhoneLocation, PhoneLocationInfo } from '@/lib/phoneLocation';
 import { parseLeadPasteText } from '@/lib/parse-lead-paste';
 import dynamic from 'next/dynamic';
 import { kickSyncWorker } from '@/lib/sync/kick';
+import { downloadLeadAttachment } from '@/lib/attachments/downloadClient';
 
 const UnderwritingSuite = dynamic(() => import('@/components/UnderwritingSuite'), { ssr: false });
 
@@ -1677,20 +1678,9 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
     }
   };
 
-  const handleFileDownload = async (attachmentId: string) => {
+  const handleFileDownload = async (attachmentId: string, fileName?: string) => {
     try {
-      const res = await fetch(`/api/attachments/download?id=${attachmentId}`);
-      if (res.ok) {
-        const { url, fileName } = await res.json();
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = fileName;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      } else {
-        alert('Failed to download file');
-      }
+      await downloadLeadAttachment(attachmentId, fileName || 'download');
     } catch (error) {
       console.error('Error downloading file:', error);
       alert('Failed to download file');
@@ -3107,7 +3097,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                         </div>
                         <div className="flex gap-1 flex-shrink-0">
                           <button
-                            onClick={() => handleFileDownload(attachment.id)}
+                            onClick={() => handleFileDownload(attachment.id, attachment.file_name)}
                             className="p-1.5 hover:bg-[#e5e5e5] rounded transition-colors"
                             title="Download"
                           >

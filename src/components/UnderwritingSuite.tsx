@@ -3,7 +3,81 @@
 import { useState, useEffect, useRef } from 'react';
 import type { BankStatementAnalysisSnapshot } from '@/lib/bankAnalyzer';
 import ClientPortalModal from '@/components/ClientPortalModal';
+import EmailOfferPicker, { type ParsedOfferFields } from '@/components/EmailOfferPicker';
 import { JotPad, type JotPadHandle } from '@/components/JotPad';
+import { formatEpoSummary, settleEpoOptions, type OfferEpoOption } from '@/lib/email/offerFields';
+
+function EpoEditor({
+  value,
+  onChange,
+  offerAmount,
+}: {
+  value: OfferEpoOption[];
+  onChange: (next: OfferEpoOption[]) => void;
+  offerAmount?: number;
+}) {
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <label className="block text-xs text-gray-600">Early pre-pay (optional)</label>
+        <button
+          type="button"
+          onClick={() => onChange([
+            ...value,
+            { days: [30, 60, 90, 120][value.length] ?? 30 + value.length * 30, amount: 0 },
+          ])}
+          className="text-[11px] text-[#5a7fc7] hover:underline"
+        >
+          + Add
+        </button>
+      </div>
+      {value.length === 0 ? (
+        <p className="text-[11px] text-gray-400">30/60/90 buyouts from the lender email, if any.</p>
+      ) : (
+        <div className="space-y-2">
+          {value.map((opt, idx) => {
+            const inferred = opt.amount <= 0 && opt.factorRate && offerAmount
+              ? Math.round(offerAmount * opt.factorRate)
+              : 0;
+            return (
+              <div key={idx} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
+                <div>
+                  <label className="block text-[10px] text-gray-400 mb-0.5">Days</label>
+                  <input
+                    type="number"
+                    value={opt.days || ''}
+                    onChange={e => onChange(value.map((o, i) => i === idx ? { ...o, days: Number(e.target.value) || 0 } : o))}
+                    className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                    min={1}
+                    placeholder="30"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-gray-400 mb-0.5">Buyout $</label>
+                  <input
+                    type="number"
+                    value={opt.amount || ''}
+                    onChange={e => onChange(value.map((o, i) => i === idx ? { ...o, amount: Number(e.target.value) || 0 } : o))}
+                    className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#5a7fc7]"
+                    min={0}
+                    placeholder={inferred ? String(inferred) : '65000'}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onChange(value.filter((_, i) => i !== idx))}
+                  className="text-red-400 hover:text-red-600 text-xs pb-2 px-1"
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface UnderwritingData {
   // Merchant Info
@@ -46,6 +120,7 @@ interface UnderwritingData {
     termLength?: number; 
     paymentFrequency?: string; 
     url?: string;
+    epoOptions?: OfferEpoOption[];
   }>;
   offersNotes?: string;
   selectedOfferId?: string | null;
@@ -539,6 +614,7 @@ export default function UnderwritingSuite({
     locTermMonths?: number;
     locPaymentFrequency?: string;
     url?: string;
+    epoOptions?: OfferEpoOption[];
   }>>(
     initialData?.actualOffers || []
   );
@@ -548,10 +624,11 @@ export default function UnderwritingSuite({
   const [newOfferFactorRate, setNewOfferFactorRate] = useState('');
   const [newOfferBuyRate, setNewOfferBuyRate] = useState('');
   const [newOfferAddedPoints, setNewOfferAddedPoints] = useState('');
-  const [newOfferMyCommissionPercent, setNewOfferMyCommissionPercent] = useState('');
+  const [newOfferMyCommissionPercent, setNewOfferMyCommissionPercent] = useState('50');
   const [newOfferTermLength, setNewOfferTermLength] = useState('');
   const [newOfferPaymentFreq, setNewOfferPaymentFreq] = useState('Daily');
   const [newOfferUrl, setNewOfferUrl] = useState('');
+  const [newOfferEpo, setNewOfferEpo] = useState<OfferEpoOption[]>([]);
   // LOC-specific state
   const [newOfferMonthlyAPR, setNewOfferMonthlyAPR] = useState('');
   const [newOfferLocTermMonths, setNewOfferLocTermMonths] = useState('');
@@ -559,6 +636,8 @@ export default function UnderwritingSuite({
   const [offersNotes, setOffersNotes] = useState(initialData?.offersNotes || '');
   const [notesExpanded, setNotesExpanded] = useState(false);
   const [addOfferOpen, setAddOfferOpen] = useState(false);
+  const [emailPickerOpen, setEmailPickerOpen] = useState(false);
+  const [emailParseNote, setEmailParseNote] = useState('');
   const [portalOffer, setPortalOffer] = useState<typeof actualOffers[number] | null>(null);
   const [notesEditing, setNotesEditing] = useState(false);
   const [notesEditValue, setNotesEditValue] = useState(leadNotes ?? '');
@@ -795,6 +874,7 @@ export default function UnderwritingSuite({
   const [editOfferTermLength, setEditOfferTermLength] = useState('');
   const [editOfferPaymentFreq, setEditOfferPaymentFreq] = useState('Daily');
   const [editOfferUrl, setEditOfferUrl] = useState('');
+  const [editOfferEpo, setEditOfferEpo] = useState<OfferEpoOption[]>([]);
   // LOC edit fields
   const [editOfferMonthlyAPR, setEditOfferMonthlyAPR] = useState('');
   const [editOfferLocTermMonths, setEditOfferLocTermMonths] = useState('');
@@ -1306,6 +1386,32 @@ export default function UnderwritingSuite({
     );
   };
 
+  const applyOfferFromEmail = (offer: ParsedOfferFields) => {
+    setAddOfferOpen(true);
+    if (offer.offerType) setNewOfferType(offer.offerType);
+    if (offer.lenderName) setNewOfferLender(offer.lenderName);
+    if (offer.amount != null) setNewOfferAmount(String(Math.round(offer.amount)));
+    if (offer.buyRate != null) setNewOfferBuyRate(String(offer.buyRate));
+    else if (offer.factorRate != null) setNewOfferBuyRate(String(offer.factorRate));
+    const pts = offer.addedPoints != null ? Number(offer.addedPoints) : commissionPointsMax;
+    setNewOfferAddedPoints(String(Math.min(commissionPointsMax, Math.max(0, pts))));
+    setNewOfferMyCommissionPercent(prev => (prev === '' ? '50' : prev));
+    if (offer.termLength != null) setNewOfferTermLength(String(Math.round(offer.termLength)));
+    if (offer.paymentFrequency) setNewOfferPaymentFreq(offer.paymentFrequency);
+    if (offer.monthlyAPR != null) setNewOfferMonthlyAPR(String(offer.monthlyAPR));
+    if (offer.locTermMonths != null) setNewOfferLocTermMonths(String(Math.round(offer.locTermMonths)));
+    if (offer.locPaymentFrequency) setNewOfferLocPaymentFreq(offer.locPaymentFrequency);
+    if (offer.url) setNewOfferUrl(offer.url);
+    setNewOfferEpo(settleEpoOptions(offer.epoOptions, offer.amount ?? 0));
+    if (offer.verdict === 'declined') {
+      setEmailParseNote(offer.notes || 'This email looks like a decline — review before saving.');
+    } else if (offer.notes) {
+      setEmailParseNote(offer.notes);
+    } else {
+      setEmailParseNote('');
+    }
+  };
+
   const addActualOffer = () => {
     if (!newOfferLender.trim() || !newOfferAmount) {
       alert('Please fill in at least lender name and amount');
@@ -1334,6 +1440,7 @@ export default function UnderwritingSuite({
       const buyRate = Number(newOfferBuyRate) || 1.20;
       const addedPoints = Math.min(commissionPointsMax, newOfferAddedPoints === '' ? 0 : Number(newOfferAddedPoints));
       const calculatedFactorRate = buyRate + (addedPoints / 100);
+      const epos = settleEpoOptions(newOfferEpo, Number(newOfferAmount));
       newOffer = {
         id: Date.now().toString(),
         lenderName: newOfferLender.trim(),
@@ -1342,10 +1449,11 @@ export default function UnderwritingSuite({
         factorRate: calculatedFactorRate,
         buyRate,
         addedPoints,
-        myCommissionPercent: Number(newOfferMyCommissionPercent) || 0,
+        myCommissionPercent: Number(newOfferMyCommissionPercent || 50),
         termLength: Number(newOfferTermLength) || 250,
         paymentFrequency: newOfferPaymentFreq || 'Daily',
         url: newOfferUrl.trim() || undefined,
+        epoOptions: epos.length ? epos : undefined,
       };
     }
 
@@ -1356,10 +1464,11 @@ export default function UnderwritingSuite({
     setNewOfferFactorRate('');
     setNewOfferBuyRate('');
     setNewOfferAddedPoints('');
-    setNewOfferMyCommissionPercent('');
+    setNewOfferMyCommissionPercent('50');
     setNewOfferTermLength('');
     setNewOfferPaymentFreq('Daily');
     setNewOfferUrl('');
+    setNewOfferEpo([]);
     setNewOfferMonthlyAPR('');
     setNewOfferLocTermMonths('');
     setNewOfferLocPaymentFreq('Monthly');
@@ -1398,6 +1507,7 @@ export default function UnderwritingSuite({
     setEditOfferTermLength((offer.termLength || 250).toString());
     setEditOfferPaymentFreq(offer.paymentFrequency || 'Daily');
     setEditOfferUrl(offer.url || '');
+    setEditOfferEpo(offer.epoOptions ?? []);
     // LOC fields
     setEditOfferMonthlyAPR((offer.monthlyAPR ?? '').toString());
     setEditOfferLocTermMonths((offer.locTermMonths ?? '').toString());
@@ -1436,6 +1546,7 @@ export default function UnderwritingSuite({
               locTermMonths: Number(editOfferLocTermMonths),
               locPaymentFrequency: editOfferLocPaymentFreq || 'Monthly',
               url: editOfferUrl.trim() || undefined,
+              epoOptions: undefined,
             }
           : offer
       );
@@ -1443,6 +1554,7 @@ export default function UnderwritingSuite({
       const buyRate = Number(editOfferBuyRate) || 1.20;
       const addedPoints = Math.min(commissionPointsMax, editOfferAddedPoints === '' ? 0 : Number(editOfferAddedPoints));
       const calculatedFactorRate = buyRate + (addedPoints / 100);
+      const epos = settleEpoOptions(editOfferEpo, Number(editOfferAmount));
       updatedOffers = actualOffers.map(offer =>
         offer.id === editingOfferId
           ? {
@@ -1460,6 +1572,7 @@ export default function UnderwritingSuite({
               locTermMonths: undefined,
               locPaymentFrequency: undefined,
               url: editOfferUrl.trim() || undefined,
+              epoOptions: epos.length ? epos : undefined,
             }
           : offer
       );
@@ -1483,6 +1596,7 @@ export default function UnderwritingSuite({
     setEditOfferAmount('');
     setEditOfferFactorRate('');
     setEditOfferUrl('');
+    setEditOfferEpo([]);
   };
 
   const moneyTxt = (n: number) =>
@@ -1989,6 +2103,11 @@ export default function UnderwritingSuite({
                                     <option value="Monthly">Monthly</option>
                                   </select>
                                 </div>
+                                <EpoEditor
+                                  value={editOfferEpo}
+                                  onChange={setEditOfferEpo}
+                                  offerAmount={Number(editOfferAmount) || undefined}
+                                />
                               </>
                             )}
 
@@ -2172,6 +2291,12 @@ export default function UnderwritingSuite({
                                     <span className="text-gray-600">Frequency:</span>
                                     <span className="font-medium">{offer.paymentFrequency || 'Daily'}</span>
                                   </div>
+                                  {offer.epoOptions && offer.epoOptions.length > 0 && (
+                                    <div className="flex justify-between">
+                                      <span className="text-gray-600">Pre-pay:</span>
+                                      <span className="font-medium text-right">{formatEpoSummary(offer.epoOptions)}</span>
+                                    </div>
+                                  )}
                                   <div className="flex justify-between pt-1 border-t border-gray-200 mt-1">
                                     <span className="text-gray-600 font-medium">{offer.paymentFrequency || 'Daily'} Payment:</span>
                                     <span className="font-bold text-green-700">
@@ -2413,21 +2538,35 @@ export default function UnderwritingSuite({
             
             {/* Add New Offer Form */}
             <div className="bg-white border border-gray-300 rounded-lg mb-4">
-              <button
-                type="button"
-                onClick={() => setAddOfferOpen(v => !v)}
-                className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-50 transition-colors rounded-lg"
-              >
-                <span className="text-sm font-medium text-gray-900">Add Competitor Offer</span>
-                <svg
-                  className={`w-4 h-4 text-gray-500 transition-transform ${addOfferOpen ? 'rotate-180' : ''}`}
-                  fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"
+              <div className="flex items-center gap-2 px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => setAddOfferOpen(v => !v)}
+                  className="flex-1 flex items-center justify-between text-left hover:opacity-80 transition-opacity"
                 >
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
+                  <span className="text-sm font-medium text-gray-900">Add Competitor Offer</span>
+                  <svg
+                    className={`w-4 h-4 text-gray-500 transition-transform ${addOfferOpen ? 'rotate-180' : ''}`}
+                    fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEmailPickerOpen(true)}
+                  className="shrink-0 text-xs font-medium text-[#5a7fc7] hover:underline px-1"
+                >
+                  Fill from email
+                </button>
+              </div>
               {addOfferOpen && (
               <div className="px-4 pb-4 space-y-3 border-t border-gray-100">
+                {emailParseNote && (
+                  <p className="text-[11px] text-[#6b6b6b] bg-[#f7f7f7] border border-[#ececec] rounded-md px-3 py-2">
+                    {emailParseNote}
+                  </p>
+                )}
 
                 {/* Offer type toggle */}
                 <div className="flex rounded-md overflow-hidden border border-gray-300 text-xs font-medium">
@@ -2597,6 +2736,11 @@ export default function UnderwritingSuite({
                         <option value="Monthly">Monthly</option>
                       </select>
                     </div>
+                    <EpoEditor
+                      value={newOfferEpo}
+                      onChange={setNewOfferEpo}
+                      offerAmount={Number(newOfferAmount) || undefined}
+                    />
                   </>
                 )}
 
@@ -2619,6 +2763,14 @@ export default function UnderwritingSuite({
               </div>
               )}
             </div>
+            {emailPickerOpen && (
+              <EmailOfferPicker
+                leadId={leadId}
+                queryHint={businessName || leadName}
+                onFill={applyOfferFromEmail}
+                onClose={() => setEmailPickerOpen(false)}
+              />
+            )}
             </div>
 
             {/* Notes Section — auto-populated from the lead's CRM notes, editable */}

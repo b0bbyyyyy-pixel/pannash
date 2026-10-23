@@ -124,6 +124,16 @@ export function unglueBankText(text: string): string {
   return s;
 }
 
+export function statementMonthFromFilename(name: string): string | undefined {
+  const iso = name.match(/_D_(\d{4})(\d{2})(\d{2})/);
+  if (iso) {
+    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const mi = Number(iso[2]) - 1;
+    if (mi >= 0 && mi < 12) return `${months[mi]} ${iso[1]}`;
+  }
+  return undefined;
+}
+
 function statementMonthFromText(text: string): string | undefined {
   const named = text.match(
     /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})\b/i,
@@ -225,6 +235,7 @@ export function extractBankMetricsFromText(raw: string): Record<string, string> 
     new RegExp(`DEPOSITS?(?:\\s*\\/?\\s*OTHER\\s+CREDITS)?[^\\d\\-\\n$]{0,40}(\\d+)\\s*TOTAL(?:ING)?\\s*${MONEY}`, 'i'),
     new RegExp(`(?:TOTAL\\s+)?DEPOSITS?(?:\\s*(?:\\/|,)?\\s*(?:OTHER\\s+)?CREDITS)?(?:\\s+AND\\s+(?:OTHER\\s+)?(?:ADDITIONS|CREDITS))?\\s*[:\\s]*${MONEY}`, 'i'),
     new RegExp(`DEPOSITS?\\s+AND\\s+ADDITIONS\\s*[:\\s]*${MONEY}`, 'i'),
+    new RegExp(`DEPOSITS?\\s*\\/\\s*MISC(?:ELLANEOUS)?\\s+CREDITS?[^\\d\\n$]{0,40}(\\d+)\\s+${MONEY}`, 'i'),
     new RegExp(`TOTAL\\s+CREDITS\\s*[:\\s]*${MONEY}`, 'i'),
     new RegExp(`${MONEY}\\s*(?:TOTAL\\s+)?DEPOSITS?(?:\\s+AND\\s+ADDITIONS)?`, 'i'),
   ]);
@@ -242,6 +253,7 @@ export function extractBankMetricsFromText(raw: string): Record<string, string> 
     new RegExp(`LESS\\s+(\\d+)\\s+OTHER\\s+WITHDRAWALS?[\\s\\S]{0,90}?TOTAL(?:ING)?\\s*${MONEY}`, 'i'),
     new RegExp(`OTHER\\s+WITHDRAWALS?(?:\\s*\\/?\\s*DEBITS)?[\\s\\S]{0,60}?TOTAL(?:ING)?\\s*${MONEY}`, 'i'),
     new RegExp(`(?:TOTAL\\s+)?WITHDRAWALS?(?:\\s*(?:\\/|,)?\\s*(?:OTHER\\s+)?DEBITS)?\\s*[:\\s]*${MONEY}`, 'i'),
+    new RegExp(`WITHDRAWALS?\\s*\\/\\s*MISC(?:ELLANEOUS)?\\s+DEBITS?[^\\d\\n$]{0,40}(\\d+)\\s+${MONEY}`, 'i'),
     new RegExp(`TOTAL\\s+DEBITS\\s*[:\\s]*${MONEY}`, 'i'),
     new RegExp(`WITHDRAWALS?\\s+AND\\s+(?:OTHER\\s+)?SUBTRACTIONS\\s*[:\\s]*${MONEY}`, 'i'),
   ]);

@@ -13,9 +13,10 @@ import TwilioMessagingSidForm from './TwilioMessagingSidForm';
 export default async function ConnectionsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ gmail_connected?: string; gmail_error?: string }>;
+  searchParams: Promise<{ gmail_connected?: string; gmail_error?: string; gmail_kind?: string }>;
 }) {
   const sp = await searchParams;
+  const connectKind = sp.gmail_kind === 'read' || sp.gmail_connected === 'read' ? 'read' : 'send';
   const cookieStore = await cookies();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -42,6 +43,13 @@ export default async function ConnectionsPage({
 
   const gmailConnection = connections?.find(c => c.provider === 'gmail');
   const outlookConnection = connections?.find(c => c.provider === 'outlook');
+
+  const { data: readRows } = await supabase
+    .from('email_read_connections')
+    .select('*')
+    .eq('user_id', user.id)
+    .limit(1);
+  const gmailReadConnection = readRows?.[0] ?? null;
 
   // Fetch user's phone connections
   const { data: phoneConnections } = await supabase
@@ -78,6 +86,35 @@ export default async function ConnectionsPage({
       .delete()
       .eq('user_id', user.id)
       .eq('provider', 'gmail');
+
+    revalidatePath('/settings/connections');
+  }
+
+  async function disconnectGmailRead() {
+    'use server';
+
+    const cookieStore = await cookies();
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          get(name: string) {
+            return cookieStore.get(name)?.value;
+          },
+          set() {},
+          remove() {},
+        },
+      }
+    );
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Unauthorized');
+
+    await supabase
+      .from('email_read_connections')
+      .delete()
+      .eq('user_id', user.id);
 
     revalidatePath('/settings/connections');
   }
@@ -206,18 +243,17 @@ export default async function ConnectionsPage({
               Connection Status
             </h2>
             
-            {!gmailConnection && !outlookConnection ? (
+            {!gmailConnection && !gmailReadConnection && !outlookConnection ? (
               <div className="text-center py-8">
                 <p className="text-gray-500 mb-4">
                   No email accounts connected yet
                 </p>
                 <p className="text-sm text-gray-400">
-                  Connect an account below to start sending emails
+                  Connect Gmail send and Gmail read as two separate logins
                 </p>
               </div>
             ) : (
               <div className="space-y-4">
-                {/* Gmail Connection */}
                 {gmailConnection && (
                   <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
                     <div className="flex items-center justify-between">
@@ -226,14 +262,15 @@ export default async function ConnectionsPage({
                           G
                         </div>
                         <div>
-                          <div className="font-medium text-gray-900">Gmail</div>
+                          <div className="font-medium text-gray-900">Gmail send</div>
                           <div className="text-sm text-gray-600">
                             {gmailConnection.from_email || gmailConnection.email || 'Connected'}
                           </div>
+                          <div className="text-xs text-gray-500 mt-0.5">Applications and outbound mail only</div>
                         </div>
                       </div>
                       <DisconnectButton
-                        provider="Gmail"
+                        provider="Gmail send"
                         disconnectAction={disconnectGmail}
                       />
                     </div>
@@ -242,6 +279,29 @@ export default async function ConnectionsPage({
                       connectionId={gmailConnection.id}
                       initialFromName={gmailConnection.from_name}
                     />
+                  </div>
+                )}
+
+                {gmailReadConnection && (
+                  <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-3">
+                        <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white font-semibold">
+                          R
+                        </div>
+                        <div>
+                          <div className="font-medium text-gray-900">Gmail read</div>
+                          <div className="text-sm text-gray-600">
+                            {gmailReadConnection.from_email || gmailReadConnection.email || gmailReadConnection.email_address || 'Connected'}
+                          </div>
+                          <div className="text-xs text-gray-500 mt-0.5">Inbox and Sent — fill offers, log Status</div>
+                        </div>
+                      </div>
+                      <DisconnectButton
+                        provider="Gmail read"
+                        disconnectAction={disconnectGmailRead}
+                      />
+                    </div>
                   </div>
                 )}
 
@@ -276,16 +336,33 @@ export default async function ConnectionsPage({
             )}
           </div>
 
-          {/* Connect Gmail */}
           {!gmailConnection && (
             <div className="bg-white border border-[#e5e5e5] rounded-md p-7">
               <h2 className="text-lg font-bold text-[#1a1a1a] mb-2 tracking-tight">
-                Connect Gmail
+                Connect Gmail send
               </h2>
               <p className="text-sm text-[#6b6b6b] mb-5">
-                Use OAuth to securely connect your Gmail account
+                Send-only. Applications and outbound mail. Does not read your inbox.
               </p>
-              <GmailConnectButton error={sp.gmail_error} />
+              <GmailConnectButton
+                kind="send"
+                error={connectKind === 'send' ? sp.gmail_error : null}
+              />
+            </div>
+          )}
+
+          {!gmailReadConnection && (
+            <div className="bg-white border border-[#e5e5e5] rounded-md p-7">
+              <h2 className="text-lg font-bold text-[#1a1a1a] mb-2 tracking-tight">
+                Connect Gmail read
+              </h2>
+              <p className="text-sm text-[#6b6b6b] mb-5">
+                Read-only. Inbox and Sent for filling competitor offers. Does not send.
+              </p>
+              <GmailConnectButton
+                kind="read"
+                error={connectKind === 'read' ? sp.gmail_error : null}
+              />
             </div>
           )}
 

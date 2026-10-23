@@ -43,18 +43,22 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Attachment not found' }, { status: 404 });
   }
 
-  // Same-origin bytes so the browser can render PDF pages without Storage CORS.
-  if (searchParams.get('raw') === '1') {
+  // Same-origin bytes so the browser can render or save without Storage CORS.
+  if (searchParams.get('raw') === '1' || searchParams.get('download') === '1') {
     const { data: blob, error: dlErr } = await supabase.storage
       .from('lead-attachments')
       .download(attachment.file_path);
     if (dlErr || !blob) {
       return NextResponse.json({ error: 'Could not download file' }, { status: 502 });
     }
+    const asDownload = searchParams.get('download') === '1';
+    const safe = String(attachment.file_name || 'download').replace(/["\r\n]/g, '_');
+    const encoded = encodeURIComponent(attachment.file_name || 'download');
     return new NextResponse(blob, {
       headers: {
         'Content-Type': attachment.file_type || blob.type || 'application/pdf',
-        'Content-Disposition': `inline; filename="${attachment.file_name}"`,
+        'Content-Disposition': `${asDownload ? 'attachment' : 'inline'}; filename="${safe}"; filename*=UTF-8''${encoded}`,
+        'Cache-Control': 'private, no-store',
       },
     });
   }

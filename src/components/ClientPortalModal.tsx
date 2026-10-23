@@ -15,6 +15,7 @@ interface Offer {
   factorRate: number;
   termLength?: number;
   paymentFrequency?: string;
+  epoOptions?: { days: number; amount: number; factorRate?: number }[];
 }
 
 interface ActivityLog {
@@ -91,10 +92,22 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
   ]);
   const [previewTermId, setPreviewTermId] = useState('1');
 
-  // Early payoff options
-  const [showEpoOptions, setShowEpoOptions] = useState<boolean>(saved?.showEpoOptions ?? false);
-  const [epoOptions, setEpoOptions] = useState<EpoOption[]>(saved?.epoOptions ?? []);
-  const [previewShowEpo, setPreviewShowEpo] = useState(false);
+  // Early payoff options — offer-specific pre-pays win over saved portal defaults
+  const offerEpos: EpoOption[] = (offer.epoOptions ?? [])
+    .filter(o => Number(o.days) > 0)
+    .map(o => ({
+      days: Math.round(Number(o.days)),
+      amount: Number(o.amount) > 0
+        ? Math.round(Number(o.amount))
+        : Math.round((Number(o.factorRate) || 0) * offer.amount),
+    }));
+  const [showEpoOptions, setShowEpoOptions] = useState<boolean>(
+    offerEpos.length > 0 ? true : (saved?.showEpoOptions ?? false)
+  );
+  const [epoOptions, setEpoOptions] = useState<EpoOption[]>(
+    offerEpos.length > 0 ? offerEpos : (saved?.epoOptions ?? [])
+  );
+  const [previewShowEpo, setPreviewShowEpo] = useState(offerEpos.length > 0);
 
   // Fee disclaimer (editable, shown below details card)
   const [feeDisclaimer, setFeeDisclaimer] = useState<string>(
@@ -186,8 +199,10 @@ export default function ClientPortalModal({ offer, leadId, leadName, avgMonthlyR
         if (defaults.ogSiteName !== undefined) setOgSiteName(defaults.ogSiteName);
         if (defaults.portalDomain !== undefined) setPortalDomain(defaults.portalDomain);
         if (defaults.logoUrl !== undefined) setLogoUrl(defaults.logoUrl);
-        if (defaults.showEpoOptions !== undefined) setShowEpoOptions(defaults.showEpoOptions);
-        if (defaults.epoOptions !== undefined) setEpoOptions(defaults.epoOptions);
+        if (offerEpos.length === 0) {
+          if (defaults.showEpoOptions !== undefined) setShowEpoOptions(defaults.showEpoOptions);
+          if (defaults.epoOptions !== undefined) setEpoOptions(defaults.epoOptions);
+        }
         saveDefaults(defaults); // refresh localStorage cache
       })
       .catch(() => {}); // silent — localStorage fallback still active

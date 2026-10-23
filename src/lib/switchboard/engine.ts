@@ -78,8 +78,8 @@ const REST_R = 1.15;
 const PERSIST_R = 1.3;
 const SCAN_MS = 5200;
 const SCAN_GAP_MS = 600;
-const SCAN_FAT_ROWS = 0.62;
-const SCAN_THIN_ROWS = 1.15;
+const SCAN_FAT_ROWS = 0.34;
+const SCAN_THIN_ROWS = 1.05;
 const AI_CYCLE_MS = 5800;
 const AI_PULSE_MS = 3000;
 const AI_SIGMA = 1.7;
@@ -475,26 +475,25 @@ export class SwitchboardEngine {
     }
   }
 
-  /** Fat at drip start (~half the board), one row when almost done. Tapers during each pass. */
+  /** Horizontal bar in row-space: many rows at drip start, one row at the end. */
   private scanSigma(u: number) {
-    const cols = Math.max(1, this.cols);
-    const fat = Math.max(8, this.rows * SCAN_FAT_ROWS);
+    const fat = Math.min(this.rows * 0.42, Math.max(6, this.rows * SCAN_FAT_ROWS));
     const thin = SCAN_THIN_ROWS;
     const remain = clamp(this.dripRemain, 0, 1);
     const startRows = thin + (fat - thin) * remain;
-    const endRows = thin + (startRows - thin) * 0.18;
+    const endRows = thin + (startRows - thin) * 0.2;
     const rowsWide = startRows + (endRows - startRows) * clamp(u, 0, 1);
-    return Math.max(2.4, (rowsWide * cols) / 4.4);
+    return Math.max(0.42, rowsWide / 2.2);
   }
 
-  private waveAt(c: number, r: number, now: number) {
+  private waveAt(_c: number, r: number, now: number) {
     const scan = this.scan;
-    if (!scan || !this.cols) return 0;
+    if (!scan || !this.rows) return 0;
     const u = clamp((now - scan.born) / scan.duration, 0, 1);
     const sigma = this.scanSigma(u);
     const pad = sigma * 2.2;
-    const head = u * (this.cols * this.rows + pad * 2) - pad;
-    const d = r * this.cols + c - head;
+    const head = u * (this.rows + pad * 2) - pad;
+    const d = r - head;
     const g = Math.exp(-(d * d) / (2 * sigma * sigma));
     const edge = u < 0.06 ? u / 0.06 : u > 0.94 ? (1 - u) / 0.06 : 1;
     return g * edge;
@@ -605,8 +604,8 @@ export class SwitchboardEngine {
         const g = Math.max(this.waveAt(cell.c, cell.r, now), this.aiAt(cell.c, cell.r, now));
         if (g < 0.05) continue;
         ctx.beginPath();
-        ctx.fillStyle = rgba(GLOW, g * 0.2 * decay);
-        ctx.arc(cell.x, cell.y, 5.8, 0, Math.PI * 2);
+        ctx.fillStyle = rgba(GLOW, g * 0.16 * decay);
+        ctx.arc(cell.x, cell.y, 4.2, 0, Math.PI * 2);
         ctx.fill();
       }
     }
@@ -634,11 +633,11 @@ export class SwitchboardEngine {
       }
 
       if (g > 0.04) {
-        const persistMix = p ? 0.48 : 1;
+        const persistMix = p ? 0.22 : 0.7;
         const mix = Math.min(1, g * persistMix);
         col = mixRgb(col, GLOW, mix);
-        if (!p) r = Math.max(r, REST_R + g * 1.55);
-        a = Math.max(a, (0.22 + g * 0.78) * decay);
+        if (!p) r = Math.max(r, REST_R + g * 0.85);
+        a = Math.max(a, (0.22 + g * 0.42) * decay);
       }
 
       if (lives?.length) {

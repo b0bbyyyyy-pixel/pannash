@@ -143,7 +143,52 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(`${origin}${redirectAfter}?gmail_error=db_error`);
     }
 
-    return NextResponse.redirect(`${origin}${redirectAfter}?gmail_connected=1`);
+    return NextResponse.redirect(`${origin}${redirectAfter}?gmail_connected=send`);
+  }
+
+  if (purpose === 'gmail_read') {
+    if (!googleEmail) {
+      return NextResponse.redirect(`${origin}${redirectAfter}?gmail_error=no_email&gmail_kind=read`);
+    }
+    const { data: existingRead } = await supabase
+      .from('email_read_connections')
+      .select('refresh_token')
+      .eq('user_id', userId)
+      .maybeSingle();
+    const readRefresh = incomingRefreshToken(tokens) ?? existingRead?.refresh_token ?? null;
+    const readRow = {
+      user_id: userId,
+      email: googleEmail,
+      from_email: googleEmail,
+      email_address: googleEmail,
+      access_token: tokens.access_token,
+      refresh_token: readRefresh,
+      expiry_date: expiresAt,
+      expires_at: expiresAt,
+      updated_at: new Date().toISOString(),
+    };
+    let { error: readErr } = await supabase
+      .from('email_read_connections')
+      .upsert(readRow, { onConflict: 'user_id' });
+    if (readErr) {
+      const fallback = await supabase.from('email_read_connections').upsert({
+        user_id: userId,
+        email_address: googleEmail,
+        access_token: tokens.access_token,
+        refresh_token: readRefresh,
+        expires_at: expiresAt,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'user_id' });
+      readErr = fallback.error;
+    }
+    if (readErr) {
+      console.error('email_read_connections upsert error:', readErr);
+      const missing = /email_read_connections|schema cache|does not exist/i.test(readErr.message || '');
+      return NextResponse.redirect(
+        `${origin}${redirectAfter}?gmail_error=${encodeURIComponent(missing ? 'run_read_sql' : 'db_error')}&gmail_kind=read`,
+      );
+    }
+    return NextResponse.redirect(`${origin}${redirectAfter}?gmail_connected=read`);
   }
 
   const { data: existingSheets } = await supabase

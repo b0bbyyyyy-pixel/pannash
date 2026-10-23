@@ -77,7 +77,7 @@ export async function logLeadStatusChange(
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function appendEmailSent(
   supabase: any,
-  args: { userId: string; leadId: string; to?: string; subject?: string },
+  args: { userId: string; leadId: string; to?: string; subject?: string; at?: string },
 ): Promise<void> {
   try {
     const { data } = await supabase
@@ -90,10 +90,18 @@ export async function appendEmailSent(
     const events = Array.isArray(ud.fileEvents) ? [...ud.fileEvents] : [];
     const subject = String(args.subject || '').trim();
     const application = /application/i.test(subject);
+    const title = application ? 'Application emailed' : 'Email sent';
+    const detail = [subject, args.to].filter(Boolean).join(' · ');
+    const already = events.some(e => {
+      if (!e || typeof e !== 'object') return false;
+      const row = e as { title?: string; detail?: string };
+      return row.title === title && row.detail === detail;
+    });
+    if (already) return;
     events.push({
-      at: new Date().toISOString(),
-      title: application ? 'Application emailed' : 'Email sent',
-      detail: [subject, args.to].filter(Boolean).join(' · '),
+      at: args.at && !Number.isNaN(Date.parse(args.at)) ? args.at : new Date().toISOString(),
+      title,
+      detail,
     });
     ud.fileEvents = events.slice(-80);
     await writeUd(supabase, args.userId, args.leadId, ud);

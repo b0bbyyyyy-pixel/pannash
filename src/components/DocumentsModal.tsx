@@ -13,6 +13,7 @@ import {
   splitFullPackFiles,
 } from '@/lib/leadDocActions';
 import { explainUploadFailure, uploadFileToLeadStorage } from '@/lib/uploadLeadFile';
+import { downloadLeadAttachment } from '@/lib/attachments/downloadClient';
 import { downloadAttachmentBytes, readBankStatementPdf } from '@/lib/pdf/renderPdfPages';
 import { hasBankMetrics, reconcileBankMetrics } from '@/lib/pdf/extractBankMetrics';
 import { postLeadPatch } from '@/lib/pipeline/iframeMessages';
@@ -262,6 +263,51 @@ export default function DocumentsModal({
     pendingBankAttIds.current = [];
   }, [uploading]);
 
+  const applyAndClose = async (fields: Record<string, string>, selectedKeys?: Set<string>) => {
+    const selected = new Set(selectedKeys ?? Object.keys(fields));
+    if (fields.statementMonths) selected.add('statementMonths');
+    setApplying(true);
+    try {
+      await applyParsed(fields, selected);
+      const bankIds = pendingBankAttIds.current;
+      const needPython = (uploadKind === 'fullpack' || uploadKind === 'bank')
+        && bankIds.length > 0
+        && !hasMeaningfulBankFields(fields);
+      if (needPython) {
+        await analyzeBankAttachmentsForLead(leadId, bankIds);
+      }
+      onApplied?.();
+      setUploading(false);
+      setShowUpload(false);
+      setPendingFiles([]);
+      setUploadProgress({});
+      setUploadErrors({});
+      setParseStep('upload');
+      setParsedFields({});
+      setParsedSelected(new Set());
+      setUploadKind('fullpack');
+      setUploadStatus(null);
+      pendingBankSnapFiles.current = [];
+      pendingBankAttIds.current = [];
+    } catch (e) {
+      const raw = e instanceof Error ? e.message : 'Could not apply fields';
+      if (!/no text found|scanned image|OPENAI_API_KEY|XAI_API_KEY|could not reach the bank analyzer|BANK_ANALYZER_URL|not configured/i.test(raw)) {
+        setParseStep('upload');
+        setUploadStatus(raw);
+      } else {
+        onApplied?.();
+        setUploading(false);
+        setShowUpload(false);
+        setPendingFiles([]);
+        setUploadProgress({});
+        setParseStep('upload');
+        setUploadStatus(null);
+      }
+    } finally {
+      setApplying(false);
+    }
+  };
+
   // ── Sort + filter ──────────────────────────────────────────────────────────
   const displayed = attachments
     .filter(a => !search || a.file_name.toLowerCase().includes(search.toLowerCase()))
@@ -427,14 +473,9 @@ export default function DocumentsModal({
       const reviewFields = enrichParsedBusinessFields(normalizeParsedFields(mergedFields));
 
       if (Object.keys(reviewFields).length > 0) {
-        setParsedFields(reviewFields);
-        setParsedSelected(new Set(Object.keys(reviewFields)));
-        setParseStep('review');
-        setUploadStatus(null);
+        await applyAndClose(reviewFields);
       } else {
-        setParsedFields({});
-        setParsedSelected(new Set());
-        setParseStep('review');
+        setParseStep('upload');
         setUploadStatus('Could not extract application fields.');
       }
       return;
@@ -458,10 +499,7 @@ export default function DocumentsModal({
         setPendingFiles([]);
         setUploadProgress({});
         if (hasMeaningfulBankFields(reviewFields) || Object.keys(reviewFields).length > 0) {
-          setParsedFields(reviewFields);
-          setParsedSelected(new Set(Object.keys(reviewFields)));
-          setParseStep('review');
-          setUploadStatus(null);
+          await applyAndClose(reviewFields);
         } else {
           setParseStep('upload');
           setUploadStatus(ok ? 'Could not read deposit or balance numbers from these files.' : (error || 'Could not read these statements.'));
@@ -518,16 +556,19 @@ export default function DocumentsModal({
         setPendingFiles([]);
         setUploadProgress({});
         if (Object.keys(reviewFields).length > 0) {
-          setParsedFields(reviewFields);
-          setParsedSelected(new Set(Object.keys(reviewFields)));
-          setParseStep('review');
-          setUploadStatus(null);
+          await applyAndClose(reviewFields);
         } else if (bankAtts.length > 0) {
           const result = await analyzeBankAttachmentsForLead(leadId, bankAtts.map(a => a.id));
-          setParseStep('upload');
-          setUploadStatus(result.ok
-            ? 'Applied to lead'
-            : 'Statement reader found no deposit or balance totals in these files.');
+          if (result.ok) {
+            onApplied?.();
+            setShowUpload(false);
+            setParseStep('upload');
+            setUploadStatus(null);
+            setPendingFiles([]);
+          } else {
+            setParseStep('upload');
+            setUploadStatus('Statement reader found no deposit or balance totals in these files.');
+          }
         } else {
           setParsedFields({});
           setParsedSelected(new Set());
@@ -553,48 +594,16 @@ export default function DocumentsModal({
 
   // ── Apply parsed fields ────────────────────────────────────────────────────
   const handleApplyFields = async () => {
-    setApplying(true);
-    const selected = new Set(parsedSelected);
-    if (parsedFields.statementMonths) selected.add('statementMonths');
-    try {
-      await applyParsed(parsedFields, selected);
-      const bankIds = pendingBankAttIds.current;
-      const needPython = (uploadKind === 'fullpack' || uploadKind === 'bank')
-        && bankIds.length > 0
-        && !hasMeaningfulBankFields(parsedFields);
-      if (needPython) {
-        setUploadStatus(bankIds.length === 1 ? 'Analyzing bank statements…' : `Analyzing ${bankIds.length} statements…`);
-        await analyzeBankAttachmentsForLead(leadId, bankIds);
-      }
-      onApplied?.();
-      setUploadStatus('Applied to lead');
-      setParseStep('upload');
-      setPendingFiles([]);
-      setUploadProgress({});
-    } catch (e) {
-      const raw = e instanceof Error ? e.message : 'Could not apply fields';
-      if (!/no text found|scanned image|OPENAI_API_KEY|XAI_API_KEY|could not reach the bank analyzer|BANK_ANALYZER_URL|not configured/i.test(raw)) {
-        setUploadStatus(raw);
-      } else {
-        onApplied?.();
-        setUploadStatus('Applied to lead');
-        setParseStep('upload');
-      }
-    }
-    setApplying(false);
+    await applyAndClose(parsedFields, parsedSelected);
   };
 
   // ── Download ───────────────────────────────────────────────────────────────
-  const handleDownload = async (id: string) => {
+  const handleDownload = async (id: string, fileName?: string) => {
     setDownloading(id);
     try {
-      const res = await fetch(`/api/attachments/download?id=${id}`, { credentials: 'include' });
-      if (res.ok) {
-        const { url, fileName } = await res.json();
-        const link = document.createElement('a');
-        link.href = url; link.download = fileName;
-        document.body.appendChild(link); link.click(); document.body.removeChild(link);
-      }
+      await downloadLeadAttachment(id, fileName || 'download');
+    } catch {
+      /* keep row usable */
     } finally { setDownloading(null); }
   };
 
@@ -623,14 +632,12 @@ export default function DocumentsModal({
         );
         const row = statementMonthFromFields(extractedFields);
         if (row) attachStatementMonths(extractedFields, [row]);
-        setParsedFields(extractedFields);
-        setParsedSelected(new Set(Object.keys(extractedFields)));
-        setParseStep('review');
-        setShowUpload(true);
         if (json.warning) {
           console.warn('[DocumentsModal] Extraction warning:', json.warning);
         }
-        if (!Object.keys(extractedFields).length) {
+        if (Object.keys(extractedFields).length) {
+          await applyAndClose(extractedFields);
+        } else {
           alert(json.warning || 'Could not extract data from this file.');
         }
       } else {
@@ -723,10 +730,7 @@ export default function DocumentsModal({
 
     setAnalyzing(false);
     if (rich) {
-      setParsedFields(reviewFields);
-      setParsedSelected(new Set(Object.keys(reviewFields)));
-      setParseStep('review');
-      setUploadStatus('Pulled totals from the stored statements. Review, then Apply.');
+      await applyAndClose(reviewFields);
     } else {
       setParseStep('upload');
       setShowUpload(false);
@@ -933,7 +937,7 @@ export default function DocumentsModal({
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                           </svg>
                         </button>
-                        <button onClick={() => handleDownload(a.id)} disabled={downloading === a.id} title="Download" className="p-1.5 rounded-lg text-emerald-500 hover:bg-emerald-50 transition-colors disabled:opacity-40">
+                        <button onClick={() => handleDownload(a.id, a.file_name)} disabled={downloading === a.id} title="Download" className="p-1.5 rounded-lg text-emerald-500 hover:bg-emerald-50 transition-colors disabled:opacity-40">
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                           </svg>

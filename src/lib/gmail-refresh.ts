@@ -7,7 +7,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 export async function refreshGmailToken(
   userId: string,
   refreshToken: string,
-  supabase: SupabaseClient
+  supabase: SupabaseClient,
+  opts?: { table?: 'email_connections' | 'email_read_connections' },
 ): Promise<{ access_token: string; expiry_date: number } | null> {
   try {
     const oauth2Client = new google.auth.OAuth2(
@@ -29,20 +30,31 @@ export async function refreshGmailToken(
       return null;
     }
 
-    // Save new token to database (using provided supabase client with user's auth)
-    const { error } = await supabase
-      .from('email_connections')
-      .update({
-        access_token: credentials.access_token,
-        expiry_date: new Date(credentials.expiry_date).toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq('user_id', userId)
-      .eq('provider', 'gmail');
+    const table = opts?.table ?? 'email_connections';
+    const expiry = new Date(credentials.expiry_date).toISOString();
+    const patch = {
+      access_token: credentials.access_token,
+      expiry_date: expiry,
+      expires_at: expiry,
+      updated_at: new Date().toISOString(),
+    };
+    let query = supabase.from(table).update(patch).eq('user_id', userId);
+    if (table === 'email_connections') query = query.eq('provider', 'gmail');
+    const { error } = await query;
 
     if (error) {
-      console.error('Failed to save refreshed token:', error);
-      return null;
+      const slim = {
+        access_token: credentials.access_token,
+        expiry_date: expiry,
+        updated_at: new Date().toISOString(),
+      };
+      let retry = supabase.from(table).update(slim).eq('user_id', userId);
+      if (table === 'email_connections') retry = retry.eq('provider', 'gmail');
+      const again = await retry;
+      if (again.error) {
+        console.error('Failed to save refreshed token:', again.error);
+        return null;
+      }
     }
 
     console.log(`✓ Refreshed Gmail token for user ${userId}`);
