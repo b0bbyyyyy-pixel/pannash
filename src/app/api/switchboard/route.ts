@@ -121,11 +121,11 @@ async function fundedThisMonth(supabase: SbClient, userId: string, month: string
 
 async function liveActivity(supabase: SbClient, userId: string) {
   const since = new Date(Date.now() - 45_000).toISOString();
-  let jobs: { id: string; list_id: string | null; status: string; sent_count: number | null }[] = [];
+  let jobs: { id: string; list_id: string | null; status: string; sent_count: number | null; total_count: number | null }[] = [];
   try {
     const res = await supabase
       .from('sms_drip_jobs')
-      .select('id, list_id, status, sent_count')
+      .select('id, list_id, status, sent_count, total_count')
       .eq('user_id', userId)
       .eq('status', 'active')
       .limit(3);
@@ -145,7 +145,9 @@ async function liveActivity(supabase: SbClient, userId: string) {
 
   let sent = 0;
   let failed = 0;
+  let total = 0;
   for (const job of jobs) {
+    total += Math.max(0, job.total_count ?? 0);
     const [sentRes, failRes] = await Promise.all([
       supabase
         .from('sms_drip_sends')
@@ -213,7 +215,7 @@ async function liveActivity(supabase: SbClient, userId: string) {
   }
 
   return {
-    drip: { active: jobs.length > 0, sent, failed },
+    drip: { active: jobs.length > 0, sent, failed, total: Math.max(total, sent + failed) },
     inbound: (inboundRows ?? []).map((r: { lead_id: string; last_message_at: string | null }) => ({
       leadId: r.lead_id,
       at: r.last_message_at,

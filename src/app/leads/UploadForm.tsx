@@ -78,6 +78,24 @@ function isImportableLead(l: ParsedLead): boolean {
   return Boolean(l.name || l.phone || l.email || l.company);
 }
 
+async function readResponseJson(res: Response): Promise<{ json: Record<string, unknown>; error?: string }> {
+  const text = await res.text();
+  try {
+    return { json: text ? JSON.parse(text) as Record<string, unknown> : {} };
+  } catch {
+    if (res.status === 504 || res.status === 502) {
+      return { json: {}, error: 'The server timed out reading the sheet. Import a smaller row range, or retry off VPN / on a faster network.' };
+    }
+    if (res.status === 413) {
+      return { json: {}, error: 'That sheet range is too large to send. Import fewer rows at a time (for example 2–100, then 101–214).' };
+    }
+    if (text.trim().startsWith('<')) {
+      return { json: {}, error: 'This computer or network blocked the import (got a web page instead of sheet data). Try again off VPN, in Chrome, or on another network.' };
+    }
+    return { json: {}, error: `Import failed (${res.status || 'network'}). Try a smaller range or another network.` };
+  }
+}
+
 const EMPTY_PARSED_LEAD: ParsedLead = {
   name: '',
   email: '',
@@ -1430,9 +1448,13 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ csv: rangedCsv, expectedCount: count }),
       });
-      const json = await res.json();
+      const { json, error: parseErr } = await readResponseJson(res);
+      if (parseErr) {
+        setAiParseError(parseErr);
+        return;
+      }
       if (!res.ok) {
-        setAiParseError(json.error || 'AI parse failed. Check your XAI_API_KEY.');
+        setAiParseError(String(json.error || 'AI parse failed. Check your XAI_API_KEY.'));
         return;
       }
       const aiLeads = (json.leads as Array<{
@@ -1492,8 +1514,9 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
       : `/api/import/google-sheets?url=${encodeURIComponent(sheetsUrl.trim())}`;
     try {
       const res = await fetch(apiUrl);
-      const json = await res.json();
-      if (!res.ok) { setMessage(json.error || 'Failed to fetch sheet'); setSheetsLoading(false); return; }
+      const { json, error: parseErr } = await readResponseJson(res);
+      if (parseErr) { setMessage(parseErr); setSheetsLoading(false); return; }
+      if (!res.ok) { setMessage(String(json.error || 'Failed to fetch sheet')); setSheetsLoading(false); return; }
 
       setRawSheetsCsv(json.csv); // store for optional AI re-parse
       const sheetRows = parseSheetCsv(json.csv);

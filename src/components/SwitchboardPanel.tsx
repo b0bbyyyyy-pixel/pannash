@@ -19,11 +19,19 @@ const EXTREME_RE = /declin|funded|docs in|docs received|approv|pre-qualified|sub
 const BOARD_EVENT = 'gostwrk-board';
 
 type LivePayload = {
-  drip?: { active: boolean; sent: number; failed: number };
+  drip?: { active: boolean; sent: number; failed: number; total?: number };
   inbound?: { leadId: string; at: string | null }[];
   composing?: boolean;
   emails?: { at: string }[];
 };
+
+function dripRemain(drip: { sent: number; failed: number; total: number; active: boolean }) {
+  if (!drip.active) return 1;
+  const done = Math.max(0, drip.sent) + Math.max(0, drip.failed);
+  const total = Math.max(drip.total, done);
+  if (total <= 0) return 1;
+  return Math.max(0, Math.min(1, 1 - done / total));
+}
 
 export function emitBoardEvent(kind: 'email' | 'status') {
   if (typeof window === 'undefined') return;
@@ -50,7 +58,7 @@ export default function SwitchboardPanel({
   const declinedRef = useRef(0);
   const countsPrimed = useRef(false);
   const countsRef = useRef<SwitchboardCounts>({ funded: 0, offers: 0, docsIn: 0, prospects: 0, submitted: 0, approvals: 0, day: 1, daysInMonth: 31 });
-  const dripRef = useRef({ sent: 0, failed: 0, active: false, primed: false });
+  const dripRef = useRef({ sent: 0, failed: 0, total: 0, active: false, primed: false });
   const pulsePrimed = useRef(false);
   const visibleRef = useRef(true);
   const aiOnRef = useRef(aiOn);
@@ -62,6 +70,7 @@ export default function SwitchboardPanel({
       frozen: !visible,
       campaignLive: visible && dripRef.current.active,
       aiLive: visible && aiOnRef.current,
+      dripRemain: dripRemain(dripRef.current),
     });
     if (visible && (aiOnRef.current || dripRef.current.active)) kickRef.current();
   }, []);
@@ -135,12 +144,13 @@ export default function SwitchboardPanel({
       const res = await fetch('/api/switchboard?live=1', { cache: 'no-store' });
       if (!res.ok) return;
       const data = await res.json() as LivePayload;
-      const drip = data.drip ?? { active: false, sent: 0, failed: 0 };
+      const drip = data.drip ?? { active: false, sent: 0, failed: 0, total: 0 };
       const prev = dripRef.current;
       const first = !prev.primed;
       dripRef.current = {
         sent: drip.sent,
         failed: drip.failed,
+        total: drip.total ?? 0,
         active: drip.active,
         primed: true,
       };

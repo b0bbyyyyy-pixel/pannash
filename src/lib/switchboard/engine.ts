@@ -78,6 +78,8 @@ const REST_R = 1.15;
 const PERSIST_R = 1.3;
 const SCAN_MS = 5200;
 const SCAN_GAP_MS = 600;
+const SCAN_FAT_ROWS = 0.62;
+const SCAN_THIN_ROWS = 1.15;
 const AI_CYCLE_MS = 5800;
 const AI_PULSE_MS = 3000;
 const AI_SIGMA = 1.7;
@@ -136,6 +138,8 @@ export class SwitchboardEngine {
   burstUntil = 0;
   nextBurstAt = 0;
   campaignLive = false;
+  /** 1 = drip just started (fat bar). 0 = almost done (one row). */
+  dripRemain = 1;
   aiLive = false;
   aiT0 = 0;
   intensity: FlashIntensity = 'normal';
@@ -164,8 +168,9 @@ export class SwitchboardEngine {
     }
   }
 
-  setActivity(opts: { frozen: boolean; campaignLive?: boolean; aiLive?: boolean }) {
+  setActivity(opts: { frozen: boolean; campaignLive?: boolean; aiLive?: boolean; dripRemain?: number }) {
     this.liveFrozen = opts.frozen;
+    if (opts.dripRemain != null) this.dripRemain = clamp(opts.dripRemain, 0, 1);
     if (opts.frozen) {
       this.composing = false;
       this.burstUntil = 0;
@@ -470,14 +475,27 @@ export class SwitchboardEngine {
     }
   }
 
+  /** Fat at drip start (~half the board), one row when almost done. Tapers during each pass. */
+  private scanSigma(u: number) {
+    const cols = Math.max(1, this.cols);
+    const fat = Math.max(8, this.rows * SCAN_FAT_ROWS);
+    const thin = SCAN_THIN_ROWS;
+    const remain = clamp(this.dripRemain, 0, 1);
+    const startRows = thin + (fat - thin) * remain;
+    const endRows = thin + (startRows - thin) * 0.18;
+    const rowsWide = startRows + (endRows - startRows) * clamp(u, 0, 1);
+    return Math.max(2.4, (rowsWide * cols) / 4.4);
+  }
+
   private waveAt(c: number, r: number, now: number) {
     const scan = this.scan;
     if (!scan || !this.cols) return 0;
     const u = clamp((now - scan.born) / scan.duration, 0, 1);
-    const pad = scan.sigma * 2.2;
+    const sigma = this.scanSigma(u);
+    const pad = sigma * 2.2;
     const head = u * (this.cols * this.rows + pad * 2) - pad;
     const d = r * this.cols + c - head;
-    const g = Math.exp(-(d * d) / (2 * scan.sigma * scan.sigma));
+    const g = Math.exp(-(d * d) / (2 * sigma * sigma));
     const edge = u < 0.06 ? u / 0.06 : u > 0.94 ? (1 - u) / 0.06 : 1;
     return g * edge;
   }
@@ -505,7 +523,7 @@ export class SwitchboardEngine {
 
     if (this.campaignLive && this.cells.length) {
       if (!this.scan && now >= this.nextScan) {
-        this.scan = { born: now, duration: SCAN_MS, sigma: 5.6 };
+        this.scan = { born: now, duration: SCAN_MS, sigma: this.scanSigma(0) };
       }
       if (this.scan && now - this.scan.born >= this.scan.duration) {
         this.scan = null;
