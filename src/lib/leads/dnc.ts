@@ -1,3 +1,5 @@
+import { last10, phoneVariants } from '@/lib/leads/phone';
+
 export const DNC_STATUS = {
   name: 'DNC',
   color: '#7f1d1d',
@@ -77,4 +79,116 @@ export async function markLeadDnc(supabase: any, leadId: string, userId?: string
     sms_opt_out: true,
     lead_status: DNC_STATUS.name,
   }).eq('id', leadId);
+}
+
+export function isTwilioOptOutError(
+  errorCode?: number | string | null,
+  message?: string | null,
+) {
+  if (Number(errorCode) === 21610) return true;
+  const t = String(message ?? '');
+  return /\b21610\b/.test(t) || /recipient opted out/i.test(t);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function findLeadIdsByPhone(supabase: any, phone: string, userId: string): Promise<string[]> {
+  const variants = phoneVariants(phone);
+  const digits = last10(phone);
+  const ids = new Set<string>();
+  if (variants.length) {
+    const { data: byPhone } = await supabase
+      .from('leads')
+      .select('id')
+      .eq('user_id', userId)
+      .in('phone', variants)
+      .limit(40);
+    for (const row of byPhone ?? []) if (row?.id) ids.add(row.id);
+    const { data: byE164 } = await supabase
+      .from('leads')
+      .select('id')
+      .eq('user_id', userId)
+      .in('phone_e164', variants)
+      .limit(40);
+    for (const row of byE164 ?? []) if (row?.id) ids.add(row.id);
+  }
+  if (digits.length === 10 && ids.size === 0) {
+    const { data: loose } = await supabase
+      .from('leads')
+      .select('id, phone, phone_e164')
+      .eq('user_id', userId)
+      .or(`phone.ilike.%${digits}%,phone_e164.ilike.%${digits}%`)
+      .limit(40);
+    for (const row of loose ?? []) {
+      if (last10(row.phone) === digits || last10(row.phone_e164) === digits) ids.add(row.id);
+    }
+  }
+  return [...ids];
+}
+
+/** Mark every lead on this phone so drip/inbox cannot text a duplicate. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function markPhoneDnc(
+  supabase: any,
+  args: { userId?: string | null; phone?: string | null; leadId?: string | null },
+) {
+  let userId = args.userId ?? null;
+  let phone = args.phone ?? null;
+  if (args.leadId && (!userId || !phone)) {
+    const { data } = await supabase
+      .from('leads')
+      .select('id, user_id, phone, phone_e164')
+      .eq('id', args.leadId)
+      .maybeSingle();
+    if (data) {
+      userId = userId || data.user_id || null;
+      phone = phone || data.phone || data.phone_e164 || null;
+    }
+  }
+  const ids = new Set<string>();
+  if (args.leadId) ids.add(args.leadId);
+  if (userId && phone) {
+    for (const id of await findLeadIdsByPhone(supabase, phone, userId)) ids.add(id);
+  }
+  if (!ids.size) return;
+  if (userId) await ensureDncStatus(supabase, userId);
+  for (const id of ids) await markLeadDnc(supabase, id, userId);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function lastInboundWasStop(supabase: any, leadId: string) {
+  const { data } = await supabase
+    .from('inbox_messages')
+    .select('body')
+    .eq('lead_id', leadId)
+    .eq('direction', 'inbound')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return isSmsStopBody(data?.body);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function smsSendBlockReason(
+  supabase: any,
+  lead: { id: string; sms_opt_out?: boolean | null; lead_status?: string | null; dnc?: boolean | null },
+) {
+  if (isDncLead(lead)) return 'Lead has opted out of SMS';
+  if (await lastInboundWasStop(supabase, lead.id)) return 'Lead replied STOP';
+  return null;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function applySmsOptOutFromFailure(
+  supabase: any,
+  args: {
+    userId?: string | null;
+    phone?: string | null;
+    leadId?: string | null;
+    errorCode?: number | string | null;
+    error?: string | null;
+  },
+) {
+  if (!isTwilioOptOutError(args.errorCode, args.error)) return false;
+  await markPhoneDnc(supabase, args);
+  return true;
 }

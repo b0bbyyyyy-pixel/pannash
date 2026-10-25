@@ -7,6 +7,7 @@ import { sendTwilioSms } from '@/lib/telephony/sms';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
 import { notifyUserAlert } from '@/lib/notify/userAlert';
 import { isCarrierBlockError } from '@/lib/smsDrip/carrierBlock';
+import { applySmsOptOutFromFailure, smsSendBlockReason } from '@/lib/leads/dnc';
 
 export async function POST(req: NextRequest) {
   try {
@@ -51,7 +52,7 @@ export async function POST(req: NextRequest) {
       const leadIds = queueItems.map(item => item.lead_id);
       const { data: leadsData } = await supabase
         .from('leads')
-        .select('id, name, company, email, phone, notes')
+        .select('id, name, company, email, phone, notes, sms_opt_out, lead_status')
         .in('id', leadIds);
       
       enrichedQueueItems = queueItems.map(item => ({
@@ -98,6 +99,20 @@ export async function POST(req: NextRequest) {
           continue;
         }
 
+        const blocked = await smsSendBlockReason(supabase, lead);
+        if (blocked) {
+          await supabase
+            .from('sms_queue')
+            .update({
+              status: 'failed',
+              last_error: blocked,
+              attempts: item.attempts + 1,
+            })
+            .eq('id', item.id);
+          failureCount++;
+          continue;
+        }
+
         // Mark as sending
         await supabase
           .from('sms_queue')
@@ -109,6 +124,12 @@ export async function POST(req: NextRequest) {
 
         const message = await sendTwilioSms(creds, lead.phone, personalizedBody);
         sentSid = message.sid;
+        await applySmsOptOutFromFailure(supabase, {
+          userId: user.id,
+          phone: lead.phone,
+          leadId: lead.id,
+          error: message.error,
+        });
         await recordOutboundInboxSms(supabase, {
           userId: user.id,
           leadId: lead.id,
@@ -162,6 +183,12 @@ export async function POST(req: NextRequest) {
         successCount++;
       } catch (err: any) {
         console.error('Error sending SMS:', err);
+        await applySmsOptOutFromFailure(supabase, {
+          userId: user.id,
+          phone: lead?.phone,
+          leadId: lead?.id,
+          error: err.message,
+        });
 
         if (!inboxRecorded && lead?.id) {
           await recordOutboundInboxSms(supabase, {

@@ -5,7 +5,7 @@ import { promoteCampaignLeadOnReply, stampInboxInbound } from '@/lib/inbox/promo
 import { runCasperInboundSms } from '@/lib/casper/reply';
 import { notifyUserOfInboundSms } from '@/lib/mobile/notifyInbound';
 import { saveInboundMms } from '@/lib/inbox/saveInboundMms';
-import { isSmsStopBody, markLeadDnc } from '@/lib/leads/dnc';
+import { isSmsStopBody, markPhoneDnc } from '@/lib/leads/dnc';
 import { markOutboundReadAfterReply } from '@/lib/inbox/markOutboundRead';
 import { findUserByPingPhone, recordPingMessage } from '@/lib/casper/ping';
 import { runCasperPingReply } from '@/lib/casper/pingReply';
@@ -161,7 +161,7 @@ export async function POST(req: NextRequest) {
     const stopped = isSmsStopBody(body);
 
     if (stopped) {
-      await markLeadDnc(supabase, lead.id, ownerId);
+      await markPhoneDnc(supabase, { userId: ownerId, phone: from, leadId: lead.id });
     }
 
     const rpcOk = Boolean(ingested && typeof ingested === 'object' && (ingested as { ok?: boolean }).ok);

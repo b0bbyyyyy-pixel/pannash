@@ -6,6 +6,7 @@ import { recountJobSentCount } from '@/lib/smsDrip/tally';
 import { zoneForLocation, isInSendWindow, nextWindowStart } from '@/lib/smsDrip/timezones';
 import { toE164 } from '@/lib/dialer/e164';
 import { isCampaignInboxLead } from '@/lib/inbox/promoteCampaignReply';
+import { applySmsOptOutFromFailure, smsSendBlockReason } from '@/lib/leads/dnc';
 
 interface DripJob {
   id: string;
@@ -353,8 +354,9 @@ export async function processTick(supabase: any, user: { id: string; email?: str
           await releaseJobNow(supabase, job.id);
           continue;
         }
-        if (nextLead.sms_opt_out) {
-          await failSend('skipped_dnc', 'Opted out');
+        const blocked = await smsSendBlockReason(supabase, nextLead);
+        if (blocked) {
+          await failSend('skipped_dnc', blocked);
           results.push({ jobId: job.id, leadId: nextLead.id, status: 'skipped_dnc' });
           await releaseJobNow(supabase, job.id);
           continue;
@@ -441,6 +443,12 @@ export async function processTick(supabase: any, user: { id: string; email?: str
         sendStatus = 'failed';
         sendError = e instanceof Error ? e.message : 'Send failed';
       }
+      await applySmsOptOutFromFailure(supabase, {
+        userId: user.id,
+        phone: send.phone ?? lead.phone,
+        leadId: lead.id,
+        error: sendError,
+      });
 
       const sentAt = new Date().toISOString();
 
@@ -504,7 +512,7 @@ export async function processTick(supabase: any, user: { id: string; email?: str
             .select('id, name, company, phone, sms_opt_out, underwriting_data, in_pipeline, lead_status')
             .eq('id', next.lead_id)
             .single();
-          if (!nextLead || nextLead.sms_opt_out) {
+          if (!nextLead || await smsSendBlockReason(supabase, nextLead)) {
             await supabase.from('sms_drip_sends')
               .update({ sms_status: 'skipped_dnc', error: nextLead ? 'Opted out' : 'Lead deleted', scheduled_for: null })
               .eq('id', next.id);
@@ -558,6 +566,12 @@ export async function processTick(supabase: any, user: { id: string; email?: str
             extraStatus = 'failed';
             extraErr = e instanceof Error ? e.message : 'Send failed';
           }
+          await applySmsOptOutFromFailure(supabase, {
+            userId: user.id,
+            phone: next.phone ?? nextLead.phone,
+            leadId: nextLead.id,
+            error: extraErr,
+          });
           const extraAt = new Date().toISOString();
           await recordOutboundInboxSms(supabase, {
             userId: user.id,

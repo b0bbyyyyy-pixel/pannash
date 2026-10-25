@@ -4,6 +4,8 @@ import { cookies } from 'next/headers';
 import { getTwilioCreds } from '@/lib/telephony/twilio';
 import { sendTwilioSms } from '@/lib/telephony/sms';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
+import { applySmsOptOutFromFailure, smsSendBlockReason } from '@/lib/leads/dnc';
+import { findLeadByPhone } from '@/lib/leads/findByPhone';
 
 export async function POST(req: NextRequest) {
   const cookieStore = await cookies();
@@ -37,8 +39,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'No phone connection found. Please connect Twilio first.' }, { status: 400 });
   }
 
+  const matched = await findLeadByPhone(supabase, String(to), user.id);
+  if (matched) {
+    const blocked = await smsSendBlockReason(supabase, matched);
+    if (blocked) {
+      return NextResponse.json({ error: blocked }, { status: 400 });
+    }
+  }
+
   try {
     const sent = await sendTwilioSms(creds, to, body);
+    await applySmsOptOutFromFailure(supabase, {
+      userId: user.id,
+      phone: String(to),
+      leadId: matched?.id,
+      error: sent.error,
+    });
     await recordOutboundInboxSms(supabase, {
       userId: user.id,
       toPhone: to,
@@ -58,6 +74,12 @@ export async function POST(req: NextRequest) {
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'SMS send error';
     console.error('SMS send error:', error);
+    await applySmsOptOutFromFailure(supabase, {
+      userId: user.id,
+      phone: String(to),
+      leadId: matched?.id,
+      error: message,
+    });
     await recordOutboundInboxSms(supabase, {
       userId: user.id,
       toPhone: to,

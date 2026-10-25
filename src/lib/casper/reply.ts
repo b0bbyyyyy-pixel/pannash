@@ -15,6 +15,7 @@ import { sendTwilioSms } from '@/lib/telephony/sms';
 import { getTwilioCreds } from '@/lib/telephony/twilio';
 import { sendCasperPing } from '@/lib/casper/ping';
 import { casperSmsToSend, isClearSmsDecline, isUnsendableCasperSms } from '@/lib/casper/smsGuard';
+import { applySmsOptOutFromFailure, isSmsStopBody } from '@/lib/leads/dnc';
 
 export { humanDelayMs, outboxDelayMs } from '@/lib/casper/outbox';
 
@@ -128,6 +129,18 @@ export async function runCasperInboundSms(
       inputSummary: args.body.slice(0, 200),
     });
     return { replied: false, reason: gate.reason };
+  }
+
+  if (isSmsStopBody(args.body)) {
+    await logCasperRun(supabase, {
+      userId: args.userId,
+      leadId: args.lead.id,
+      trigger: 'inbound_sms',
+      status: 'ok',
+      error: 'opt_out',
+      inputSummary: args.body.slice(0, 200),
+    });
+    return { replied: false, reason: 'opt_out' };
   }
 
   if (await leadInAiFullPacks(supabase, { userId: args.userId, leadId: args.lead.id, listId: args.lead.list_id })) {
@@ -396,6 +409,12 @@ If they declined or a reply would only be an internal note, set "sms" to "". Emp
       sendStatus = 'failed';
       sendError = err instanceof Error ? err.message : 'Send failed';
     }
+    await applySmsOptOutFromFailure(supabase, {
+      userId: args.userId,
+      phone: toPhone,
+      leadId: args.lead.id,
+      error: sendError,
+    });
 
     await recordOutboundInboxSms(supabase, {
       userId: args.userId,

@@ -5,6 +5,7 @@ import { sendTwilioSms } from '@/lib/telephony/sms';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
 import { notifyUserAlert } from '@/lib/notify/userAlert';
 import { isCarrierBlockError } from '@/lib/smsDrip/carrierBlock';
+import { applySmsOptOutFromFailure, smsSendBlockReason } from '@/lib/leads/dnc';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -58,7 +59,7 @@ export async function POST(req: NextRequest) {
 
   const { data: leads, error } = await supabase
     .from('leads')
-    .select('id, name, company, phone, sms_opt_out')
+    .select('id, name, company, phone, sms_opt_out, lead_status')
     .eq('user_id', user.id)
     .eq('list_id', listId)
     .not('phone', 'is', null)
@@ -69,7 +70,7 @@ export async function POST(req: NextRequest) {
   const seen = new Set<string>();
   const targets = [];
   for (const lead of leads ?? []) {
-    if (lead.sms_opt_out || !lead.phone) continue;
+    if (!lead.phone || lead.sms_opt_out) continue;
     const key = last10(lead.phone);
     if (!key || seen.has(key)) continue;
     seen.add(key);
@@ -93,9 +94,21 @@ export async function POST(req: NextRequest) {
   let stopped = false;
   let lastError: string | null = null;
   for (const lead of targets) {
+    const blocked = await smsSendBlockReason(supabase, lead);
+    if (blocked) {
+      failed += 1;
+      lastError = blocked;
+      continue;
+    }
     const body = renderTemplate(text, lead);
     try {
       const result = await sendTwilioSms(creds, lead.phone, body);
+      await applySmsOptOutFromFailure(supabase, {
+        userId: user.id,
+        phone: lead.phone,
+        leadId: lead.id,
+        error: result.error,
+      });
       await recordOutboundInboxSms(supabase, {
         userId: user.id,
         leadId: lead.id,
@@ -120,6 +133,12 @@ export async function POST(req: NextRequest) {
       failed += 1;
       streak += 1;
       lastError = err instanceof Error ? err.message : 'Twilio error';
+      await applySmsOptOutFromFailure(supabase, {
+        userId: user.id,
+        phone: lead.phone,
+        leadId: lead.id,
+        error: lastError,
+      });
       await recordOutboundInboxSms(supabase, {
         userId: user.id,
         leadId: lead.id,

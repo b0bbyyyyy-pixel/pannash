@@ -3,6 +3,7 @@ import { sendTwilioSms } from '@/lib/telephony/sms';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
 import { followUpTitle, localDateKey, localTimeHm, renderFollowUpSms } from '@/lib/lead-follow-up';
 import { fireDueCalendarPings } from '@/lib/casper/calendarPing';
+import { applySmsOptOutFromFailure, isTwilioOptOutError, smsSendBlockReason } from '@/lib/leads/dnc';
 
 interface DueLead {
   id: string;
@@ -88,7 +89,7 @@ export async function processDue(supabase: any, user: { id: string }): Promise<F
 
     const shouldText = !!lead.follow_up_auto_text && !lead.follow_up_sms_sent_at && !!lead.follow_up_sms_body?.trim();
     if (!shouldText) continue;
-    if (lead.sms_opt_out || String(lead.lead_status || '') === 'DNC' || !lead.phone) {
+    if (!lead.phone || await smsSendBlockReason(supabase, lead)) {
       await supabase
         .from('leads')
         .update({ follow_up_sms_sent_at: now, follow_up_auto_text: false })
@@ -115,6 +116,12 @@ export async function processDue(supabase: any, user: { id: string }): Promise<F
 
     try {
       const sent = await sendTwilioSms(creds, lead.phone, body);
+      await applySmsOptOutFromFailure(supabase, {
+        userId: user.id,
+        phone: lead.phone,
+        leadId: lead.id,
+        error: sent.error,
+      });
       await recordOutboundInboxSms(supabase, {
         userId: user.id,
         leadId: lead.id,
@@ -135,12 +142,21 @@ export async function processDue(supabase: any, user: { id: string }): Promise<F
         .eq('user_id', user.id);
       texts++;
     } catch (err) {
+      const message = err instanceof Error ? err.message : 'SMS failed';
       console.error('[follow-up due] sms', lead.id, err);
-      await supabase
-        .from('leads')
-        .update({ follow_up_sms_sent_at: null })
-        .eq('id', lead.id)
-        .eq('user_id', user.id);
+      await applySmsOptOutFromFailure(supabase, {
+        userId: user.id,
+        phone: lead.phone,
+        leadId: lead.id,
+        error: message,
+      });
+      if (!isTwilioOptOutError(null, message)) {
+        await supabase
+          .from('leads')
+          .update({ follow_up_sms_sent_at: null })
+          .eq('id', lead.id)
+          .eq('user_id', user.id);
+      }
     }
   }
 

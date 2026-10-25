@@ -8,6 +8,7 @@ import {
   isPlaceholderSmsBody,
 } from '@/lib/inbox/recordOutboundSms';
 import { onDripDeliveryFailed } from '@/lib/smsDrip/failsafe';
+import { applySmsOptOutFromFailure } from '@/lib/leads/dnc';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -220,6 +221,12 @@ export async function POST(req: NextRequest) {
 
     if (inboxStatus === 'failed') {
       const leadId = updated?.[0]?.lead_id ?? queueItem?.lead_id ?? null;
+      await applySmsOptOutFromFailure(supabase, {
+        leadId,
+        phone: to,
+        errorCode,
+        error: inboxError,
+      });
       await onDripDeliveryFailed(supabase, {
         twilioSid: messageSid,
         leadId,

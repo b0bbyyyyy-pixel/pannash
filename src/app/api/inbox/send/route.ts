@@ -4,6 +4,7 @@ import { cookies } from 'next/headers';
 import { getTwilioCreds } from '@/lib/telephony/twilio';
 import { sendTwilioSms } from '@/lib/telephony/sms';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
+import { applySmsOptOutFromFailure, markPhoneDnc, smsSendBlockReason } from '@/lib/leads/dnc';
 
 export async function POST(req: NextRequest) {
   const cookieStore = await cookies();
@@ -23,14 +24,18 @@ export async function POST(req: NextRequest) {
 
   const { data: lead } = await supabase
     .from('leads')
-    .select('id, phone, name, company, sms_opt_out')
+    .select('id, phone, name, company, sms_opt_out, lead_status')
     .eq('id', leadId)
     .eq('user_id', user.id)
     .single();
 
   if (!lead) return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
   if (!lead.phone) return NextResponse.json({ error: 'Lead has no phone number' }, { status: 400 });
-  if (lead.sms_opt_out) return NextResponse.json({ error: 'Lead has opted out of SMS' }, { status: 400 });
+  const blocked = await smsSendBlockReason(supabase, lead);
+  if (blocked) {
+    await markPhoneDnc(supabase, { userId: user.id, phone: lead.phone, leadId: lead.id });
+    return NextResponse.json({ error: blocked }, { status: 400 });
+  }
 
   let { data: conv } = await supabase
     .from('inbox_conversations')
@@ -100,6 +105,12 @@ export async function POST(req: NextRequest) {
 
   try {
     const sent = await sendTwilioSms(creds, lead.phone, body.trim());
+    await applySmsOptOutFromFailure(supabase, {
+      userId: user.id,
+      phone: lead.phone,
+      leadId,
+      error: sent.error,
+    });
 
     await recordOutboundInboxSms(supabase, {
       existingMessageId: msg.id,
@@ -126,6 +137,12 @@ export async function POST(req: NextRequest) {
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Twilio error';
+    await applySmsOptOutFromFailure(supabase, {
+      userId: user.id,
+      phone: lead.phone,
+      leadId,
+      error: message,
+    });
     await supabase
       .from('inbox_messages')
       .update({ status: 'failed', error_message: message })

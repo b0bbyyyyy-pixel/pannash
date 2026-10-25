@@ -3,7 +3,7 @@ import { mergeCapabilities, parseReplyDelay, type CasperPhase, type CasperReplyD
 import { leadInAiFullPacks } from '@/lib/casper/fullPacks';
 import { logCasperRun, upsertCasperLeadState } from '@/lib/casper/runs';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
-import { isSmsStopBody } from '@/lib/leads/dnc';
+import { applySmsOptOutFromFailure, isSmsStopBody } from '@/lib/leads/dnc';
 import { casperSmsToSend, isClearSmsDecline } from '@/lib/casper/smsGuard';
 import { sendTwilioSms } from '@/lib/telephony/sms';
 import { getTwilioCreds, publicAppUrl } from '@/lib/telephony/twilio';
@@ -418,6 +418,12 @@ async function sendOneOutbox(supabase: any, raw: CasperOutboxRow): Promise<{ sen
     sendStatus = 'failed';
     sendError = err instanceof Error ? err.message : 'Send failed';
   }
+  await applySmsOptOutFromFailure(supabase, {
+    userId: row.user_id,
+    phone: row.to_phone,
+    leadId: row.lead_id,
+    error: sendError,
+  });
 
   await recordOutboundInboxSms(supabase, {
     userId: row.user_id,

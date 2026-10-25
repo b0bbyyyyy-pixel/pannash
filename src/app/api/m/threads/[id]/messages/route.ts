@@ -4,6 +4,7 @@ import { getTwilioCreds } from '@/lib/telephony/twilio';
 import { sendTwilioSms, refreshSmsStatuses } from '@/lib/telephony/sms';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
 import { backfillInboundPhotos } from '@/lib/inbox/saveInboundMms';
+import { applySmsOptOutFromFailure, markPhoneDnc, smsSendBlockReason } from '@/lib/leads/dnc';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,7 +13,7 @@ const PAGE = 40;
 async function ownLead(supabase: Awaited<ReturnType<typeof mobileClient>>['supabase'], userId: string, leadId: string) {
   const { data } = await supabase
     .from('leads')
-    .select('id, phone, name, company, sms_opt_out')
+    .select('id, phone, name, company, sms_opt_out, lead_status')
     .eq('id', leadId)
     .eq('user_id', userId)
     .maybeSingle();
@@ -128,7 +129,11 @@ export async function POST(
   const lead = await ownLead(supabase, user.id, leadId);
   if (!lead) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   if (!lead.phone) return NextResponse.json({ error: 'Lead has no phone number' }, { status: 400 });
-  if (lead.sms_opt_out) return NextResponse.json({ error: 'Lead has opted out of SMS' }, { status: 400 });
+  const blocked = await smsSendBlockReason(supabase, lead);
+  if (blocked) {
+    await markPhoneDnc(supabase, { userId: user.id, phone: lead.phone, leadId });
+    return NextResponse.json({ error: blocked }, { status: 400 });
+  }
 
   let { data: conv } = await supabase
     .from('inbox_conversations')
@@ -181,6 +186,12 @@ export async function POST(
 
   try {
     const sent = await sendTwilioSms(creds, lead.phone, text);
+    await applySmsOptOutFromFailure(supabase, {
+      userId: user.id,
+      phone: lead.phone,
+      leadId,
+      error: sent.error,
+    });
     await recordOutboundInboxSms(supabase, {
       existingMessageId: msg.id,
       userId: user.id,
@@ -204,6 +215,12 @@ export async function POST(
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Twilio error';
+    await applySmsOptOutFromFailure(supabase, {
+      userId: user.id,
+      phone: lead.phone,
+      leadId,
+      error: message,
+    });
     await supabase.from('inbox_messages').update({ status: 'failed', error_message: message }).eq('id', msg.id);
     return NextResponse.json({
       message: { ...msg, status: 'failed', error_message: message },
