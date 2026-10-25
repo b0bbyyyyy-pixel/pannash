@@ -9,6 +9,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { toE164, formatDisplay } from '@/lib/dialer/e164';
 import { useWebPhone } from '@/components/webphone/WebPhone';
+import { isMissedCall, markMissedCallsSeen, missedClockLabel } from '@/lib/telephony/missed';
 
 const KEYPAD: { d: string; letters: string }[] = [
   { d: '1', letters: '' },     { d: '2', letters: 'ABC' }, { d: '3', letters: 'DEF' },
@@ -30,10 +31,7 @@ interface HistoryRow {
 }
 
 function isMissed(c: HistoryRow) {
-  if (c.status === 'no_answer') return true;
-  if (c.direction !== 'inbound') return false;
-  if (c.answered_at) return false;
-  return !['in_progress', 'created', 'ringing_agent'].includes(c.status ?? '');
+  return isMissedCall(c);
 }
 
 function partyNumber(c: HistoryRow) {
@@ -100,6 +98,11 @@ export default function ManualDialPanel({
   useEffect(() => {
     if (view === 'history') void loadHistory();
   }, [view, loadHistory]);
+
+  useEffect(() => {
+    if (view !== 'history' || historyLoading) return;
+    markMissedCallsSeen();
+  }, [view, historyLoading]);
 
   const e164 = toE164(number);
   const busy = webphone.status === 'connecting' || webphone.status === 'ringing' || webphone.status === 'in-call';
@@ -199,7 +202,12 @@ export default function ManualDialPanel({
                     </p>
                   </button>
                   <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-[10px] text-[#9ca3af]">{whenLabel(c.started_at)}</span>
+                    <span className={`text-right leading-tight ${missed ? 'text-red-500' : 'text-[#9ca3af]'}`}>
+                      {missed && (
+                        <span className="block text-[10px] font-medium">{missedClockLabel(c.started_at)}</span>
+                      )}
+                      <span className={`block text-[10px] ${missed ? 'text-red-400' : ''}`}>{whenLabel(c.started_at)}</span>
+                    </span>
                     <button
                       type="button"
                       onClick={() => void startCall(partyNumber(c))}

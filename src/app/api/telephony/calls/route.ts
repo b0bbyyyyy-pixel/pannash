@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import { isMissedCall } from '@/lib/telephony/missed';
 
 async function getSupabase() {
   const cookieStore = await cookies();
@@ -25,7 +26,8 @@ export async function GET(req: NextRequest) {
 
     const leadId = req.nextUrl.searchParams.get('leadId');
     const callId = req.nextUrl.searchParams.get('callId');
-    const limit = Math.min(parseInt(req.nextUrl.searchParams.get('limit') || '20', 10), 100);
+    const peekMissed = req.nextUrl.searchParams.get('peekMissed') === '1';
+    const limit = Math.min(parseInt(req.nextUrl.searchParams.get('limit') || (peekMissed ? '40' : '20'), 10), 100);
 
     let query = supabase
       .from('dialer_calls')
@@ -43,7 +45,13 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Failed to load calls' }, { status: 500 });
     }
 
-    return NextResponse.json({ calls: data ?? [] });
+    const calls = data ?? [];
+    if (peekMissed) {
+      const latest = calls.find(isMissedCall);
+      return NextResponse.json({ latestMissedAt: latest?.started_at ?? null });
+    }
+
+    return NextResponse.json({ calls });
   } catch (err) {
     console.error('[telephony/calls GET]', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

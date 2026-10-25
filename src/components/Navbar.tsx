@@ -9,6 +9,7 @@ import BillingClient from '@/app/settings/billing/BillingClient';
 import DocumentVault from '@/components/DocumentVault';
 import { usePolling } from '@/lib/sync/usePolling';
 import type { BillingCredits } from '@/lib/billing/credits';
+import { hasUnseenMissedCall, MISSED_CALLS_SEEN_EVENT } from '@/lib/telephony/missed';
 
 type DripJobSummary = {
   id: string;
@@ -51,6 +52,7 @@ export default function Navbar({ userName }: NavbarProps) {
   const webphone = useWebPhone();
   const [dripJob, setDripJob] = useState<DripJobSummary | null>(null);
   const [billingPeek, setBillingPeek] = useState<{ twilio: number | null; xai: number | null } | null>(null);
+  const [unseenMissed, setUnseenMissed] = useState(false);
 
   const loadDrip = useCallback(async () => {
     try {
@@ -64,6 +66,29 @@ export default function Navbar({ userName }: NavbarProps) {
   }, []);
 
   usePolling(loadDrip, dripJob ? 10_000 : 45_000);
+
+  const loadMissedPeek = useCallback(async () => {
+    try {
+      const res = await fetch('/api/telephony/calls?peekMissed=1', { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json() as { latestMissedAt?: string | null };
+      setUnseenMissed(hasUnseenMissedCall(data.latestMissedAt));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  usePolling(loadMissedPeek, 15_000);
+
+  useEffect(() => {
+    const refresh = () => { void loadMissedPeek(); };
+    window.addEventListener(MISSED_CALLS_SEEN_EVENT, refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.removeEventListener(MISSED_CALLS_SEEN_EVENT, refresh);
+      window.removeEventListener('storage', refresh);
+    };
+  }, [loadMissedPeek]);
 
   const loadBillingPeek = useCallback(async () => {
     try {
@@ -138,7 +163,7 @@ export default function Navbar({ userName }: NavbarProps) {
             <button
               onClick={() => { setShowDropdown(!showDropdown); webphone.closeDialPad(); }}
               className="focus:outline-none hover:opacity-70 transition-opacity"
-              title="Settings"
+              title={unseenMissed ? 'Settings — missed call' : 'Settings'}
             >
               <img
                 src="/images/icons/kanban-icon.png"
@@ -146,6 +171,9 @@ export default function Navbar({ userName }: NavbarProps) {
                 width={22}
                 height={22}
                 className="w-[22px] h-[22px]"
+                style={unseenMissed ? {
+                  filter: 'invert(18%) sepia(94%) saturate(4000%) hue-rotate(350deg) brightness(95%) contrast(110%)',
+                } : undefined}
               />
             </button>
 
@@ -186,7 +214,7 @@ export default function Navbar({ userName }: NavbarProps) {
                     webphone.openDialPad();
                   }}
                 >
-                  Phone
+                  <span className={unseenMissed ? 'text-red-600' : undefined}>Phone</span>
                 </button>
                 <button
                   type="button"
