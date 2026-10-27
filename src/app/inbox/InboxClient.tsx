@@ -7,6 +7,7 @@ import { createClient } from '@supabase/supabase-js';
 import { useWebPhone } from '@/components/webphone/WebPhone';
 import InboxDialer from '@/components/InboxDialer';
 import { casperEffectiveForLead } from '@/lib/casper/allow';
+import { isCasperSender } from '@/lib/casper/sender';
 import InboundPhoto from '@/components/mobile/InboundPhoto';
 import { getPhoneLocation } from '@/lib/phoneLocation';
 import { outboundSmsReceipt } from '@/lib/inbox/smsReceipt';
@@ -298,6 +299,7 @@ export default function InboxClient({
   const lastThreadMsg = messages[messages.length - 1] ?? null;
   const [outboxByLead, setOutboxByLead] = useState<Record<string, { send_at: string; body: string }>>({});
   const [casperSkip, setCasperSkip] = useState<string | null>(null);
+  const [casperMeta, setCasperMeta] = useState<{ stage?: string | null; plan?: string | null; businessNameMissing?: boolean }>({});
   const [nowTick, setNowTick] = useState(() => Date.now());
   const casperWaiting = !!(
     selectedLead &&
@@ -347,6 +349,21 @@ export default function InboxClient({
       .then(d => setCasperOn(!!d.enabled))
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!selectedLeadId) {
+      setCasperMeta({});
+      return;
+    }
+    fetch(`/api/leads/${selectedLeadId}/casper`)
+      .then(r => r.json())
+      .then(d => setCasperMeta({
+        stage: d.stage || null,
+        plan: d.plan_note || null,
+        businessNameMissing: !!d.business_name_missing,
+      }))
+      .catch(() => setCasperMeta({}));
+  }, [selectedLeadId, leadCasperOn]);
 
   useEffect(() => {
     fetch('/api/settings/timezone', { credentials: 'include' })
@@ -1483,6 +1500,17 @@ export default function InboxClient({
                   >
                     Casper
                   </button>
+                  {casperMeta.stage && (
+                    <span className="text-[10px] text-[#9b9b9b]">{casperMeta.stage}</span>
+                  )}
+                  {casperMeta.businessNameMissing && (
+                    <span className="text-[10px] text-red-500">Set your business name in Settings.</span>
+                  )}
+                  {casperMeta.plan && (
+                    <span className="text-[10px] text-[#9b9b9b] max-w-[160px] truncate" title={casperMeta.plan}>
+                      Plan: {casperMeta.plan}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -1579,6 +1607,9 @@ export default function InboxClient({
                             ) : null}
                             <div className={`flex items-center gap-1.5 px-1 ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}>
                               <span className="text-[10px] text-gray-400">{msgTime(msg.created_at)}</span>
+                              {msg.direction === 'outbound' && isCasperSender(msg.sent_by) && (
+                                <span className="text-[10px] text-gray-400">Casper</span>
+                              )}
                               {msg.direction === 'outbound' && (
                                 <>
                                   {receipt === 'queued' && <span className="text-[10px] text-gray-300">sending…</span>}

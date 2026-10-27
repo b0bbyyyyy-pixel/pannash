@@ -29,6 +29,9 @@ type CasperRun = {
   output_summary: string | null;
   error: string | null;
   created_at: string;
+  stage?: string | null;
+  plan_note?: string | null;
+  guard_results?: unknown;
 };
 
 function timeAgo(iso: string) {
@@ -46,6 +49,8 @@ function actionsList(raw: unknown): Array<Record<string, unknown>> {
 }
 
 function actionLabel(a: Record<string, unknown>, kind: string) {
+  if (typeof a.result === 'string' && a.result.trim()) return a.result;
+  if (a.cancelled && a.reason) return `cancelled: ${a.reason}`;
   if (typeof a.summary === 'string' && a.summary.trim()) return a.summary;
   if (kind === 'update_lead_email' && a.updated) {
     return `Email updated: ${a.old || '(none)'} -> ${a.next || ''}`;
@@ -102,7 +107,14 @@ export function ActivityPanel() {
               </div>
               <span className="text-[10px] text-gray-400">{timeAgo(run.created_at)}</span>
             </div>
+            {run.stage && <p className="text-[11px] text-gray-500 mb-1">Stage: {run.stage}</p>}
             {run.thinking && <p className="text-sm text-[#1a1a1a] mb-2">{run.thinking}</p>}
+            {run.plan_note && <p className="text-[11px] text-gray-500 mb-1">Plan: {run.plan_note}</p>}
+            {Array.isArray(run.guard_results) && run.guard_results.some((g: { result?: string }) => g?.result) && (
+              <p className="text-[11px] text-gray-500 mb-1">
+                {(run.guard_results as Array<{ result?: string }>).map(g => g.result).filter(Boolean).join(' · ')}
+              </p>
+            )}
             {run.output_summary && (
               <p className="text-xs text-gray-600 bg-[#f7f7f7] rounded-xl px-3 py-2 mb-2">{run.output_summary}</p>
             )}
@@ -301,6 +313,84 @@ function ReplyDelayCard() {
   );
 }
 
+function SendWindowRow() {
+  const [start, setStart] = useState('08:00');
+  const [end, setEnd] = useState('21:00');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [savedNote, setSavedNote] = useState('');
+
+  useEffect(() => {
+    fetch('/api/settings/casper')
+      .then(r => r.json())
+      .then(d => {
+        if (d.send_window?.start) setStart(d.send_window.start);
+        if (d.send_window?.end) setEnd(d.send_window.end);
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    setSavedNote('');
+    try {
+      const res = await fetch('/api/settings/casper', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ send_window: { start, end, days: [0, 1, 2, 3, 4, 5, 6] } }),
+      });
+      const json = await res.json();
+      if (json.send_window) {
+        setStart(json.send_window.start);
+        setEnd(json.send_window.end);
+        setSavedNote('Saved');
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return null;
+
+  return (
+    <div className="bg-white border border-[#e5e5e5] rounded-2xl p-5 mb-4">
+      <h3 className="text-sm font-semibold text-[#1a1a1a] mb-1">Send window</h3>
+      <p className="text-[11px] text-gray-400 mb-4">
+        Local hours Casper may text. Merchant texts in the last 30 minutes can still get a reply.
+      </p>
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Start</span>
+          <input
+            type="time"
+            value={start}
+            onChange={e => setStart(e.target.value)}
+            className="w-28 rounded-xl border border-[#e5e5e5] px-3 py-2 text-sm text-[#1a1a1a]"
+          />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">End</span>
+          <input
+            type="time"
+            value={end}
+            onChange={e => setEnd(e.target.value)}
+            className="w-28 rounded-xl border border-[#e5e5e5] px-3 py-2 text-sm text-[#1a1a1a]"
+          />
+        </label>
+        <button
+          type="button"
+          onClick={() => save()}
+          disabled={saving}
+          className="px-4 py-2 bg-[#1a1a1a] text-white text-xs font-semibold rounded-xl disabled:opacity-50"
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+        {savedNote && <span className="text-[11px] text-emerald-600">{savedNote}</span>}
+      </div>
+    </div>
+  );
+}
+
 export function CapabilitiesPanel() {
   const [caps, setCaps] = useState<CasperCapabilities>(DEFAULT_CASPER_CAPABILITIES);
   const [loading, setLoading] = useState(true);
@@ -335,6 +425,7 @@ export function CapabilitiesPanel() {
   return (
     <div>
     <ReplyDelayCard />
+    <SendWindowRow />
     <div className="bg-white border border-[#e5e5e5] rounded-2xl p-5">
       <h3 className="text-sm font-semibold text-[#1a1a1a] mb-1">Capabilities</h3>
       <p className="text-[11px] text-gray-400 mb-4">Only enabled steps may run. Waterfall / propose / upload persist but do not run yet.</p>

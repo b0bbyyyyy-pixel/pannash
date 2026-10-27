@@ -2,6 +2,7 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import Navbar from '@/components/Navbar';
+import BusinessNameRow from '@/app/settings/profile/BusinessNameRow';
 
 export default async function ProfilePage() {
   const cookieStore = await cookies();
@@ -61,6 +62,8 @@ export default async function ProfilePage() {
                   {user.id}
                 </div>
               </div>
+
+              <BusinessNameRow />
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
