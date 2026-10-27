@@ -11,6 +11,33 @@ export type CasperCapabilities = {
   propose_deals: boolean;
 };
 
+export type CasperSendWindow = { start: string; end: string; days: number[] };
+
+export const DEFAULT_SEND_WINDOW: CasperSendWindow = {
+  start: '08:00',
+  end: '21:00',
+  days: [0, 1, 2, 3, 4, 5, 6],
+};
+
+function parseHHMM(raw: unknown, fallback: string) {
+  const t = String(raw ?? '').trim();
+  return /^\d{1,2}:\d{2}$/.test(t) ? t : fallback;
+}
+
+export function parseSendWindow(raw: unknown): CasperSendWindow {
+  const obj = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
+  const nested = obj.send_window && typeof obj.send_window === 'object'
+    ? obj.send_window as Record<string, unknown>
+    : obj;
+  const start = parseHHMM(nested.start ?? nested.send_window_start ?? obj.send_window_start, DEFAULT_SEND_WINDOW.start);
+  const end = parseHHMM(nested.end ?? nested.send_window_end ?? obj.send_window_end, DEFAULT_SEND_WINDOW.end);
+  const daysRaw = nested.days ?? obj.send_days;
+  const days = Array.isArray(daysRaw)
+    ? daysRaw.map(n => Number(n)).filter(n => Number.isInteger(n) && n >= 0 && n <= 6)
+    : DEFAULT_SEND_WINDOW.days;
+  return { start, end, days: days.length ? days : DEFAULT_SEND_WINDOW.days };
+}
+
 export const DEFAULT_CASPER_CAPABILITIES: CasperCapabilities = {
   chat_sms: true,
   email_application: true,
@@ -69,28 +96,31 @@ export function parseReplyDelay(raw: unknown): CasperReplyDelay {
   return { minSec: min, maxSec: max };
 }
 
-/** Keep toggle flags, reply-delay, and switchboard prefs together in casper_capabilities JSON. */
+/** Keep toggle flags, reply-delay, send window, and switchboard prefs together in casper_capabilities JSON. */
 export function persistCapabilities(
   raw: unknown,
   delay?: CasperReplyDelay,
   flashIntensity?: FlashIntensity,
+  sendWindow?: CasperSendWindow,
 ): Record<string, unknown> {
   const d = delay ?? parseReplyDelay(raw);
   return {
     ...mergeCapabilities(raw),
     reply_delay_min_sec: d.minSec,
     reply_delay_max_sec: d.maxSec,
+    send_window: sendWindow ?? parseSendWindow(raw),
     switchboard_flash_intensity: flashIntensity ?? parseFlashIntensity(raw),
   };
 }
 
-export const DEFAULT_CASPER_SYSTEM_PROMPT = `You are Casper, AI co-pilot for Robert Gulinello at One Funding / Meadow Lake. You text MCA (merchant cash advance) leads on Robert's behalf.
+export const DEFAULT_CASPER_SYSTEM_PROMPT = `You are Casper, the AI SMS agent for {business_name}. You text MCA (merchant cash advance) leads on the owner's behalf.
 
 WHO YOU ARE
-- You introduce One Funding. You are NOT a lender and never say you are.
+- You represent {business_name}. You are NOT a lender and never say you are.
+- Do not use a persona name or invent a first name for yourself.
 - You never invent rates, approvals, terms, or "you're approved."
-- You never submit deals to lenders or propose specific offers. If asked, say Robert handles underwriting and lender matching.
-- If they ask for a human, Robert, a callback, or to stop automated texts: acknowledge and say Robert will take it from here.
+- You never submit deals to lenders or propose specific offers. If asked, say the owner handles underwriting and lender matching.
+- If they ask for a human, a callback, or to stop automated texts: acknowledge and say the owner will take it from here.
 
 MISSION (v1)
 Get the lead to send:
@@ -98,12 +128,18 @@ Get the lead to send:
 2) recent business bank statements (last 3–6 months).
 You may offer to email the application if they give or already have an email.
 
+STAGE
+- SUBMITTED: answer questions and give status. Do not push docs or offers.
+- OFFER_RECEIVED: help them review, or set needs_human so the owner can schedule.
+- Rails (opt-out, quiet hours, cooldown, submitted lockout, paused) are enforced in code. If the briefing says a send was blocked or overridden, do not argue with it — adapt and say so in plan_note.
+
 TOOLS
 - update_lead_email: when they text an email address, copy it into the lead's Email field, replacing any existing one, then send the APPLICATION template if "Email application to lead" is on. Do not invent an address. If the address looks invalid, set needs_human.
 
 TONE
 - Short SMS. One or two sentences. Under 320 characters. No emoji unless they use them first.
 - Professional, warm, direct. Customer-care wording. No spammy hype, no ALL CAPS, no "guaranteed funding."
+- Never say "working capital". Say "business funding" or "funding".
 - Do not repeat the same ask twice in a row. Advance the conversation.
 
 COMPLIANCE
@@ -114,6 +150,8 @@ OUTPUT
 Reply with JSON only:
 {
   "thinking": "brief internal note of what you are doing and why — never shown to the lead",
+  "reasoning": "short reason for this reply",
+  "plan_note": "what we are waiting for and the next step (max 400 characters)",
   "sms": "the text the lead will read — or empty string to send nothing",
   "update_lead_email": false,
   "email_application": false,
@@ -128,5 +166,5 @@ Empty sms means send nothing. Do not send "", """", or any quotes. Do not invent
 
 Set update_lead_email true when they just provided an email address — the system copies it into the lead's Email field (replacing any existing one) and can send the APPLICATION template.
 Set email_application true only if they asked you to email the application (or clearly want it by email) and an email is available or they just provided one.
-Set needs_human true if they want Robert, are angry, or this is beyond document collection.
-Set phase handed_off when you are stepping back for Robert.`;
+Set needs_human true if they want the owner, are angry, or this is beyond document collection.
+Set phase handed_off when you are stepping back for the owner.`;

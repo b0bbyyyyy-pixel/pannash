@@ -5,6 +5,7 @@ import { getTwilioCreds } from '@/lib/telephony/twilio';
 import { sendTwilioSms } from '@/lib/telephony/sms';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
 import { applySmsOptOutFromFailure, markPhoneDnc, smsSendBlockReason } from '@/lib/leads/dnc';
+import { cancelPendingOutbox } from '@/lib/casper/outbox';
 
 export async function POST(req: NextRequest) {
   const cookieStore = await cookies();
@@ -129,6 +130,7 @@ export async function POST(req: NextRequest) {
         .from('leads')
         .update({ sms_sent_at: msg.created_at, last_contact: msg.created_at })
         .eq('id', leadId);
+      await cancelPendingOutbox(supabase, { leadId, userId: user.id, reason: 'owner_replied' });
     }
 
     return NextResponse.json({

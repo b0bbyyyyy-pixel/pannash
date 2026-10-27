@@ -2,50 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { getRequestUser } from '@/lib/auth/getRequestUser';
+import {
+  APPROVAL_STATUSES,
+  DECLINED_STATUSES,
+  DOCS_STATUSES,
+  OFFER_STATUSES,
+  PROSPECT_STATUSES,
+  SUBMITTED_STATUSES,
+} from '@/lib/casper/stage';
 
 export const dynamic = 'force-dynamic';
-
-const OFFER_STATUSES = [
-  'Offers/Follow up',
-  'Approved',
-  'Conditionally Approved',
-  'Pre-Qualified',
-];
-const DOCS_STATUSES = ['Docs In', 'Docs Received'];
-const PROSPECT_STATUSES = [
-  'New Lead',
-  'Prospect',
-  'Contacted',
-  'Callback Scheduled',
-  'Revisit',
-  'App Out',
-  'Application Acknowledgement',
-  'Documents Acknowledgment',
-  'Docs Requested',
-  'Missing Docs/info',
-  'Needs More Docs',
-];
-const SUBMITTED_STATUSES = [
-  'Submitted',
-  'Submitted To Non-MCA',
-  'Submitted to Underwriting',
-  'In Underwriting',
-];
-const APPROVAL_STATUSES = [
-  'Offers/Follow up',
-  'Pre-Qualified',
-  'Approved',
-  'Conditionally Approved',
-  'Contract Sent',
-  'Contract In',
-  'Contract Signed',
-  'Contract Out',
-];
-const DECLINED_STATUSES = [
-  'Declined',
-  'All Declined/Final',
-  'Merchant Declined Offer',
-];
 
 function parseUd(raw: unknown): Record<string, unknown> {
   if (!raw) return {};

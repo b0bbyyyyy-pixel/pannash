@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
+import { releaseCasperLock, tryCasperLock } from '@/lib/casper/burst';
 import { runCasperInboundSms } from '@/lib/casper/reply';
 
 export const dynamic = 'force-dynamic';
@@ -39,15 +40,20 @@ export async function POST(req: NextRequest) {
     .limit(1)
     .maybeSingle();
 
-  const result = await runCasperInboundSms(supabase, {
-    userId: user.id,
-    lead,
-    body: lastIn?.body || '',
-    from: lead.phone,
-    to: '',
-    delay: delay !== false,
-  });
-  console.log('[casper/reply]', lead.id, result);
-
-  return NextResponse.json(result);
+  const token = await tryCasperLock(supabase, { leadId: lead.id, userId: user.id, ttlSec: 90 });
+  try {
+    const result = await runCasperInboundSms(supabase, {
+      userId: user.id,
+      lead,
+      body: lastIn?.body || '',
+      from: lead.phone,
+      to: '',
+      delay: delay !== false,
+      lockToken: token,
+    });
+    console.log('[casper/reply]', lead.id, result);
+    return NextResponse.json(result);
+  } finally {
+    if (token) await releaseCasperLock(supabase, { leadId: lead.id, token });
+  }
 }

@@ -1,5 +1,6 @@
 import { logCasperRun, upsertCasperLeadState } from '@/lib/casper/runs';
 import type { CasperPhase } from '@/lib/casper/defaults';
+import { cancelPendingOutbox } from '@/lib/casper/outbox';
 import { getPingSettings, sendCasperPing } from '@/lib/casper/ping';
 
 export type DocKind = 'application' | 'bank' | 'other';
@@ -78,8 +79,9 @@ export async function onCasperDocsReceived(
     userId: args.userId,
     phase,
     lastRunId: runId,
-    pausedReason: kind === 'application' ? 'app_received' : 'banks_received',
+    pausedReason: 'docs_received',
   });
+  await cancelPendingOutbox(supabase, { leadId: args.leadId, userId: args.userId, reason: 'paused' });
 
   const type = kind === 'application' ? 'casper_docs_received' : 'casper_docs_received';
   await supabase.from('agent_decisions').insert({

@@ -1,15 +1,21 @@
 import { getAIClient, GROK_MINI_MODEL } from '@/lib/ai';
 import { canCasperAutoReply } from '@/lib/casper/allow';
+import { applyBusinessName } from '@/lib/casper/businessName';
+import { buildLeadContext, maskPhones } from '@/lib/casper/context';
 import {
   DEFAULT_CASPER_SYSTEM_PROMPT,
+  STOPPED_PHASES,
   mergeCapabilities,
+  parseReplyDelay,
   type CasperPhase,
 } from '@/lib/casper/defaults';
 import { emailApplicationToLead } from '@/lib/casper/emailApplication';
 import { leadInAiFullPacks } from '@/lib/casper/fullPacks';
 import { extractEmailFromSms, runUpdateLeadEmailTool } from '@/lib/casper/updateLeadEmail';
-import { cancelPendingOutbox, enqueueCasperOutbox, getPendingOutboxForLead, kickOutboxPump } from '@/lib/casper/outbox';
+import { cancelPendingOutbox, enqueueCasperOutbox, getPendingOutboxForLead, kickOutboxPump, outboxDelayMs } from '@/lib/casper/outbox';
+import { checkCasperSms, lastGuardLine, type RailResult } from '@/lib/casper/rails';
 import { logCasperRun, upsertCasperLeadState } from '@/lib/casper/runs';
+import { CASPER_SENT_BY } from '@/lib/casper/sender';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
 import { sendTwilioSms } from '@/lib/telephony/sms';
 import { getTwilioCreds } from '@/lib/telephony/twilio';
@@ -21,6 +27,8 @@ export { humanDelayMs, outboxDelayMs } from '@/lib/casper/outbox';
 
 type MissionJson = {
   thinking?: string;
+  reasoning?: string;
+  plan_note?: string;
   sms?: string;
   update_lead_email?: boolean;
   email_application?: boolean;
@@ -46,6 +54,28 @@ function parseMission(raw: string | null | undefined): MissionJson {
   return { sms: fallback, thinking: 'plain-text fallback' };
 }
 
+function clipPlan(note: string | null | undefined, fallback?: string | null) {
+  const t = String(note ?? '').trim() || String(fallback ?? '').trim();
+  return t ? t.slice(0, 400) : null;
+}
+
+function snapshotOf(text: string) {
+  return maskPhones(text).slice(0, 4000);
+}
+
+function railActions(results: RailResult[]) {
+  return results.filter(r => r.result).map(r => ({ type: 'rail', result: r.result }));
+}
+
+function isPausedPhase(phase?: string | null, pausedReason?: string | null) {
+  const p = (phase || 'chatting') as CasperPhase;
+  const reason = String(pausedReason || '');
+  const transient = reason === 'thinking' || reason === 'replying';
+  if (STOPPED_PHASES.includes(p)) return reason || p;
+  if (reason && !transient) return reason;
+  return null;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function runCasperInboundSms(
   supabase: any,
@@ -67,6 +97,8 @@ export async function runCasperInboundSms(
     from: string;
     to: string;
     delay?: boolean;
+    burstStartedAt?: string | null;
+    lockToken?: string | null;
   },
 ): Promise<{ replied: boolean; reason?: string; body?: string; send_at?: string }> {
   let { data: settings } = await supabase
@@ -85,13 +117,35 @@ export async function runCasperInboundSms(
 
   const { data: state } = await supabase
     .from('casper_lead_state')
-    .select('phase, paused_reason, updated_at')
+    .select('phase, paused_reason, updated_at, plan_note')
     .eq('lead_id', args.lead.id)
     .maybeSingle();
 
-  // A new inbound cancels any unsent draft so we answer both texts in one SMS.
-  // Only block a duplicate run for the same inbound while thinking.
-  if (state?.paused_reason === 'thinking' && state.updated_at) {
+  const paused = isPausedPhase(state?.phase, state?.paused_reason);
+  if (paused) {
+    const result = `blocked: paused (${paused})`;
+    const rails = [{ ok: false as const, result }];
+    await logCasperRun(supabase, {
+      userId: args.userId,
+      leadId: args.lead.id,
+      trigger: 'inbound_sms',
+      status: 'ok',
+      error: result,
+      actions: [{ type: 'rail', result }],
+      guardResults: rails,
+      inputSummary: args.body.slice(0, 200),
+    });
+    await upsertCasperLeadState(supabase, {
+      leadId: args.lead.id,
+      userId: args.userId,
+      phase: (state?.phase as CasperPhase) || 'chatting',
+      lastGuardResult: result,
+    });
+    await cancelPendingOutbox(supabase, { leadId: args.lead.id, userId: args.userId, reason: 'paused' });
+    return { replied: false, reason: result };
+  }
+
+  if (!args.lockToken && state?.paused_reason === 'thinking' && state.updated_at) {
     const age = Date.now() - new Date(state.updated_at).getTime();
     if (age < 20_000) {
       const { data: lastInNow } = await supabase
@@ -109,15 +163,13 @@ export async function runCasperInboundSms(
     }
   }
 
-  // A new inbound resumes the thread — leftover handed_off / docs-received
-  // pause was blocking every reply (reason: 'paused').
   const gate = canCasperAutoReply({
     globalEnabled: !!settings?.casper_enabled,
     leadCasperEnabled: args.lead.casper_enabled,
     smsOptOut: args.lead.sms_opt_out,
     capabilities: settings?.casper_capabilities,
-    phase: 'chatting',
-    pausedReason: null,
+    phase: state?.phase || 'chatting',
+    pausedReason: state?.paused_reason ?? null,
   });
   if (!gate.ok) {
     await logCasperRun(supabase, {
@@ -137,7 +189,8 @@ export async function runCasperInboundSms(
       leadId: args.lead.id,
       trigger: 'inbound_sms',
       status: 'ok',
-      error: 'opt_out',
+      error: 'blocked: opt_out',
+      actions: [{ type: 'rail', result: 'blocked: opt_out' }],
       inputSummary: args.body.slice(0, 200),
     });
     return { replied: false, reason: 'opt_out' };
@@ -156,14 +209,18 @@ export async function runCasperInboundSms(
   }
 
   const caps = mergeCapabilities(settings?.casper_capabilities);
-  const brain = (settings?.casper_system_prompt || '').trim() || DEFAULT_CASPER_SYSTEM_PROMPT;
+  const ctx = await buildLeadContext(supabase, { userId: args.userId, leadId: args.lead.id });
+  const brain = applyBusinessName(
+    (settings?.casper_system_prompt || '').trim() || DEFAULT_CASPER_SYSTEM_PROMPT,
+    ctx.facts.businessName || '{business_name}',
+  );
 
   const { data: thread } = await supabase
     .from('inbox_messages')
     .select('direction, body, created_at, sent_by')
     .eq('lead_id', args.lead.id)
     .order('created_at', { ascending: false })
-    .limit(12);
+    .limit(20);
 
   const latest = (thread ?? [])[0] as { direction?: string } | undefined;
   if (latest?.direction === 'outbound') {
@@ -173,6 +230,8 @@ export async function runCasperInboundSms(
       trigger: 'inbound_sms',
       status: 'ok',
       error: 'already_replied',
+      stage: ctx.stage,
+      contextSnapshot: snapshotOf(ctx.text),
       inputSummary: args.body.slice(0, 200),
     });
     return { replied: false, reason: 'already_replied' };
@@ -203,6 +262,9 @@ export async function runCasperInboundSms(
       status: 'ok',
       thinking: 'Lead declined — no SMS sent',
       error: 'declined_no_reply',
+      stage: ctx.stage,
+      planNote: 'Lead declined. Waiting for owner.',
+      contextSnapshot: snapshotOf(ctx.text),
       inputSummary: args.body.slice(0, 200),
     });
     await upsertCasperLeadState(supabase, {
@@ -210,6 +272,7 @@ export async function runCasperInboundSms(
       userId: args.userId,
       phase: 'handed_off',
       pausedReason: 'declined',
+      planNote: 'Lead declined. Waiting for owner.',
     });
     return { replied: false, reason: 'declined' };
   }
@@ -221,10 +284,6 @@ export async function runCasperInboundSms(
     pausedReason: 'thinking',
   });
 
-  const history = (thread ?? []).slice().reverse()
-    .map((m: { direction: string; body: string }) => `${m.direction === 'outbound' ? 'You' : 'Lead'}: ${m.body}`)
-    .join('\n');
-
   let parsed: MissionJson = {};
   try {
     const openai = getAIClient();
@@ -234,21 +293,19 @@ export async function runCasperInboundSms(
         { role: 'system', content: brain },
         {
           role: 'user',
-          content: `Lead: ${args.lead.name || 'Unknown'} | Company: ${args.lead.company || 'n/a'} | Email: ${args.lead.email || 'none'} | Phone: ${args.lead.phone || args.from}
-Phase: ${state?.phase || 'chatting'}
-Mission: ${settings?.casper_mission || 'collect_app_and_banks'}
+          content: `Mission: ${settings?.casper_mission || 'collect_app_and_banks'}
 Capabilities: chat_sms=${caps.chat_sms} email_application=${caps.email_application} update_lead_email=${caps.update_lead_email} (waterfall/propose/upload are off)
 
-Thread:
-${history || '(no prior thread)'}
+${ctx.text}
 
 Lead just texted: "${args.body}"
 If they sent more than one text since your last reply, cover all of them in a single SMS. Do not write a separate reply per message.
-If they declined or a reply would only be an internal note, set "sms" to "". Empty sms sends nothing. Never text "no reply needed" or thinking.`,
+If they declined or a reply would only be an internal note, set "sms" to "". Empty sms sends nothing. Never text "no reply needed" or thinking.
+Never say "working capital". You represent the business name in STAGE.`,
         },
       ],
       temperature: 0.6,
-      max_tokens: 400,
+      max_tokens: 500,
     });
     parsed = parseMission(completion.choices[0]?.message?.content);
   } catch (err) {
@@ -258,6 +315,8 @@ If they declined or a reply would only be an internal note, set "sms" to "". Emp
       trigger: 'inbound_sms',
       status: 'error',
       error: err instanceof Error ? err.message : 'AI error',
+      stage: ctx.stage,
+      contextSnapshot: snapshotOf(ctx.text),
       inputSummary: args.body.slice(0, 200),
     });
     await upsertCasperLeadState(supabase, {
@@ -269,6 +328,8 @@ If they declined or a reply would only be an internal note, set "sms" to "". Emp
     return { replied: false, reason: 'ai_error' };
   }
 
+  const planNote = clipPlan(parsed.plan_note, parsed.reasoning || parsed.thinking || state?.plan_note);
+  const thinking = [parsed.thinking, parsed.reasoning].filter(Boolean).join(' — ') || parsed.thinking;
   const actions: unknown[] = [];
   let sms = casperSmsToSend(String(parsed.sms ?? ''), parsed.thinking);
 
@@ -301,6 +362,7 @@ If they declined or a reply would only be an internal note, set "sms" to "". Emp
     actions.push({ type: 'update_lead_email', skipped: true, reason: 'capability_off' });
   }
 
+  const biz = ctx.facts.businessName;
   if (parsed.email_application && caps.email_application && !sentApplication) {
     try {
       const emailed = await emailApplicationToLead(supabase, { userId: args.userId, lead: args.lead });
@@ -308,11 +370,11 @@ If they declined or a reply would only be an internal note, set "sms" to "". Emp
       if (emailed.sent) {
         sms = sms || `Just emailed the application to ${args.lead.email}. Reply with the completed form and recent bank statements.`;
       } else if (emailed.error?.startsWith('Missing')) {
-        sms = `I can email the application once we have a bit more on file (${emailed.error.replace('Missing application fields: ', '')}). Robert can also send it — want me to have him reach out?`;
+        sms = `I can email the application once we have a bit more on file (${emailed.error.replace('Missing application fields: ', '')}). Want me to have someone from ${biz || 'our team'} reach out?`;
       } else if (emailed.error === 'Lead has no email') {
         sms = 'Happy to email the application — what email should I send it to?';
       } else {
-        sms = 'I can have Robert email the application shortly. In the meantime, last 3–6 months of bank statements help a lot.';
+        sms = `I can have ${biz || 'our team'} email the application shortly. In the meantime, last 3–6 months of bank statements help a lot.`;
       }
     } catch (err) {
       actions.push({ type: 'email_application', sent: false, error: err instanceof Error ? err.message : 'email failed' });
@@ -348,29 +410,72 @@ If they declined or a reply would only be an internal note, set "sms" to "". Emp
       ? parsed.phase
       : ((state?.phase as CasperPhase) || 'chatting'));
 
-  if (!sms) {
-    actions.push({ type: 'sms', skipped: true, reason: 'no_sms' });
-    await logCasperRun(supabase, {
-      userId: args.userId,
-      leadId: args.lead.id,
-      trigger: 'inbound_sms',
-      status: 'ok',
-      thinking: parsed.thinking,
-      actions,
-      model: GROK_MINI_MODEL,
-      inputSummary: args.body.slice(0, 240),
-      error: 'no_sms',
-    });
+  const persistPlan = async (runId?: string | null, guard?: string | null) => {
     await upsertCasperLeadState(supabase, {
       leadId: args.lead.id,
       userId: args.userId,
       phase,
+      ...(runId !== undefined ? { lastRunId: runId } : {}),
       pausedReason: phase === 'handed_off' ? (parsed.human_reason || 'handed_off') : null,
+      planNote,
+      lastGuardResult: guard ?? null,
     });
+  };
+
+  if (!sms) {
+    actions.push({ type: 'sms', skipped: true, reason: 'no_sms' });
+    const runId = await logCasperRun(supabase, {
+      userId: args.userId,
+      leadId: args.lead.id,
+      trigger: 'inbound_sms',
+      status: 'ok',
+      thinking,
+      actions,
+      model: GROK_MINI_MODEL,
+      inputSummary: args.body.slice(0, 240),
+      error: 'no_sms',
+      stage: ctx.stage,
+      planNote,
+      contextSnapshot: snapshotOf(ctx.text),
+    });
+    await persistPlan(runId, 'blocked: no_sms');
     return { replied: false, reason: 'no_sms' };
   }
 
   const toPhone = args.from || args.lead.phone || '';
+  const rails = await checkCasperSms(supabase, {
+    userId: args.userId,
+    leadId: args.lead.id,
+    toPhone,
+    body: sms,
+    initiatedBy: 'merchant_reply',
+    thinking: parsed.thinking,
+  });
+  sms = rails.body;
+  actions.push(...railActions(rails.results));
+  const guardLine = lastGuardLine(rails.results);
+
+  if (!rails.ok) {
+    const runId = await logCasperRun(supabase, {
+      userId: args.userId,
+      leadId: args.lead.id,
+      trigger: 'inbound_sms',
+      status: 'ok',
+      thinking,
+      actions,
+      model: GROK_MINI_MODEL,
+      inputSummary: args.body.slice(0, 240),
+      outputSummary: sms,
+      error: rails.blocked,
+      stage: rails.stage || ctx.stage,
+      guardResults: rails.results,
+      planNote,
+      contextSnapshot: snapshotOf(ctx.text),
+    });
+    await persistPlan(runId, rails.blocked);
+    return { replied: false, reason: rails.blocked || 'blocked' };
+  }
+
   const creds = await getTwilioCreds(supabase, args.userId);
   if (!creds) {
     await logCasperRun(supabase, {
@@ -378,23 +483,52 @@ If they declined or a reply would only be an internal note, set "sms" to "". Emp
       leadId: args.lead.id,
       trigger: 'inbound_sms',
       status: 'error',
-      thinking: parsed.thinking,
+      thinking,
       actions,
       error: 'No Twilio connection',
       inputSummary: args.body.slice(0, 200),
       outputSummary: sms,
       model: GROK_MINI_MODEL,
+      stage: ctx.stage,
+      planNote,
+      contextSnapshot: snapshotOf(ctx.text),
     });
-    await upsertCasperLeadState(supabase, {
-      leadId: args.lead.id,
-      userId: args.userId,
-      phase,
-      pausedReason: phase === 'handed_off' ? (parsed.human_reason || 'handed_off') : null,
-    });
+    await persistPlan(null, 'blocked: no_twilio');
     return { replied: false, reason: 'no_twilio' };
   }
 
   const sendNow = async (fallbackReason?: string) => {
+    const again = await checkCasperSms(supabase, {
+      userId: args.userId,
+      leadId: args.lead.id,
+      toPhone,
+      body: sms,
+      initiatedBy: 'merchant_reply',
+      thinking: parsed.thinking,
+    });
+    actions.push(...railActions(again.results));
+    if (!again.ok) {
+      const runId = await logCasperRun(supabase, {
+        userId: args.userId,
+        leadId: args.lead.id,
+        trigger: 'inbound_sms',
+        status: 'ok',
+        thinking,
+        actions,
+        model: GROK_MINI_MODEL,
+        inputSummary: args.body.slice(0, 240),
+        outputSummary: again.body,
+        error: again.blocked,
+        stage: again.stage || ctx.stage,
+        guardResults: again.results,
+        planNote,
+        contextSnapshot: snapshotOf(ctx.text),
+      });
+      await persistPlan(runId, again.blocked);
+      return { replied: false, reason: again.blocked || 'blocked' };
+    }
+    sms = again.body;
+
     let sid: string | null = null;
     let sendStatus: 'sent' | 'failed' = 'sent';
     let sendError: string | null = null;
@@ -424,7 +558,7 @@ If they declined or a reply would only be an internal note, set "sms" to "". Emp
       twilioSid: sid,
       status: sendStatus,
       errorMessage: sendError,
-      sentBy: 'calvin',
+      sentBy: CASPER_SENT_BY,
     });
     actions.push({ type: 'sms', sid, status: sendStatus, error: sendError, fallback: fallbackReason || undefined });
 
@@ -433,27 +567,36 @@ If they declined or a reply would only be an internal note, set "sms" to "". Emp
       leadId: args.lead.id,
       trigger: 'inbound_sms',
       status: sendStatus === 'failed' ? 'error' : 'ok',
-      thinking: parsed.thinking,
+      thinking,
       actions,
       model: GROK_MINI_MODEL,
       inputSummary: args.body.slice(0, 240),
       outputSummary: sms,
       error: sendError || fallbackReason || null,
+      stage: ctx.stage,
+      guardResults: again.results,
+      planNote,
+      contextSnapshot: snapshotOf(ctx.text),
     });
 
-    await upsertCasperLeadState(supabase, {
-      leadId: args.lead.id,
-      userId: args.userId,
-      phase,
-      lastRunId: runId,
-      pausedReason: phase === 'handed_off' ? (parsed.human_reason || 'handed_off') : null,
-    });
-
+    await persistPlan(runId, lastGuardLine(again.results));
     return { replied: sendStatus !== 'failed', reason: sendError || fallbackReason || undefined };
   };
 
-  // Manual / delay=false still sends now. Webhook path schedules the SMS.
   if (args.delay === false) return sendNow();
+
+  const delayRange = parseReplyDelay(settings?.casper_capabilities);
+  const delayMs = outboxDelayMs(sms, delayRange);
+  let sendAtMs = Date.now() + delayMs;
+  if (args.burstStartedAt) {
+    const burst = new Date(args.burstStartedAt).getTime();
+    if (Number.isFinite(burst)) sendAtMs = Math.max(Date.now() + 2000, burst + delayMs);
+  }
+  if (rails.rescheduleTo) {
+    const rs = new Date(rails.rescheduleTo).getTime();
+    if (Number.isFinite(rs)) sendAtMs = Math.max(sendAtMs, rs);
+  }
+  const sendAt = new Date(sendAtMs).toISOString();
 
   const queued = await enqueueCasperOutbox(supabase, {
     userId: args.userId,
@@ -465,6 +608,8 @@ If they declined or a reply would only be an internal note, set "sms" to "". Emp
     phase,
     inputSummary: args.body.slice(0, 240),
     model: GROK_MINI_MODEL,
+    sendAt,
+    burstStartedAt: args.burstStartedAt,
   });
 
   if (!queued.id) {
@@ -480,11 +625,15 @@ If they declined or a reply would only be an internal note, set "sms" to "". Emp
     leadId: args.lead.id,
     trigger: 'inbound_sms',
     status: 'ok',
-    thinking: parsed.thinking,
+    thinking,
     actions,
     model: GROK_MINI_MODEL,
     inputSummary: args.body.slice(0, 240),
     outputSummary: sms,
+    stage: ctx.stage,
+    guardResults: rails.results,
+    planNote,
+    contextSnapshot: snapshotOf(ctx.text),
   });
 
   await upsertCasperLeadState(supabase, {
@@ -493,6 +642,8 @@ If they declined or a reply would only be an internal note, set "sms" to "". Emp
     phase,
     lastRunId: runId,
     pausedReason: 'replying',
+    planNote,
+    lastGuardResult: guardLine,
   });
 
   return { replied: true, reason: 'scheduled', body: sms, send_at: queued.sendAt };

@@ -3,6 +3,7 @@ import { applicationFileName, buildFundingApplication } from '@/lib/fundingAppli
 import { buildFundingApplicationPdf } from '@/lib/fundingApplicationPdf';
 import { resolveFromHeader } from '@/lib/email-from';
 import { appendEmailSent } from '@/lib/leads/fileActivity';
+import { getBusinessName } from '@/lib/casper/businessName';
 
 export type EmailAppResult = {
   sent: boolean;
@@ -42,6 +43,8 @@ export async function emailApplicationToLead(
     .select('email_from_name')
     .eq('user_id', args.userId)
     .maybeSingle();
+  const biz = await getBusinessName(supabase, args.userId);
+  const brand = biz.name || 'our team';
 
   const pdf = await buildFundingApplicationPdf(data);
   const fileName = applicationFileName(String(args.lead.company || args.lead.name || 'Application'));
@@ -61,8 +64,8 @@ export async function emailApplicationToLead(
   await transporter.sendMail({
     from,
     to: email,
-    subject: 'Funding application — One Funding',
-    html: `<p>Hi,</p><p>Attached is the funding application for ${company}. Please complete it and send it back along with the last 3–6 months of business bank statements.</p><p>Robert Gulinello<br/>One Funding</p>`,
+    subject: `Funding application — ${brand}`,
+    html: `<p>Hi,</p><p>Attached is the funding application for ${company}. Please complete it and send it back along with the last 3–6 months of business bank statements.</p><p>${brand}</p>`,
     attachments: [{ filename: fileName, content: Buffer.from(pdf), contentType: 'application/pdf' }],
   });
 
@@ -70,7 +73,7 @@ export async function emailApplicationToLead(
     userId: args.userId,
     leadId: String(args.lead.id || ''),
     to: email,
-    subject: 'Funding application — One Funding',
+    subject: `Funding application — ${brand}`,
   });
 
   return { sent: true, fileName };

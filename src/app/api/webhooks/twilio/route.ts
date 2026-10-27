@@ -2,6 +2,7 @@ import { after, NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { toE164 } from '@/lib/dialer/e164';
 import { promoteCampaignLeadOnReply, stampInboxInbound } from '@/lib/inbox/promoteCampaignReply';
+import { noteInbound, runWhenSettled } from '@/lib/casper/burst';
 import { runCasperInboundSms } from '@/lib/casper/reply';
 import { notifyUserOfInboundSms } from '@/lib/mobile/notifyInbound';
 import { saveInboundMms } from '@/lib/inbox/saveInboundMms';
@@ -11,6 +12,7 @@ import { findUserByPingPhone, recordPingMessage } from '@/lib/casper/ping';
 import { runCasperPingReply } from '@/lib/casper/pingReply';
 import { findLeadByPhone as findPreferredLeadByPhone } from '@/lib/leads/findByPhone';
 import { extractEmailFromSms, runUpdateLeadEmailTool } from '@/lib/casper/updateLeadEmail';
+import { formDataToParams, publicAppUrl, validateTwilioSignatureUrls } from '@/lib/telephony/twilio';
 
 export const maxDuration = 60;
 
@@ -72,9 +74,41 @@ export async function GET() {
   return NextResponse.json({ ok: true, webhook: 'twilio-inbound-sms' });
 }
 
+function twilioSmsUrls(req: NextRequest) {
+  const path = '/api/webhooks/twilio';
+  const proto = req.headers.get('x-forwarded-proto') || 'https';
+  const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || '';
+  return [
+    `${publicAppUrl()}${path}`,
+    req.url,
+    host ? `${proto}://${host}${path}` : '',
+  ].filter(Boolean);
+}
+
+async function validateInboundSignature(req: NextRequest, formData: FormData) {
+  const params = formDataToParams(formData);
+  const signature = req.headers.get('x-twilio-signature');
+  const urls = twilioSmsUrls(req);
+  const tokens = new Set<string>();
+  if (process.env.TWILIO_AUTH_TOKEN) tokens.add(process.env.TWILIO_AUTH_TOKEN);
+  const { data: conns } = await supabase.from('phone_connections').select('auth_token');
+  for (const row of conns ?? []) {
+    if (row?.auth_token) tokens.add(String(row.auth_token));
+  }
+  const ok = [...tokens].some(token => validateTwilioSignatureUrls(token, signature, urls, params));
+  return { ok, signature: Boolean(signature) };
+}
+
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
+    const signed = await validateInboundSignature(req, formData);
+    if (!signed.ok) {
+      console.warn('[SMS Webhook] Invalid Twilio signature');
+      if (process.env.TWILIO_VALIDATE_SIGNATURE !== 'false') {
+        return new NextResponse('Forbidden', { status: 403 });
+      }
+    }
 
     const from = String(formData.get('From') ?? '');
     const to = String(formData.get('To') ?? '');
@@ -343,13 +377,35 @@ export async function POST(req: NextRequest) {
 
     after(async () => {
       try {
-        const result = await runCasperInboundSms(supabase, {
+        const { data: casperSettings } = await supabase
+          .from('user_settings')
+          .select('casper_capabilities')
+          .eq('user_id', ownerId)
+          .maybeSingle();
+        const waitUntil = await noteInbound(supabase, {
+          leadId: target.id,
+          userId: ownerId,
+          capabilities: casperSettings?.casper_capabilities,
+        });
+        if (!waitUntil) {
+          const result = await runCasperInboundSms(supabase, {
+            userId: ownerId,
+            lead: target,
+            body: storedBody,
+            from,
+            to,
+            delay: true,
+          });
+          console.log('[SMS Webhook] Casper', result);
+          return;
+        }
+        const result = await runWhenSettled(supabase, {
+          leadId: target.id,
           userId: ownerId,
           lead: target,
-          body,
+          body: storedBody,
           from,
           to,
-          delay: true,
         });
         console.log('[SMS Webhook] Casper', result);
       } catch (casperErr) {

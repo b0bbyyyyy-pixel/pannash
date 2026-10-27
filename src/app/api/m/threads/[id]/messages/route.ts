@@ -5,6 +5,7 @@ import { sendTwilioSms, refreshSmsStatuses } from '@/lib/telephony/sms';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
 import { backfillInboundPhotos } from '@/lib/inbox/saveInboundMms';
 import { applySmsOptOutFromFailure, markPhoneDnc, smsSendBlockReason } from '@/lib/leads/dnc';
+import { cancelPendingOutbox } from '@/lib/casper/outbox';
 
 export const dynamic = 'force-dynamic';
 
@@ -208,6 +209,7 @@ export async function POST(
         sms_sent_at: msg.created_at,
         last_contact: msg.created_at,
       }).eq('id', leadId);
+      await cancelPendingOutbox(supabase, { leadId, userId: user.id, reason: 'owner_replied' });
     }
     return NextResponse.json({
       message: { ...msg, status: sent.status, twilio_sid: sent.sid, error_message: sent.error ?? null },

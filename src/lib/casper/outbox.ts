@@ -1,7 +1,10 @@
 import { casperEffectiveForLead } from '@/lib/casper/allow';
+import { sweepStuckCasperRuns } from '@/lib/casper/burst';
 import { mergeCapabilities, parseReplyDelay, type CasperPhase, type CasperReplyDelay } from '@/lib/casper/defaults';
 import { leadInAiFullPacks } from '@/lib/casper/fullPacks';
+import { checkCasperSms, lastGuardLine } from '@/lib/casper/rails';
 import { logCasperRun, upsertCasperLeadState } from '@/lib/casper/runs';
+import { CASPER_SENT_BY } from '@/lib/casper/sender';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
 import { applySmsOptOutFromFailure, isSmsStopBody } from '@/lib/leads/dnc';
 import { casperSmsToSend, isClearSmsDecline } from '@/lib/casper/smsGuard';
@@ -86,22 +89,37 @@ export function replyInLabel(sendAt: string, now = Date.now()): string {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function cancelPendingOutbox(
   supabase: any,
-  args: { leadId: string; userId?: string; exceptId?: string },
+  args: { leadId: string; userId?: string; exceptId?: string; reason?: string },
 ): Promise<number> {
   try {
+    const patch: Record<string, unknown> = { status: 'cancelled' };
+    if (args.reason) patch.error = args.reason;
     let q = supabase
       .from('casper_outbox')
-      .update({ status: 'cancelled' })
+      .update(patch)
       .eq('lead_id', args.leadId)
       .eq('status', 'pending');
     if (args.userId) q = q.eq('user_id', args.userId);
     if (args.exceptId) q = q.neq('id', args.exceptId);
-    const { data, error } = await q.select('id');
+    const { data, error } = await q.select('id, user_id, body');
     if (error) {
       console.error('[casper] cancel pending outbox', error);
       return 0;
     }
-    return (data ?? []).length;
+    const rows = data ?? [];
+    if (args.reason && rows.length) {
+      const userId = args.userId || rows[0].user_id;
+      await logCasperRun(supabase, {
+        userId,
+        leadId: args.leadId,
+        trigger: 'outbox',
+        status: 'ok',
+        actions: [{ type: 'sms', cancelled: true, reason: args.reason, result: `cancelled: ${args.reason}` }],
+        error: args.reason,
+        outputSummary: rows[0].body ?? null,
+      });
+    }
+    return rows.length;
   } catch (err) {
     console.error('[casper] cancel pending outbox', err);
     return 0;
@@ -138,6 +156,8 @@ export type EnqueueOutboxArgs = {
   phase?: string | null;
   inputSummary?: string | null;
   model?: string | null;
+  sendAt?: string;
+  burstStartedAt?: string | null;
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -161,8 +181,16 @@ export async function enqueueCasperOutbox(
     .maybeSingle();
   const delay = parseReplyDelay(settings?.casper_capabilities);
 
-  let sendAtMs = Date.now() + outboxDelayMs(args.body, delay);
-  if (existing?.send_at) {
+  const delayMs = outboxDelayMs(args.body, delay);
+  let sendAtMs = Date.now() + delayMs;
+  if (args.burstStartedAt) {
+    const burst = new Date(args.burstStartedAt).getTime();
+    if (Number.isFinite(burst)) sendAtMs = Math.max(Date.now() + 2000, burst + delayMs);
+  }
+  if (args.sendAt) {
+    const forced = new Date(args.sendAt).getTime();
+    if (Number.isFinite(forced)) sendAtMs = forced;
+  } else if (existing?.send_at) {
     const prev = new Date(existing.send_at).getTime();
     if (Number.isFinite(prev) && prev > Date.now()) sendAtMs = Math.min(sendAtMs, prev);
   }
@@ -357,7 +385,7 @@ async function sendOneOutbox(supabase: any, raw: CasperOutboxRow): Promise<{ sen
       trigger: 'outbox',
       status: 'ok',
       thinking: row.thinking,
-      actions: [...(Array.isArray(row.actions) ? row.actions : []), { type: 'sms', cancelled: true, reason: gate.reason }],
+      actions: [...(Array.isArray(row.actions) ? row.actions : []), { type: 'sms', cancelled: true, reason: gate.reason, result: `blocked: ${gate.reason}` }],
       model: row.model,
       inputSummary: row.input_summary,
       outputSummary: row.body,
@@ -366,6 +394,64 @@ async function sendOneOutbox(supabase: any, raw: CasperOutboxRow): Promise<{ sen
     await clearReplyingIfIdle(supabase, row, row.phase === 'handed_off');
     return { sent: false, reason: gate.reason };
   }
+
+  const rails = await checkCasperSms(supabase, {
+    userId: row.user_id,
+    leadId: row.lead_id,
+    toPhone: row.to_phone,
+    body: row.body,
+    initiatedBy: 'merchant_reply',
+    thinking: row.thinking,
+  });
+  if (!rails.ok) {
+    await markOutbox(supabase, row.id, 'cancelled', rails.blocked);
+    await logCasperRun(supabase, {
+      userId: row.user_id,
+      leadId: row.lead_id,
+      trigger: 'outbox',
+      status: 'ok',
+      thinking: row.thinking,
+      actions: [
+        ...(Array.isArray(row.actions) ? row.actions : []),
+        ...rails.results.filter(r => r.result).map(r => ({ type: 'rail', result: r.result })),
+        { type: 'sms', cancelled: true, reason: rails.blocked },
+      ],
+      model: row.model,
+      inputSummary: row.input_summary,
+      outputSummary: rails.body,
+      error: rails.blocked,
+      stage: rails.stage,
+      guardResults: rails.results,
+    });
+    await clearReplyingIfIdle(supabase, row, row.phase === 'handed_off');
+    return { sent: false, reason: rails.blocked || 'blocked' };
+  }
+  if (rails.rescheduleTo && new Date(rails.rescheduleTo).getTime() > Date.now() + 5000) {
+    await supabase.from('casper_outbox').update({
+      status: 'pending',
+      send_at: rails.rescheduleTo,
+      body: rails.body,
+      error: lastGuardLine(rails.results),
+    }).eq('id', row.id);
+    kickOutboxPump(row.id);
+    await logCasperRun(supabase, {
+      userId: row.user_id,
+      leadId: row.lead_id,
+      trigger: 'outbox',
+      status: 'ok',
+      thinking: row.thinking,
+      actions: [
+        ...(Array.isArray(row.actions) ? row.actions : []),
+        ...rails.results.filter(r => r.result).map(r => ({ type: 'rail', result: r.result })),
+      ],
+      error: lastGuardLine(rails.results),
+      stage: rails.stage,
+      guardResults: rails.results,
+      outputSummary: rails.body,
+    });
+    return { sent: false, reason: lastGuardLine(rails.results) || 'rescheduled' };
+  }
+  row.body = rails.body;
 
   const creds = await getTwilioCreds(supabase, row.user_id);
   if (!creds) {
@@ -433,7 +519,7 @@ async function sendOneOutbox(supabase: any, raw: CasperOutboxRow): Promise<{ sen
     twilioSid: sid,
     status: sendStatus,
     errorMessage: sendError,
-    sentBy: 'calvin',
+    sentBy: CASPER_SENT_BY,
   });
 
   const actions = [
@@ -508,6 +594,8 @@ export async function processDueCasperOutbox(
     console.error('[casper] process outbox', error);
     return { processed: 0, sent: 0, cancelled: 0 };
   }
+
+  await sweepStuckCasperRuns(supabase, userId);
 
   let sent = 0;
   let cancelled = 0;

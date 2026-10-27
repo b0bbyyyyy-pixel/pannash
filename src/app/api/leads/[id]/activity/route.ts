@@ -21,13 +21,26 @@ function casperEvent(run: Record<string, unknown>): LeadActivityEvent | null {
   const list = acts(run.actions);
   const at = String(run.created_at || '');
   if (!at) return null;
+  const stage = run.stage ? String(run.stage) : '';
+  const plan = run.plan_note ? String(run.plan_note) : '';
+  const guards = Array.isArray(run.guard_results)
+    ? (run.guard_results as Array<{ result?: string }>).map(g => g.result).filter(Boolean)
+    : [];
+  const cancelled = list.find(a => a.cancelled && a.reason);
+  const rail = list.find(a => a.type === 'rail' && a.result);
+  const extra = [
+    stage && `Stage: ${stage}`,
+    (cancelled ? `cancelled: ${cancelled.reason}` : '') || rail?.result || guards[guards.length - 1],
+    plan && `Plan: ${plan}`,
+  ].filter(Boolean).join(' · ');
+
   for (const a of list) {
     const kind = String(a.type || '');
     if (kind === 'application_sent' && a.sent !== false) {
       return {
         at,
         title: 'Application emailed',
-        detail: String(a.to || a.summary || '').trim() || undefined,
+        detail: [String(a.to || a.summary || '').trim(), extra].filter(Boolean).join(' · ') || undefined,
         source: 'casper',
       };
     }
@@ -35,10 +48,18 @@ function casperEvent(run: Record<string, unknown>): LeadActivityEvent | null {
       return {
         at,
         title: 'Email updated',
-        detail: [a.old, a.next].filter(Boolean).join(' → ') || undefined,
+        detail: [[a.old, a.next].filter(Boolean).join(' → '), extra].filter(Boolean).join(' · ') || undefined,
         source: 'casper',
       };
     }
+  }
+  if (cancelled || extra) {
+    return {
+      at,
+      title: cancelled ? 'Casper draft cancelled' : 'Casper run',
+      detail: extra || undefined,
+      source: 'casper',
+    };
   }
   return null;
 }
@@ -109,13 +130,25 @@ export async function GET(
       .eq('lead_id', leadId)
       .order('created_at', { ascending: false })
       .limit(80),
-    supabase
-      .from('casper_runs')
-      .select('actions, created_at')
-      .eq('user_id', user.id)
-      .eq('lead_id', leadId)
-      .order('created_at', { ascending: false })
-      .limit(80),
+    (async () => {
+      const full = await supabase
+        .from('casper_runs')
+        .select('actions, created_at, stage, plan_note, guard_results')
+        .eq('user_id', user.id)
+        .eq('lead_id', leadId)
+        .order('created_at', { ascending: false })
+        .limit(80);
+      if (full.error && /stage|plan_note|guard_results|schema cache|42703|PGRST/i.test(`${full.error.message || ''} ${full.error.code || ''}`)) {
+        return supabase
+          .from('casper_runs')
+          .select('actions, created_at')
+          .eq('user_id', user.id)
+          .eq('lead_id', leadId)
+          .order('created_at', { ascending: false })
+          .limit(80);
+      }
+      return full;
+    })(),
     supabase
       .from('contact_history')
       .select('notes, contact_date')

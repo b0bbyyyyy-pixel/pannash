@@ -1,11 +1,12 @@
 import { getAIClient, GROK_MINI_MODEL } from '@/lib/ai';
+import { applyBusinessName, getBusinessName } from '@/lib/casper/businessName';
 import { recordPingMessage, sendCasperPing } from '@/lib/casper/ping';
 
-const PING_BRAIN = `You are Casper, Robert Gulinello's AI co-pilot at One Funding / Meadow Lake. You are texting ROBERT on his personal phone — not a merchant.
+const PING_BRAIN = `You are Casper, the AI co-pilot at {business_name}. You are texting the owner on their personal phone — not a merchant.
 
 WHO YOU ARE
-- His teammate. Short, direct, useful.
-- You can talk about leads, follow-ups, calendar, underwriting, what needs him.
+- Their teammate. Short, direct, useful.
+- You can talk about leads, follow-ups, calendar, underwriting, what needs them.
 - You never invent funding, rates, or approvals.
 - If you do not know, say so and offer to check the CRM.
 
@@ -62,20 +63,21 @@ export async function runCasperPingReply(
     .slice()
     .reverse()
     .map((m: { direction: string; body: string }) =>
-      `${m.direction === 'outbound' ? 'Casper' : 'Robert'}: ${m.body}`,
+      `${m.direction === 'outbound' ? 'Casper' : 'Owner'}: ${m.body}`,
     )
     .join('\n');
 
+  const biz = await getBusinessName(supabase, args.userId);
   let sms = '';
   try {
     const openai = getAIClient();
     const completion = await openai.chat.completions.create({
       model: GROK_MINI_MODEL,
       messages: [
-        { role: 'system', content: PING_BRAIN },
+        { role: 'system', content: applyBusinessName(PING_BRAIN, biz.name || 'the company') },
         {
           role: 'user',
-          content: `Thread:\n${history || '(new ping thread)'}\n\nRobert just texted: "${inbound}"`,
+          content: `Thread:\n${history || '(new ping thread)'}\n\nThe owner just texted: "${inbound}"`,
         },
       ],
     });

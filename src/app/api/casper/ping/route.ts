@@ -46,6 +46,9 @@ export async function PATCH(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await req.json().catch(() => ({}));
+  if ('business_name' in body) {
+    return NextResponse.json({ error: 'Business name cannot be changed here' }, { status: 400 });
+  }
   const phone = typeof body.phone === 'string' ? body.phone.trim() : undefined;
   const enabled = typeof body.enabled === 'boolean' ? body.enabled : undefined;
   const activity = typeof body.activity === 'boolean' ? body.activity : undefined;

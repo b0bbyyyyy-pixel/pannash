@@ -7,6 +7,7 @@ import {
   DEFAULT_CASPER_SYSTEM_PROMPT,
   mergeCapabilities,
   parseReplyDelay,
+  parseSendWindow,
   persistCapabilities,
 } from '@/lib/casper/defaults';
 import { parseFlashIntensity } from '@/lib/switchboard/prefs';
@@ -71,6 +72,7 @@ export async function GET() {
     system_prompt: prompt,
     capabilities: mergeCapabilities(data?.casper_capabilities),
     reply_delay: { min_sec: delay.minSec, max_sec: delay.maxSec },
+    send_window: parseSendWindow(data?.casper_capabilities),
     switchboard_flash_intensity: parseFlashIntensity(data?.casper_capabilities),
     mission: data?.casper_mission || CASPER_MISSION,
     updated_at: data?.updated_at ?? null,
@@ -95,7 +97,10 @@ export async function POST(req: NextRequest) {
   if ('enabled' in body) payload.casper_enabled = !!body.enabled;
   if ('system_prompt' in body) payload.casper_system_prompt = String(body.system_prompt ?? '');
   if ('mission' in body) payload.casper_mission = String(body.mission || CASPER_MISSION);
-  if ('capabilities' in body || 'reply_delay' in body || 'switchboard_flash_intensity' in body) {
+  if ('business_name' in body) {
+    return NextResponse.json({ error: 'Business name cannot be changed here' }, { status: 400 });
+  }
+  if ('capabilities' in body || 'reply_delay' in body || 'send_window' in body || 'switchboard_flash_intensity' in body) {
     const merged = {
       ...mergeCapabilities(existing?.casper_capabilities),
       ...(body.capabilities && typeof body.capabilities === 'object' ? body.capabilities : {}),
@@ -109,7 +114,10 @@ export async function POST(req: NextRequest) {
     const flash = 'switchboard_flash_intensity' in body
       ? parseFlashIntensity(body.switchboard_flash_intensity)
       : parseFlashIntensity(merged);
-    payload.casper_capabilities = persistCapabilities(merged, delay, flash);
+    const window = 'send_window' in body
+      ? parseSendWindow(body.send_window)
+      : parseSendWindow(merged);
+    payload.casper_capabilities = persistCapabilities(merged, delay, flash, window);
   }
 
   const { error } = existing
@@ -140,6 +148,7 @@ export async function POST(req: NextRequest) {
     system_prompt: fresh?.casper_system_prompt || DEFAULT_CASPER_SYSTEM_PROMPT,
     capabilities: mergeCapabilities(fresh?.casper_capabilities),
     reply_delay: { min_sec: delay.minSec, max_sec: delay.maxSec },
+    send_window: parseSendWindow(fresh?.casper_capabilities),
     switchboard_flash_intensity: parseFlashIntensity(fresh?.casper_capabilities),
     mission: fresh?.casper_mission || CASPER_MISSION,
     updated_at: fresh?.updated_at ?? null,

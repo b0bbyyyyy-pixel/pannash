@@ -10,7 +10,7 @@ export type RecordOutboundSmsArgs = {
   twilioSid?: string | null;
   status: InboxSmsStatus;
   errorMessage?: string | null;
-  sentBy?: 'user' | 'system' | 'calvin';
+  sentBy?: 'user' | 'system' | 'casper' | 'calvin';
   bumpLastMessageAt?: boolean;
   existingMessageId?: string | null;
 };
