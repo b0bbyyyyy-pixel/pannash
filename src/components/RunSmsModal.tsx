@@ -7,6 +7,12 @@
 import { useState, useEffect, useRef } from 'react';
 import { kickSyncWorker } from '@/lib/sync/kick';
 import { ALL_STATES } from '@/lib/smsDrip/timezones';
+import {
+  emptyOptimizedPack,
+  isOptimizedPack,
+  OPTIMIZED_PACK_NAME,
+  upsertOptimizedPack,
+} from '@/lib/smsDrip/optimizeTemplates';
 
 const PACE_PRESETS = [
   { label: '0 sec', min: 0, max: 0 },
@@ -19,7 +25,14 @@ const WINDOW_PRESETS = [3, 5, 8];
 
 const DEFAULT_TEMPLATES = ['', '', '', '', ''];
 
-type TemplatePack = { id: string; name: string; templates: string[] };
+type TemplatePack = {
+  id: string;
+  name: string;
+  templates: string[];
+  reasoning?: string;
+  logic?: string[];
+  generatedAt?: string;
+};
 
 function newPack(name: string, templates: string[] = DEFAULT_TEMPLATES): TemplatePack {
   return { id: crypto.randomUUID(), name, templates: [...templates] };
@@ -74,6 +87,7 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
           ? savedTemplates
           : DEFAULT_TEMPLATES
     ),
+    emptyOptimizedPack(),
   ]);
   const [activePackId, setActivePackId] = useState(() => packs[0].id);
   const userEdited = useRef(false);
@@ -89,6 +103,7 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [optBusy, setOptBusy] = useState(false);
 
   const activePack = packs.find(p => p.id === activePackId) ?? packs[0];
   const templates = activePack?.templates ?? DEFAULT_TEMPLATES;
@@ -157,14 +172,14 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
           } catch { /* ignore */ }
         }
         hydrated.current = true;
-        if (loaded.length) {
-          setPacks(loaded);
-          const seed = existingJob?.templates?.length ? existingJob.templates : savedTemplates;
-          const match = seed?.length
-            ? loaded.find(p => JSON.stringify(p.templates.filter(Boolean)) === JSON.stringify(seed.filter(Boolean)))
-            : null;
-          setActivePackId(match?.id ?? loaded[0].id);
-        }
+        const base = loaded.length ? loaded : packs;
+        const withOpt = base.some(p => isOptimizedPack(p)) ? base : [...base, emptyOptimizedPack()];
+        setPacks(withOpt);
+        const seed = existingJob?.templates?.length ? existingJob.templates : savedTemplates;
+        const match = seed?.length
+          ? withOpt.find(p => JSON.stringify(p.templates.filter(Boolean)) === JSON.stringify(seed.filter(Boolean)))
+          : null;
+        setActivePackId(match?.id ?? withOpt[0].id);
       })
       .catch(() => { hydrated.current = true; });
     return () => { cancelled = true; };
@@ -180,15 +195,12 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
     setPacks(prev => prev.map(p => p.id === activePackId ? { ...p, templates: updater(p.templates) } : p));
   };
 
-  const selectPack = (id: string) => {
-    setActivePackId(id);
-    persistPacks(packs);
-  };
-
   const addPack = () => {
     const name = newPackName.trim() || `Set ${packs.length + 1}`;
     const pack = newPack(name);
-    const next = [...packs, pack];
+    const rest = packs.filter(p => !isOptimizedPack(p));
+    const opt = packs.find(p => isOptimizedPack(p));
+    const next = opt ? [...rest, pack, opt] : [...packs, pack];
     setPacks(next);
     setActivePackId(pack.id);
     setNewPackName('');
@@ -197,11 +209,46 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
   };
 
   const removeActivePack = () => {
-    if (packs.length < 2) return;
+    if (packs.length < 2 || isOptimizedPack(activePack)) return;
     const next = packs.filter(p => p.id !== activePackId);
     setPacks(next);
     setActivePackId(next[0].id);
     persistPacks(next);
+  };
+
+  const generateOptimized = async () => {
+    setOptBusy(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/sms/optimized-templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days: 30 }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Could not write optimized texts');
+      const pack = json.optimized as TemplatePack;
+      userEdited.current = true;
+      setPacks(prev => {
+        const next = upsertOptimizedPack(prev, pack);
+        persistPacks(next as TemplatePack[]);
+        return next as TemplatePack[];
+      });
+      setActivePackId(pack.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not write optimized texts');
+    } finally {
+      setOptBusy(false);
+    }
+  };
+
+  const selectPack = (id: string) => {
+    setActivePackId(id);
+    persistPacks(packs);
+    const pack = packs.find(p => p.id === id);
+    if (isOptimizedPack(pack) && !pack?.templates.some(t => t.trim()) && !optBusy) {
+      void generateOptimized();
+    }
   };
 
   const filledTemplates = templates.map(t => t.trim()).filter(Boolean);
@@ -381,7 +428,7 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
                       : 'border-[#e5e5e5] text-[#6b6b6b] hover:bg-[#f5f5f5]'
                   }`}
                 >
-                  {p.name}
+                  {isOptimizedPack(p) ? OPTIMIZED_PACK_NAME : p.name}
                 </button>
               ))}
               {namingNew ? (
@@ -409,6 +456,22 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
                 </button>
               )}
             </div>
+            {isOptimizedPack(activePack) && (
+              <div className="mb-2">
+                {optBusy ? (
+                  <p className="text-[11px] text-[#9b9b9b]">Writing from the last 30 days of campaign replies and opt-outs…</p>
+                ) : activePack?.reasoning ? (
+                  <p className="text-[11px] text-[#6b6b6b] leading-snug">{activePack.reasoning}</p>
+                ) : (
+                  <p className="text-[11px] text-[#9b9b9b]">
+                    Built from campaign insights to get replies without STOP.{' '}
+                    <button type="button" onClick={() => void generateOptimized()} className="underline underline-offset-2">
+                      Write from last 30 days
+                    </button>
+                  </p>
+                )}
+              </div>
+            )}
             <div className="space-y-2">
               {templates.map((t, i) => (
                 <textarea
@@ -417,7 +480,8 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
                   onChange={e => setTemplates(prev => prev.map((x, j) => (j === i ? e.target.value : x)))}
                   placeholder={`Template ${i + 1}${i === 0 ? ' — e.g. Hi {first_name}, quick question about {company}…' : ''}`}
                   rows={2}
-                  className="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-lg focus:outline-none focus:border-[#1a1a1a] resize-none"
+                  disabled={optBusy && isOptimizedPack(activePack)}
+                  className="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-lg focus:outline-none focus:border-[#1a1a1a] resize-none disabled:bg-[#fafafa]"
                 />
               ))}
             </div>
@@ -438,12 +502,21 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
                   Remove last
                 </button>
               )}
-              {packs.length > 1 && (
+              {packs.length > 1 && !isOptimizedPack(activePack) && (
                 <button
                   onClick={removeActivePack}
                   className="text-[11px] text-[#9b9b9b] hover:text-[#1a1a1a] underline underline-offset-2"
                 >
                   Delete set
+                </button>
+              )}
+              {isOptimizedPack(activePack) && (
+                <button
+                  onClick={() => void generateOptimized()}
+                  disabled={optBusy}
+                  className="text-[11px] text-[#6b6b6b] hover:text-[#1a1a1a] underline underline-offset-2 disabled:opacity-50"
+                >
+                  {optBusy ? 'Writing…' : 'Refresh Optimized'}
                 </button>
               )}
               <span className="text-[11px] text-[#9b9b9b] ml-auto">{filledTemplates.length} ready · each lead gets one at random</span>

@@ -7,6 +7,8 @@ import InboundPhoto from '@/components/mobile/InboundPhoto';
 import { dayStamp, initial } from '@/components/mobile/format';
 import { outboundSmsReceipt } from '@/lib/inbox/smsReceipt';
 import { inboxEnglishGloss, sentInLabel } from '@/lib/inbox/languageDisplay';
+import { classifyMmsFile, isAttachmentPlaceholder, MMS_COLUMN, MMS_MAX_FILES } from '@/lib/inbox/outboundMms';
+import { putFileToSignedUpload, signLeadUpload } from '@/lib/uploadLeadFile';
 import { useSync } from '@/lib/sync/SyncProvider';
 import { usePolling } from '@/lib/sync/usePolling';
 
@@ -46,7 +48,9 @@ export default function ThreadScreen() {
   const [sending, setSending] = useState(false);
   const [showTpls, setShowTpls] = useState(false);
   const [tpls, setTpls] = useState<Tpl[]>([]);
+  const [staged, setStaged] = useState<{ id: string; file: File; preview: string; type: string }[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const loadingOlder = useRef(false);
@@ -115,44 +119,82 @@ export default function ThreadScreen() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages.length]);
 
+  function addFiles(list: FileList | File[] | null) {
+    if (!list) return;
+    setStaged(prev => {
+      const next = [...prev];
+      for (const file of Array.from(list)) {
+        const check = classifyMmsFile(file);
+        if (!check.ok || next.length >= MMS_MAX_FILES) continue;
+        next.push({
+          id: `${Date.now()}-${file.name}`,
+          file,
+          preview: check.type.startsWith('image/') ? URL.createObjectURL(file) : '',
+          type: check.type,
+        });
+      }
+      return next;
+    });
+  }
+
   async function send() {
     const text = draft.trim();
-    if (!text || sending) return;
-    const temp: Msg = {
-      id: `tmp-${Date.now()}`,
-      direction: 'outbound',
-      body: text,
-      status: 'queued',
-      created_at: new Date().toISOString(),
-      pending: true,
-    };
+    const files = staged;
+    if ((!text && !files.length) || sending) return;
     setDraft('');
+    setStaged([]);
     setShowTpls(false);
     setSending(true);
     stick.current = true;
-    setMessages(prev => [...prev, temp]);
+    const tempId = `tmp-${Date.now()}`;
     try {
+      const media: { path: string; type: string; name: string }[] = [];
+      for (const item of files) {
+        const signed = await signLeadUpload({
+          leadId: threadId,
+          columnField: MMS_COLUMN,
+          fileName: item.file.name,
+          fileType: item.type,
+          fileSize: item.file.size,
+        });
+        await putFileToSignedUpload(signed, item.file);
+        media.push({ path: signed.path, type: item.type, name: item.file.name });
+      }
+      const temp: Msg = {
+        id: tempId,
+        direction: 'outbound',
+        body: text,
+        status: 'queued',
+        created_at: new Date().toISOString(),
+        pending: true,
+        media_items: media.map(item => ({ path: item.path, type: item.type, savedAt: null })),
+      };
+      setMessages(prev => [...prev, temp]);
       const res = await fetch(`/api/m/threads/${threadId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body: text }),
+        body: JSON.stringify({ body: text, media }),
       });
       const data = await res.json();
       const saved: Msg | undefined = data.message;
       setMessages(prev => {
         if (saved?.id && prev.some(m => m.id === saved.id)) {
-          return prev.filter(m => m.id !== temp.id);
+          return prev.filter(m => m.id !== tempId);
         }
         return prev.map(m => {
-          if (m.id !== temp.id) return m;
+          if (m.id !== tempId) return m;
           if (!saved) return { ...m, pending: false, status: 'failed', error_message: data.error || 'Not sent' };
           return { ...saved, pending: false };
         });
       });
     } catch {
-      setMessages(prev => prev.map(m => m.id === temp.id
-        ? { ...m, pending: false, status: 'failed', error_message: 'Not sent' }
-        : m));
+      setMessages(prev => prev.some(m => m.id === tempId)
+        ? prev.map(m => m.id === tempId
+          ? { ...m, pending: false, status: 'failed', error_message: 'Not sent' }
+          : m)
+        : prev);
+      setDraft(text);
+      setStaged(files);
     } finally {
       setSending(false);
     }
@@ -204,7 +246,7 @@ export default function ThreadScreen() {
           const receiptStatus = outboundSmsReceipt(msg, messages);
           const receipt = msg.id === lastOutboundId && (receiptStatus === 'delivered' || receiptStatus === 'read');
           const photos = (msg.media_items ?? []).filter(item => item?.sid || item?.path);
-          const caption = msg.body === 'Attachment: 1 Photo' && photos.length ? '' : msg.body;
+          const caption = isAttachmentPlaceholder(msg.body) && photos.length ? '' : msg.body;
           const gloss = !out ? inboxEnglishGloss(msg) : null;
           const langSent = out ? sentInLabel(msg) : null;
           return (
@@ -219,6 +261,8 @@ export default function ThreadScreen() {
                       key={`${msg.id}-${photoIndex}`}
                       messageId={msg.id}
                       index={photoIndex}
+                      type={photo.type}
+                      canSave={!out && !!photo.sid}
                       savedAt={photo.savedAt}
                       onSaved={(savedAt) => {
                         setMessages(prev => prev.map(m => {
@@ -291,6 +335,27 @@ export default function ThreadScreen() {
             )}
           </div>
         )}
+        {staged.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-2 px-1">
+            {staged.map(item => (
+              <div key={item.id} className="relative">
+                {item.preview ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={item.preview} alt="" className="h-12 w-12 rounded-lg object-cover" />
+                ) : (
+                  <div className="flex h-12 w-14 items-center justify-center rounded-lg bg-white text-[10px] font-semibold">PDF</div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setStaged(prev => prev.filter(f => f.id !== item.id))}
+                  className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-black text-[10px] text-white"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="flex items-end gap-2">
           <button
             type="button"
@@ -304,17 +369,44 @@ export default function ThreadScreen() {
             +
           </button>
           <input
+            ref={fileRef}
+            type="file"
+            accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf"
+            multiple
+            className="hidden"
+            onChange={e => {
+              addFiles(e.target.files);
+              e.target.value = '';
+            }}
+          />
+          <button
+            type="button"
+            aria-label="Attach photo or PDF"
+            onClick={() => fileRef.current?.click()}
+            className="mb-1 flex h-8 w-8 items-center justify-center rounded-full text-[#8E8E93]"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
+            </svg>
+          </button>
+          <input
             ref={inputRef}
             value={draft}
             onChange={e => setDraft(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); send(); } }}
+            onPaste={e => {
+              const files = Array.from(e.clipboardData.files || []);
+              if (!files.length) return;
+              e.preventDefault();
+              addFiles(files);
+            }}
             placeholder="Text Message"
             className="mb-1 h-9 min-w-0 flex-1 rounded-full border border-[#C6C6C8] bg-white px-3 text-[16px] focus:outline-none"
           />
           <button
             type="button"
             onClick={send}
-            disabled={!draft.trim()}
+            disabled={!draft.trim() && !staged.length}
             aria-label="Send"
             className="mb-1 flex h-8 w-8 items-center justify-center rounded-full bg-[#34C759] text-white disabled:opacity-40"
           >

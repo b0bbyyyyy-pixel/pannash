@@ -17,7 +17,7 @@ export {
 
 export function isLanguageAgnosticSms(body: string | null | undefined) {
   const t = String(body ?? '').trim();
-  if (!t || t === 'Attachment: 1 Photo') return true;
+  if (!t || t === 'Attachment: 1 Photo' || /^Attachment:\s*\d+\s+(Photo|Photos|PDF|PDFs|file|files)$/i.test(t)) return true;
   if (isSmsStopBody(t)) return true;
   if (/^(help|info)$/i.test(t)) return true;
   const letters = t.replace(/[^A-Za-zÀ-ÿ]/g, '');

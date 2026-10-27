@@ -8,6 +8,10 @@ export type SmsTemplatePack = {
   id: string;
   name: string;
   templates: string[];
+  reasoning?: string;
+  logic?: string[];
+  generatedAt?: string;
+  days?: number;
 };
 
 async function getClient() {
@@ -23,13 +27,21 @@ function normalizePacks(raw: unknown): SmsTemplatePack[] {
   if (!Array.isArray(raw)) return [];
   return raw
     .filter((p): p is Record<string, unknown> => !!p && typeof p === 'object')
-    .map((p) => ({
-      id: String(p.id || crypto.randomUUID()),
-      name: String(p.name || 'Set').trim() || 'Set',
-      templates: Array.isArray(p.templates)
-        ? p.templates.map((t) => String(t ?? ''))
-        : ['', '', '', '', ''],
-    }));
+    .map((p) => {
+      const logic = Array.isArray(p.logic) ? p.logic.map(x => String(x || '').trim()).filter(Boolean) : undefined;
+      const pack: SmsTemplatePack = {
+        id: String(p.id || crypto.randomUUID()),
+        name: String(p.name || 'Set').trim() || 'Set',
+        templates: Array.isArray(p.templates)
+          ? p.templates.map((t) => String(t ?? ''))
+          : ['', '', '', '', ''],
+      };
+      if (typeof p.reasoning === 'string' && p.reasoning.trim()) pack.reasoning = p.reasoning.trim();
+      if (logic?.length) pack.logic = logic;
+      if (typeof p.generatedAt === 'string' && p.generatedAt) pack.generatedAt = p.generatedAt;
+      if (typeof p.days === 'number' && Number.isFinite(p.days)) pack.days = p.days;
+      return pack;
+    });
 }
 
 export async function GET() {

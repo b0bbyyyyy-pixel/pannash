@@ -13,6 +13,13 @@ import { getPhoneLocation } from '@/lib/phoneLocation';
 import { outboundSmsReceipt } from '@/lib/inbox/smsReceipt';
 import { inboxEnglishGloss, sentInLabel } from '@/lib/inbox/languageDisplay';
 import {
+  classifyMmsFile,
+  isAttachmentPlaceholder,
+  MMS_COLUMN,
+  MMS_MAX_FILES,
+} from '@/lib/inbox/outboundMms';
+import { putFileToSignedUpload, signLeadUpload } from '@/lib/uploadLeadFile';
+import {
   BACK_TO_PIPELINE_MSG,
   LEAD_DELETED_MSG,
   LEAD_SHOWN_MSG,
@@ -98,6 +105,13 @@ interface PhoneConnection {
   phone_number: string;
   provider: string;
 }
+
+type StagedMms = {
+  id: string;
+  file: File;
+  preview: string;
+  type: 'image/jpeg' | 'image/png' | 'application/pdf';
+};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -260,6 +274,9 @@ export default function InboxClient({
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [dbStatuses, setDbStatuses] = useState<DBStatus[]>([]);
   const [composerText, setComposerText] = useState('');
+  const [stagedFiles, setStagedFiles] = useState<StagedMms[]>([]);
+  const [dropActive, setDropActive] = useState(false);
+  const [attachError, setAttachError] = useState<string | null>(null);
   const [showTpls, setShowTpls] = useState(false);
   const [tpls, setTpls] = useState<SavedTpl[]>([]);
   const [draftName, setDraftName] = useState('');
@@ -290,6 +307,7 @@ export default function InboxClient({
   const stickToBottomRef = useRef(true);
   const lastScrolledMsgIdRef = useRef<string | null>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const selectedLead = leads.find(l => l.id === selectedLeadId) ?? null;
   const selectedDots = resolveMenuDots(leadMenuState, selectedLead);
@@ -626,6 +644,14 @@ export default function InboxClient({
     stickToBottomRef.current = true;
     lastScrolledMsgIdRef.current = null;
     setComposerText(selectedLeadId ? (draftsRef.current[selectedLeadId] ?? '') : '');
+    setStagedFiles(prev => {
+      for (const item of prev) {
+        if (item.preview) URL.revokeObjectURL(item.preview);
+      }
+      return [];
+    });
+    setAttachError(null);
+    setDropActive(false);
     if (selectedLeadId) loadMessages(selectedLeadId);
   }, [selectedLeadId, loadMessages]);
 
@@ -1016,87 +1042,157 @@ export default function InboxClient({
   };
 
 
+  const addComposerFiles = (list: FileList | File[] | null) => {
+    if (!list) return;
+    const incoming = Array.from(list);
+    if (!incoming.length) return;
+    const errors: string[] = [];
+    setStagedFiles(prev => {
+      const next = [...prev];
+      for (const file of incoming) {
+        const check = classifyMmsFile(file);
+        if (!check.ok) {
+          errors.push(check.error);
+          continue;
+        }
+        if (next.length >= MMS_MAX_FILES) {
+          errors.push(`You can attach up to ${MMS_MAX_FILES} files.`);
+          break;
+        }
+        next.push({
+          id: `${Date.now()}-${file.name}-${Math.random().toString(36).slice(2, 8)}`,
+          file,
+          preview: check.type.startsWith('image/') ? URL.createObjectURL(file) : '',
+          type: check.type,
+        });
+      }
+      return next;
+    });
+    setAttachError(errors[0] ?? null);
+  };
+
+  const removeStagedFile = (id: string) => {
+    setStagedFiles(prev => {
+      const hit = prev.find(item => item.id === id);
+      if (hit?.preview) URL.revokeObjectURL(hit.preview);
+      return prev.filter(item => item.id !== id);
+    });
+    setAttachError(null);
+  };
+
   // ── Send message ────────────────────────────────────────────────────────────
   const handleSend = async () => {
     const sendLeadId = selectedLeadId;
-    if (!sendLeadId || !composerText.trim() || sending) return;
+    const files = stagedFiles;
+    if (!sendLeadId || sending || (!composerText.trim() && !files.length)) return;
     setSending(true);
     setSendError(null);
+    setAttachError(null);
 
     const body = composerText.trim();
     draftsRef.current[sendLeadId] = '';
     setComposerText('');
+    setStagedFiles([]);
     stickToBottomRef.current = true;
     const stillOnThread = () => selectedLeadIdRef.current === sendLeadId;
 
-    // Optimistic message
-    const optimistic: InboxMessage = {
-      id: `opt_${Date.now()}`,
-      conversation_id: conversationId ?? '',
-      lead_id: sendLeadId,
-      direction: 'outbound',
-      body,
-      status: 'queued',
-      sent_by: 'user',
-      twilio_sid: null,
-      error_message: null,
-      created_at: new Date().toISOString(),
-    };
-    if (stillOnThread()) setMessages(prev => [...prev, optimistic]);
-
+    let optimisticId: string | null = null;
+    let restored = false;
     try {
+      const media: { path: string; type: string; name: string }[] = [];
+      for (const item of files) {
+        const signed = await signLeadUpload({
+          leadId: sendLeadId,
+          columnField: MMS_COLUMN,
+          fileName: item.file.name,
+          fileType: item.type,
+          fileSize: item.file.size,
+        });
+        await putFileToSignedUpload(signed, item.file);
+        media.push({ path: signed.path, type: item.type, name: item.file.name });
+      }
+
+      const optimistic: InboxMessage = {
+        id: `opt_${Date.now()}`,
+        conversation_id: conversationId ?? '',
+        lead_id: sendLeadId,
+        direction: 'outbound',
+        body,
+        status: 'queued',
+        sent_by: 'user',
+        twilio_sid: null,
+        error_message: null,
+        created_at: new Date().toISOString(),
+        media_items: media.map(item => ({ path: item.path, type: item.type, savedAt: null })),
+      };
+      optimisticId = optimistic.id;
+      if (stillOnThread()) setMessages(prev => [...prev, optimistic]);
+
       const res = await fetch('/api/inbox/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ leadId: sendLeadId, body }),
+        body: JSON.stringify({ leadId: sendLeadId, body, media }),
       });
       const data = await res.json();
+      if (!data.message) throw new Error(data.error || 'Could not send');
 
-      if (data.message) {
-        if (stillOnThread()) {
-          setMessages(prev => {
-            const realId = data.message.id as string | undefined;
-            if (realId && prev.some(m => m.id === realId)) {
-              return prev.filter(m => m.id !== optimistic.id);
-            }
-            return prev.map(m => m.id === optimistic.id ? { ...optimistic, ...data.message } : m);
-          });
-        }
-        // Update conversation preview in lead list
-        const preview = body.length > 100 ? body.slice(0, 97) + '…' : body;
-        setLeads(prev => sortRail(prev.map(l =>
-          l.id === sendLeadId
-            ? {
-                ...l,
-                conversation: {
-                  ...(l.conversation ?? { id: data.message.conversation_id, unread_count: 0 }),
-                  last_message_at: data.message.created_at,
-                  last_message_preview: preview,
-                  last_direction: 'outbound',
-                  unread_count: l.conversation?.unread_count ?? 0,
-                },
-              }
-            : l
-        )));
-
-        if (data.error && stillOnThread()) setSendError(data.error);
-        if (data.message?.id) {
-          window.setTimeout(() => {
-            if (selectedLeadIdRef.current === sendLeadId) {
-              void loadMessages(sendLeadId, { quiet: true });
-            }
-          }, 4000);
-        }
-      }
-    } catch {
       if (stillOnThread()) {
-        setMessages(prev =>
-          prev.map(m =>
-            m.id === optimistic.id ? { ...m, status: 'failed', error_message: 'Network error' } : m
-          )
-        );
+        setMessages(prev => {
+          const realId = data.message.id as string | undefined;
+          if (realId && prev.some(m => m.id === realId)) {
+            return prev.filter(m => m.id !== optimistic.id);
+          }
+          return prev.map(m => m.id === optimistic.id ? { ...optimistic, ...data.message } : m);
+        });
+      }
+      const previewBody = String(data.message.body || body || 'Attachment');
+      const preview = previewBody.length > 100 ? previewBody.slice(0, 97) + '…' : previewBody;
+      setLeads(prev => sortRail(prev.map(l =>
+        l.id === sendLeadId
+          ? {
+              ...l,
+              conversation: {
+                ...(l.conversation ?? { id: data.message.conversation_id, unread_count: 0 }),
+                last_message_at: data.message.created_at,
+                last_message_preview: preview,
+                last_direction: 'outbound',
+                unread_count: l.conversation?.unread_count ?? 0,
+              },
+            }
+          : l
+      )));
+
+      if (data.error && stillOnThread()) setSendError(data.error);
+      if (data.message?.id) {
+        window.setTimeout(() => {
+          if (selectedLeadIdRef.current === sendLeadId) {
+            void loadMessages(sendLeadId, { quiet: true });
+          }
+        }, 4000);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not send';
+      if (stillOnThread()) {
+        if (optimisticId) {
+          setMessages(prev =>
+            prev.map(m =>
+              m.id === optimisticId ? { ...m, status: 'failed', error_message: message } : m
+            )
+          );
+        } else {
+          draftsRef.current[sendLeadId] = body;
+          setComposerText(body);
+          setStagedFiles(files);
+          restored = true;
+        }
+        setSendError(message);
       }
     } finally {
+      if (!restored) {
+        for (const item of files) {
+          if (item.preview) URL.revokeObjectURL(item.preview);
+        }
+      }
       setSending(false);
     }
   };
@@ -1561,7 +1657,7 @@ export default function InboxClient({
                       {group.msgs.map(msg => {
                         const receipt = outboundSmsReceipt(msg, messages);
                         const photos = (msg.media_items ?? []).filter(item => item?.sid || item?.path);
-                        const caption = msg.body === 'Attachment: 1 Photo' && photos.length ? '' : msg.body;
+                        const caption = isAttachmentPlaceholder(msg.body) && photos.length ? '' : msg.body;
                         const inboundEmail = msg.direction === 'inbound' ? extractEmailFromSms(caption || '').email : undefined;
                         const emailPushed = !!(
                           inboundEmail &&
@@ -1577,10 +1673,19 @@ export default function InboxClient({
                         >
                           <div className={`max-w-[72%] min-w-0 ${msg.direction === 'outbound' ? 'items-end' : 'items-start'} flex flex-col gap-0.5`}>
                             {photos.map((photo, photoIndex) => (
+                              msg.id.startsWith('opt_') ? (
+                                photo.type?.includes('pdf') ? (
+                                  <div key={`${msg.id}-${photoIndex}`} className="rounded-[18px] bg-[#e9e9e9] px-3 py-2 text-[12px] text-[#6b6b6b]">Sending PDF…</div>
+                                ) : (
+                                  <div key={`${msg.id}-${photoIndex}`} className="h-32 w-48 animate-pulse rounded-[18px] bg-[#e5e5e5]" />
+                                )
+                              ) : (
                               <InboundPhoto
                                 key={`${msg.id}-${photoIndex}`}
                                 messageId={msg.id}
                                 index={photoIndex}
+                                type={photo.type}
+                                canSave={msg.direction === 'inbound' && !!photo.sid}
                                 savedAt={photo.savedAt}
                                 onSaved={(savedAt) => {
                                   setMessages(prev => prev.map(m => {
@@ -1592,6 +1697,7 @@ export default function InboxClient({
                                   }));
                                 }}
                               />
+                              )
                             ))}
                             {caption ? (
                             <div className="flex items-end gap-1.5 max-w-full">
@@ -1672,8 +1778,8 @@ export default function InboxClient({
 
             {/* Composer */}
             <div className="px-4 py-3 border-t border-[#e5e5e5] bg-white flex-shrink-0">
-              {sendError && (
-                <p className="text-xs text-amber-600 mb-1.5 px-1">⚠ {sendError}</p>
+              {(sendError || attachError) && (
+                <p className="text-xs text-amber-600 mb-1.5 px-1">⚠ {sendError || attachError}</p>
               )}
               {showTpls && (
                 <div className="mb-2 max-h-[220px] overflow-y-auto border border-[#f0f0f0] rounded-xl p-2.5 space-y-1.5">
@@ -1804,7 +1910,78 @@ export default function InboxClient({
                 >
                   +
                 </button>
-                <div className="flex-1 bg-[#f5f5f5] rounded-2xl px-4 py-2.5 border border-[#e5e5e5] focus-within:border-gray-300 transition-colors">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf"
+                  multiple
+                  className="hidden"
+                  onChange={e => {
+                    addComposerFiles(e.target.files);
+                    e.target.value = '';
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={selectedLead.sms_opt_out ?? false}
+                  className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center border border-[#e5e5e5] text-[#6b6b6b] hover:text-[#1a1a1a] hover:border-[#c4c4c4] transition-colors disabled:opacity-40"
+                  title="Attach JPEG, PNG, or PDF"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
+                  </svg>
+                </button>
+                <div
+                  className={`flex-1 bg-[#f5f5f5] rounded-2xl px-4 py-2.5 border transition-colors ${
+                    dropActive
+                      ? 'border-[#1a1a1a] bg-[#ececec]'
+                      : 'border-[#e5e5e5] focus-within:border-gray-300'
+                  }`}
+                  onDragEnter={e => {
+                    e.preventDefault();
+                    if (!(selectedLead.sms_opt_out ?? false)) setDropActive(true);
+                  }}
+                  onDragOver={e => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'copy';
+                    if (!(selectedLead.sms_opt_out ?? false)) setDropActive(true);
+                  }}
+                  onDragLeave={e => {
+                    if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropActive(false);
+                  }}
+                  onDrop={e => {
+                    e.preventDefault();
+                    setDropActive(false);
+                    if (selectedLead.sms_opt_out ?? false) return;
+                    addComposerFiles(e.dataTransfer.files);
+                  }}
+                >
+                  {stagedFiles.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      {stagedFiles.map(item => (
+                        <div key={item.id} className="relative">
+                          {item.preview ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={item.preview} alt={item.file.name} className="h-14 w-14 rounded-lg object-cover" />
+                          ) : (
+                            <div className="flex h-14 w-[72px] flex-col items-center justify-center rounded-lg border border-[#e5e5e5] bg-white px-1 text-center">
+                              <span className="text-[9px] font-semibold tracking-wide text-[#1a1a1a]">PDF</span>
+                              <span className="mt-0.5 w-full truncate text-[9px] text-[#6b6b6b]">{item.file.name}</span>
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => removeStagedFile(item.id)}
+                            className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-[#1a1a1a] text-[10px] leading-none text-white"
+                            title="Remove"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <textarea
                     ref={composerRef}
                     value={composerText}
@@ -1814,11 +1991,19 @@ export default function InboxClient({
                       setComposerText(next);
                     }}
                     onKeyDown={handleKeyDown}
+                    onPaste={e => {
+                      const files = Array.from(e.clipboardData.files || []);
+                      if (!files.length) return;
+                      e.preventDefault();
+                      addComposerFiles(files);
+                    }}
                     disabled={selectedLead.sms_opt_out ?? false}
                     placeholder={
                       selectedLead.sms_opt_out
                         ? 'Lead has opted out of SMS'
-                        : 'Type a message… (Enter to send, Shift+Enter for newline)'
+                        : dropActive
+                          ? 'Drop JPEG, PNG, or PDF to send as a text'
+                          : 'Type a message or drop a JPEG, PNG, or PDF…'
                     }
                     rows={1}
                     className="w-full bg-transparent text-sm text-[#1a1a1a] resize-none focus:outline-none disabled:opacity-50 placeholder-gray-400"
@@ -1837,7 +2022,7 @@ export default function InboxClient({
                 </div>
                 <button
                   onClick={handleSend}
-                  disabled={!composerText.trim() || sending || (selectedLead.sms_opt_out ?? false)}
+                  disabled={(!composerText.trim() && !stagedFiles.length) || sending || (selectedLead.sms_opt_out ?? false)}
                   className="flex-shrink-0 px-4 py-2.5 bg-[#1a1a1a] text-white text-sm font-medium rounded-2xl disabled:opacity-40 hover:bg-[#333] transition-colors"
                 >
                   {sending ? (

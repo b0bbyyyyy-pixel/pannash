@@ -1,12 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { mobileClient, unauthorized } from '@/lib/mobile/session';
-import { getTwilioCreds } from '@/lib/telephony/twilio';
+import { getTwilioCreds, serviceClient } from '@/lib/telephony/twilio';
 import { sendTwilioSms, refreshSmsStatuses } from '@/lib/telephony/sms';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
 import { backfillThreadLanguage, ensureLeadSmsLanguage, insertInboxMessage, languageColumns, prepareOutboundForLead } from '@/lib/inbox/language';
 import { backfillInboundPhotos } from '@/lib/inbox/saveInboundMms';
 import { applySmsOptOutFromFailure, markPhoneDnc, smsSendBlockReason } from '@/lib/leads/dnc';
 import { cancelPendingOutbox } from '@/lib/casper/outbox';
+import {
+  attachmentSmsBody,
+  isOwnedMmsPath,
+  mediaItemsFromOutbound,
+  parseOutboundMedia,
+  signedMmsFetchUrls,
+} from '@/lib/inbox/outboundMms';
 
 export const dynamic = 'force-dynamic';
 
@@ -133,9 +140,13 @@ export async function POST(
   const { supabase, user } = await mobileClient();
   if (!user) return unauthorized();
 
-  const { body } = await req.json().catch(() => ({ body: '' }));
-  const text = String(body ?? '').trim();
-  if (!text) return NextResponse.json({ error: 'body required' }, { status: 400 });
+  const payload = await req.json().catch(() => ({ body: '' }));
+  const text = String(payload.body ?? '').trim();
+  const media = parseOutboundMedia(payload.media);
+  if (!text && !media.length) return NextResponse.json({ error: 'body required' }, { status: 400 });
+  if (media.some(item => !isOwnedMmsPath(item.path, user.id, leadId))) {
+    return NextResponse.json({ error: 'Invalid attachment' }, { status: 400 });
+  }
 
   const lead = await ownLead(supabase, user.id, leadId);
   if (!lead) return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -163,24 +174,39 @@ export async function POST(
   }
   if (!conv) return NextResponse.json({ error: 'Could not open thread' }, { status: 500 });
 
-  const leadLang = await ensureLeadSmsLanguage(supabase, leadId);
-  const prep = await prepareOutboundForLead(text, leadLang);
-  console.log('[sms-lang] outbound', { leadId, lang: prep.lang, translated: prep.translated });
+  const leadLang = text ? await ensureLeadSmsLanguage(supabase, leadId) : null;
+  const prep = text
+    ? await prepareOutboundForLead(text, leadLang)
+    : { body: '', bodyOriginal: '', bodyEn: '', lang: null, translated: false };
+  console.log('[sms-lang] outbound', { leadId, lang: prep.lang, translated: prep.translated, media: media.length });
   const sendBody = prep.body;
-  const preview = sendBody.length > 100 ? `${sendBody.slice(0, 97)}…` : sendBody;
-  const { data: msg, error: msgErr } = await insertInboxMessage(
+  const storedBody = sendBody || attachmentSmsBody(media.map(m => m.type));
+  const preview = storedBody.length > 100 ? `${storedBody.slice(0, 97)}…` : storedBody;
+  const mediaItems = mediaItemsFromOutbound(media);
+  const row = {
+    conversation_id: conv.id,
+    lead_id: leadId,
+    direction: 'outbound',
+    body: storedBody,
+    status: 'queued',
+    sent_by: 'user',
+    ...(mediaItems.length ? { media_items: mediaItems } : {}),
+    ...languageColumns(prep),
+  };
+  let { data: msg, error: msgErr } = await insertInboxMessage(
     supabase,
-    {
-      conversation_id: conv.id,
-      lead_id: leadId,
-      direction: 'outbound',
-      body: sendBody,
-      status: 'queued',
-      sent_by: 'user',
-      ...languageColumns(prep),
-    },
-    'id, direction, body, status, error_message, created_at, twilio_sid, body_en, body_original, detected_lang',
+    row,
+    'id, direction, body, status, error_message, created_at, twilio_sid, media_items, body_en, body_original, detected_lang',
   );
+  if (msgErr && /media_items/i.test(msgErr.message || '')) {
+    const withoutMedia = { ...row };
+    delete (withoutMedia as { media_items?: unknown }).media_items;
+    ({ data: msg, error: msgErr } = await insertInboxMessage(
+      supabase,
+      withoutMedia,
+      'id, direction, body, status, error_message, created_at, twilio_sid, body_en, body_original, detected_lang',
+    ));
+  }
 
   if (msgErr || !msg) {
     return NextResponse.json({ error: msgErr?.message ?? 'Insert failed' }, { status: 500 });
@@ -201,7 +227,10 @@ export async function POST(
   }
 
   try {
-    const sent = await sendTwilioSms(creds, lead.phone, sendBody);
+    const mediaUrls = media.length
+      ? await signedMmsFetchUrls(serviceClient(), media.map(item => item.path))
+      : [];
+    const sent = await sendTwilioSms(creds, lead.phone, sendBody, mediaUrls);
     await applySmsOptOutFromFailure(supabase, {
       userId: user.id,
       phone: lead.phone,
@@ -236,6 +265,7 @@ export async function POST(
         twilio_sid: sent.sid,
         error_message: sent.error ?? null,
         ...languageColumns(prep),
+        ...(mediaItems.length ? { media_items: mediaItems } : {}),
       },
       ...(sent.error ? { error: sent.error } : {}),
     });

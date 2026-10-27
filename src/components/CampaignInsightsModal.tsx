@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import type { OptimizedPack } from '@/lib/smsDrip/optimizeTemplates';
 
 type Insights = {
   name: string;
@@ -167,6 +168,11 @@ export default function CampaignInsightsModal({
       return 'America/New_York';
     }
   });
+  const [pane, setPane] = useState<'insights' | 'optimization'>('insights');
+  const [optimized, setOptimized] = useState<OptimizedPack | null>(null);
+  const [optLoaded, setOptLoaded] = useState(false);
+  const [optBusy, setOptBusy] = useState(false);
+  const [optError, setOptError] = useState<string | null>(null);
 
   useEffect(() => {
     let dead = false;
@@ -201,6 +207,50 @@ export default function CampaignInsightsModal({
     return () => { dead = true; ctrl.abort(); };
   }, [listId, overview, days, tz]);
 
+  useEffect(() => {
+    if (!overview || pane !== 'optimization' || optLoaded) return;
+    let dead = false;
+    fetch('/api/sms/optimized-templates', { cache: 'no-store' })
+      .then(r => r.json())
+      .then(d => {
+        if (dead) return;
+        const pack = d.optimized as OptimizedPack | undefined;
+        setOptimized(pack?.templates?.some(t => t.trim()) ? pack : null);
+      })
+      .catch(() => {})
+      .finally(() => { if (!dead) setOptLoaded(true); });
+    return () => { dead = true; };
+  }, [overview, pane, optLoaded]);
+
+  const runOptimize = async (insights: Insights) => {
+    setOptBusy(true);
+    setOptError(null);
+    try {
+      const res = await fetch('/api/sms/optimized-templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          days: days === 'all' ? 30 : Number(days),
+          insights,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Could not write optimized texts');
+      setOptimized(json.optimized);
+    } catch (err) {
+      setOptError(err instanceof Error ? err.message : 'Could not write optimized texts');
+    } finally {
+      setOptBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!overview || pane !== 'optimization' || !data || !optLoaded || optimized || optBusy) return;
+    void runOptimize(data);
+    // Write Optimized the first time this tab is opened.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overview, pane, data, optLoaded]);
+
   const mixTotal = data ? data.mix.positive + data.mix.negative + data.mix.opt_out + data.mix.other : 0;
   const statusCount = data ? (data.statusCounts[status] ?? 0) : 0;
   const statusRate = data && data.sent ? Math.round((statusCount / data.sent) * 100) : 0;
@@ -230,19 +280,83 @@ export default function CampaignInsightsModal({
               <p className="text-xs text-[#6b6b6b] mt-0.5">{data?.name || campaignName}</p>
             )}
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-[#9b9b9b] hover:text-[#1a1a1a] transition-colors p-1 rounded hover:bg-[#f5f5f5]"
-            title="Close"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+          <div className="flex items-center gap-3">
+            {overview ? (
+              <button
+                type="button"
+                onClick={() => setPane(pane === 'optimization' ? 'insights' : 'optimization')}
+                className={`text-[11px] transition-colors ${
+                  pane === 'optimization' ? 'text-[#1a1a1a]' : 'text-[#9b9b9b] hover:text-[#1a1a1a]'
+                }`}
+              >
+                Optimization
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-[#9b9b9b] hover:text-[#1a1a1a] transition-colors p-1 rounded hover:bg-[#f5f5f5]"
+              title="Close"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         <div className="px-5 py-4 overflow-y-auto space-y-4">
+          {overview && pane === 'optimization' ? (
+            <>
+              <div className="flex items-baseline justify-between gap-3">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-[#9b9b9b]">Optimized</div>
+                <button
+                  type="button"
+                  onClick={() => data && runOptimize(data)}
+                  disabled={optBusy || !data}
+                  className="text-[11px] text-[#6b6b6b] hover:text-[#1a1a1a] underline underline-offset-2 disabled:opacity-50"
+                >
+                  {optBusy ? 'Writing…' : optimized ? 'Refresh' : 'Write from this range'}
+                </button>
+              </div>
+              {optError ? <p className="text-sm text-red-600">{optError}</p> : null}
+              {optBusy && !optimized ? (
+                <p className="text-sm text-[#9b9b9b]">Looking at reply mix, opt-outs, and opening texts…</p>
+              ) : null}
+              {optimized?.reasoning ? (
+                <p className="text-sm text-[#1a1a1a] leading-relaxed">{optimized.reasoning}</p>
+              ) : null}
+              {optimized?.logic?.length ? (
+                <ul className="space-y-1">
+                  {optimized.logic.map(line => (
+                    <li key={line} className="text-xs text-[#6b6b6b] leading-snug pl-3 relative before:content-['·'] before:absolute before:left-0">
+                      {line}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              {optimized?.templates?.some(t => t.trim()) ? (
+                <div className="space-y-2">
+                  <p className="text-[11px] text-[#9b9b9b]">
+                    In Run SMS this is the Optimized tab
+                    {optimized.generatedAt
+                      ? ` · ${new Date(optimized.generatedAt).toLocaleString()}`
+                      : ''}
+                  </p>
+                  {optimized.templates.filter(t => t.trim()).map((t, i) => (
+                    <p key={`${i}-${t.slice(0, 24)}`} className="text-xs text-[#1a1a1a] leading-snug">
+                      {i + 1}. {t}
+                    </p>
+                  ))}
+                </div>
+              ) : !optBusy ? (
+                <p className="text-sm text-[#9b9b9b]">
+                  {!data ? 'Loading campaign stats…' : 'No optimized set yet.'}
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <>
           {!data && !error ? (
             <p className="text-sm text-[#9b9b9b]">Loading…</p>
           ) : null}
@@ -449,6 +563,8 @@ export default function CampaignInsightsModal({
               ) : null}
             </>
           ) : null}
+            </>
+          )}
         </div>
       </div>
     </>

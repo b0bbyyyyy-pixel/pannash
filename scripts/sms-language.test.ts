@@ -36,6 +36,7 @@ assert(isLanguageAgnosticSms('HELP'), 'HELP is agnostic');
 assert(isLanguageAgnosticSms('Si'), 'short Si is agnostic');
 assert(isLanguageAgnosticSms('ok'), 'ok is agnostic');
 assert(isLanguageAgnosticSms('Attachment: 1 Photo'), 'photo placeholder is agnostic');
+assert(isLanguageAgnosticSms('Attachment: 2 PDFs'), 'pdf placeholder is agnostic');
 assert(!isLanguageAgnosticSms('Hola, cómo estás?'), 'full Spanish is not agnostic');
 assert(!isSubstantialSms('Si'), 'Si is not substantial');
 assert(!isSubstantialSms('STOP'), 'STOP is not substantial');

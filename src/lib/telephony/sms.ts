@@ -54,11 +54,12 @@ function twilioErrorCode(err: unknown): number | null {
   return null;
 }
 
-/** Send one SMS. Always E.164. Uses Messaging Service when A2P/10DLC is approved. */
+/** Send one SMS or MMS. Always E.164. Uses Messaging Service when A2P/10DLC is approved. */
 export async function sendTwilioSms(
   creds: TwilioCreds,
   toRaw: string,
   body: string,
+  mediaUrls?: string[],
 ): Promise<SmsSendResult> {
   const to = toE164(toRaw);
   if (!to) {
@@ -74,12 +75,15 @@ export async function sendTwilioSms(
 
   const client = twilio(creds.accountSid, creds.authToken);
   const statusCallback = `${publicAppUrl()}/api/webhooks/twilio/status`;
+  const urls = (mediaUrls ?? []).filter(u => /^https:\/\//i.test(u));
+  const text = String(body ?? '').trim();
 
   const send = async (useService: boolean) => {
     return client.messages.create({
-      body,
+      ...(text ? { body: text } : {}),
       to,
       statusCallback,
+      ...(urls.length ? { mediaUrl: urls } : {}),
       ...(useService && messagingServiceSid ? { messagingServiceSid } : {}),
       ...(from ? { from } : {}),
     });
