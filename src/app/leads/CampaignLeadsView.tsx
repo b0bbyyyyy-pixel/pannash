@@ -53,6 +53,8 @@ interface Props {
   leads: CampaignLead[];
   campaignName: string;
   listId: string;
+  sourceKey?: string;
+  sourceLabel?: string;
   deleteCampaign?: (formData: FormData) => Promise<void>;
 }
 
@@ -136,7 +138,7 @@ function listedRevenue(notes: string | null | undefined): string {
   return '';
 }
 
-export default function CampaignLeadsView({ leads: initialLeads, campaignName, listId, deleteCampaign }: Props) {
+export default function CampaignLeadsView({ leads: initialLeads, campaignName, listId, sourceKey, sourceLabel, deleteCampaign }: Props) {
   const router = useRouter();
   const [leads, setLeads] = useState<CampaignLead[]>(initialLeads);
   const [search, setSearch] = useState('');
@@ -709,6 +711,8 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
         <RunSmsModal
           listId={listId}
           campaignName={campaignName}
+          sourceKey={sourceKey}
+          sourceLabel={sourceLabel}
           leadCount={leads.length}
           savedTemplates={savedTemplates}
           existingJob={dripJob?.status === 'paused' ? dripJob as ExistingDripJob : null}

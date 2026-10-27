@@ -12,6 +12,8 @@ export type SmsTemplatePack = {
   logic?: string[];
   generatedAt?: string;
   days?: number;
+  sourceKey?: string;
+  sourceLabel?: string;
 };
 
 async function getClient() {
@@ -40,6 +42,8 @@ function normalizePacks(raw: unknown): SmsTemplatePack[] {
       if (logic?.length) pack.logic = logic;
       if (typeof p.generatedAt === 'string' && p.generatedAt) pack.generatedAt = p.generatedAt;
       if (typeof p.days === 'number' && Number.isFinite(p.days)) pack.days = p.days;
+      if (typeof p.sourceKey === 'string' && p.sourceKey.trim()) pack.sourceKey = p.sourceKey.trim();
+      if (typeof p.sourceLabel === 'string' && p.sourceLabel.trim()) pack.sourceLabel = p.sourceLabel.trim();
       return pack;
     });
 }

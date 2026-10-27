@@ -3,9 +3,10 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import UploadForm from './UploadForm';
+import { BUILTIN_LEAD_SOURCES, guessLeadSource, slugLeadSource } from '@/lib/smsDrip/leadSources';
 
 interface Props {
-  createCampaign: (name: string) => Promise<string | null>; // returns new list id
+  createCampaign: (name: string, sourceCategory?: string) => Promise<string | null>; // returns new list id
 }
 
 function todayLabel() {
@@ -19,6 +20,7 @@ export default function NewCampaignModal({ createCampaign }: Props) {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<Step>('name');
   const [name, setName] = useState(todayLabel());
+  const [source, setSource] = useState('');
   const [listId, setListId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
@@ -26,6 +28,7 @@ export default function NewCampaignModal({ createCampaign }: Props) {
   const handleOpen = () => {
     setStep('name');
     setName(todayLabel());
+    setSource('');
     setListId(null);
     setError('');
     setOpen(true);
@@ -36,7 +39,8 @@ export default function NewCampaignModal({ createCampaign }: Props) {
     setCreating(true);
     setError('');
     try {
-      const id = await createCampaign(name.trim());
+      const guessed = source || guessLeadSource(name.trim())?.key || '';
+      const id = await createCampaign(name.trim(), guessed || undefined);
       if (!id) throw new Error('Failed to create campaign');
       setListId(id);
       setStep('upload');
@@ -98,6 +102,33 @@ export default function NewCampaignModal({ createCampaign }: Props) {
                     placeholder="e.g. Sep 17, 2026"
                   />
                   {error && <p className="mt-1.5 text-xs text-red-500">{error}</p>}
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-[#6b6b6b] uppercase tracking-wide mb-2">
+                    Lead source
+                  </label>
+                  <select
+                    value={source}
+                    onChange={e => {
+                      if (e.target.value === '__new__') {
+                        const typed = window.prompt('New lead source name');
+                        const key = slugLeadSource(typed || '');
+                        if (key) setSource(key);
+                        return;
+                      }
+                      setSource(e.target.value);
+                    }}
+                    className="w-full border border-[#e5e5e5] rounded-lg px-4 py-2.5 text-sm text-[#1a1a1a] focus:outline-none focus:border-[#1a1a1a] transition-colors bg-white"
+                  >
+                    <option value="">Guess from the name</option>
+                    {BUILTIN_LEAD_SOURCES.map(s => (
+                      <option key={s.key} value={s.key}>{s.label}</option>
+                    ))}
+                    {source && !BUILTIN_LEAD_SOURCES.some(s => s.key === source) ? (
+                      <option value={source}>{source}</option>
+                    ) : null}
+                    <option value="__new__">New source…</option>
+                  </select>
                 </div>
                 <div className="flex justify-end gap-3">
                   <button onClick={handleClose} className="px-4 py-2 text-sm text-[#6b6b6b] hover:text-[#1a1a1a] transition-colors">

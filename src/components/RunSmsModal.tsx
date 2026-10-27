@@ -13,6 +13,7 @@ import {
   OPTIMIZED_PACK_NAME,
   upsertOptimizedPack,
 } from '@/lib/smsDrip/optimizeTemplates';
+import { guessLeadSource, optimizedPackId } from '@/lib/smsDrip/leadSources';
 
 const PACE_PRESETS = [
   { label: '0 sec', min: 0, max: 0 },
@@ -53,6 +54,8 @@ export type ExistingDripJob = {
 interface Props {
   listId: string;
   campaignName: string;
+  sourceKey?: string;
+  sourceLabel?: string;
   leadCount: number;
   savedTemplates?: string[] | null;
   existingJob?: ExistingDripJob | null;
@@ -70,7 +73,11 @@ function windowParts(hours: number | null | undefined) {
   return { hours: Math.floor(total / 60), mins: total % 60, custom: true };
 }
 
-export default function RunSmsModal({ listId, campaignName, leadCount, savedTemplates, existingJob, onClose, onStarted }: Props) {
+export default function RunSmsModal({ listId, campaignName, sourceKey, sourceLabel, leadCount, savedTemplates, existingJob, onClose, onStarted }: Props) {
+  const campaignSource = sourceKey
+    ? { key: sourceKey, label: sourceLabel || sourceKey }
+    : guessLeadSource(campaignName);
+  const optId = optimizedPackId(campaignSource?.key);
   const initialWindow = windowParts(existingJob?.window_hours);
   const [windowHours, setWindowHours] = useState(initialWindow.custom ? 5 : initialWindow.hours);
   const [customHours, setCustomHours] = useState(initialWindow.custom ? String(initialWindow.hours || '') : '');
@@ -87,7 +94,7 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
           ? savedTemplates
           : DEFAULT_TEMPLATES
     ),
-    emptyOptimizedPack(),
+    emptyOptimizedPack(campaignSource),
   ]);
   const [activePackId, setActivePackId] = useState(() => packs[0].id);
   const userEdited = useRef(false);
@@ -173,13 +180,14 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
         }
         hydrated.current = true;
         const base = loaded.length ? loaded : packs;
-        const withOpt = base.some(p => isOptimizedPack(p)) ? base : [...base, emptyOptimizedPack()];
+        const withOpt = base.some(p => p.id === optId) ? base : [...base, emptyOptimizedPack(campaignSource)];
         setPacks(withOpt);
         const seed = existingJob?.templates?.length ? existingJob.templates : savedTemplates;
         const match = seed?.length
           ? withOpt.find(p => JSON.stringify(p.templates.filter(Boolean)) === JSON.stringify(seed.filter(Boolean)))
           : null;
-        setActivePackId(match?.id ?? withOpt[0].id);
+        const visible = withOpt.filter(p => !isOptimizedPack(p) || p.id === optId);
+        setActivePackId(match?.id ?? visible[0]?.id ?? withOpt[0].id);
       })
       .catch(() => { hydrated.current = true; });
     return () => { cancelled = true; };
@@ -198,9 +206,10 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
   const addPack = () => {
     const name = newPackName.trim() || `Set ${packs.length + 1}`;
     const pack = newPack(name);
-    const rest = packs.filter(p => !isOptimizedPack(p));
-    const opt = packs.find(p => isOptimizedPack(p));
-    const next = opt ? [...rest, pack, opt] : [...packs, pack];
+    const rest = packs.filter(p => !isOptimizedPack(p) || p.id === optId);
+    const hidden = packs.filter(p => isOptimizedPack(p) && p.id !== optId);
+    const opt = packs.find(p => p.id === optId);
+    const next = opt ? [...rest.filter(p => p.id !== optId), pack, opt, ...hidden] : [...packs, pack];
     setPacks(next);
     setActivePackId(pack.id);
     setNewPackName('');
@@ -220,10 +229,11 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
     setOptBusy(true);
     setError(null);
     try {
+      if (!campaignSource?.key) throw new Error('Assign a lead source on this campaign first.');
       const res = await fetch('/api/sms/optimized-templates', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ days: 30 }),
+        body: JSON.stringify({ days: 30, source: campaignSource.key }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Could not write optimized texts');
@@ -417,7 +427,7 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
               </span>
             </div>
             <div className="flex items-center gap-2 mb-2 flex-wrap">
-              {packs.map(p => (
+              {packs.filter(p => !isOptimizedPack(p) || p.id === optId).map(p => (
                 <button
                   key={p.id}
                   type="button"
@@ -428,7 +438,9 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
                       : 'border-[#e5e5e5] text-[#6b6b6b] hover:bg-[#f5f5f5]'
                   }`}
                 >
-                  {isOptimizedPack(p) ? OPTIMIZED_PACK_NAME : p.name}
+                  {p.id === optId
+                    ? (campaignSource?.label ? `Optimized · ${campaignSource.label}` : OPTIMIZED_PACK_NAME)
+                    : p.name}
                 </button>
               ))}
               {namingNew ? (
@@ -464,7 +476,7 @@ export default function RunSmsModal({ listId, campaignName, leadCount, savedTemp
                   <p className="text-[11px] text-[#6b6b6b] leading-snug">{activePack.reasoning}</p>
                 ) : (
                   <p className="text-[11px] text-[#9b9b9b]">
-                    Built from campaign insights to get replies without STOP.{' '}
+                    Built from {campaignSource?.label || 'this source'} insights so texts stay in this lead type.{' '}
                     <button type="button" onClick={() => void generateOptimized()} className="underline underline-offset-2">
                       Write from last 30 days
                     </button>

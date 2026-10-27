@@ -20,7 +20,23 @@ export async function PATCH(req: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { listId, newName, oldFolderName, newFolderName } = await req.json();
+    const { listId, newName, oldFolderName, newFolderName, sourceCategory } = await req.json();
+
+    if (listId && sourceCategory !== undefined) {
+      const value = String(sourceCategory || '').trim() || null;
+      const { error } = await supabase
+        .from('lead_lists')
+        .update({ source_category: value })
+        .eq('id', listId)
+        .eq('user_id', user.id);
+      if (error) {
+        if (/source_category/i.test(error.message || '')) {
+          return NextResponse.json({ error: 'Run add-lead-list-source.sql to save lead sources.' }, { status: 400 });
+        }
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+      return NextResponse.json({ ok: true, sourceCategory: value });
+    }
 
     // Rename a specific list
     if (listId && newName) {

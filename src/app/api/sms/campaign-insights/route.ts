@@ -5,6 +5,7 @@ import { classifyReply } from '@/lib/smsDrip/classifyReply';
 import { industryFromCompany } from '@/lib/smsDrip/industryFromCompany';
 import { tallyDripSends } from '@/lib/smsDrip/tally';
 import { extractNanpAreaCode, lookupAreaCode, US_STATE_NAMES } from '@/lib/phoneLocation';
+import { BUILTIN_LEAD_SOURCES, loadLeadListSources } from '@/lib/smsDrip/leadSources';
 
 export const dynamic = 'force-dynamic';
 
@@ -291,9 +292,19 @@ async function overviewInsights(
   userId: string,
   daysRaw: string | null,
   tz: string,
+  sourceKeyRaw: string | null,
 ) {
   const days = daysRaw === 'all' ? null : Math.min(365, Math.max(1, Number(daysRaw) || 30));
   const since = days ? new Date(Date.now() - days * 86_400_000).toISOString() : null;
+  const sourceKey = String(sourceKeyRaw || '').trim();
+  const { lists } = await loadLeadListSources(supabase, userId);
+  const byList = new Map(lists.map(l => [l.id, l]));
+  const sourceListIds = sourceKey
+    ? new Set(lists.filter(l => l.key === sourceKey).map(l => l.id))
+    : null;
+  const sourceMeta = sourceKey
+    ? lists.find(l => l.key === sourceKey) || BUILTIN_LEAD_SOURCES.find(s => s.key === sourceKey) || null
+    : null;
 
   const leadRows: LeadRow[] = [];
   for (let from = 0; from < 20_000; from += 1000) {
@@ -326,6 +337,35 @@ async function overviewInsights(
     if (rows.length < 1000) break;
   }
 
+  const sourceBuckets = new Map<string, { key: string; label: string; listIds: Set<string>; leadIds: Set<string> }>();
+  for (const lead of leadRows) {
+    const list = lead.list_id ? byList.get(lead.list_id) : null;
+    const key = list?.key || '';
+    const label = list?.label || 'Uncategorized';
+    let bucket = sourceBuckets.get(key);
+    if (!bucket) {
+      bucket = { key, label, listIds: new Set(), leadIds: new Set() };
+      sourceBuckets.set(key, bucket);
+    }
+    if (lead.list_id) bucket.listIds.add(lead.list_id);
+    bucket.leadIds.add(lead.id);
+  }
+  for (const list of lists) {
+    let bucket = sourceBuckets.get(list.key);
+    if (!bucket) {
+      bucket = { key: list.key, label: list.label, listIds: new Set(), leadIds: new Set() };
+      sourceBuckets.set(list.key, bucket);
+    }
+    bucket.listIds.add(list.id);
+    if (!bucket.label || bucket.label === 'Uncategorized') bucket.label = list.label;
+  }
+
+  const scopedLeads = sourceListIds
+    ? leadRows.filter(l => l.list_id && sourceListIds.has(l.list_id))
+    : leadRows;
+  leadRows.length = 0;
+  leadRows.push(...scopedLeads);
+
   const textedIds = new Set(leadRows.map(l => l.id));
   const byLead = new Map(leadRows.map(l => [l.id, l]));
 
@@ -336,6 +376,7 @@ async function overviewInsights(
     .neq('status', 'cancelled')
     .limit(500);
   const jobList = (jobs ?? []).filter(j => {
+    if (sourceListIds && (!j.list_id || !sourceListIds.has(j.list_id))) return false;
     if (!since) return true;
     if (j.status === 'active' || j.status === 'paused') return true;
     const created = String(j.created_at ?? '');
@@ -494,8 +535,23 @@ async function overviewInsights(
   }
   const replyTimes = timeInsights(tz, replyIsos, leadRows, repliedIds);
 
+  const sources = [...sourceBuckets.values()]
+    .map(b => ({
+      key: b.key,
+      label: b.label,
+      campaigns: b.listIds.size,
+      sent: b.leadIds.size,
+    }))
+    .sort((a, b) => b.sent - a.sent || a.label.localeCompare(b.label));
+
+  const rangeLabel = days ? `Last ${days} days` : 'All time';
+  const sourceLabel = sourceMeta && 'label' in sourceMeta ? sourceMeta.label : sourceKey || '';
+
   return NextResponse.json({
-    name: days ? `Last ${days} days` : 'All time',
+    name: sourceLabel ? `${rangeLabel} · ${sourceLabel}` : rangeLabel,
+    sourceKey: sourceKey || '',
+    sourceLabel: sourceLabel || 'All sources',
+    sources,
     campaigns: campaignCount,
     leads: leadRows.length,
     sent,
@@ -525,8 +581,18 @@ export async function GET(req: NextRequest) {
 
     const tz = safeTz(req.nextUrl.searchParams.get('tz'));
     const listId = req.nextUrl.searchParams.get('listId');
-    if (!listId) return overviewInsights(supabase, user.id, req.nextUrl.searchParams.get('days'), tz);
+    if (!listId) {
+      return overviewInsights(
+        supabase,
+        user.id,
+        req.nextUrl.searchParams.get('days'),
+        tz,
+        req.nextUrl.searchParams.get('source'),
+      );
+    }
 
+    const { lists } = await loadLeadListSources(supabase, user.id);
+    const listSource = lists.find(l => l.id === listId);
     const { data: list } = await supabase
       .from('lead_lists')
       .select('id, name, sms_templates')
@@ -714,6 +780,8 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       name: list.name,
+      sourceKey: listSource?.key || '',
+      sourceLabel: listSource?.label || 'Uncategorized',
       leads: leadRows.length,
       sent,
       replies,

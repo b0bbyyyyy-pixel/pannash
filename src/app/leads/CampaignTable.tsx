@@ -5,6 +5,7 @@ import { usePolling } from '@/lib/sync/usePolling';
 import { useRouter } from 'next/navigation';
 import { dripPauseChipLabel } from '@/lib/smsDrip/carrierBlock';
 import CampaignInsightsModal from '@/components/CampaignInsightsModal';
+import { BUILTIN_LEAD_SOURCES, slugLeadSource } from '@/lib/smsDrip/leadSources';
 
 interface DripJobSummary {
   id: string;
@@ -19,6 +20,8 @@ export interface Campaign {
   id: string;
   name: string;
   created_at: string;
+  sourceKey?: string;
+  sourceLabel?: string;
   total: number;
   smsCount: number;
   callCount: number;
@@ -41,6 +44,14 @@ export default function CampaignTable({ campaigns, onRename }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [insightsId, setInsightsId] = useState<string | null>(null);
+  const [sourceFilter, setSourceFilter] = useState('');
+  const [sources, setSources] = useState<Record<string, string>>(() => {
+    const map: Record<string, string> = {};
+    for (const c of campaigns) {
+      if (c.sourceKey) map[c.id] = c.sourceKey;
+    }
+    return map;
+  });
   const inputRef = useRef<HTMLInputElement>(null);
   const [dripJobs, setDripJobs] = useState<Map<string, DripJobSummary>>(new Map());
 
@@ -80,6 +91,40 @@ export default function CampaignTable({ campaigns, onRename }: Props) {
     if (e.key === 'Escape') setEditingId(null);
   };
 
+  const sourceOptions = useMemo(() => {
+    const extras = campaigns
+      .map(c => ({ key: sources[c.id] || c.sourceKey || '', label: c.sourceLabel || '' }))
+      .filter(s => s.key && !BUILTIN_LEAD_SOURCES.some(b => b.key === s.key));
+    const seen = new Set<string>();
+    const custom = extras.filter(s => {
+      if (seen.has(s.key)) return false;
+      seen.add(s.key);
+      return true;
+    });
+    return [...BUILTIN_LEAD_SOURCES, ...custom];
+  }, [campaigns, sources]);
+
+  const setCampaignSource = async (id: string, key: string) => {
+    let next = key;
+    if (key === '__new__') {
+      const typed = window.prompt('New lead source name');
+      next = slugLeadSource(typed || '');
+      if (!next) return;
+    }
+    setSources(prev => ({ ...prev, [id]: next }));
+    try {
+      await fetch('/api/lead-lists', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listId: id, sourceCategory: next }),
+      });
+    } catch { /* keep optimistic */ }
+  };
+
+  const visible = sourceFilter
+    ? campaigns.filter(c => (sources[c.id] || c.sourceKey || '') === sourceFilter)
+    : campaigns;
+
   if (campaigns.length === 0) {
     return (
       <div className="bg-white border border-[#ebebeb] rounded-xl p-16 text-center">
@@ -91,12 +136,37 @@ export default function CampaignTable({ campaigns, onRename }: Props) {
   }
 
   return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => setSourceFilter('')}
+          className={`px-2.5 py-1 rounded-full text-[11px] border ${
+            !sourceFilter ? 'bg-[#1a1a1a] text-white border-[#1a1a1a]' : 'border-[#e5e5e5] text-[#6b6b6b] hover:border-[#c4c4c4]'
+          }`}
+        >
+          All
+        </button>
+        {sourceOptions.map(s => (
+          <button
+            key={s.key}
+            type="button"
+            onClick={() => setSourceFilter(s.key)}
+            className={`px-2.5 py-1 rounded-full text-[11px] border ${
+              sourceFilter === s.key ? 'bg-[#1a1a1a] text-white border-[#1a1a1a]' : 'border-[#e5e5e5] text-[#6b6b6b] hover:border-[#c4c4c4]'
+            }`}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
     <div className="bg-white border border-[#ebebeb] rounded-xl overflow-hidden">
       <table className="w-full">
         <thead>
           <tr className="border-b border-[#f5f5f5]">
             <th className="text-[11px] font-bold text-[#9b9b9b] uppercase tracking-wider px-4 py-2 text-left">Created</th>
             <th className="text-[11px] font-bold text-[#9b9b9b] uppercase tracking-wider px-4 py-2 text-left">Campaign</th>
+            <th className="text-[11px] font-bold text-[#9b9b9b] uppercase tracking-wider px-4 py-2 text-left">Source</th>
             <th className="text-[11px] font-bold text-[#9b9b9b] uppercase tracking-wider px-4 py-2 text-left">Total</th>
             <th className="text-[11px] font-bold text-[#9b9b9b] uppercase tracking-wider px-4 py-2 text-left">Outreach</th>
             <th className="text-[11px] font-bold text-[#9b9b9b] uppercase tracking-wider px-4 py-2 text-left">Response</th>
@@ -105,7 +175,7 @@ export default function CampaignTable({ campaigns, onRename }: Props) {
           </tr>
         </thead>
         <tbody>
-          {campaigns.map((campaign) => {
+          {visible.map((campaign) => {
             const progressPct = campaign.total > 0 ? (campaign.touchedCount / campaign.total) * 100 : 0;
             return (
               <tr
@@ -149,6 +219,20 @@ export default function CampaignTable({ campaigns, onRename }: Props) {
                       </svg>
                     </button>
                   </div>
+                </td>
+
+                <td className="px-4 py-2" onClick={e => e.stopPropagation()}>
+                  <select
+                    value={sources[campaign.id] || campaign.sourceKey || ''}
+                    onChange={e => void setCampaignSource(campaign.id, e.target.value)}
+                    className="max-w-[9.5rem] text-[11px] text-[#6b6b6b] bg-transparent border-0 border-b border-transparent hover:border-[#e5e5e5] py-0.5 focus:outline-none focus:border-[#1a1a1a]"
+                  >
+                    <option value="">Uncategorized</option>
+                    {sourceOptions.map(s => (
+                      <option key={s.key} value={s.key}>{s.label}</option>
+                    ))}
+                    <option value="__new__">New source…</option>
+                  </select>
                 </td>
 
                 {/* Total */}
@@ -256,6 +340,7 @@ export default function CampaignTable({ campaigns, onRename }: Props) {
           onClose={() => setInsightsId(null)}
         />
       ) : null}
+    </div>
     </div>
   );
 }

@@ -8,6 +8,7 @@ import CampaignLeadsView, { CampaignLead } from './CampaignLeadsView';
 import CampaignRenameWrapperComponent from './CampaignRenameWrapper';
 import NewCampaignModal from './NewCampaignModal';
 import CampaignOverviewInsights from './CampaignOverviewInsights';
+import { guessLeadSource, resolveListSource } from '@/lib/smsDrip/leadSources';
 
 export default async function LeadsPage({
   searchParams,
@@ -89,10 +90,13 @@ export default async function LeadsPage({
       touchedCount: 0,
       replyCount: 0,
     };
+    const source = resolveListSource(list);
     return {
       id: list.id,
       name: list.name,
       created_at: list.created_at,
+      sourceKey: source.key,
+      sourceLabel: source.label,
       total: stats.total,
       smsCount: stats.smsCount,
       callCount: stats.callCount,
@@ -149,7 +153,7 @@ export default async function LeadsPage({
   }
 
   // ── Server action: create named campaign ──────────────────────────────────
-  async function createCampaignNamed(name: string): Promise<string | null> {
+  async function createCampaignNamed(name: string, sourceCategory?: string): Promise<string | null> {
     'use server';
     const cookieStore = await cookies();
     const supabase = createServerClient(
@@ -165,11 +169,19 @@ export default async function LeadsPage({
     );
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return null;
-    const { data, error } = await supabase
+    const source = String(sourceCategory || '').trim() || guessLeadSource(name)?.key || null;
+    let { data, error } = await supabase
       .from('lead_lists')
-      .insert({ name, user_id: user.id })
+      .insert({ name, user_id: user.id, ...(source ? { source_category: source } : {}) })
       .select('id')
       .single();
+    if (error && /source_category/i.test(error.message || '')) {
+      ({ data, error } = await supabase
+        .from('lead_lists')
+        .insert({ name, user_id: user.id })
+        .select('id')
+        .single());
+    }
     if (error || !data) return null;
     revalidatePath('/leads');
     return data.id;
@@ -301,6 +313,8 @@ export default async function LeadsPage({
             leads={campaignLeads}
             campaignName={selectedList?.name || 'Campaign'}
             listId={selectedListId}
+            sourceKey={resolveListSource(selectedList || {}).key}
+            sourceLabel={resolveListSource(selectedList || {}).label}
             deleteCampaign={deleteListWithLeads}
           />
         ) : (

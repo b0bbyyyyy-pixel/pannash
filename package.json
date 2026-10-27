@@ -7,7 +7,7 @@
     "build": "NODE_OPTIONS='--max-old-space-size=6144' next build",
     "start": "next start",
     "lint": "next lint",
-    "test:casper": "npx tsx scripts/casper-foundation.test.ts && npx tsx scripts/sms-language.test.ts && npx tsx scripts/outbound-mms.test.ts"
+    "test:casper": "npx tsx scripts/casper-foundation.test.ts && npx tsx scripts/sms-language.test.ts && npx tsx scripts/outbound-mms.test.ts && npx tsx scripts/lead-sources.test.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

@@ -1,8 +1,16 @@
 import { getAIClient, GROK_MINI_MODEL } from '@/lib/ai';
 import { classifyReply } from '@/lib/smsDrip/classifyReply';
+import {
+  isFullPacksSource,
+  isOptimizedPack,
+  optimizedPackId,
+  optimizedPackName,
+  type LeadSource,
+} from '@/lib/smsDrip/leadSources';
 
 export const OPTIMIZED_PACK_ID = 'optimized';
 export const OPTIMIZED_PACK_NAME = 'Optimized';
+export { isOptimizedPack };
 
 export type OptimizedPack = {
   id: string;
@@ -12,15 +20,14 @@ export type OptimizedPack = {
   logic?: string[];
   generatedAt?: string;
   days?: number;
+  sourceKey?: string;
+  sourceLabel?: string;
 };
-
-export function isOptimizedPack(p: { id?: string; name?: string } | null | undefined) {
-  if (!p) return false;
-  return p.id === OPTIMIZED_PACK_ID || /^optimized$/i.test(String(p.name || '').trim());
-}
 
 export type OptimizeBriefing = {
   days: number;
+  sourceKey?: string;
+  sourceLabel?: string;
   sent?: number;
   replies?: number;
   replyRate?: number;
@@ -62,7 +69,7 @@ function clipList(items: string[], n: number) {
 
 export function briefingFromInsights(
   insights: Record<string, unknown>,
-  extra?: { samples?: OptimizeBriefing['samples'] },
+  extra?: { samples?: OptimizeBriefing['samples']; source?: LeadSource | null },
 ): OptimizeBriefing {
   const mix = insights.mix && typeof insights.mix === 'object'
     ? insights.mix as OptimizeBriefing['mix']
@@ -72,6 +79,8 @@ export function briefingFromInsights(
     : [];
   return {
     days: Number(insights.days) || 30,
+    sourceKey: String(insights.sourceKey || extra?.source?.key || '').trim() || undefined,
+    sourceLabel: String(insights.sourceLabel || extra?.source?.label || '').trim() || undefined,
     sent: Number(insights.sent) || 0,
     replies: Number(insights.replies) || 0,
     replyRate: Number(insights.replyRate) || 0,
@@ -89,11 +98,15 @@ export function briefingFromInsights(
   };
 }
 
-export function emptyOptimizedPack(): OptimizedPack {
+export function emptyOptimizedPack(source?: LeadSource | null): OptimizedPack {
+  const key = source?.key || '';
+  const label = source?.label || '';
   return {
-    id: OPTIMIZED_PACK_ID,
-    name: OPTIMIZED_PACK_NAME,
+    id: optimizedPackId(key),
+    name: optimizedPackName(label),
     templates: ['', '', '', '', ''],
+    sourceKey: key || undefined,
+    sourceLabel: label || undefined,
   };
 }
 
@@ -101,22 +114,29 @@ export function upsertOptimizedPack<T extends { id: string; name: string; templa
   packs: T[],
   optimized: OptimizedPack,
 ): (T | OptimizedPack)[] {
-  const rest = packs.filter(p => !isOptimizedPack(p));
-  return [...rest, { ...optimized, id: OPTIMIZED_PACK_ID, name: OPTIMIZED_PACK_NAME }];
+  const id = optimized.id || OPTIMIZED_PACK_ID;
+  const rest = packs.filter(p => p.id !== id);
+  return [...rest, { ...optimized, id, name: optimized.name || OPTIMIZED_PACK_NAME }];
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function collectReplySamples(supabase: any, userId: string) {
+export async function collectReplySamples(
+  supabase: any,
+  userId: string,
+  leadIds?: Set<string> | null,
+) {
   const samples = { positive: [] as string[], negative: [] as string[], opt_out: [] as string[] };
   try {
-    const { data } = await supabase
+    let q = supabase
       .from('inbox_conversations')
-      .select('last_message_preview, last_direction, last_inbound_at')
+      .select('lead_id, last_message_preview, last_direction, last_inbound_at')
       .eq('user_id', userId)
       .or('last_inbound_at.not.is.null,last_direction.eq.inbound')
       .order('last_inbound_at', { ascending: false, nullsFirst: false })
-      .limit(400);
+      .limit(leadIds?.size ? 1200 : 400);
+    const { data } = await q;
     for (const row of data ?? []) {
+      if (leadIds && leadIds.size && row.lead_id && !leadIds.has(row.lead_id)) continue;
       const preview = String(row.last_message_preview || '').trim();
       if (!preview) continue;
       const tone = classifyReply(preview);
@@ -133,6 +153,8 @@ export async function collectReplySamples(supabase: any, userId: string) {
 
 export async function generateOptimizedSms(briefing: OptimizeBriefing): Promise<OptimizedPack> {
   const openai = getAIClient();
+  const sourceLabel = briefing.sourceLabel || 'this lead source';
+  const fullPacks = isFullPacksSource({ key: briefing.sourceKey || '', label: sourceLabel });
   const mix = briefing.mix;
   const mixTotal = mix ? mix.positive + mix.negative + mix.opt_out + mix.other : 0;
   const mixLine = mix && mixTotal
@@ -151,21 +173,22 @@ export async function generateOptimizedSms(briefing: OptimizeBriefing): Promise<
     messages: [
       {
         role: 'system',
-        content: `You write MCA (merchant cash advance) cold SMS drip openers for US small businesses.
-Goal: maximize interested replies about funding; minimize STOP / unsubscribe / "not interested".
+        content: `You write MCA (merchant cash advance) cold SMS drip openers for ONE lead source only: ${sourceLabel}.
+Goal: maximize interested replies about funding from THIS source; minimize STOP / unsubscribe / "not interested".
 JSON only.
-Every SMS must be clearly about business funding in the first two lines — reviewing {company} for funding, bank statements, or underwriting. The merchant has to know this is a funding text, not a generic check-in.
-Never write "how's it going", workload, "anything new", or "compare notes" with no funding ask.
-Never say "working capital". Say "funding" or "business funding".
-Do not promise they are approved. Do not invent rates, dollar amounts, or a persona last name.
+Use only the performance data in the user message. Do not borrow tactics from other lead sources.
+${fullPacks
+  ? 'This source uses underwriter / bank-statement language. Every SMS must mention funding, underwriting, or bank statements in the first two lines.'
+  : 'Match the tone of THIS source\'s best-performing openers. Do not switch to underwriter, bank-statement, or "reviewing you for funding" language unless those exact openers already won on THIS source. Still make a clear business-funding ask — no generic hello or "how\'s it going".'}
+Never say "working capital". Do not promise they are approved. Do not invent rates, dollar amounts, or a persona last name.
 Keep each SMS under 240 characters. Use {first_name} and {company} where natural. Optional {city} {state}.
-Sound like a person texting, not a blast. One clear funding question. No all-caps, no stacked emojis, no "limited time".
-Do not include STOP language (it invites opt-outs). Avoid generic "are you still looking for funding" blast phrasing if the data shows it opts people out — be more specific (statements, underwriting, a real question).
+Sound like a person texting, not a blast. One clear question. No all-caps, no stacked emojis, no "limited time".
+Do not include STOP language (it invites opt-outs).
 Return 5 variants the drip can pick at random.`,
       },
       {
         role: 'user',
-        content: `Last ${briefing.days} days across campaigns:
+        content: `Last ${briefing.days} days for ${sourceLabel} only — not other lead sources:
 Sent ${briefing.sent ?? 0}, replied ${briefing.replies ?? 0} (${briefing.replyRate ?? 0}%), opted out ${briefing.optOuts ?? 0}.
 ${mixLine}
 Peak replies: ${briefing.replyTimes?.peakHour?.label || 'n/a'} · ${briefing.replyTimes?.peakWindow?.label || ''} · ${briefing.replyTimes?.peakDay?.label || ''}
@@ -173,17 +196,19 @@ Best hours to text: ${hours}
 Top industries: ${(briefing.topIndustries || []).map(i => i.industry).join(', ') || 'n/a'}
 Top states: ${(briefing.topStates || []).map(s => s.label).join(', ') || 'n/a'}
 
-Opening texts by performance:
+Opening texts by performance on this source:
 ${tplLines}
 
 Sample positive replies: ${JSON.stringify(clipList(briefing.samples?.positive || [], 8))}
 Sample negative replies: ${JSON.stringify(clipList(briefing.samples?.negative || [], 8))}
 Sample STOP/opt-out replies: ${JSON.stringify(clipList(briefing.samples?.opt_out || [], 8))}
 
-Each template must include the word funding, underwriting, or bank statement(s). No generic hellos.
+${fullPacks
+  ? 'Each template must include funding, underwriting, or bank statement(s).'
+  : 'Stay in this source\'s voice. Do not copy underwriter scripts from other sources.'}
 
 Return JSON:
-{"reasoning":"what the last ${briefing.days} days show and what you changed, 3-6 sentences",
+{"reasoning":"what the last ${briefing.days} days show for ${sourceLabel} and what you changed, 3-6 sentences",
 "logic":["specific data-backed bullet","..."],
 "templates":["sms 1","sms 2","sms 3","sms 4","sms 5"]}`,
       },
@@ -196,7 +221,11 @@ Return JSON:
   const templates = Array.isArray(parsed?.templates)
     ? (parsed.templates as unknown[])
       .map(t => String(t || '').trim())
-      .filter(t => t && /funding|underwrit|bank statement/i.test(t))
+      .filter(t => {
+        if (!t) return false;
+        if (!fullPacks) return true;
+        return /funding|underwrit|bank statement/i.test(t);
+      })
       .slice(0, 8)
     : [];
   if (templates.length < 1) {
@@ -207,15 +236,17 @@ Return JSON:
     ? (parsed.logic as unknown[]).map(t => String(t || '').trim()).filter(Boolean).slice(0, 8)
     : [];
   const reasoning = String(parsed?.reasoning || '').trim()
-    || 'Wrote shorter question-first texts from recent reply and opt-out rates.';
+    || `Wrote texts from recent ${sourceLabel} reply and opt-out rates.`;
 
   return {
-    id: OPTIMIZED_PACK_ID,
-    name: OPTIMIZED_PACK_NAME,
+    id: optimizedPackId(briefing.sourceKey),
+    name: optimizedPackName(sourceLabel),
     templates,
     reasoning,
     logic,
     generatedAt: new Date().toISOString(),
     days: briefing.days,
+    sourceKey: briefing.sourceKey,
+    sourceLabel,
   };
 }

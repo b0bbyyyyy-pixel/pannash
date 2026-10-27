@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { name, description, folderName, parentListId } = await req.json();
+    const { name, description, folderName, parentListId, sourceCategory } = await req.json();
 
     if (!name || typeof name !== 'string') {
       return NextResponse.json({ error: 'Name is required' }, { status: 400 });
@@ -35,6 +35,8 @@ export async function POST(req: NextRequest) {
       name,
       description: description || null,
     };
+    const source = String(sourceCategory || '').trim();
+    if (source) row.source_category = source;
     if (folderName && typeof folderName === 'string' && folderName.trim()) {
       row.folder_name = folderName.trim();
     }
@@ -42,11 +44,15 @@ export async function POST(req: NextRequest) {
       row.parent_list_id = parentListId;
     }
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('lead_lists')
       .insert(row)
       .select()
       .single();
+    if (error && /source_category/i.test(error.message || '')) {
+      const { source_category: _drop, ...withoutSource } = row;
+      ({ data, error } = await supabase.from('lead_lists').insert(withoutSource).select().single());
+    }
 
     if (error) {
       console.error('Error creating lead list:', error);

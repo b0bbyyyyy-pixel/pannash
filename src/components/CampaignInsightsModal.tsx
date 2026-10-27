@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { OptimizedPack } from '@/lib/smsDrip/optimizeTemplates';
+import { BUILTIN_LEAD_SOURCES } from '@/lib/smsDrip/leadSources';
 
 type Insights = {
   name: string;
@@ -28,6 +29,9 @@ type Insights = {
   }[];
   failures: { error: string; count: number }[];
   campaigns?: number;
+  sourceKey?: string;
+  sourceLabel?: string;
+  sources?: { key: string; label: string; campaigns: number; sent: number }[];
   topStates?: { state: string; label: string; replies: number; share: number }[];
   topAreaCodes?: {
     areaCode: string;
@@ -161,6 +165,7 @@ export default function CampaignInsightsModal({
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState('Docs In');
   const [days, setDays] = useState<'30' | '60' | '90' | 'all'>('30');
+  const [source, setSource] = useState('');
   const [tz] = useState(() => {
     try {
       return Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
@@ -179,7 +184,7 @@ export default function CampaignInsightsModal({
     setData(null);
     setError(null);
     const url = overview
-      ? `/api/sms/campaign-insights?days=${days}&tz=${encodeURIComponent(tz)}`
+      ? `/api/sms/campaign-insights?days=${days}&tz=${encodeURIComponent(tz)}${source ? `&source=${encodeURIComponent(source)}` : ''}`
       : `/api/sms/campaign-insights?listId=${encodeURIComponent(listId || '')}&tz=${encodeURIComponent(tz)}`;
     const ctrl = new AbortController();
     const timer = window.setTimeout(() => ctrl.abort(), 25_000);
@@ -205,12 +210,23 @@ export default function CampaignInsightsModal({
       })
       .finally(() => window.clearTimeout(timer));
     return () => { dead = true; ctrl.abort(); };
-  }, [listId, overview, days, tz]);
+  }, [listId, overview, days, tz, source]);
+
+  useEffect(() => {
+    setOptLoaded(false);
+    setOptimized(null);
+    setOptError(null);
+  }, [source]);
 
   useEffect(() => {
     if (!overview || pane !== 'optimization' || optLoaded) return;
+    if (!source) {
+      setOptimized(null);
+      setOptLoaded(true);
+      return;
+    }
     let dead = false;
-    fetch('/api/sms/optimized-templates', { cache: 'no-store' })
+    fetch(`/api/sms/optimized-templates?source=${encodeURIComponent(source)}`, { cache: 'no-store' })
       .then(r => r.json())
       .then(d => {
         if (dead) return;
@@ -220,7 +236,7 @@ export default function CampaignInsightsModal({
       .catch(() => {})
       .finally(() => { if (!dead) setOptLoaded(true); });
     return () => { dead = true; };
-  }, [overview, pane, optLoaded]);
+  }, [overview, pane, optLoaded, source]);
 
   const runOptimize = async (insights: Insights) => {
     setOptBusy(true);
@@ -231,6 +247,7 @@ export default function CampaignInsightsModal({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           days: days === 'all' ? 30 : Number(days),
+          source: source || insights.sourceKey,
           insights,
         }),
       });
@@ -245,11 +262,20 @@ export default function CampaignInsightsModal({
   };
 
   useEffect(() => {
-    if (!overview || pane !== 'optimization' || !data || !optLoaded || optimized || optBusy) return;
+    if (!overview || pane !== 'optimization' || !source || !data || !optLoaded || optimized || optBusy) return;
     void runOptimize(data);
     // Write Optimized the first time this tab is opened.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overview, pane, data, optLoaded]);
+
+  const sourceChoices = useMemo(() => {
+    const fromData = data?.sources ?? [];
+    const seen = new Set(fromData.map(s => s.key));
+    const extras = BUILTIN_LEAD_SOURCES
+      .filter(s => !seen.has(s.key))
+      .map(s => ({ key: s.key, label: s.label, campaigns: 0, sent: 0 }));
+    return [...fromData.filter(s => s.key), ...extras];
+  }, [data?.sources]);
 
   const mixTotal = data ? data.mix.positive + data.mix.negative + data.mix.opt_out + data.mix.other : 0;
   const statusCount = data ? (data.statusCounts[status] ?? 0) : 0;
@@ -266,16 +292,28 @@ export default function CampaignInsightsModal({
           <div>
             <h3 className="font-bold text-[#1a1a1a]">Campaign insights</h3>
             {overview ? (
-              <select
-                value={days}
-                onChange={e => setDays(e.target.value as typeof days)}
-                className="mt-1 text-xs text-[#6b6b6b] bg-transparent border-0 border-b border-[#e5e5e5] py-0.5 pr-4 focus:outline-none focus:border-[#1a1a1a]"
-              >
-                <option value="30">Last 30 days</option>
-                <option value="60">Last 60 days</option>
-                <option value="90">Last 90 days</option>
-                <option value="all">All time</option>
-              </select>
+              <div className="mt-1 flex flex-wrap items-center gap-3">
+                <select
+                  value={source}
+                  onChange={e => setSource(e.target.value)}
+                  className="text-xs text-[#6b6b6b] bg-transparent border-0 border-b border-[#e5e5e5] py-0.5 pr-4 focus:outline-none focus:border-[#1a1a1a]"
+                >
+                  <option value="">All sources</option>
+                  {sourceChoices.map(s => (
+                    <option key={s.key} value={s.key}>{s.label}</option>
+                  ))}
+                </select>
+                <select
+                  value={days}
+                  onChange={e => setDays(e.target.value as typeof days)}
+                  className="text-xs text-[#6b6b6b] bg-transparent border-0 border-b border-[#e5e5e5] py-0.5 pr-4 focus:outline-none focus:border-[#1a1a1a]"
+                >
+                  <option value="30">Last 30 days</option>
+                  <option value="60">Last 60 days</option>
+                  <option value="90">Last 90 days</option>
+                  <option value="all">All time</option>
+                </select>
+              </div>
             ) : (
               <p className="text-xs text-[#6b6b6b] mt-0.5">{data?.name || campaignName}</p>
             )}
@@ -308,8 +346,33 @@ export default function CampaignInsightsModal({
         <div className="px-5 py-4 overflow-y-auto space-y-4">
           {overview && pane === 'optimization' ? (
             <>
+              {!source ? (
+                <div>
+                  <p className="text-sm text-[#1a1a1a] leading-relaxed mb-3">
+                    Optimization is per lead source. Pick one so texts are not mixed across AI Full Packs, New Data, and the rest.
+                  </p>
+                  <div className="divide-y divide-[#f0f0f0]">
+                    {sourceChoices.filter(s => s.key && s.key !== 'uncategorized').map(s => (
+                      <button
+                        key={s.key}
+                        type="button"
+                        onClick={() => setSource(s.key)}
+                        className="flex w-full items-baseline justify-between gap-3 py-2 text-left"
+                      >
+                        <span className="text-sm text-[#1a1a1a]">{s.label}</span>
+                        <span className="text-[11px] text-[#9b9b9b] tabular-nums">
+                          {s.campaigns} campaign{s.campaigns === 1 ? '' : 's'} · {s.sent} sent
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+              <>
               <div className="flex items-baseline justify-between gap-3">
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-[#9b9b9b]">Optimized</div>
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-[#9b9b9b]">
+                  Optimized · {data?.sourceLabel || 'Source'}
+                </div>
                 <button
                   type="button"
                   onClick={() => data && runOptimize(data)}
@@ -354,6 +417,8 @@ export default function CampaignInsightsModal({
                   {!data ? 'Loading campaign stats…' : 'No optimized set yet.'}
                 </p>
               ) : null}
+            </>
+              )}
             </>
           ) : (
             <>
