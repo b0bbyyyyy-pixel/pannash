@@ -70,12 +70,14 @@ export function sourceKeyFromOptimizedId(id: string) {
   return '';
 }
 
+type ListSourceRow = { id: string; name: string; key: string; label: string; stored: boolean };
+
 export async function loadLeadListSources(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase: any,
   userId: string,
 ): Promise<{
-  lists: { id: string; name: string; key: string; label: string; stored: boolean }[];
+  lists: ListSourceRow[];
   columnReady: boolean;
 }> {
   let columnReady = true;
@@ -87,7 +89,10 @@ export async function loadLeadListSources(
     columnReady = false;
     res = await supabase.from('lead_lists').select('id, name').eq('user_id', userId);
   }
-  const lists = (res.data ?? []).map((row: { id: string; name?: string | null; source_category?: string | null }) => {
+  const rows: { id: string; name?: string | null; source_category?: string | null }[] = Array.isArray(res.data)
+    ? res.data
+    : [];
+  const lists: ListSourceRow[] = rows.map(row => {
     const source = resolveListSource(row);
     return {
       id: row.id,

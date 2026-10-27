@@ -50,7 +50,8 @@ export async function POST(req: NextRequest) {
       .select()
       .single();
     if (error && /source_category/i.test(error.message || '')) {
-      const { source_category: _drop, ...withoutSource } = row;
+      const withoutSource = { ...row };
+      delete withoutSource.source_category;
       ({ data, error } = await supabase.from('lead_lists').insert(withoutSource).select().single());
     }
 
