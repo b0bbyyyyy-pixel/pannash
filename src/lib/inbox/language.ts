@@ -235,10 +235,10 @@ export async function ensureLeadSmsLanguage(
 
 /** Fill English glosses on inbound rows that predate the language columns. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function backfillThreadLanguage(
+export async function backfillThreadLanguage<T extends ThreadBit>(
   supabase: any,
-  args: { leadId: string; messages: ThreadBit[] },
-): Promise<ThreadBit[]> {
+  args: { leadId: string; messages: T[] },
+): Promise<T[]> {
   const messages = args.messages;
   if (!messages.length) return messages;
   const lang = await ensureLeadSmsLanguage(supabase, args.leadId, messages);
