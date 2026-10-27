@@ -1,4 +1,6 @@
 import { toE164 } from '@/lib/dialer/e164';
+import { isMissingSchema, warnMissingSchema } from '@/lib/casper/schema';
+import { normalizeLang } from '@/lib/inbox/languageDisplay';
 
 export type InboxSmsStatus = 'queued' | 'sent' | 'delivered' | 'read' | 'failed';
 
@@ -13,6 +15,9 @@ export type RecordOutboundSmsArgs = {
   sentBy?: 'user' | 'system' | 'casper' | 'calvin';
   bumpLastMessageAt?: boolean;
   existingMessageId?: string | null;
+  bodyOriginal?: string | null;
+  bodyEn?: string | null;
+  detectedLang?: string | null;
 };
 
 let warnedCalvinSentBy = false;
@@ -29,6 +34,23 @@ export function isPlaceholderSmsBody(body: string | null | undefined): boolean {
 
 function last10(raw: string | null | undefined): string {
   return String(raw ?? '').replace(/\D/g, '').slice(-10);
+}
+
+function languagePatch(args: RecordOutboundSmsArgs): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+  if (args.bodyOriginal) patch.body_original = args.bodyOriginal;
+  if (args.bodyEn) patch.body_en = args.bodyEn;
+  const lang = normalizeLang(args.detectedLang);
+  if (lang) patch.detected_lang = lang;
+  return patch;
+}
+
+function withoutLangCols(row: Record<string, unknown>) {
+  const rest = { ...row };
+  delete rest.body_original;
+  delete rest.body_en;
+  delete rest.detected_lang;
+  return rest;
 }
 
 function phoneVariants(raw: string): string[] {
@@ -74,10 +96,18 @@ export async function recordOutboundInboxSms(supabase: any, args: RecordOutbound
       error_message: args.errorMessage ?? null,
     };
     if (body) patch.body = body;
-    const { error } = await supabase
+    Object.assign(patch, languagePatch(args));
+    let { error } = await supabase
       .from('inbox_messages')
       .update(patch)
       .eq('id', args.existingMessageId);
+    if (error && isMissingSchema(error)) {
+      warnMissingSchema('inbox_messages.body_en', error);
+      ({ error } = await supabase
+        .from('inbox_messages')
+        .update(withoutLangCols(patch))
+        .eq('id', args.existingMessageId));
+    }
     if (error) console.error('[inbox] recordOutboundInboxSms update', error);
     // Status webhooks can insert a duplicate SID row before we attach the SID here.
     if (sid) {
@@ -97,14 +127,18 @@ export async function recordOutboundInboxSms(supabase: any, args: RecordOutbound
       .eq('twilio_sid', sid)
       .maybeSingle();
     if (existing) {
-      await supabase
-        .from('inbox_messages')
-        .update({
-          status: args.status,
-          error_message: args.errorMessage ?? null,
-          ...(body ? { body } : {}),
-        })
-        .eq('id', existing.id);
+      const sidPatch: Record<string, unknown> = {
+        status: args.status,
+        error_message: args.errorMessage ?? null,
+        ...(body ? { body } : {}),
+        ...languagePatch(args),
+      };
+      let { error } = await supabase.from('inbox_messages').update(sidPatch).eq('id', existing.id);
+      if (error && isMissingSchema(error)) {
+        warnMissingSchema('inbox_messages.body_en', error);
+        ({ error } = await supabase.from('inbox_messages').update(withoutLangCols(sidPatch)).eq('id', existing.id));
+      }
+      if (error) console.error('[inbox] recordOutboundInboxSms sid update', error);
       return { messageId: existing.id, conversationId: existing.conversation_id };
     }
   }
@@ -156,6 +190,7 @@ export async function recordOutboundInboxSms(supabase: any, args: RecordOutbound
     sent_by: args.sentBy ?? 'system',
     twilio_sid: sid,
     error_message: args.errorMessage ?? null,
+    ...languagePatch(args),
   };
 
   let { data: msg, error } = await supabase
@@ -163,6 +198,15 @@ export async function recordOutboundInboxSms(supabase: any, args: RecordOutbound
     .insert(row)
     .select('id')
     .single();
+
+  if (error && isMissingSchema(error)) {
+    warnMissingSchema('inbox_messages.body_en', error);
+    ({ data: msg, error } = await supabase
+      .from('inbox_messages')
+      .insert(withoutLangCols(row))
+      .select('id')
+      .single());
+  }
 
   if (error && error.code === '23514' && args.sentBy === 'casper') {
     warnCalvinSentByOnce();

@@ -8,7 +8,8 @@ import { last10, normPersonName } from '@/lib/leads/phone';
 import { countAttachmentsByLead } from '@/lib/leads/attachmentCounts';
 import { getRequestUser } from '@/lib/auth/getRequestUser';
 
-const LEAD_COLS = 'id, name, company, phone, email, value, stage, month_key, last_contact, created_at, in_pipeline, lead_status, list_id, underwriting_data, sms_opt_out, casper_enabled';
+const LEAD_COLS = 'id, name, company, phone, email, value, stage, month_key, last_contact, created_at, in_pipeline, lead_status, list_id, underwriting_data, sms_opt_out, casper_enabled, sms_language';
+const LEAD_COLS_NO_LANG = 'id, name, company, phone, email, value, stage, month_key, last_contact, created_at, in_pipeline, lead_status, list_id, underwriting_data, sms_opt_out, casper_enabled';
 const LEAD_COLS_FALLBACK = 'id, name, company, phone, email, value, stage, month_key, last_contact, created_at, in_pipeline, lead_status, list_id, underwriting_data';
 const CONV_COLS = 'id, lead_id, last_message_at, last_inbound_at, last_direction, last_message_preview, unread_count';
 const LIMIT = 40;
@@ -43,6 +44,11 @@ export async function GET(req: NextRequest) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async function selectLeads(build: (cols: string) => any) {
       let { data, error } = await build(LEAD_COLS);
+      if (error) {
+        const mid = await build(LEAD_COLS_NO_LANG);
+        data = mid.data;
+        error = mid.error;
+      }
       if (error) {
         const fallback = await build(LEAD_COLS_FALLBACK);
         data = fallback.data;

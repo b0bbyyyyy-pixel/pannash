@@ -4,6 +4,7 @@ import { cookies } from 'next/headers';
 import { getTwilioCreds } from '@/lib/telephony/twilio';
 import { sendTwilioSms } from '@/lib/telephony/sms';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
+import { ensureLeadSmsLanguage, insertInboxMessage, languageColumns, prepareOutboundForLead } from '@/lib/inbox/language';
 import { applySmsOptOutFromFailure, markPhoneDnc, smsSendBlockReason } from '@/lib/leads/dnc';
 import { cancelPendingOutbox } from '@/lib/casper/outbox';
 
@@ -56,19 +57,21 @@ export async function POST(req: NextRequest) {
 
   if (!conv) return NextResponse.json({ error: 'Could not create conversation' }, { status: 500 });
 
-  const preview = body.length > 100 ? body.slice(0, 97) + '…' : body;
-  const { data: msg, error: msgErr } = await supabase
-    .from('inbox_messages')
-    .insert({
-      conversation_id: conv.id,
-      lead_id: leadId,
-      direction: 'outbound',
-      body: body.trim(),
-      status: 'queued',
-      sent_by: 'user',
-    })
-    .select()
-    .single();
+  const draft = body.trim();
+  const leadLang = await ensureLeadSmsLanguage(supabase, leadId);
+  const prep = await prepareOutboundForLead(draft, leadLang);
+  console.log('[sms-lang] outbound', { leadId, lang: prep.lang, translated: prep.translated });
+  const sendBody = prep.body;
+  const preview = sendBody.length > 100 ? sendBody.slice(0, 97) + '…' : sendBody;
+  const { data: msg, error: msgErr } = await insertInboxMessage(supabase, {
+    conversation_id: conv.id,
+    lead_id: leadId,
+    direction: 'outbound',
+    body: sendBody,
+    status: 'queued',
+    sent_by: 'user',
+    ...languageColumns(prep),
+  });
 
   if (msgErr || !msg) {
     return NextResponse.json({ error: msgErr?.message ?? 'Insert failed' }, { status: 500 });
@@ -97,7 +100,7 @@ export async function POST(req: NextRequest) {
   const creds = await getTwilioCreds(supabase, user.id);
   if (!creds) {
     return NextResponse.json({
-      message: msg,
+      message: { ...msg, ...languageColumns(prep) },
       status: 'queued',
       noConnection: true,
       error: 'No Twilio connection — message saved but not sent.',
@@ -105,7 +108,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const sent = await sendTwilioSms(creds, lead.phone, body.trim());
+    const sent = await sendTwilioSms(creds, lead.phone, sendBody);
     await applySmsOptOutFromFailure(supabase, {
       userId: user.id,
       phone: lead.phone,
@@ -114,15 +117,18 @@ export async function POST(req: NextRequest) {
     });
 
     await recordOutboundInboxSms(supabase, {
-      existingMessageId: msg.id,
+      existingMessageId: msg.id as string,
       userId: user.id,
       leadId: leadId,
       toPhone: lead.phone,
-      body: body.trim(),
+      body: sendBody,
       twilioSid: sent.sid,
       status: sent.status,
       errorMessage: sent.error ?? null,
       sentBy: 'user',
+      bodyOriginal: prep.bodyOriginal,
+      bodyEn: prep.bodyEn,
+      detectedLang: prep.lang,
     });
 
     if (sent.status !== 'failed') {
@@ -134,7 +140,13 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({
-      message: { ...msg, status: sent.status, twilio_sid: sent.sid, error_message: sent.error ?? null },
+      message: {
+        ...msg,
+        status: sent.status,
+        twilio_sid: sent.sid,
+        error_message: sent.error ?? null,
+        ...languageColumns(prep),
+      },
       ...(sent.error ? { error: sent.error } : {}),
     });
   } catch (err: unknown) {

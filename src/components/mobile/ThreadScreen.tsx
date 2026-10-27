@@ -6,6 +6,7 @@ import FullCrmLink from '@/components/mobile/FullCrmLink';
 import InboundPhoto from '@/components/mobile/InboundPhoto';
 import { dayStamp, initial } from '@/components/mobile/format';
 import { outboundSmsReceipt } from '@/lib/inbox/smsReceipt';
+import { inboxEnglishGloss, sentInLabel } from '@/lib/inbox/languageDisplay';
 import { useSync } from '@/lib/sync/SyncProvider';
 import { usePolling } from '@/lib/sync/usePolling';
 
@@ -20,6 +21,9 @@ type Msg = {
   created_at: string;
   pending?: boolean;
   media_items?: MediaItem[] | null;
+  body_en?: string | null;
+  body_original?: string | null;
+  detected_lang?: string | null;
 };
 
 type Tpl = { id: string; name: string; body: string };
@@ -201,6 +205,8 @@ export default function ThreadScreen() {
           const receipt = msg.id === lastOutboundId && (receiptStatus === 'delivered' || receiptStatus === 'read');
           const photos = (msg.media_items ?? []).filter(item => item?.sid || item?.path);
           const caption = msg.body === 'Attachment: 1 Photo' && photos.length ? '' : msg.body;
+          const gloss = !out ? inboxEnglishGloss(msg) : null;
+          const langSent = out ? sentInLabel(msg) : null;
           return (
             <div key={msg.id}>
               {showDay && (
@@ -234,6 +240,12 @@ export default function ThreadScreen() {
                     {caption}
                   </div>
                   ) : null}
+                  {gloss && (
+                    <p className="mt-0.5 px-1 text-[11px] text-[#8E8E93]">EN: {gloss}</p>
+                  )}
+                  {langSent && (
+                    <p className="mt-0.5 px-1 text-[11px] text-[#8E8E93]">{langSent}</p>
+                  )}
                   {out && (
                     <p className="mt-0.5 px-1 text-[11px] text-[#8E8E93]">Sent as Text Message</p>
                   )}

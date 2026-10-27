@@ -5,6 +5,8 @@ import { classifyDoc } from '@/lib/casper/docs';
 import { isCasperSender } from '@/lib/casper/sender';
 import { dealStageFromLead, type DealStage } from '@/lib/casper/stage';
 import { isMissingSchema, warnMissingSchema } from '@/lib/casper/schema';
+import { languageLabel } from '@/lib/inbox/languageDisplay';
+import { ensureLeadSmsLanguage } from '@/lib/inbox/language';
 import { buildFundingApplication } from '@/lib/fundingApplication';
 import { formatLocal, isInSendWindow, nextWindowStart, zoneForLocation } from '@/lib/smsDrip/timezones';
 
@@ -100,6 +102,7 @@ export type LeadContext = {
     businessName: string;
     lastGuard: string | null;
     planNote: string | null;
+    smsLanguage: string | null;
   };
 };
 
@@ -113,7 +116,7 @@ export async function buildLeadContext(
     stage: 'NEW',
     facts: {
       stage: 'NEW', leadStatus: '', phase: 'chatting', enabled: false,
-      tz: 'America/New_York', inWindow: true, businessName: '', lastGuard: null, planNote: null,
+      tz: 'America/New_York', inWindow: true, businessName: '', lastGuard: null, planNote: null, smsLanguage: null,
     },
   });
 
@@ -202,10 +205,16 @@ export async function buildLeadContext(
 
     const lastGuard = state?.last_guard_result ? String(state.last_guard_result) : null;
     const planNote = state?.plan_note ? String(state.plan_note) : null;
+    const smsLanguage = await ensureLeadSmsLanguage(supabase, args.leadId, thread);
+    const langName = languageLabel(smsLanguage);
+    const languageLine = smsLanguage
+      ? `LANGUAGE: ${langName || smsLanguage} (${smsLanguage}). Write sms in this language. thinking and plan_note stay English.`
+      : 'LANGUAGE: unknown (detect from THREAD; default English). thinking and plan_note stay English.';
 
     const lines = [
       `NOW: ${nowLocal} (${tz}) | ET ${nowEt} | send window ${win.start}–${win.end} ${inWindow ? 'OPEN' : 'CLOSED'} | next open ${formatLocal(nextOpen, tz)}`,
       `STAGE: ${derived.stage} | lead_status=${lead.lead_status || '(none)'} | casper phase=${state?.phase || 'chatting'}${state?.paused_reason ? ` paused=${state.paused_reason}` : ''} | AI enabled: ${enabled ? 'yes' : 'no'} (${override}) | business=${biz.name || '(unset)'}`,
+      languageLine,
       `FINANCIALS: ${financialBits.join('; ') || '(none)'}`,
       `READINESS BLOCKERS: ${blockers.join('; ') || 'none'}`,
       `DOCS: application=${kinds.application} bank=${kinds.bank} other=${kinds.other} newest=${newestFile ? fmtWhen(newestFile, tz) : 'none'}`,
@@ -228,6 +237,7 @@ export async function buildLeadContext(
         businessName: biz.name,
         lastGuard,
         planNote,
+        smsLanguage,
       },
     };
   } catch (err) {

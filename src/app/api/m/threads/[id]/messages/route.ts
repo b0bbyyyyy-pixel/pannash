@@ -3,6 +3,7 @@ import { mobileClient, unauthorized } from '@/lib/mobile/session';
 import { getTwilioCreds } from '@/lib/telephony/twilio';
 import { sendTwilioSms, refreshSmsStatuses } from '@/lib/telephony/sms';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
+import { backfillThreadLanguage, ensureLeadSmsLanguage, insertInboxMessage, languageColumns, prepareOutboundForLead } from '@/lib/inbox/language';
 import { backfillInboundPhotos } from '@/lib/inbox/saveInboundMms';
 import { applySmsOptOutFromFailure, markPhoneDnc, smsSendBlockReason } from '@/lib/leads/dnc';
 import { cancelPendingOutbox } from '@/lib/casper/outbox';
@@ -62,8 +63,13 @@ export async function GET(
   };
 
   let { data, error } = await runQuery(
-    'id, direction, body, status, error_message, created_at, twilio_sid, media_items',
+    'id, direction, body, status, error_message, created_at, twilio_sid, media_items, body_en, body_original, detected_lang',
   );
+  if (error) {
+    const mid = await runQuery('id, direction, body, status, error_message, created_at, twilio_sid, media_items');
+    data = mid.data;
+    error = mid.error;
+  }
   if (error && /media_items/i.test(error.message)) {
     const retry = await runQuery('id, direction, body, status, error_message, created_at, twilio_sid');
     data = retry.data;
@@ -80,6 +86,9 @@ export async function GET(
     created_at: string;
     twilio_sid: string | null;
     media_items?: { sid?: string; path?: string; type: string; savedAt?: string | null }[] | null;
+    body_en?: string | null;
+    body_original?: string | null;
+    detected_lang?: string | null;
   };
   let messages: ThreadRow[] = Array.isArray(data) ? data as unknown as ThreadRow[] : [];
   if (!cursor && (conv.unread_count ?? 0) > 0) {
@@ -107,6 +116,7 @@ export async function GET(
   const nextCursor = messages.length === PAGE ? messages[messages.length - 1].created_at : null;
   messages = [...messages].reverse();
   messages = await backfillInboundPhotos(supabase, user.id, messages);
+  messages = await backfillThreadLanguage(supabase, { leadId, messages });
 
   return NextResponse.json({
     messages,
@@ -153,19 +163,24 @@ export async function POST(
   }
   if (!conv) return NextResponse.json({ error: 'Could not open thread' }, { status: 500 });
 
-  const preview = text.length > 100 ? `${text.slice(0, 97)}…` : text;
-  const { data: msg, error: msgErr } = await supabase
-    .from('inbox_messages')
-    .insert({
+  const leadLang = await ensureLeadSmsLanguage(supabase, leadId);
+  const prep = await prepareOutboundForLead(text, leadLang);
+  console.log('[sms-lang] outbound', { leadId, lang: prep.lang, translated: prep.translated });
+  const sendBody = prep.body;
+  const preview = sendBody.length > 100 ? `${sendBody.slice(0, 97)}…` : sendBody;
+  const { data: msg, error: msgErr } = await insertInboxMessage(
+    supabase,
+    {
       conversation_id: conv.id,
       lead_id: leadId,
       direction: 'outbound',
-      body: text,
+      body: sendBody,
       status: 'queued',
       sent_by: 'user',
-    })
-    .select('id, direction, body, status, error_message, created_at, twilio_sid')
-    .single();
+      ...languageColumns(prep),
+    },
+    'id, direction, body, status, error_message, created_at, twilio_sid, body_en, body_original, detected_lang',
+  );
 
   if (msgErr || !msg) {
     return NextResponse.json({ error: msgErr?.message ?? 'Insert failed' }, { status: 500 });
@@ -180,13 +195,13 @@ export async function POST(
   const creds = await getTwilioCreds(supabase, user.id);
   if (!creds) {
     return NextResponse.json({
-      message: { ...msg, status: 'failed', error_message: 'No Twilio connection' },
+      message: { ...msg, status: 'failed', error_message: 'No Twilio connection', ...languageColumns(prep) },
       error: 'No Twilio connection — message saved but not sent.',
     });
   }
 
   try {
-    const sent = await sendTwilioSms(creds, lead.phone, text);
+    const sent = await sendTwilioSms(creds, lead.phone, sendBody);
     await applySmsOptOutFromFailure(supabase, {
       userId: user.id,
       phone: lead.phone,
@@ -194,15 +209,18 @@ export async function POST(
       error: sent.error,
     });
     await recordOutboundInboxSms(supabase, {
-      existingMessageId: msg.id,
+      existingMessageId: msg.id as string,
       userId: user.id,
       leadId,
       toPhone: lead.phone,
-      body: text,
+      body: sendBody,
       twilioSid: sent.sid,
       status: sent.status,
       errorMessage: sent.error ?? null,
       sentBy: 'user',
+      bodyOriginal: prep.bodyOriginal,
+      bodyEn: prep.bodyEn,
+      detectedLang: prep.lang,
     });
     if (sent.status !== 'failed') {
       await supabase.from('leads').update({
@@ -212,7 +230,13 @@ export async function POST(
       await cancelPendingOutbox(supabase, { leadId, userId: user.id, reason: 'owner_replied' });
     }
     return NextResponse.json({
-      message: { ...msg, status: sent.status, twilio_sid: sent.sid, error_message: sent.error ?? null },
+      message: {
+        ...msg,
+        status: sent.status,
+        twilio_sid: sent.sid,
+        error_message: sent.error ?? null,
+        ...languageColumns(prep),
+      },
       ...(sent.error ? { error: sent.error } : {}),
     });
   } catch (err: unknown) {

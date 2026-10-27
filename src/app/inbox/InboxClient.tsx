@@ -11,6 +11,7 @@ import { isCasperSender } from '@/lib/casper/sender';
 import InboundPhoto from '@/components/mobile/InboundPhoto';
 import { getPhoneLocation } from '@/lib/phoneLocation';
 import { outboundSmsReceipt } from '@/lib/inbox/smsReceipt';
+import { inboxEnglishGloss, sentInLabel } from '@/lib/inbox/languageDisplay';
 import {
   BACK_TO_PIPELINE_MSG,
   LEAD_DELETED_MSG,
@@ -88,6 +89,9 @@ interface InboxMessage {
   error_message: string | null;
   created_at: string;
   media_items?: { sid?: string; path?: string; type: string; savedAt?: string | null }[] | null;
+  body_en?: string | null;
+  body_original?: string | null;
+  detected_lang?: string | null;
 }
 
 interface PhoneConnection {
@@ -1568,6 +1572,8 @@ export default function InboxClient({
                           selectedLead?.email &&
                           inboundEmail === selectedLead.email.trim().toLowerCase()
                         );
+                        const gloss = msg.direction === 'inbound' ? inboxEnglishGloss(msg) : null;
+                        const langSent = msg.direction === 'outbound' ? sentInLabel(msg) : null;
                         return (
                         <div
                           key={msg.id}
@@ -1605,10 +1611,18 @@ export default function InboxClient({
                             {emailPushed ? <SmsEmailCheck /> : null}
                             </div>
                             ) : null}
+                            {gloss && (
+                              <span className="text-[10px] text-gray-400 px-1 leading-snug">
+                                EN: {gloss}
+                              </span>
+                            )}
                             <div className={`flex items-center gap-1.5 px-1 ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}>
                               <span className="text-[10px] text-gray-400">{msgTime(msg.created_at)}</span>
                               {msg.direction === 'outbound' && isCasperSender(msg.sent_by) && (
                                 <span className="text-[10px] text-gray-400">Casper</span>
+                              )}
+                              {langSent && (
+                                <span className="text-[10px] text-gray-400">{langSent}</span>
                               )}
                               {msg.direction === 'outbound' && (
                                 <>

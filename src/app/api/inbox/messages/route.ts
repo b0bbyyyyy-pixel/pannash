@@ -8,6 +8,7 @@ import { isPlaceholderSmsBody, recoverOutboundSmsBody } from '@/lib/inbox/record
 import { getRequestUser } from '@/lib/auth/getRequestUser';
 import { findSiblingLeadIds } from '@/lib/leads/findByPhone';
 import { extractEmailFromSms, runUpdateLeadEmailTool } from '@/lib/casper/updateLeadEmail';
+import { backfillThreadLanguage } from '@/lib/inbox/language';
 
 export async function GET(req: NextRequest) {
   try {
@@ -106,6 +107,7 @@ export async function GET(req: NextRequest) {
     }
 
     messages = await backfillInboundPhotos(supabase, user.id, messages);
+    messages = await backfillThreadLanguage(supabase, { leadId, messages });
 
     const realBySid = new Set(
       messages

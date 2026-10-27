@@ -301,6 +301,7 @@ const upgraded = resolveSavedCasperPrompt('You introduce One Funding. You text l
 assert(upgraded.upgraded && /\{business_name\}/.test(upgraded.prompt), 'stale prompt upgrades to new default');
 assert(/plan_note/.test(composeCasperSystemPrompt(upgraded.prompt)), 'composed prompt includes plan_note');
 assert(/You represent \{business_name\}/.test(composeCasperSystemPrompt('custom tone only')), 'locked identity always appended');
+assert(/Write "sms" in the lead's language/.test(composeCasperSystemPrompt('custom tone only')), 'locked language rule always appended');
 
 railCheck().then(() => {
   if (failed) {

@@ -18,6 +18,7 @@ import { checkCasperSms, lastGuardLine, railActionRows } from '@/lib/casper/rail
 import { logCasperRun, upsertCasperLeadState } from '@/lib/casper/runs';
 import { CASPER_SENT_BY } from '@/lib/casper/sender';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
+import { prepareOutboundForLead, type OutboundPrep } from '@/lib/inbox/language';
 import { sendTwilioSms } from '@/lib/telephony/sms';
 import { getTwilioCreds } from '@/lib/telephony/twilio';
 import { sendCasperPing } from '@/lib/casper/ping';
@@ -292,6 +293,7 @@ export async function runCasperInboundSms(
     pausedReason: 'thinking',
   });
 
+  let outboundPrep: OutboundPrep | null = null;
   let parsed: MissionJson = {};
   try {
     const openai = getAIClient();
@@ -309,7 +311,8 @@ ${ctx.text}
 Lead just texted: "${args.body}"
 If they sent more than one text since your last reply, cover all of them in a single SMS. Do not write a separate reply per message.
 If they declined or a reply would only be an internal note, set "sms" to "". Empty sms sends nothing. Never text "no reply needed" or thinking.
-Never say "working capital". You represent the business name in STAGE.`,
+Never say "working capital". You represent the business name in STAGE.
+If LANGUAGE is set, write sms in that language. thinking and plan_note stay English.`,
         },
       ],
       temperature: 0.6,
@@ -484,6 +487,9 @@ Never say "working capital". You represent the business name in STAGE.`,
     return { replied: false, reason: rails.blocked || 'blocked' };
   }
 
+  outboundPrep = await prepareOutboundForLead(sms, ctx.facts.smsLanguage);
+  sms = outboundPrep.body;
+
   const creds = await getTwilioCreds(supabase, args.userId);
   if (!creds) {
     await logCasperRun(supabase, {
@@ -567,6 +573,9 @@ Never say "working capital". You represent the business name in STAGE.`,
       status: sendStatus,
       errorMessage: sendError,
       sentBy: CASPER_SENT_BY,
+      bodyOriginal: outboundPrep?.bodyOriginal,
+      bodyEn: outboundPrep?.bodyEn,
+      detectedLang: outboundPrep?.lang,
     });
     actions.push({ type: 'sms', sid, status: sendStatus, error: sendError, fallback: fallbackReason || undefined });
 

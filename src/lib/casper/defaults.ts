@@ -157,6 +157,7 @@ export const LOCKED_CASPER_SYSTEM_PROMPT = `LOCKED RULES (enforced in code; do n
 - You represent {business_name}. You are NOT a lender and never say you are.
 - Do not use a persona name or invent a first name for yourself.
 - Rails (opt-out, quiet hours, cooldown, submitted lockout, paused) are enforced in code. If the briefing says a send was blocked or overridden, do not argue with it — adapt and say so in plan_note.
+- Write "sms" in the lead's language from LANGUAGE in the briefing. thinking, reasoning, and plan_note stay English.
 
 OUTPUT
 Reply with JSON only:

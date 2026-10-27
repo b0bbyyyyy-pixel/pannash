@@ -12,6 +12,7 @@ import { findUserByPingPhone, recordPingMessage } from '@/lib/casper/ping';
 import { runCasperPingReply } from '@/lib/casper/pingReply';
 import { findLeadByPhone as findPreferredLeadByPhone } from '@/lib/leads/findByPhone';
 import { extractEmailFromSms, runUpdateLeadEmailTool } from '@/lib/casper/updateLeadEmail';
+import { applyInboundLanguage } from '@/lib/inbox/language';
 import { formDataToParams, publicAppUrl, validateTwilioSignatureUrls } from '@/lib/telephony/twilio';
 
 export const maxDuration = 60;
@@ -376,6 +377,15 @@ export async function POST(req: NextRequest) {
     }
 
     after(async () => {
+      try {
+        await applyInboundLanguage(supabase, {
+          leadId: target.id,
+          body: storedBody,
+          messageSid: messageSid || null,
+        });
+      } catch (langErr) {
+        console.error('[SMS Webhook] language', langErr);
+      }
       try {
         const { data: casperSettings } = await supabase
           .from('user_settings')

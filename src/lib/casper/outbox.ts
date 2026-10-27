@@ -6,6 +6,7 @@ import { checkCasperSms, lastGuardLine, railActionRows } from '@/lib/casper/rail
 import { logCasperRun, upsertCasperLeadState } from '@/lib/casper/runs';
 import { CASPER_SENT_BY } from '@/lib/casper/sender';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
+import { readLeadSmsLanguage } from '@/lib/inbox/language';
 import { applySmsOptOutFromFailure, isSmsStopBody } from '@/lib/leads/dnc';
 import { casperSmsToSend, isClearSmsDecline } from '@/lib/casper/smsGuard';
 import { sendTwilioSms } from '@/lib/telephony/sms';
@@ -511,6 +512,7 @@ async function sendOneOutbox(supabase: any, raw: CasperOutboxRow): Promise<{ sen
     error: sendError,
   });
 
+  const detectedLang = await readLeadSmsLanguage(supabase, row.lead_id);
   await recordOutboundInboxSms(supabase, {
     userId: row.user_id,
     leadId: row.lead_id,
@@ -520,6 +522,7 @@ async function sendOneOutbox(supabase: any, raw: CasperOutboxRow): Promise<{ sen
     status: sendStatus,
     errorMessage: sendError,
     sentBy: CASPER_SENT_BY,
+    detectedLang,
   });
 
   const actions = [
