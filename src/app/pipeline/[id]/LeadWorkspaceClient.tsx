@@ -8,6 +8,7 @@ import { saveLeadStatusWrite } from '@/lib/pipeline/saveLeadStatus';
 import { toE164 } from '@/lib/dialer/e164';
 import { buildFundingApplication } from '@/lib/fundingApplication';
 import { isDocsComplete, isOffersComplete } from '@/lib/leads/menuComplete';
+import { dealStageFromLead, dealStageLabel } from '@/lib/casper/stage';
 import { useWebPhone } from '@/components/webphone/WebPhone';
 import LeadUpdatesTimeline from '@/components/LeadUpdatesTimeline';
 import LeadActionsMenu, { type LeadActionId } from '@/components/LeadActionsMenu';
@@ -2076,6 +2077,17 @@ export default function LeadWorkspaceClient({
                     <option value="">— Select —</option>
                     {dbStatuses.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
                   </select>
+                </div>
+
+                <div className="flex items-center gap-2 py-2 border-b border-[#f5f5f5]">
+                  <span className="text-xs text-[#9b9b9b] w-28 flex-shrink-0">Deal stage</span>
+                  <span className="flex-1 text-sm text-[#1a1a1a]">
+                    {dealStageLabel(dealStageFromLead({
+                      lead_status: lead.lead_status,
+                      in_pipeline: lead.in_pipeline,
+                      list_id: lead.list_id,
+                    }, submissions).stage) || '—'}
+                  </span>
                 </div>
 
                 {(lead.lead_status === 'Funded' || Boolean(ud.isFunded)) && (

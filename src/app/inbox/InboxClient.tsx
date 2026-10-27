@@ -303,7 +303,7 @@ export default function InboxClient({
   const lastThreadMsg = messages[messages.length - 1] ?? null;
   const [outboxByLead, setOutboxByLead] = useState<Record<string, { send_at: string; body: string }>>({});
   const [casperSkip, setCasperSkip] = useState<string | null>(null);
-  const [casperMeta, setCasperMeta] = useState<{ stage?: string | null; plan?: string | null; businessNameMissing?: boolean }>({});
+  const [casperMeta, setCasperMeta] = useState<{ plan?: string | null; businessNameMissing?: boolean }>({});
   const [nowTick, setNowTick] = useState(() => Date.now());
   const casperWaiting = !!(
     selectedLead &&
@@ -362,7 +362,6 @@ export default function InboxClient({
     fetch(`/api/leads/${selectedLeadId}/casper`)
       .then(r => r.json())
       .then(d => setCasperMeta({
-        stage: d.stage || null,
         plan: d.plan_note || null,
         businessNameMissing: !!d.business_name_missing,
       }))
@@ -1504,9 +1503,6 @@ export default function InboxClient({
                   >
                     Casper
                   </button>
-                  {casperMeta.stage && (
-                    <span className="text-[10px] text-[#9b9b9b]">{casperMeta.stage}</span>
-                  )}
                   {casperMeta.businessNameMissing && (
                     <span className="text-[10px] text-red-500">Set your business name in Settings.</span>
                   )}

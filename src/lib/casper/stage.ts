@@ -162,6 +162,20 @@ export function dealStageFromLead(
   return { stage: 'NEW', submittedAt, why: status ? `status:${status}` : 'empty' };
 }
 
+export function dealStageLabel(stage: DealStage | string | null | undefined): string {
+  switch (stage) {
+    case 'NEW': return 'New';
+    case 'DRIP': return 'Drip';
+    case 'ACTIVE': return 'Active';
+    case 'PENDING_SUBMISSION': return 'Pending submission';
+    case 'SUBMITTED': return 'Submitted';
+    case 'OFFER_RECEIVED': return 'Offer received';
+    case 'FUNDED': return 'Funded';
+    case 'DEAD': return 'Dead';
+    default: return '';
+  }
+}
+
 function earliest(isos: string[]) {
   if (!isos.length) return null;
   const sorted = [...isos].sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
