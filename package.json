@@ -6,7 +6,8 @@
     "dev": "NODE_OPTIONS='--max-old-space-size=4096' next dev --turbopack",
     "build": "NODE_OPTIONS='--max-old-space-size=6144' next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:casper": "npx tsx scripts/casper-foundation.test.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
