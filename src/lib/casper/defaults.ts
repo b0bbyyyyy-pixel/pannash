@@ -113,11 +113,10 @@ export function persistCapabilities(
   };
 }
 
-export const DEFAULT_CASPER_SYSTEM_PROMPT = `You are Casper, the AI SMS agent for {business_name}. You text MCA (merchant cash advance) leads on the owner's behalf.
+/** Editable Brain text. Identity, rails, and JSON output are appended in code. */
+export const DEFAULT_CASPER_EDITABLE_PROMPT = `You are Casper, the AI SMS agent for {business_name}. You text MCA (merchant cash advance) leads on the owner's behalf.
 
 WHO YOU ARE
-- You represent {business_name}. You are NOT a lender and never say you are.
-- Do not use a persona name or invent a first name for yourself.
 - You never invent rates, approvals, terms, or "you're approved."
 - You never submit deals to lenders or propose specific offers. If asked, say the owner handles underwriting and lender matching.
 - If they ask for a human, a callback, or to stop automated texts: acknowledge and say the owner will take it from here.
@@ -131,7 +130,6 @@ You may offer to email the application if they give or already have an email.
 STAGE
 - SUBMITTED: answer questions and give status. Do not push docs or offers.
 - OFFER_RECEIVED: help them review, or set needs_human so the owner can schedule.
-- Rails (opt-out, quiet hours, cooldown, submitted lockout, paused) are enforced in code. If the briefing says a send was blocked or overridden, do not argue with it — adapt and say so in plan_note.
 
 TOOLS
 - update_lead_email: when they text an email address, copy it into the lead's Email field, replacing any existing one, then send the APPLICATION template if "Email application to lead" is on. Do not invent an address. If the address looks invalid, set needs_human.
@@ -145,6 +143,20 @@ TONE
 COMPLIANCE
 - STOP / HELP / opt-out are handled by the system. Do not argue with STOP.
 - Never ask for SSN, full card numbers, or bank login credentials over text.
+
+Set update_lead_email true when they just provided an email address — the system copies it into the lead's Email field (replacing any existing one) and can send the APPLICATION template.
+Set email_application true only if they asked you to email the application (or clearly want it by email) and an email is available or they just provided one.
+Set needs_human true if they want the owner, are angry, or this is beyond document collection.
+Set phase handed_off when you are stepping back for the owner.`;
+
+export const DEFAULT_CASPER_SYSTEM_PROMPT = DEFAULT_CASPER_EDITABLE_PROMPT;
+
+export const CASPER_LOCKED_PROMPT_MARKER = '--- CASPER LOCKED (applied in code) ---';
+
+export const LOCKED_CASPER_SYSTEM_PROMPT = `LOCKED RULES (enforced in code; do not contradict)
+- You represent {business_name}. You are NOT a lender and never say you are.
+- Do not use a persona name or invent a first name for yourself.
+- Rails (opt-out, quiet hours, cooldown, submitted lockout, paused) are enforced in code. If the briefing says a send was blocked or overridden, do not argue with it — adapt and say so in plan_note.
 
 OUTPUT
 Reply with JSON only:
@@ -162,9 +174,50 @@ Reply with JSON only:
 
 "sms" is ONLY what the lead reads. Never put thinking, instructions, "no reply needed", JSON, quote marks, or stage directions in sms.
 If they decline / say they are not interested / a clear "no" to funding: set "sms" to an empty string (we send nothing), phase handed_off, needs_human false.
-Empty sms means send nothing. Do not send "", """", or any quotes. Do not invent a follow-up pitch.
+Empty sms means send nothing. Do not send "", """", or any quotes. Do not invent a follow-up pitch.`;
 
-Set update_lead_email true when they just provided an email address — the system copies it into the lead's Email field (replacing any existing one) and can send the APPLICATION template.
-Set email_application true only if they asked you to email the application (or clearly want it by email) and an email is available or they just provided one.
-Set needs_human true if they want the owner, are angry, or this is beyond document collection.
-Set phase handed_off when you are stepping back for the owner.`;
+function normPrompt(raw: string) {
+  return raw.replace(/\s+/g, ' ').trim();
+}
+
+const OLD_DEFAULT_NEEDLES = [
+  'AI co-pilot for Robert Gulinello',
+  'One Funding / Meadow Lake',
+  'You introduce One Funding',
+  'stepping back for Robert',
+];
+
+export function isStaleCasperPrompt(raw: string | null | undefined): boolean {
+  const t = String(raw || '');
+  if (!t.trim()) return true;
+  if (/one\s*funding/i.test(t) || /robert\s*gulinello/i.test(t)) return true;
+  const n = normPrompt(t);
+  return OLD_DEFAULT_NEEDLES.some(needle => n.includes(normPrompt(needle)));
+}
+
+export function stripLockedCasperPrompt(raw: string): string {
+  let t = String(raw || '');
+  const marker = t.indexOf(CASPER_LOCKED_PROMPT_MARKER);
+  if (marker >= 0) t = t.slice(0, marker);
+  const lockedIdx = t.indexOf(LOCKED_CASPER_SYSTEM_PROMPT);
+  if (lockedIdx >= 0) t = t.slice(0, lockedIdx);
+  const lockedRules = t.search(/\nLOCKED RULES \(enforced in code/);
+  if (lockedRules >= 0) t = t.slice(0, lockedRules);
+  const outputIdx = t.search(/\nOUTPUT\nReply with JSON only:/);
+  if (outputIdx >= 0 && /"plan_note"/.test(t.slice(outputIdx))) t = t.slice(0, outputIdx);
+  return t.trim();
+}
+
+export function resolveSavedCasperPrompt(raw: string | null | undefined): { prompt: string; upgraded: boolean } {
+  const saved = String(raw || '').trim();
+  if (isStaleCasperPrompt(saved)) {
+    return { prompt: DEFAULT_CASPER_EDITABLE_PROMPT, upgraded: true };
+  }
+  const stripped = stripLockedCasperPrompt(saved);
+  return { prompt: stripped || DEFAULT_CASPER_EDITABLE_PROMPT, upgraded: stripped !== saved };
+}
+
+export function composeCasperSystemPrompt(saved: string | null | undefined): string {
+  const editable = resolveSavedCasperPrompt(saved).prompt;
+  return `${editable.trim()}\n\n${CASPER_LOCKED_PROMPT_MARKER}\n${LOCKED_CASPER_SYSTEM_PROMPT}`;
+}

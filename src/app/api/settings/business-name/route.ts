@@ -31,9 +31,11 @@ function authOnlyClient() {
 }
 
 function serviceClient() {
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!key) return null;
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    key,
     { auth: { persistSession: false, autoRefreshToken: false } },
   );
 }
@@ -58,6 +60,7 @@ export async function POST(req: NextRequest) {
   if (!password) return NextResponse.json({ error: 'Could not update business name' }, { status: 400 });
 
   const admin = serviceClient();
+  if (!admin) return NextResponse.json({ error: 'server not configured' }, { status: 500 });
   const since = new Date(Date.now() - 15 * 60_000).toISOString();
   try {
     const { count } = await admin
@@ -91,14 +94,17 @@ export async function POST(req: NextRequest) {
   }
 
   const current = await getBusinessName(admin, user.id);
-  const { error } = await admin
+  const now = new Date().toISOString();
+  const { data: saved, error } = await admin
     .from('user_settings')
-    .update({
+    .upsert({
+      user_id: user.id,
       business_name: nextName,
-      business_name_updated_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq('user_id', user.id);
+      business_name_updated_at: now,
+      updated_at: now,
+    }, { onConflict: 'user_id' })
+    .select('id, business_name')
+    .maybeSingle();
 
   if (error) {
     if (isMissingSchema(error)) {
@@ -107,6 +113,7 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({ error: 'Could not update business name' }, { status: 500 });
   }
+  if (!saved) return NextResponse.json({ error: 'Could not update business name' }, { status: 500 });
 
   try {
     await admin.from('casper_settings_audit').insert({

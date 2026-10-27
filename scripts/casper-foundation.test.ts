@@ -3,8 +3,14 @@
  * Run: npx tsx scripts/casper-foundation.test.ts
  */
 import { bankAnalysisIsStale } from '../src/lib/casper/context';
-import { parseSendWindow, DEFAULT_SEND_WINDOW } from '../src/lib/casper/defaults';
-import { rewriteBannedPhrases, checkCasperSms } from '../src/lib/casper/rails';
+import {
+  parseSendWindow,
+  DEFAULT_SEND_WINDOW,
+  composeCasperSystemPrompt,
+  isStaleCasperPrompt,
+  resolveSavedCasperPrompt,
+} from '../src/lib/casper/defaults';
+import { rewriteBannedPhrases, checkCasperSms, isNotedRail } from '../src/lib/casper/rails';
 import { isCasperSender } from '../src/lib/casper/sender';
 import {
   DEFAULT_STATUS_NAMES,
@@ -252,7 +258,7 @@ async function railCheck() {
   }), {
     userId: 'u1', leadId: 'l1', toPhone: '+15551212', body: 'Got it', initiatedBy: 'merchant_reply', now: late,
   });
-  assert(quietOverride.ok && quietOverride.results.some(r => r.result?.includes('overridden: quiet_hours — merchant texted first')), 'quiet_hours merchant override');
+  assert(quietOverride.ok && quietOverride.results.some(r => isNotedRail(r) && r.result.includes('overridden: quiet_hours — merchant texted first')), 'quiet_hours merchant override');
 
   const quietResched = await checkCasperSms(fakeSupabase({
     ...base,
@@ -261,7 +267,7 @@ async function railCheck() {
     userId: 'u1', leadId: 'l1', toPhone: '+15551212', body: 'Got it', initiatedBy: 'merchant_reply', now: late,
   });
   assert(quietResched.ok && quietResched.rescheduleTo, 'quiet_hours reschedule');
-  assert(quietResched.results.some(r => r.result?.includes('overridden: quiet_hours — rescheduled')), 'quiet_hours reschedule result');
+  assert(quietResched.results.some(r => isNotedRail(r) && r.result.includes('overridden: quiet_hours — rescheduled')), 'quiet_hours reschedule result');
 
   const phrase = await checkCasperSms(fakeSupabase(base), {
     userId: 'u1', leadId: 'l1', toPhone: '+15551212', body: 'We offer working capital', initiatedBy: 'merchant_reply', now: noon,
@@ -277,7 +283,24 @@ async function railCheck() {
     userId: 'u1', leadId: 'l1', toPhone: '+15551212', body: 'Hello', initiatedBy: 'merchant_reply', now: noon,
   });
   assert(typeof missingTables.ok === 'boolean', 'build/rails survive missing optional rows');
+
+  const leftover = await checkCasperSms(fakeSupabase(base), {
+    userId: 'u1', leadId: 'l1', toPhone: '+15551212', body: 'Hi from {business_name}', initiatedBy: 'merchant_reply', now: noon,
+  });
+  assert(leftover.ok && leftover.body.includes('Test Co') && !leftover.body.includes('{'), 'placeholder filled from business name');
+
+  const unknownPh = await checkCasperSms(fakeSupabase(base), {
+    userId: 'u1', leadId: 'l1', toPhone: '+15551212', body: 'Call {owner_name}', initiatedBy: 'merchant_reply', now: noon,
+  });
+  assert(!unknownPh.ok && /placeholder_in_sms/.test(unknownPh.blocked || ''), 'placeholder_in_sms rail');
 }
+
+assert(isStaleCasperPrompt('You are Casper, AI co-pilot for Robert Gulinello at One Funding / Meadow Lake.'), 'old One Funding prompt is stale');
+assert(!isStaleCasperPrompt('You are Casper, the AI SMS agent for {business_name}.'), 'new prompt is not stale');
+const upgraded = resolveSavedCasperPrompt('You introduce One Funding. You text leads on Robert Gulinello\'s behalf.');
+assert(upgraded.upgraded && /\{business_name\}/.test(upgraded.prompt), 'stale prompt upgrades to new default');
+assert(/plan_note/.test(composeCasperSystemPrompt(upgraded.prompt)), 'composed prompt includes plan_note');
+assert(/You represent \{business_name\}/.test(composeCasperSystemPrompt('custom tone only')), 'locked identity always appended');
 
 railCheck().then(() => {
   if (failed) {

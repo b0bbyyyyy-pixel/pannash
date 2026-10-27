@@ -6,15 +6,21 @@ Unit (from repo root):
 npx tsx scripts/casper-foundation.test.ts
 ```
 
-Covers `dealStageFromLead` for every default status, submission overrides, each rail (opt-out, casper_off, paused, submitted lockout, cooldown, quiet hours ET/CT/PT, banned phrase), `bankAnalysisIsStale`, and missing-table fallbacks.
+Covers `dealStageFromLead` for every default status, submission overrides, each rail (opt-out, casper_off, paused, submitted lockout, cooldown, quiet hours ET/CT/PT, banned phrase, leftover `{...}` placeholders), `bankAnalysisIsStale`, stale-prompt upgrade, and missing-table fallbacks.
 
 ## Preview manual tests
 
 Use your own test phone. Casper on for **one test lead only**.
 
-1. **Before the migration:** text the test lead. Casper should still reply like today. Server logs show a single `[casper] missing schema (...)` warn, not a crash.
-2. Run `add-casper-foundation.sql` in Supabase. **Set your business name in Settings → Profile** (password-protected) before expecting more replies — a blank name logs `blocked: business_name_missing`. Then send 3 texts in 15s → exactly **one** `casper_runs` row, it covers all 3 texts, reply lands in the reply-delay range counted from the first text.
-3. Two texts 50s apart → the second extends `wait_until`; still one reply. Kill test: set `lock_until` in the past by hand → the next text runs (stale lock recovered).
+**Setup (do this first)**
+1. Run `add-casper-foundation.sql` in Supabase.
+2. Set your **business name** in Settings → Profile (password-protected). A blank name logs `blocked: business_name_missing` and Casper will not send.
+
+Then:
+
+1. **Before the migration (only if you have not run the SQL yet):** text the test lead. Casper should still reply like today. Server logs show a single `[casper] missing schema (...)` warn, not a crash. After that, go back to Setup.
+2. Send 3 texts in 15s → exactly **one** `casper_runs` row, it covers all 3 texts, reply lands in the reply-delay range counted from the first text.
+3. Two texts 50s apart → the second extends `wait_until`; still one reply. Kill test: set `lock_until` in the past by hand → the next text runs (stale lock recovered). Text again while a run is in progress → the new text is picked up (lock poll / follow-up), not dropped.
 4. Set the lead to `Submitted` → nothing proactive goes out. Text "any update?" → Casper replies (merchant texted first). A pending draft made before the status change is blocked at send time with `blocked: submitted_lockout`. Set `Approved` → lockout lifts.
 5. Reply by hand from Inbox while a Casper draft is queued → draft cancelled. Activity says it was cancelled because you replied (`cancelled: owner_replied`).
 6. Temporarily set send window to now+1h, then text → `overridden: quiet_hours` / rescheduled as specified.
@@ -25,6 +31,7 @@ Use your own test phone. Casper on for **one test lead only**.
 11. Regression: global toggle off, per-lead force on/off, owner activity alerts on/off, drip send window, follow-up auto-text, needs_human ping, email_application, update_lead_email, Queue panel list/send-now.
 12. Docs-received pause: text from the test phone → no reply, Activity shows `blocked: paused (docs_received)` (or `banks_received` / `app_received`). Turn Casper back on for that lead → next text gets a reply.
 13. Business name: wrong password → rejected. Right password → saved, audit row written, next Casper reply uses the new name. Blank name → `blocked: business_name_missing` and Inbox shows "Set your business name in Settings."
-14. Grep: no `working capital` in SMS-producing Casper code; no hardcoded `One Funding` in Casper prompts/fallbacks. `npm run build` and lint pass. Vercel: no new crons in `vercel.json`.
+14. Old saved prompt: paste an old "One Funding / Robert Gulinello" brain (or leave the previously saved default). Open Agent → Brain: it should show the new default (no One Funding / Robert). Next inbound reply's `casper_runs` row has a `plan_note`, and the SMS uses the Settings business name, not One Funding.
+15. Grep: no `working capital` in SMS-producing Casper code; no hardcoded `One Funding` in Casper prompts/fallbacks. `npm run build` and lint pass. Vercel: no new crons in `vercel.json`.
 
 Preview URL will be the Vercel deployment for `feature/casper-foundation`.

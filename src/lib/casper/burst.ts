@@ -117,6 +117,37 @@ export type CasperLeadForBurst = {
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function setRunPending(
+  supabase: any,
+  args: { leadId: string; pending: boolean; token?: string | null; onlyIfWaitElapsed?: boolean },
+) {
+  try {
+    const patch: Record<string, unknown> = { run_pending: args.pending, updated_at: new Date().toISOString() };
+    let q = supabase.from('casper_lead_state').update(patch).eq('lead_id', args.leadId);
+    if (args.token) q = q.eq('lock_token', args.token);
+    if (args.onlyIfWaitElapsed) q = q.or(`wait_until.is.null,wait_until.lte.${new Date().toISOString()}`);
+    const { error } = await q;
+    if (error && isMissingSchema(error)) warnMissingSchema('casper_lead_state.run_pending', error);
+  } catch (err) {
+    if (isMissingSchema(err)) warnMissingSchema('casper_lead_state.run_pending', err);
+  }
+}
+
+async function acquireLock(
+  supabase: Parameters<typeof tryCasperLock>[0],
+  args: { leadId: string; userId: string },
+): Promise<string | null> {
+  let token = await tryCasperLock(supabase, { leadId: args.leadId, userId: args.userId, ttlSec: 90 });
+  if (token) return token;
+  const until = Date.now() + 20_000;
+  while (!token && Date.now() < until) {
+    await sleep(3000);
+    token = await tryCasperLock(supabase, { leadId: args.leadId, userId: args.userId, ttlSec: 90 });
+  }
+  return token;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function runWhenSettled(
   supabase: any,
   args: {
@@ -127,9 +158,10 @@ export async function runWhenSettled(
     body: string;
     from: string;
     to: string;
+    followUp?: boolean;
   },
 ): Promise<{ replied: boolean; reason?: string; body?: string; send_at?: string }> {
-  const deadline = Date.now() + 40_000;
+  const deadline = Date.now() + 30_000;
   for (let hop = 0; hop < 2; hop++) {
     let waitUntilIso: string | null = null;
     try {
@@ -181,25 +213,47 @@ export async function runWhenSettled(
     if (Date.now() >= deadline) break;
   }
 
-  const token = await tryCasperLock(supabase, { leadId: args.leadId, userId: args.userId, ttlSec: 90 });
+  const token = await acquireLock(supabase, { leadId: args.leadId, userId: args.userId });
   if (!token) return { replied: false, reason: 'locked' };
 
   try {
     const burstStart = await claimCasperRun(supabase, { leadId: args.leadId, token });
     if (!burstStart) return { replied: false, reason: 'nothing_pending' };
-    const { runCasperInboundSms } = await import('@/lib/casper/reply');
-    return await runCasperInboundSms(supabase, {
-      userId: args.userId,
-      lead: args.lead,
-      body: args.body,
-      from: args.from,
-      to: args.to,
-      delay: true,
-      burstStartedAt: burstStart,
-      lockToken: token,
-    });
+    try {
+      const { runCasperInboundSms } = await import('@/lib/casper/reply');
+      const result = await runCasperInboundSms(supabase, {
+        userId: args.userId,
+        lead: args.lead,
+        body: args.body,
+        from: args.from,
+        to: args.to,
+        delay: true,
+        burstStartedAt: burstStart,
+        lockToken: token,
+      });
+      await setRunPending(supabase, { leadId: args.leadId, pending: false, token, onlyIfWaitElapsed: true });
+      return result;
+    } catch (err) {
+      await setRunPending(supabase, { leadId: args.leadId, pending: true });
+      throw err;
+    }
   } finally {
     await releaseCasperLock(supabase, { leadId: args.leadId, token });
+    if (!args.followUp) {
+      try {
+        const { data } = await supabase
+          .from('casper_lead_state')
+          .select('run_pending, wait_until')
+          .eq('lead_id', args.leadId)
+          .maybeSingle();
+        const due = data?.run_pending && (!data.wait_until || new Date(data.wait_until).getTime() <= Date.now());
+        if (due) {
+          await runWhenSettled(supabase, { ...args, followUp: true });
+        }
+      } catch (err) {
+        if (isMissingSchema(err)) warnMissingSchema('casper_lead_state.run_pending', err);
+      }
+    }
   }
 }
 

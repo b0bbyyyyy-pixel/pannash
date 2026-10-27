@@ -14,7 +14,7 @@ export function dripPauseChipLabel(reason?: string | null): string {
 export function dripPauseBanner(reason?: string | null): { title: string; detail?: string } {
   if (isCarrierBlockError(reason)) {
     return {
-      title: 'Sending stopped because a carrier blocked a message (spam filter). Try Customer Care wording with One Funding: and STOP/HELP, then Resume.',
+      title: 'Sending stopped because a carrier blocked a message (spam filter). Try Customer Care wording with your business name: and STOP/HELP, then Resume.',
       detail: reason ?? undefined,
     };
   }

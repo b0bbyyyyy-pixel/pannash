@@ -1,6 +1,6 @@
 import { casperEffectiveForLead } from '@/lib/casper/allow';
 import { STOPPED_PHASES, parseSendWindow, type CasperPhase } from '@/lib/casper/defaults';
-import { getBusinessName } from '@/lib/casper/businessName';
+import { applyBusinessName, getBusinessName } from '@/lib/casper/businessName';
 import { isCasperSender } from '@/lib/casper/sender';
 import { dealStageFromLead, submittedLockoutResult, type DealStage } from '@/lib/casper/stage';
 import { isMissingSchema, warnMissingSchema } from '@/lib/casper/schema';
@@ -247,6 +247,10 @@ export async function checkCasperSms(
   const banned = rewriteBannedPhrases(body);
   body = banned.body;
   push(banned.hit ? overridden('banned_phrase') : ok());
+
+  if (biz.name) body = applyBusinessName(body, biz.name);
+  if (/\{[A-Za-z_][A-Za-z0-9_]*\}/.test(body)) push(blocked('placeholder_in_sms'));
+  else push(ok());
 
   // g. unsendable / duplicate
   if (isUnsendableCasperSms(body, args.thinking) || !casperSmsToSend(body, args.thinking)) {

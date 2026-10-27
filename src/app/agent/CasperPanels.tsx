@@ -182,7 +182,7 @@ export function BrainPanel() {
         <div>
           <h3 className="text-sm font-semibold text-[#1a1a1a]">Master brain</h3>
           <p className="text-[11px] text-gray-400 mt-0.5">
-            How Casper speaks on SMS. Saved prompt is used on the next allowed auto-reply.
+            Persona, tone, and mission. Identity, rails, and JSON output are applied in code.
           </p>
         </div>
         {savedAt && (

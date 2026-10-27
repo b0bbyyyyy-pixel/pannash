@@ -15,6 +15,13 @@ export type RecordOutboundSmsArgs = {
   existingMessageId?: string | null;
 };
 
+let warnedCalvinSentBy = false;
+function warnCalvinSentByOnce() {
+  if (warnedCalvinSentBy) return;
+  warnedCalvinSentBy = true;
+  console.warn('[inbox] sent_by casper rejected by check; retrying as calvin');
+}
+
 export function isPlaceholderSmsBody(body: string | null | undefined): boolean {
   const t = String(body ?? '').trim().toLowerCase();
   return !t || t === '(undelivered)' || t === '(no body)';
@@ -140,20 +147,31 @@ export async function recordOutboundInboxSms(supabase: any, args: RecordOutbound
     return null;
   }
 
-  const { data: msg, error } = await supabase
+  const row = {
+    conversation_id: conv.id,
+    lead_id: leadId,
+    direction: 'outbound',
+    body,
+    status: args.status,
+    sent_by: args.sentBy ?? 'system',
+    twilio_sid: sid,
+    error_message: args.errorMessage ?? null,
+  };
+
+  let { data: msg, error } = await supabase
     .from('inbox_messages')
-    .insert({
-      conversation_id: conv.id,
-      lead_id: leadId,
-      direction: 'outbound',
-      body,
-      status: args.status,
-      sent_by: args.sentBy ?? 'system',
-      twilio_sid: sid,
-      error_message: args.errorMessage ?? null,
-    })
+    .insert(row)
     .select('id')
     .single();
+
+  if (error && error.code === '23514' && args.sentBy === 'casper') {
+    warnCalvinSentByOnce();
+    ({ data: msg, error } = await supabase
+      .from('inbox_messages')
+      .insert({ ...row, sent_by: 'calvin' })
+      .select('id')
+      .single());
+  }
 
   if (error) {
     console.error('[inbox] recordOutboundInboxSms insert', error);

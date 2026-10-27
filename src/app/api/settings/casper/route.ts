@@ -5,6 +5,7 @@ import {
   CASPER_MISSION,
   DEFAULT_CASPER_CAPABILITIES,
   DEFAULT_CASPER_SYSTEM_PROMPT,
+  resolveSavedCasperPrompt,
   mergeCapabilities,
   parseReplyDelay,
   parseSendWindow,
@@ -34,24 +35,24 @@ export async function GET() {
     .eq('user_id', user.id)
     .maybeSingle();
 
-  let prompt = typeof data?.casper_system_prompt === 'string' ? data.casper_system_prompt : null;
-  if (!prompt) {
-    prompt = DEFAULT_CASPER_SYSTEM_PROMPT;
-    if (data?.id) {
-      await supabase
-        .from('user_settings')
-        .update({ casper_system_prompt: prompt, updated_at: new Date().toISOString() })
-        .eq('user_id', user.id);
-    } else {
-      await supabase.from('user_settings').insert({
-        user_id: user.id,
-        casper_system_prompt: prompt,
-        casper_capabilities: DEFAULT_CASPER_CAPABILITIES,
-        casper_mission: CASPER_MISSION,
-        casper_enabled: false,
-        updated_at: new Date().toISOString(),
-      });
-    }
+  const resolved = resolveSavedCasperPrompt(
+    typeof data?.casper_system_prompt === 'string' ? data.casper_system_prompt : null,
+  );
+  const prompt = resolved.prompt;
+  if (!data?.id) {
+    await supabase.from('user_settings').insert({
+      user_id: user.id,
+      casper_system_prompt: prompt,
+      casper_capabilities: DEFAULT_CASPER_CAPABILITIES,
+      casper_mission: CASPER_MISSION,
+      casper_enabled: false,
+      updated_at: new Date().toISOString(),
+    });
+  } else if (resolved.upgraded || data.casper_system_prompt !== prompt) {
+    await supabase
+      .from('user_settings')
+      .update({ casper_system_prompt: prompt, updated_at: new Date().toISOString() })
+      .eq('user_id', user.id);
   }
 
   let pausedLeads = 0;
@@ -95,7 +96,9 @@ export async function POST(req: NextRequest) {
 
   const payload: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if ('enabled' in body) payload.casper_enabled = !!body.enabled;
-  if ('system_prompt' in body) payload.casper_system_prompt = String(body.system_prompt ?? '');
+  if ('system_prompt' in body) {
+    payload.casper_system_prompt = resolveSavedCasperPrompt(String(body.system_prompt ?? '')).prompt;
+  }
   if ('mission' in body) payload.casper_mission = String(body.mission || CASPER_MISSION);
   if ('business_name' in body) {
     return NextResponse.json({ error: 'Business name cannot be changed here' }, { status: 400 });
@@ -145,7 +148,7 @@ export async function POST(req: NextRequest) {
   const delay = parseReplyDelay(fresh?.casper_capabilities);
   return NextResponse.json({
     enabled: !!fresh?.casper_enabled,
-    system_prompt: fresh?.casper_system_prompt || DEFAULT_CASPER_SYSTEM_PROMPT,
+    system_prompt: resolveSavedCasperPrompt(fresh?.casper_system_prompt).prompt,
     capabilities: mergeCapabilities(fresh?.casper_capabilities),
     reply_delay: { min_sec: delay.minSec, max_sec: delay.maxSec },
     send_window: parseSendWindow(fresh?.casper_capabilities),

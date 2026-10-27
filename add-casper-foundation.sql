@@ -24,7 +24,12 @@ CREATE OR REPLACE FUNCTION casper_note_inbound(
 RETURNS TIMESTAMPTZ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE v_until TIMESTAMPTZ;
 BEGIN
-  IF auth.uid() IS NOT NULL AND auth.uid() <> p_user THEN RAISE EXCEPTION 'forbidden'; END IF;
+  IF auth.uid() IS NOT NULL THEN
+    IF auth.uid() <> p_user THEN RAISE EXCEPTION 'forbidden'; END IF;
+    IF NOT EXISTS (SELECT 1 FROM public.leads l WHERE l.id = p_lead AND l.user_id = p_user) THEN
+      RAISE EXCEPTION 'forbidden';
+    END IF;
+  END IF;
   INSERT INTO casper_lead_state AS s
     (lead_id, user_id, phase, run_pending, burst_started_at, wait_until, updated_at)
   VALUES (p_lead, p_user, 'chatting', TRUE, now(),
@@ -48,7 +53,12 @@ CREATE OR REPLACE FUNCTION casper_try_lock(p_lead UUID, p_user UUID, p_ttl_sec I
 RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE v_token UUID := gen_random_uuid(); v_got UUID;
 BEGIN
-  IF auth.uid() IS NOT NULL AND auth.uid() <> p_user THEN RAISE EXCEPTION 'forbidden'; END IF;
+  IF auth.uid() IS NOT NULL THEN
+    IF auth.uid() <> p_user THEN RAISE EXCEPTION 'forbidden'; END IF;
+    IF NOT EXISTS (SELECT 1 FROM public.leads l WHERE l.id = p_lead AND l.user_id = p_user) THEN
+      RAISE EXCEPTION 'forbidden';
+    END IF;
+  END IF;
   INSERT INTO casper_lead_state AS s (lead_id, user_id, phase, lock_token, lock_until, updated_at)
   VALUES (p_lead, p_user, 'chatting', v_token, now() + make_interval(secs => p_ttl_sec), now())
   ON CONFLICT (lead_id) DO UPDATE SET
@@ -64,7 +74,7 @@ RETURNS TIMESTAMPTZ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public A
 DECLARE v_started TIMESTAMPTZ;
 BEGIN
   UPDATE casper_lead_state
-     SET run_pending = FALSE, updated_at = now()
+     SET updated_at = now()
    WHERE lead_id = p_lead AND lock_token = p_token AND run_pending
      AND (wait_until IS NULL OR wait_until <= now())
      AND (auth.uid() IS NULL OR user_id = auth.uid())
@@ -134,12 +144,14 @@ CREATE TABLE IF NOT EXISTS casper_settings_audit (
 ALTER TABLE casper_settings_audit ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS casper_settings_audit_own ON casper_settings_audit;
-CREATE POLICY casper_settings_audit_own ON casper_settings_audit
-  FOR ALL TO authenticated
-  USING (user_id = auth.uid())
-  WITH CHECK (user_id = auth.uid());
+DROP POLICY IF EXISTS casper_settings_audit_select ON casper_settings_audit;
+CREATE POLICY casper_settings_audit_select ON casper_settings_audit
+  FOR SELECT TO authenticated
+  USING (user_id = auth.uid());
 
-GRANT SELECT, INSERT ON casper_settings_audit TO authenticated, service_role;
+REVOKE ALL ON casper_settings_audit FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON casper_settings_audit TO authenticated;
+GRANT SELECT, INSERT ON casper_settings_audit TO service_role;
 
 -- business_name may only change via the password-protected route (service_role).
 CREATE OR REPLACE FUNCTION casper_protect_business_name()

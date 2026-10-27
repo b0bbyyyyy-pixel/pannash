@@ -3,7 +3,8 @@ import { canCasperAutoReply } from '@/lib/casper/allow';
 import { applyBusinessName } from '@/lib/casper/businessName';
 import { buildLeadContext, maskPhones } from '@/lib/casper/context';
 import {
-  DEFAULT_CASPER_SYSTEM_PROMPT,
+  composeCasperSystemPrompt,
+  resolveSavedCasperPrompt,
   STOPPED_PHASES,
   mergeCapabilities,
   parseReplyDelay,
@@ -206,8 +207,19 @@ export async function runCasperInboundSms(
 
   const caps = mergeCapabilities(settings?.casper_capabilities);
   const ctx = await buildLeadContext(supabase, { userId: args.userId, leadId: args.lead.id });
+  const savedPrompt = resolveSavedCasperPrompt(settings?.casper_system_prompt);
+  if (savedPrompt.upgraded) {
+    try {
+      await supabase
+        .from('user_settings')
+        .update({ casper_system_prompt: savedPrompt.prompt, updated_at: new Date().toISOString() })
+        .eq('user_id', args.userId);
+    } catch {
+      // keep going with the upgraded in-memory prompt
+    }
+  }
   const brain = applyBusinessName(
-    (settings?.casper_system_prompt || '').trim() || DEFAULT_CASPER_SYSTEM_PROMPT,
+    composeCasperSystemPrompt(savedPrompt.prompt),
     ctx.facts.businessName || '{business_name}',
   );
 
