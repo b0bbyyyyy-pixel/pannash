@@ -12,6 +12,15 @@ export type RailOk = { ok: true };
 export type RailBlocked = { ok: false; result: string };
 export type RailOverridden = { ok: true; result: string };
 export type RailResult = RailOk | RailBlocked | RailOverridden;
+export type RailNoted = RailBlocked | RailOverridden;
+
+export function isNotedRail(r: RailResult): r is RailNoted {
+  return 'result' in r && typeof r.result === 'string' && r.result.length > 0;
+}
+
+export function railActionRows(results: RailResult[]) {
+  return results.filter(isNotedRail).map(r => ({ type: 'rail' as const, result: r.result }));
+}
 
 export type CasperInitiatedBy = 'merchant_reply' | 'casper_proactive';
 
@@ -270,6 +279,6 @@ export async function checkCasperSms(
 }
 
 export function lastGuardLine(results: RailResult[]): string | null {
-  const notable = [...results].reverse().find(r => r.result);
+  const notable = [...results].reverse().find(isNotedRail);
   return notable?.result ?? null;
 }

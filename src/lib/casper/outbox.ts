@@ -2,7 +2,7 @@ import { casperEffectiveForLead } from '@/lib/casper/allow';
 import { sweepStuckCasperRuns } from '@/lib/casper/burst';
 import { mergeCapabilities, parseReplyDelay, type CasperPhase, type CasperReplyDelay } from '@/lib/casper/defaults';
 import { leadInAiFullPacks } from '@/lib/casper/fullPacks';
-import { checkCasperSms, lastGuardLine } from '@/lib/casper/rails';
+import { checkCasperSms, lastGuardLine, railActionRows } from '@/lib/casper/rails';
 import { logCasperRun, upsertCasperLeadState } from '@/lib/casper/runs';
 import { CASPER_SENT_BY } from '@/lib/casper/sender';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
@@ -413,7 +413,7 @@ async function sendOneOutbox(supabase: any, raw: CasperOutboxRow): Promise<{ sen
       thinking: row.thinking,
       actions: [
         ...(Array.isArray(row.actions) ? row.actions : []),
-        ...rails.results.filter(r => r.result).map(r => ({ type: 'rail', result: r.result })),
+        ...railActionRows(rails.results),
         { type: 'sms', cancelled: true, reason: rails.blocked },
       ],
       model: row.model,
@@ -442,7 +442,7 @@ async function sendOneOutbox(supabase: any, raw: CasperOutboxRow): Promise<{ sen
       thinking: row.thinking,
       actions: [
         ...(Array.isArray(row.actions) ? row.actions : []),
-        ...rails.results.filter(r => r.result).map(r => ({ type: 'rail', result: r.result })),
+        ...railActionRows(rails.results),
       ],
       error: lastGuardLine(rails.results),
       stage: rails.stage,

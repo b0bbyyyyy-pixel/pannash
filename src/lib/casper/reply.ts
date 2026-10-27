@@ -13,7 +13,7 @@ import { emailApplicationToLead } from '@/lib/casper/emailApplication';
 import { leadInAiFullPacks } from '@/lib/casper/fullPacks';
 import { extractEmailFromSms, runUpdateLeadEmailTool } from '@/lib/casper/updateLeadEmail';
 import { cancelPendingOutbox, enqueueCasperOutbox, getPendingOutboxForLead, kickOutboxPump, outboxDelayMs } from '@/lib/casper/outbox';
-import { checkCasperSms, lastGuardLine, type RailResult } from '@/lib/casper/rails';
+import { checkCasperSms, lastGuardLine, railActionRows } from '@/lib/casper/rails';
 import { logCasperRun, upsertCasperLeadState } from '@/lib/casper/runs';
 import { CASPER_SENT_BY } from '@/lib/casper/sender';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
@@ -61,10 +61,6 @@ function clipPlan(note: string | null | undefined, fallback?: string | null) {
 
 function snapshotOf(text: string) {
   return maskPhones(text).slice(0, 4000);
-}
-
-function railActions(results: RailResult[]) {
-  return results.filter(r => r.result).map(r => ({ type: 'rail', result: r.result }));
 }
 
 function isPausedPhase(phase?: string | null, pausedReason?: string | null) {
@@ -452,7 +448,7 @@ Never say "working capital". You represent the business name in STAGE.`,
     thinking: parsed.thinking,
   });
   sms = rails.body;
-  actions.push(...railActions(rails.results));
+  actions.push(...railActionRows(rails.results));
   const guardLine = lastGuardLine(rails.results);
 
   if (!rails.ok) {
@@ -506,7 +502,7 @@ Never say "working capital". You represent the business name in STAGE.`,
       initiatedBy: 'merchant_reply',
       thinking: parsed.thinking,
     });
-    actions.push(...railActions(again.results));
+    actions.push(...railActionRows(again.results));
     if (!again.ok) {
       const runId = await logCasperRun(supabase, {
         userId: args.userId,
