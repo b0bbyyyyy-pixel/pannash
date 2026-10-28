@@ -460,6 +460,7 @@ export default function DocumentsModal({
       parseJobs.start({
         kind: 'application',
         label: subject,
+        leadId,
         run: async () => {
           const mergedFields: Record<string, string> = {};
           const months: StatementMonth[] = [];
@@ -498,6 +499,7 @@ export default function DocumentsModal({
       parseJobs.start({
         kind: 'banks',
         label: subject,
+        leadId,
         run: async () => {
           const res = await fetch('/api/leads/analyze-bank-docs', {
             method: 'POST',
@@ -524,6 +526,7 @@ export default function DocumentsModal({
       parseJobs.start({
         kind: 'banks',
         label: subject,
+        leadId,
         run: async () => {
           const mergedFields: Record<string, string> = {};
           const months: StatementMonth[] = [];
@@ -647,6 +650,7 @@ export default function DocumentsModal({
     parseJobs.start({
       kind: 'banks',
       label: a.file_name,
+      leadId,
       run: async () => {
         try {
           const result = await analyzeBankAttachmentForLead(leadId, a);
@@ -698,6 +702,7 @@ export default function DocumentsModal({
     parseJobs.start({
       kind: bankOnly || asBanks.length ? 'banks' : 'application',
       label: subject,
+      leadId,
       run: async () => {
         if (bankOnly) {
           const res = await fetch('/api/leads/analyze-bank-docs', {

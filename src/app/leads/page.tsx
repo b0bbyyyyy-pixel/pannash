@@ -67,6 +67,19 @@ export default async function LeadsPage({
       .map(c => c.lead_id),
   );
 
+  const { data: dripRuns } = await supabase
+    .from('sms_drip_jobs')
+    .select('list_id, created_at')
+    .eq('user_id', user.id)
+    .neq('status', 'cancelled')
+    .order('created_at', { ascending: false });
+  const ranAtByList = new Map<string, string>();
+  for (const job of dripRuns ?? []) {
+    if (job.list_id && job.created_at && !ranAtByList.has(job.list_id)) {
+      ranAtByList.set(job.list_id, job.created_at);
+    }
+  }
+
   const campaignStats = await Promise.all(
     (leadLists || []).map(async (list) => {
       const { data: stats } = await supabase
@@ -78,7 +91,11 @@ export default async function LeadsPage({
       const callCount = stats?.filter((l) => l.call_made_at).length || 0;
       const touchedCount = stats?.filter((l) => l.sms_sent_at || l.call_made_at).length || 0;
       const replyCount = stats?.filter((l) => l.sms_sent_at && repliedIds.has(l.id)).length || 0;
-      return { listId: list.id, total, smsCount, callCount, touchedCount, replyCount };
+      const firstSms = (stats ?? [])
+        .map(l => l.sms_sent_at)
+        .filter((v): v is string => Boolean(v))
+        .sort()[0] ?? null;
+      return { listId: list.id, total, smsCount, callCount, touchedCount, replyCount, firstSms };
     })
   );
 
@@ -89,12 +106,14 @@ export default async function LeadsPage({
       callCount: 0,
       touchedCount: 0,
       replyCount: 0,
+      firstSms: null as string | null,
     };
     const source = resolveListSource(list);
     return {
       id: list.id,
       name: list.name,
       created_at: list.created_at,
+      ran_at: ranAtByList.get(list.id) || stats.firstSms || null,
       sourceKey: source.key,
       sourceLabel: source.label,
       total: stats.total,

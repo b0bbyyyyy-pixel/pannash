@@ -10,6 +10,7 @@ export type DocAttachment = {
 type LeadDocContext = {
   id: string;
   company?: string | null;
+  phone?: string | null;
   underwriting_data?: Record<string, unknown> | null;
 };
 
@@ -21,6 +22,7 @@ async function fetchLeadDocContext(leadId: string): Promise<LeadDocContext> {
   return {
     id: leadId,
     company: lead.company ?? null,
+    phone: lead.phone ?? null,
     underwriting_data: (lead.underwriting_data || {}) as Record<string, unknown>,
   };
 }
@@ -37,6 +39,7 @@ export async function applyParsedFieldsToLead(
     selected,
     currentUd: (lead.underwriting_data || {}) as Record<string, unknown>,
     currentCompany: lead.company,
+    currentPhone: lead.phone,
     fallbackCompany,
   });
 

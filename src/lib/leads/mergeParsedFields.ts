@@ -15,6 +15,10 @@ import {
 import { preserveFileActivity } from '@/lib/leads/fileActivity';
 
 const DIRECT = new Set(['company', 'name', 'email', 'phone', 'notes', 'stage', 'value']);
+
+export function leadHasPhone(raw: unknown) {
+  return String(raw ?? '').replace(/\D/g, '').length >= 7;
+}
 const BANK_KEYS = new Set([
   'totalDeposits', 'totalWithdrawals', 'openingBalance', 'depositCount', 'depositsCount',
   'mcaPositions', 'hasOtherMCALoans', 'nsfCount', 'negativeDays', 'avgDailyBalance',
@@ -28,6 +32,7 @@ export function mergeParsedFieldsIntoLead(args: {
   selected?: Set<string>;
   currentUd: Record<string, unknown>;
   currentCompany?: string | null;
+  currentPhone?: string | null;
   fallbackCompany?: string | null;
 }): {
   directUpdates: Record<string, string>;
@@ -48,6 +53,7 @@ export function mergeParsedFieldsIntoLead(args: {
     if (DIRECT.has(k)) directUpdates[k] = v;
     else udUpdates[k] = v;
   }
+  if (leadHasPhone(args.currentPhone)) delete directUpdates.phone;
 
   const currentUd = args.currentUd || {};
   const legalName = (directUpdates.company || String(args.currentCompany || args.fallbackCompany || '')).trim();
@@ -125,7 +131,7 @@ export async function persistParsedFieldsToLead(
 ): Promise<{ ok: boolean }> {
   const { data: lead } = await supabase
     .from('leads')
-    .select('company, underwriting_data')
+    .select('company, phone, underwriting_data')
     .eq('id', args.leadId)
     .eq('user_id', args.userId)
     .maybeSingle();
@@ -136,6 +142,7 @@ export async function persistParsedFieldsToLead(
     selected: args.selected,
     currentUd: asRecord(lead.underwriting_data),
     currentCompany: lead.company,
+    currentPhone: lead.phone,
     fallbackCompany: args.fallbackCompany,
   });
 

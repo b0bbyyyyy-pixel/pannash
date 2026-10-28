@@ -31,6 +31,7 @@ import {
   postLeadActionToFrame,
 } from '@/lib/pipeline/iframeMessages';
 import LeadActionsMenu, { type LeadActionId } from '@/components/LeadActionsMenu';
+import { ParseJobsSpinner } from '@/lib/parseJobs/ParseJobsProvider';
 import dynamic from 'next/dynamic';
 import { isCampaignInboxLead } from '@/lib/inbox/promoteCampaignReply';
 import { sortInboxLeads } from '@/lib/inbox/sortInboxLeads';
@@ -1474,17 +1475,20 @@ export default function InboxClient({
                       <span className="text-[10px] text-gray-400">
                         {relativeTime(lead.conversation?.last_message_at ?? lead.last_contact)}
                       </span>
-                      {lead.lead_status && (
-                        <span
-                          className="inline-flex h-[18px] w-[88px] items-center justify-center truncate rounded px-1.5 text-[10px] font-medium"
-                          style={{
-                            background: getStatusStyleFrom(lead.lead_status, dbStatuses).bg,
-                            color: getStatusStyleFrom(lead.lead_status, dbStatuses).text,
-                          }}
-                        >
-                          {lead.lead_status}
-                        </span>
-                      )}
+                      <div className="flex items-center gap-1">
+                        <ParseJobsSpinner leadId={lead.id} />
+                        {lead.lead_status && (
+                          <span
+                            className="inline-flex h-[18px] w-[88px] items-center justify-center truncate rounded px-1.5 text-[10px] font-medium"
+                            style={{
+                              background: getStatusStyleFrom(lead.lead_status, dbStatuses).bg,
+                              color: getStatusStyleFrom(lead.lead_status, dbStatuses).text,
+                            }}
+                          >
+                            {lead.lead_status}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </button>
@@ -1554,7 +1558,8 @@ export default function InboxClient({
                   )}
                 </p>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-start gap-1.5">
+                <ParseJobsSpinner leadId={selectedLead.id} />
                 <div className="flex flex-col items-end gap-0.5">
                   <LeadActionsMenu
                     compact

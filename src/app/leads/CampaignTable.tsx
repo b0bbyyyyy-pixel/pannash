@@ -20,6 +20,7 @@ export interface Campaign {
   id: string;
   name: string;
   created_at: string;
+  ran_at?: string | null;
   sourceKey?: string;
   sourceLabel?: string;
   total: number;
@@ -37,6 +38,11 @@ interface Props {
 function formatDate(dateStr: string) {
   const d = new Date(dateStr);
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function formatTime(dateStr: string) {
+  const d = new Date(dateStr);
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
 export default function CampaignTable({ campaigns, onRename }: Props) {
@@ -162,6 +168,11 @@ export default function CampaignTable({ campaigns, onRename }: Props) {
                 {/* Created date */}
                 <td className="px-4 py-2">
                   <span className="text-sm text-[#9b9b9b]">{formatDate(campaign.created_at)}</span>
+                  {campaign.ran_at && (
+                    <span className="text-[10px] text-[#c4c4c4] ml-1.5" title="Last run">
+                      {formatTime(campaign.ran_at)}
+                    </span>
+                  )}
                 </td>
 
                 {/* Campaign name */}

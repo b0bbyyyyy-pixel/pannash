@@ -888,6 +888,7 @@ export default function LeadWorkspaceClient({
       if (DIRECT.has(k)) directUpdates[k] = v;
       else                udUpdates[k]     = v;
     }
+    if (String(lead.phone || '').replace(/\D/g, '').length >= 7) delete directUpdates.phone;
 
     // Direct fields — one PATCH per field
     for (const [field, value] of Object.entries(directUpdates)) {
