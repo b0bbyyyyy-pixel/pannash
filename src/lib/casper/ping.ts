@@ -10,6 +10,8 @@ export type PingSettings = {
   activity: boolean;
   /** SMS when AI finishes reading bank statements or parsing a lead sheet. */
   parse: boolean;
+  /** SMS to your cell when a lead texts the inbox. Off unless explicitly enabled. */
+  inbox: boolean;
   phone: string;
 };
 
@@ -27,6 +29,13 @@ export function phonesMatch(a: string | null | undefined, b: string | null | und
   return da.length === 10 && da === db;
 }
 
+const PING_SELECTS = [
+  'casper_ping_enabled, casper_ping_phone, casper_ping_activity, casper_ping_parse, casper_ping_inbox',
+  'casper_ping_enabled, casper_ping_phone, casper_ping_activity, casper_ping_parse',
+  'casper_ping_enabled, casper_ping_phone, casper_ping_activity',
+  'casper_ping_enabled, casper_ping_phone',
+];
+
 export async function getPingSettings(
   supabase: { from: (table: string) => any },
   userId: string,
@@ -34,38 +43,26 @@ export async function getPingSettings(
   let enabled = false;
   let activity = false;
   let parse = false;
+  let inbox = false;
   let phone = '';
 
   try {
-    const { data, error } = await supabase
-      .from('user_settings')
-      .select('casper_ping_enabled, casper_ping_phone, casper_ping_activity, casper_ping_parse')
-      .eq('user_id', userId)
-      .maybeSingle();
-    if (error && /casper_ping_parse|casper_ping_activity/i.test(error.message || '')) {
-      const fallback = await supabase
+    for (const cols of PING_SELECTS) {
+      const { data, error } = await supabase
         .from('user_settings')
-        .select('casper_ping_enabled, casper_ping_phone, casper_ping_activity')
+        .select(cols)
         .eq('user_id', userId)
         .maybeSingle();
-      if (fallback.error && /casper_ping_activity/i.test(fallback.error.message || '')) {
-        const basic = await supabase
-          .from('user_settings')
-          .select('casper_ping_enabled, casper_ping_phone')
-          .eq('user_id', userId)
-          .maybeSingle();
-        enabled = !!basic.data?.casper_ping_enabled;
-        phone = String(basic.data?.casper_ping_phone || '').trim();
-      } else {
-        enabled = !!fallback.data?.casper_ping_enabled;
-        activity = !!fallback.data?.casper_ping_activity;
-        phone = String(fallback.data?.casper_ping_phone || '').trim();
+      if (error) {
+        if (/casper_ping_/i.test(error.message || '')) continue;
+        break;
       }
-    } else {
       enabled = !!data?.casper_ping_enabled;
       activity = !!data?.casper_ping_activity;
       parse = !!data?.casper_ping_parse;
+      inbox = !!data?.casper_ping_inbox;
       phone = String(data?.casper_ping_phone || '').trim();
+      break;
     }
   } catch {
     // columns not added yet
@@ -84,7 +81,7 @@ export async function getPingSettings(
     }
   }
 
-  return { enabled, activity, parse, phone };
+  return { enabled, activity, parse, inbox, phone };
 }
 
 /** Text the user when a long AI parse finishes. Independent of the chat-ping toggle. */
@@ -106,6 +103,27 @@ export async function notifyParseFinished(
   return sendCasperPing(supabase, {
     userId: args.userId,
     body,
+    kind: 'alert',
+    requireEnabled: false,
+  });
+}
+
+/** Text the user when a lead texts the inbox. Independent of the chat-ping toggle. */
+export async function notifyInboxText(
+  supabase: { from: (table: string) => any },
+  args: {
+    userId: string;
+    who?: string | null;
+    body: string;
+  },
+): Promise<{ sent: boolean; reason?: string }> {
+  const settings = await getPingSettings(supabase, args.userId);
+  if (!settings.inbox) return { sent: false, reason: 'inbox_off' };
+  const who = String(args.who || 'Someone').trim() || 'Someone';
+  const preview = args.body.length > 140 ? `${args.body.slice(0, 137)}…` : args.body;
+  return sendCasperPing(supabase, {
+    userId: args.userId,
+    body: `${who}: ${preview}`,
     kind: 'alert',
     requireEnabled: false,
   });

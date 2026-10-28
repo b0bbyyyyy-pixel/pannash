@@ -8,7 +8,7 @@ import { notifyUserOfInboundSms } from '@/lib/mobile/notifyInbound';
 import { saveInboundMms } from '@/lib/inbox/saveInboundMms';
 import { isSmsStopBody, markPhoneDnc } from '@/lib/leads/dnc';
 import { markOutboundReadAfterReply } from '@/lib/inbox/markOutboundRead';
-import { findUserByPingPhone, recordPingMessage } from '@/lib/casper/ping';
+import { findUserByPingPhone, notifyInboxText, recordPingMessage } from '@/lib/casper/ping';
 import { runCasperPingReply } from '@/lib/casper/pingReply';
 import { findLeadByPhone as findPreferredLeadByPhone } from '@/lib/leads/findByPhone';
 import { extractEmailFromSms, runUpdateLeadEmailTool } from '@/lib/casper/updateLeadEmail';
@@ -328,6 +328,11 @@ export async function POST(req: NextRequest) {
             userId: ownerId,
             threadId: lead.id,
             name: lead.name,
+            body: storedBody,
+          });
+          await notifyInboxText(supabase, {
+            userId: ownerId,
+            who: lead.company || lead.name,
             body: storedBody,
           });
         } catch (notifyErr) {

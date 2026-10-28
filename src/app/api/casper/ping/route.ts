@@ -53,6 +53,7 @@ export async function PATCH(req: NextRequest) {
   const enabled = typeof body.enabled === 'boolean' ? body.enabled : undefined;
   const activity = typeof body.activity === 'boolean' ? body.activity : undefined;
   const parse = typeof body.parse === 'boolean' ? body.parse : undefined;
+  const inbox = typeof body.inbox === 'boolean' ? body.inbox : undefined;
 
   const { data: existing } = await supabase
     .from('user_settings')
@@ -64,6 +65,7 @@ export async function PATCH(req: NextRequest) {
   if (enabled !== undefined) payload.casper_ping_enabled = enabled;
   if (activity !== undefined) payload.casper_ping_activity = activity;
   if (parse !== undefined) payload.casper_ping_parse = parse;
+  if (inbox !== undefined) payload.casper_ping_inbox = inbox;
   if (phone !== undefined) payload.casper_ping_phone = phone || null;
 
   const write = existing
@@ -71,8 +73,9 @@ export async function PATCH(req: NextRequest) {
     : (row: Record<string, unknown>) => supabase.from('user_settings').insert({ user_id: user.id, ...row });
 
   let { error } = await write(payload);
-  if (error && /casper_ping_parse|casper_ping_activity/i.test(error.message || '')) {
+  if (error && /casper_ping_inbox|casper_ping_parse|casper_ping_activity/i.test(error.message || '')) {
     const retry = { ...payload };
+    if (/casper_ping_inbox/i.test(error.message || '')) delete retry.casper_ping_inbox;
     if (/casper_ping_parse/i.test(error.message || '')) delete retry.casper_ping_parse;
     if (/casper_ping_activity/i.test(error.message || '')) delete retry.casper_ping_activity;
     ({ error } = await write(retry));

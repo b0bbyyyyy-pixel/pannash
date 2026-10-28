@@ -29,6 +29,9 @@ export default function InboxScreen() {
   const [banner, setBanner] = useState(false);
   const [alertState, setAlertState] = useState<'checking' | 'on' | 'ask' | 'denied' | 'error'>('checking');
   const [alertError, setAlertError] = useState('');
+  const [inboxPing, setInboxPing] = useState(false);
+  const [inboxPingPhone, setInboxPingPhone] = useState('');
+  const [inboxPingSaving, setInboxPingSaving] = useState(false);
 
   useEffect(() => {
     const standalone = window.matchMedia('(display-mode: standalone)').matches
@@ -76,11 +79,65 @@ export default function InboxScreen() {
   }, [q, compose]);
   usePolling(pollThreads, 8000, true, false);
 
+  useEffect(() => {
+    fetch('/api/casper/ping', { cache: 'no-store' })
+      .then(r => r.json())
+      .then(d => {
+        setInboxPing(!!d.inbox);
+        setInboxPingPhone(String(d.phone || '').trim());
+      })
+      .catch(() => {});
+  }, []);
+
+  const toggleInboxPing = async () => {
+    if (inboxPingSaving) return;
+    const next = !inboxPing;
+    setInboxPing(next);
+    setInboxPingSaving(true);
+    try {
+      const res = await fetch('/api/casper/ping', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inbox: next }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) setInboxPing(!next);
+      else {
+        setInboxPing(!!d.inbox);
+        if (typeof d.phone === 'string') setInboxPingPhone(d.phone.trim());
+      }
+    } catch {
+      setInboxPing(!next);
+    } finally {
+      setInboxPingSaving(false);
+    }
+  };
+
   return (
     <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-white">
-      <header className="px-4 pt-[max(12px,env(safe-area-inset-top))] pb-2">
+      <header className="px-5 pt-[max(16px,env(safe-area-inset-top))] pb-2 min-[431px]:pt-6 min-[431px]:pr-6">
         <p className="text-[10px] tracking-wide text-[#8E8E93]">Gostwrk</p>
-        <h1 className="text-[34px] font-bold leading-none text-black">Messages</h1>
+        <div className="mt-0.5 flex items-center justify-between gap-3">
+          <h1 className="min-w-0 truncate text-[34px] font-bold leading-none text-black">Messages</h1>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={inboxPing}
+            aria-label="Ping my cell on new texts"
+            disabled={inboxPingSaving}
+            onClick={toggleInboxPing}
+            className="flex shrink-0 items-center gap-2 py-1 disabled:opacity-50"
+          >
+            <span className="text-[13px] text-[#8E8E93]">Ping</span>
+            <span
+              className={`relative block h-[31px] w-[51px] rounded-full transition-colors ${inboxPing ? 'bg-[#34C759]' : 'bg-[#E9E9EB]'}`}
+            >
+              <span
+                className={`absolute top-[2px] block h-[27px] w-[27px] rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.18)] transition-transform ${inboxPing ? 'translate-x-[22px]' : 'translate-x-[2px]'}`}
+              />
+            </span>
+          </button>
+        </div>
       </header>
 
       {banner && (
@@ -126,6 +183,11 @@ export default function InboxScreen() {
       )}
       {alertState === 'error' && alertError && (
         <p className="mx-4 mb-2 text-[12px] leading-snug text-[#8E8E93]">{alertError}</p>
+      )}
+      {inboxPing && !inboxPingPhone && (
+        <p className="mx-4 mb-2 text-[12px] leading-snug text-[#8E8E93]">
+          Set your cell under Agent → Ping so after-hours texts can reach you.
+        </p>
       )}
 
       <div className="m-scroll min-h-0 flex-1 overflow-y-auto">
