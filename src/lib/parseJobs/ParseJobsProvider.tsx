@@ -4,10 +4,12 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from 'react';
+import { createPortal } from 'react-dom';
 
 export type ParseJobKind = 'banks' | 'leads' | 'application';
 
@@ -46,13 +48,15 @@ function ParseJobsChip({
   jobs: ParseJob[];
   dismiss: (id: string) => void;
 }) {
-  if (!jobs.length) return null;
-  return (
-    <div className="fixed bottom-14 right-5 z-[120] flex flex-col gap-2 w-[min(20rem,calc(100vw-2.5rem))] pointer-events-none">
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  if (!mounted || !jobs.length) return null;
+  return createPortal(
+    <div className="fixed bottom-2 right-3 z-[400] flex flex-col gap-2 w-[min(18.5rem,calc(100vw-1.5rem))] pointer-events-none">
       {jobs.map(job => (
         <div
           key={job.id}
-          className="pointer-events-auto bg-white border border-[#e5e5e5] shadow-lg rounded-2xl px-4 py-3 flex items-start gap-3"
+          className="pointer-events-auto bg-white border border-[#e5e5e5] shadow-xl rounded-2xl px-4 py-3 flex items-start gap-3"
         >
           {job.status === 'running' ? (
             <svg className="w-4 h-4 mt-0.5 shrink-0 animate-spin text-[#1a1a1a]" fill="none" viewBox="0 0 24 24">
@@ -89,7 +93,8 @@ function ParseJobsChip({
           </button>
         </div>
       ))}
-    </div>
+    </div>,
+    document.body,
   );
 }
 
