@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
 import { compactAnalyzerBody, persistAnalyzerSnapshotToLead } from '@/lib/leads/mergeParsedFields';
 import { notifyParseFinished, pingLeadLabel } from '@/lib/casper/ping';
+import { renameBankStatementAfterParse } from '@/lib/attachments/bankStatementFileName';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -152,6 +153,26 @@ export async function POST(request: NextRequest) {
     : { error: 'Invalid analyzer response' };
   const ok = upstream.ok && !!payload.metrics && typeof payload.metrics === 'object';
   let pinged = false;
+
+  if (ok && attachmentIds.length) {
+    const per = Array.isArray(payload.per_file)
+      ? payload.per_file as Array<{ filename?: string; metrics?: Record<string, unknown> }>
+      : [];
+    const fallback = payload.metrics && typeof payload.metrics === 'object'
+      ? payload.metrics as Record<string, unknown>
+      : {};
+    for (let i = 0; i < attachmentIds.length; i++) {
+      const row = per[i];
+      const metrics = (row?.metrics && typeof row.metrics === 'object' ? row.metrics : fallback);
+      const renamed = await renameBankStatementAfterParse(supabase, {
+        userId: user.id,
+        id: attachmentIds[i],
+        currentName: fromStorage[i]?.name || '',
+        fields: metrics,
+      });
+      if (renamed && row) row.filename = renamed;
+    }
+  }
 
   if (leadId && ok) {
     await persistAnalyzerSnapshotToLead(supabase, {

@@ -12,6 +12,7 @@ import {
 } from '@/lib/bankAnalyzer';
 import { persistParsedFieldsToLead } from '@/lib/leads/mergeParsedFields';
 import { notifyParseFinished, pingLeadLabel } from '@/lib/casper/ping';
+import { renameBankStatementAfterParse } from '@/lib/attachments/bankStatementFileName';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -62,7 +63,13 @@ export async function POST(request: Request) {
     }
     const buffer = Buffer.from(await blob.arrayBuffer());
     const fields = await analyzeStoredBankPdf(buffer, att.file_name);
-    perFile.push({ id, name: att.file_name, fields: Object.keys(fields) });
+    const renamed = await renameBankStatementAfterParse(supabase, {
+      userId: user.id,
+      id,
+      currentName: att.file_name,
+      fields,
+    });
+    perFile.push({ id, name: renamed || att.file_name, fields: Object.keys(fields) });
     const row = statementMonthFromFields(fields);
     if (row) months.push(row);
     merged = mergeParsedFieldMaps(merged, fields);

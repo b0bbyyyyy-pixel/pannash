@@ -6,6 +6,7 @@ import { loadPdfjsNode } from '@/lib/pdf/loadPdfjsNode';
 import { explodeFormLabels, fieldsFromLabeledText, mergeParsedFieldMaps, normalizeParsedFields } from '@/lib/normalizeParsedFields';
 import { extractPdfImages } from '@/lib/pdf/extractPdfImages';
 import { extractBankMetricsFromText, hasBankMetrics, reconcileBankMetrics } from '@/lib/pdf/extractBankMetrics';
+import { renameBankStatementAfterParse } from '@/lib/attachments/bankStatementFileName';
 
 export const runtime     = 'nodejs';
 export const maxDuration = 120;
@@ -562,9 +563,20 @@ export async function POST(request: Request) {
 
   console.log(`[parse-application] Extracted ${Object.keys(fields).length} field(s):`, Object.keys(fields));
 
+  let fileName: string | undefined;
+  if (isBank && attachmentId) {
+    fileName = await renameBankStatementAfterParse(supabase, {
+      userId: user.id,
+      id: attachmentId,
+      currentName: filename,
+      fields,
+    });
+  }
+
   return NextResponse.json({
     fields,
     documentType: isBank ? 'bank_statement' : 'application',
+    ...(fileName ? { file_name: fileName } : {}),
     ...(Object.keys(fields).length === 0
       ? { warning: 'This appears to be a scanned PDF with no readable text layer. Please fill in the fields manually or use a digital/typed PDF for best results.' }
       : {}),

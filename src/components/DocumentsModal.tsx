@@ -377,8 +377,13 @@ export default function DocumentsModal({
         credentials: 'include',
         body: JSON.stringify({ attachmentIds: [atts[i].id], persist: false, notify: false }),
       });
-      const json = await res.json().catch(() => ({})) as { fields?: Record<string, string>; error?: string };
+      const json = await res.json().catch(() => ({})) as {
+        fields?: Record<string, string>;
+        error?: string;
+        perFile?: Array<{ id: string; name: string }>;
+      };
       if (!res.ok) lastError = json.error || lastError;
+      if (json.perFile) applyFileRenames(json.perFile);
       const incoming = json.fields ?? {};
       const row = statementMonthFromFields(incoming);
       if (row) months.push(row);
@@ -415,8 +420,18 @@ export default function DocumentsModal({
       if (typeof pageText === 'string' && pageText) retry.append('pageText', pageText);
       res = await fetch('/api/leads/parse-application', { method: 'POST', body: retry, credentials: 'include' });
     }
-    const json = await res.json();
+    const json = await res.json() as { fields?: Record<string, string>; error?: string; warning?: string; file_name?: string };
+    if (res.ok && json.file_name) {
+      setAttachments(prev => prev.map(x => x.id === a.id ? { ...x, file_name: json.file_name as string } : x));
+    }
     return { ok: res.ok, json };
+  };
+
+  const applyFileRenames = (rows: Array<{ id?: string; name?: string }>) => {
+    if (!rows.length) return;
+    const names = new Map(rows.filter(r => r.id && r.name).map(r => [r.id as string, r.name as string]));
+    if (!names.size) return;
+    setAttachments(prev => prev.map(a => names.has(a.id) ? { ...a, file_name: names.get(a.id)! } : a));
   };
 
   // ── Upload ─────────────────────────────────────────────────────────────────
@@ -507,7 +522,12 @@ export default function DocumentsModal({
             credentials: 'include',
             body: JSON.stringify({ attachmentIds: ids, leadId, persist: true }),
           });
-          const json = await res.json().catch(() => ({})) as { ok?: boolean; error?: string };
+          const json = await res.json().catch(() => ({})) as {
+            ok?: boolean;
+            error?: string;
+            perFile?: Array<{ id: string; name: string }>;
+          };
+          if (json.perFile) applyFileRenames(json.perFile);
           if (!res.ok) throw new Error(json.error || 'Could not read these statements.');
           onApplied?.();
           if (!json.ok) throw new Error('Could not read deposit or balance numbers from these files.');
@@ -672,6 +692,7 @@ export default function DocumentsModal({
           throw new Error('Could not read this statement.');
         } finally {
           setAnalyzingId(null);
+          fetchDocs();
         }
       },
     });
@@ -715,7 +736,13 @@ export default function DocumentsModal({
               persist: true,
             }),
           });
-          const json = await res.json().catch(() => ({})) as { ok?: boolean; error?: string; pinged?: boolean };
+          const json = await res.json().catch(() => ({})) as {
+            ok?: boolean;
+            error?: string;
+            pinged?: boolean;
+            perFile?: Array<{ id: string; name: string }>;
+          };
+          if (json.perFile) applyFileRenames(json.perFile);
           if (!res.ok) throw new Error(json.error || 'Could not read statements');
           onApplied?.();
           if (!json.ok) throw new Error('Statement reader found no deposit or balance totals in these files.');

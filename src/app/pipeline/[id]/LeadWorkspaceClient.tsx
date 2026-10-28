@@ -73,6 +73,7 @@ interface LeadWorkspaceClientProps {
   /** modal `from` query so Prev/Next keeps the same chrome */
   fromSource?: string | null;
   campaignName?: string | null;
+  campaignSource?: string | null;
   initialDocCount?: number;
 }
 
@@ -457,6 +458,7 @@ export default function LeadWorkspaceClient({
   hidePipelineNav = false,
   fromSource = null,
   campaignName = null,
+  campaignSource = null,
   initialDocCount = 0,
 }: LeadWorkspaceClientProps) {
   const router = useRouter();
@@ -1509,6 +1511,14 @@ export default function LeadWorkspaceClient({
             >
               {campaignName}
             </a>
+          )}
+          {(campaignSource || lead.lead_source) && (
+            <span
+              className="max-w-[140px] truncate text-[9px] leading-none text-[#9b9b9b] tracking-wide"
+              title={`Lead source: ${campaignSource || lead.lead_source}`}
+            >
+              {campaignSource || lead.lead_source}
+            </span>
           )}
 
           {/* SOS + Google quick lookup buttons */}

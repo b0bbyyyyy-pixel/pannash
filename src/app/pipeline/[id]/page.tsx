@@ -5,6 +5,7 @@ import { notFound } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import LeadWorkspaceClient from './LeadWorkspaceClient';
 import { countAttachmentsForLead } from '@/lib/leads/attachmentCounts';
+import { resolveListSource } from '@/lib/smsDrip/leadSources';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -67,13 +68,23 @@ export default async function PipelineLeadPage({
   const userName = user.email?.split('@')[0] || 'User';
 
   let campaignName: string | null = null;
+  let campaignSource: string | null = null;
   if (lead.list_id) {
-    const { data: list } = await supabase
+    const withSource = await supabase
       .from('lead_lists')
-      .select('name')
+      .select('name, source_category')
       .eq('id', lead.list_id)
       .maybeSingle();
+    const list = withSource.data
+      ?? ((withSource.error && /source_category/i.test(withSource.error.message || ''))
+        ? (await supabase.from('lead_lists').select('name').eq('id', lead.list_id).maybeSingle()).data
+        : null);
     campaignName = list?.name ?? null;
+    const resolved = resolveListSource({
+      name: list?.name,
+      source_category: (list as { source_category?: string | null } | null)?.source_category,
+    });
+    if (resolved.label && resolved.label !== 'Uncategorized') campaignSource = resolved.label;
   }
 
   if (isModal) {
@@ -92,6 +103,7 @@ export default async function PipelineLeadPage({
             hidePipelineNav={hidePipelineNav}
             fromSource={sp.from ?? null}
             campaignName={campaignName}
+            campaignSource={campaignSource}
             initialDocCount={initialDocCount}
           />
         </div>
@@ -111,6 +123,7 @@ export default async function PipelineLeadPage({
             userId={user.id}
             userName={userName}
             campaignName={campaignName}
+            campaignSource={campaignSource}
             initialDocCount={initialDocCount}
           />
         </div>

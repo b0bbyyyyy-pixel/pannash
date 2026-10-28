@@ -13,6 +13,7 @@ import {
   statementMonthFromFields,
   type StatementMonth,
 } from '@/lib/bankAnalyzer';
+import { bankStatementFileName } from '@/lib/attachments/bankStatementFileName';
 
 type Method = 'choose' | 'manual' | 'paste' | 'sheet' | 'upload' | 'fullpack';
 type DocKind = 'application' | 'bank_statement';
@@ -163,6 +164,7 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const appRef = useRef<HTMLInputElement>(null);
   const bankRef = useRef<HTMLInputElement>(null);
+  const bankUploadNames = useRef<Map<string, string>>(new Map());
 
   // Create state
   const [saving, setSaving] = useState(false);
@@ -330,6 +332,7 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
 
     const mergedRaw: Record<string, string> = {};
     const months: StatementMonth[] = [];
+    bankUploadNames.current = new Map();
     let appLead: Partial<Fields> = {};
     let appUw: Record<string, string> = {};
     let bankLead: Partial<Fields> = {};
@@ -348,6 +351,12 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
         try {
           const bankJson = await parseDoc(file, 'bank_statement');
           const incoming = (bankJson.fields ?? {}) as Record<string, string>;
+          const renamed = bankStatementFileName({
+            statementMonth: incoming.statementMonth,
+            accountNumber: incoming.accountNumber,
+            originalName: file.name,
+          });
+          if (renamed) bankUploadNames.current.set(file.name, renamed);
           const row = statementMonthFromFields(incoming);
           if (row) months.push(row);
           for (const [k, v] of Object.entries(incoming)) {
@@ -493,7 +502,11 @@ export default function AddPipelineLeadModal({ onClose }: Props) {
         const { uploadFileToLeadStorage } = await import('@/lib/uploadLeadFile');
         for (const file of bankFiles) {
           try {
-            await uploadFileToLeadStorage(file, { leadId: lead.id, columnField: 'bank_statements' });
+            const nextName = bankUploadNames.current.get(file.name);
+            const toSave = nextName && nextName !== file.name
+              ? new File([file], nextName, { type: file.type })
+              : file;
+            await uploadFileToLeadStorage(toSave, { leadId: lead.id, columnField: 'bank_statements' });
           } catch (e) {
             console.warn('Failed to save statement', file.name, e);
           }

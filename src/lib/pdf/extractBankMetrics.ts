@@ -125,11 +125,25 @@ export function unglueBankText(text: string): string {
 }
 
 export function statementMonthFromFilename(name: string): string | undefined {
+  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   const iso = name.match(/_D_(\d{4})(\d{2})(\d{2})/);
   if (iso) {
-    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     const mi = Number(iso[2]) - 1;
     if (mi >= 0 && mi < 12) return `${months[mi]} ${iso[1]}`;
+  }
+  const ymd = name.match(/(?:^|[^\d])(20\d{2}|19\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(?:[^\d]|$)/);
+  if (ymd) {
+    const mi = Number(ymd[2]) - 1;
+    if (mi >= 0 && mi < 12) return `${months[mi]} ${ymd[1]}`;
+  }
+  const yyyyMm = name.match(/(20\d{2}|19\d{2})[-_.](0[1-9]|1[0-2])(?:[-_.]|$)/);
+  if (yyyyMm) return `${months[Number(yyyyMm[2]) - 1]} ${yyyyMm[1]}`;
+  const named = name.match(
+    /\b(January|February|March|April|May|June|July|August|September|October|November|December)\b/i,
+  );
+  if (named) {
+    const year = name.match(/\b(20\d{2}|19\d{2})\b/);
+    return year ? `${named[1]} ${year[1]}` : named[1];
   }
   return undefined;
 }
@@ -281,6 +295,14 @@ export function extractBankMetricsFromText(raw: string): Record<string, string> 
 
   const month = statementMonthFromText(text);
   if (month) out.statementMonth = month;
+
+  const acct = first(text, [
+    /account\s*(?:number|#|no\.?)?\s*[:#]?\s*(?:[xX*]{2,}[\s-]*)?(\d{4,17})/i,
+    /acct\.?\s*(?:#|no\.?)?\s*[:#]?\s*(?:[xX*]{2,}[\s-]*)?(\d{4,17})/i,
+  ]);
+  if (acct?.[1] && acct[1].replace(/\D/g, '').length >= 4) {
+    out.accountNumber = acct[1].replace(/\D/g, '').slice(-4);
+  }
 
   const largest = largestDepositFromLines(text);
   if (largest) out.largestDeposit = largest;
