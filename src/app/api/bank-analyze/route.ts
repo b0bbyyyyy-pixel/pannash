@@ -147,8 +147,10 @@ export async function POST(request: NextRequest) {
     body = { error: text || 'Invalid JSON from analyzer' };
   }
 
-  const payload = body && typeof body === 'object' ? { ...(body as Record<string, unknown>) } : { error: 'Invalid analyzer response' };
-  const ok = upstream.ok && payload.metrics && typeof payload.metrics === 'object';
+  const payload: Record<string, unknown> = body && typeof body === 'object'
+    ? { ...(body as Record<string, unknown>) }
+    : { error: 'Invalid analyzer response' };
+  const ok = upstream.ok && !!payload.metrics && typeof payload.metrics === 'object';
   let pinged = false;
 
   if (leadId && ok) {
