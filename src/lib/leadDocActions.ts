@@ -1,17 +1,5 @@
-import { inferFromLegalName } from '@/lib/businessName';
-import { monthsInBusinessFromStartDate, normalizeParsedFields } from '@/lib/normalizeParsedFields';
-import {
-  compactMetricsForStorage,
-  mapAnalyzerMetricsToUnderwritingFields,
-  mapParsedBankFieldsToUd,
-  mergeStatementMonths,
-  mergeMcaPositions,
-  parseStatementMonths,
-  requestedAmountFromMonthlyRevenue,
-  seedBankAnalysisFromParsed,
-  statementMonthFromFields,
-  statementMonthsFromUd,
-} from '@/lib/bankAnalyzer';
+import { compactMetricsForStorage, mapAnalyzerMetricsToUnderwritingFields, requestedAmountFromMonthlyRevenue } from '@/lib/bankAnalyzer';
+import { mergeParsedFieldsIntoLead } from '@/lib/leads/mergeParsedFields';
 
 export type DocAttachment = {
   id: string;
@@ -44,22 +32,15 @@ export async function applyParsedFieldsToLead(
   fallbackCompany?: string | null,
 ) {
   const lead = await fetchLeadDocContext(leadId);
-  const normalized = normalizeParsedFields(fields);
-  const selectedNorm = new Set(selected);
-  for (const k of selected) {
-    for (const nk of Object.keys(normalizeParsedFields({ [k]: fields[k] || '' }))) selectedNorm.add(nk);
-  }
-  const DIRECT = new Set(['company', 'name', 'email', 'phone', 'notes', 'stage', 'value']);
-  const directUpdates: Record<string, string> = {};
-  const udUpdates: Record<string, string> = {};
+  const merged = mergeParsedFieldsIntoLead({
+    fields,
+    selected,
+    currentUd: (lead.underwriting_data || {}) as Record<string, unknown>,
+    currentCompany: lead.company,
+    fallbackCompany,
+  });
 
-  for (const [k, v] of Object.entries(normalized)) {
-    if (!selectedNorm.has(k) || !v) continue;
-    if (DIRECT.has(k)) directUpdates[k] = v;
-    else udUpdates[k] = v;
-  }
-
-  for (const [field, value] of Object.entries(directUpdates)) {
+  for (const [field, value] of Object.entries(merged.directUpdates)) {
     await fetch('/api/leads/update-crm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -68,77 +49,21 @@ export async function applyParsedFieldsToLead(
     });
   }
 
-  const currentUd = (lead.underwriting_data || {}) as Record<string, unknown>;
-  const legalName = (directUpdates.company || String(lead.company || fallbackCompany || '')).trim();
-  if (legalName) {
-    const inferred = inferFromLegalName(legalName);
-    if (!String(udUpdates.dba || currentUd.dba || '').trim() && inferred.dba) {
-      udUpdates.dba = inferred.dba;
-    }
-    if (!String(udUpdates.entityType || currentUd.entityType || '').trim() && inferred.entityType) {
-      udUpdates.entityType = inferred.entityType;
-    }
-  }
-  const incomingMonths = parseStatementMonths(udUpdates.statementMonths);
-  const single = incomingMonths.length ? [] : (() => {
-    const one = statementMonthFromFields(udUpdates);
-    return one ? [one] : [];
-  })();
-  const combinedMonths = mergeStatementMonths(
-    statementMonthsFromUd(currentUd),
-    incomingMonths.length ? incomingMonths : single,
-  );
-  if (combinedMonths.length) udUpdates.statementMonths = JSON.stringify(combinedMonths);
-
-  const mappedBank = mapParsedBankFieldsToUd(udUpdates);
-  const BANK_KEYS = new Set([
-    'totalDeposits', 'totalWithdrawals', 'openingBalance', 'depositCount', 'depositsCount',
-    'mcaPositions', 'hasOtherMCALoans', 'nsfCount', 'negativeDays', 'avgDailyBalance',
-    'endingBalance', 'monthlyRevenue', 'largestDeposit', 'statementMonth', 'bankName',
-    'accountNumber', 'month1Revenue', 'month2Revenue', 'month3Revenue', 'month4Revenue',
-    'statementMonths',
-  ]);
-  const leftover: Record<string, string> = {};
-  for (const [k, v] of Object.entries(udUpdates)) {
-    if (k in mappedBank || BANK_KEYS.has(k)) continue;
-    leftover[k] = v;
-  }
-  const tib = monthsInBusinessFromStartDate(leftover.businessStartDate || currentUd.businessStartDate);
-  if (tib != null) leftover.timeInBusiness = String(tib);
-
-  if (Object.keys(mappedBank).length || Object.keys(leftover).length) {
-    if (mappedBank.mcaPositions && currentUd.mcaPositions) {
-      const combined = mergeMcaPositions(currentUd.mcaPositions, mappedBank.mcaPositions);
-      mappedBank.mcaPositions = combined;
-      mappedBank.mcaPositionCount = combined.length;
-      mappedBank.hasOtherMCALoans = combined.length > 0;
-      mappedBank.otherMCALenders = combined.map(p => p.lender).filter(Boolean).join(', ');
-      mappedBank.otherMCAMonthlyPayment = combined.reduce((s, p) => s + (p.monthlyPayment || 0), 0);
-    }
-    const hasBank = Object.keys(mappedBank).length > 0;
-    const requested = requestedAmountFromMonthlyRevenue(mappedBank.monthlyRevenue);
-    if (requested != null) mappedBank.requestedAmount = requested;
-    const mergedUd: Record<string, unknown> = { ...currentUd, ...leftover, ...mappedBank };
-    if (hasBank) {
-      mergedUd.bankStatementAnalysis = seedBankAnalysisFromParsed(
-        udUpdates,
-        (currentUd.bankStatementAnalysis as Record<string, unknown> | undefined) ?? null,
-      );
-    }
+  if (merged.mergedUd) {
     await fetch('/api/leads/underwriting', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ leadId, underwritingData: mergedUd }),
+      body: JSON.stringify({ leadId, underwritingData: merged.mergedUd }),
       credentials: 'include',
     });
-    if (requested != null) {
-      await fetch('/api/leads/update-crm', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ leadId, field: 'value', value: requested }),
-        credentials: 'include',
-      });
-    }
+  }
+  if (merged.requestedAmount != null) {
+    await fetch('/api/leads/update-crm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ leadId, field: 'value', value: merged.requestedAmount }),
+      credentials: 'include',
+    });
   }
 }
 

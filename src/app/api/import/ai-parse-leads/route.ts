@@ -4,6 +4,7 @@ import { cookies } from 'next/headers';
 import Papa from 'papaparse';
 import { getAIClient, GROK_MINI_MODEL } from '@/lib/ai';
 import { looksLikeHeaderRow, mergeSheetLead } from '@/lib/import/extractSheetLead';
+import { notifyParseFinished } from '@/lib/casper/ping';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -192,5 +193,13 @@ Rules:
   const target = expectedCount ?? dataRows.length;
   allLeads = padTo(allLeads, target).map((lead, i) => mergeSheetLead(lead, dataRows[i] ?? []) as ParsedRow);
 
-  return NextResponse.json({ leads: allLeads });
+  const named = allLeads.filter(l => l.name || l.company || l.phone || l.email).length;
+  await notifyParseFinished(supabase, {
+    userId: user.id,
+    ok: named > 0,
+    what: `${allLeads.length} lead${allLeads.length === 1 ? '' : 's'}`,
+    extra: named > 0 ? 'Open the campaign import to apply them.' : 'No names or phones came back.',
+  });
+
+  return NextResponse.json({ leads: allLeads, pinged: true });
 }

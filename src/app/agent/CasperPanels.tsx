@@ -465,6 +465,7 @@ function pingTime(iso: string) {
 export function PingPanel() {
   const [enabled, setEnabled] = useState(false);
   const [activity, setActivity] = useState(false);
+  const [parse, setParse] = useState(false);
   const [phone, setPhone] = useState('');
   const [savedPhone, setSavedPhone] = useState('');
   const [messages, setMessages] = useState<PingMsg[]>([]);
@@ -488,6 +489,7 @@ export function PingPanel() {
     if (!silent) {
       setEnabled(!!d.enabled);
       setActivity(!!d.activity);
+      setParse(!!d.parse);
       setPhone(d.phone || '');
       setSavedPhone(d.phone || '');
     }
@@ -527,13 +529,14 @@ export function PingPanel() {
       const res = await fetch('/api/casper/ping', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled, activity, phone: phone.trim() }),
+        body: JSON.stringify({ enabled, activity, parse, phone: phone.trim() }),
       });
       const d = await res.json();
       if (!res.ok) setError(d.error || 'Could not save');
       else {
         setEnabled(!!d.enabled);
         setActivity(!!d.activity);
+        setParse(!!d.parse);
         setPhone(d.phone || phone);
         setSavedPhone(d.phone || phone.trim());
         setSavedNote('Saved');
@@ -573,7 +576,7 @@ export function PingPanel() {
       <div className="bg-white border border-[#e5e5e5] rounded-2xl p-5">
         <h3 className="text-sm font-semibold text-[#1a1a1a] mb-1">Ping</h3>
         <p className="text-[11px] text-gray-400 mb-4">
-          Calendar reminders always go to this cell. Chat replies and “needs you” pings follow the toggle below. Lead activity texts are separate.
+          Calendar reminders always go to this cell. Chat replies and “needs you” pings follow the toggle below. Lead activity and AI-parse texts are separate.
         </p>
         {setupRequired && (
           <p className="text-xs text-amber-700 bg-amber-50 rounded-xl px-3 py-2 mb-4">
@@ -590,7 +593,7 @@ export function PingPanel() {
             className="rounded border-gray-300"
           />
         </label>
-        <label className="flex items-center justify-between gap-3 mb-4">
+        <label className="flex items-center justify-between gap-3 mb-3">
           <span className="text-sm text-[#1a1a1a]">
             Lead activity updates
             <span className="block text-[11px] text-gray-400 font-normal">Apps and bank statements landing in the CRM</span>
@@ -600,6 +603,19 @@ export function PingPanel() {
             checked={activity}
             disabled={saving}
             onChange={e => setActivity(e.target.checked)}
+            className="rounded border-gray-300"
+          />
+        </label>
+        <label className="flex items-center justify-between gap-3 mb-4">
+          <span className="text-sm text-[#1a1a1a]">
+            AI parse finished
+            <span className="block text-[11px] text-gray-400 font-normal">Bank statements or lead sheets when the reader is done</span>
+          </span>
+          <input
+            type="checkbox"
+            checked={parse}
+            disabled={saving}
+            onChange={e => setParse(e.target.checked)}
             className="rounded border-gray-300"
           />
         </label>

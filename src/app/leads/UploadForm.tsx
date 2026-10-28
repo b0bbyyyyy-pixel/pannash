@@ -8,6 +8,8 @@ import JSZip from 'jszip';
 import { parseLeadPasteText } from '@/lib/parse-lead-paste';
 import { toE164 } from '@/lib/dialer/e164';
 import { extractSheetLead, looksLikeHeaderRow, mergeSheetLead } from '@/lib/import/extractSheetLead';
+import { aiParseFingerprint, saveAiParseResult, takeAiParseForList, type CachedAiLead } from '@/lib/import/aiParseCache';
+import { useParseJobs } from '@/lib/parseJobs/ParseJobsProvider';
 
 interface UploadFormProps {
   selectedListId?: string;
@@ -191,6 +193,8 @@ function isRevenueHeader(key: string): boolean {
 }
 
 export default function UploadForm({ selectedListId, onSuccess, initialMode = 'file' }: UploadFormProps) {
+  const parseJobs = useParseJobs();
+  const aiParsing = parseJobs.jobs.some(j => j.kind === 'leads' && j.status === 'running');
   const [mode, setMode] = useState<UploadMode>(initialMode);
   const [file, setFile] = useState<File | null>(null);
   const [pasteText, setPasteText] = useState('');
@@ -207,7 +211,6 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
   const [sheetsLoading, setSheetsLoading] = useState(false);
   const [sheetsAddToDialer, setSheetsAddToDialer] = useState(false);
   const [rawSheetsCsv, setRawSheetsCsv] = useState<string>(''); // original CSV for AI re-parse
-  const [aiParsing, setAiParsing] = useState(false);
   const [aiParseError, setAiParseError] = useState<string>('');
   const [rangeFrom, setRangeFrom] = useState<string>('2');
   const [rangeTo, setRangeTo] = useState<string>('');
@@ -1431,8 +1434,35 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
     return bad / rows.length > 0.2;
   };
 
+  const applyMappedAiLeads = useCallback((mapped: CachedAiLead[], from: number, allRows: ParsedLead[]) => {
+    const firstDataSheetRowInRange = sheetsHasHeader ? Math.max(from, 2) : from;
+    const next = [...allRows];
+    for (let i = 0; i < mapped.length; i++) {
+      const sheetRow = firstDataSheetRowInRange + i;
+      const idx = next.findIndex(l => l.sheetRow === sheetRow);
+      if (idx >= 0) next[idx] = { ...mapped[i], sheetRow };
+    }
+    setSheetsAllRows(next);
+    setSheetsPreview(applyRange(next, rangeFrom, rangeTo));
+  }, [sheetsHasHeader, applyRange, rangeFrom, rangeTo]);
+
+  useEffect(() => {
+    if (!selectedListId) return;
+    const cached = takeAiParseForList(selectedListId);
+    if (!cached?.leads?.length) return;
+    if (sheetsAllRows.length) {
+      applyMappedAiLeads(cached.leads, cached.from, sheetsAllRows);
+      return;
+    }
+    const rows = cached.leads.map((l, i) => ({ ...l, sheetRow: cached.from + i }));
+    setSheetsAllRows(rows);
+    setSheetsPreview(rows);
+    // Restore a finished background parse if this campaign's upload was closed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedListId]);
+
   // ── AI-powered re-parse ─────────────────────────────────────────────────
-  const handleAiParse = async () => {
+  const handleAiParse = () => {
     if (!rawSheetsCsv) return;
     const { from, to } = selectedRange();
     const { csv: rangedCsv, count, dataRows } = sliceCsvToRange(rawSheetsCsv, from, to, sheetsHasHeader);
@@ -1440,61 +1470,58 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
       setAiParseError('No rows in the selected range to parse.');
       return;
     }
-    setAiParsing(true);
     setAiParseError('');
-    try {
-      const res = await fetch('/api/import/ai-parse-leads', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ csv: rangedCsv, expectedCount: count }),
-      });
-      const { json, error: parseErr } = await readResponseJson(res);
-      if (parseErr) {
-        setAiParseError(parseErr);
-        return;
-      }
-      if (!res.ok) {
-        setAiParseError(String(json.error || 'AI parse failed. Check your XAI_API_KEY.'));
-        return;
-      }
-      const aiLeads = (json.leads as Array<{
-        name: string | null; email: string | null; phone: string | null; company: string | null;
-        industry?: string | null; address?: string | null; city?: string | null;
-        state?: string | null; zip?: string | null; start_date?: string | null;
-      }>) ?? [];
-      const mapped: ParsedLead[] = [];
-      for (let i = 0; i < count; i++) {
-        const l = aiLeads[i] ?? {};
-        const merged = mergeSheetLead(l, dataRows[i] ?? []);
-        mapped.push({
-          name:      merged.name    || '',
-          email:     merged.email   || '',
-          phone:     merged.phone   || null,
-          company:   merged.company || null,
-          notes:     null,
-          industry:  merged.industry   || null,
-          address:   merged.address    || null,
-          city:      merged.city       || null,
-          state:     merged.state      || null,
-          zip:       merged.zip        || null,
-          startDate: merged.start_date || null,
-        });
-      }
+    const snapshotRows = sheetsAllRows;
+    const listId = selectedListId || '';
+    const fingerprint = aiParseFingerprint(rawSheetsCsv, from, to);
 
-      const firstDataSheetRowInRange = sheetsHasHeader ? Math.max(from, 2) : from;
-      const next = [...sheetsAllRows];
-      for (let i = 0; i < mapped.length; i++) {
-        const sheetRow = firstDataSheetRowInRange + i;
-        const idx = next.findIndex(l => l.sheetRow === sheetRow);
-        if (idx >= 0) next[idx] = { ...mapped[i], sheetRow };
-      }
-      setSheetsAllRows(next);
-      setSheetsPreview(applyRange(next, rangeFrom, rangeTo));
-    } catch (e: any) {
-      setAiParseError(e.message || 'Unexpected error during AI parse.');
-    } finally {
-      setAiParsing(false);
-    }
+    parseJobs.start({
+      kind: 'leads',
+      label: `${count} leads`,
+      run: async () => {
+        const res = await fetch('/api/import/ai-parse-leads', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ csv: rangedCsv, expectedCount: count }),
+        });
+        const { json, error: parseErr } = await readResponseJson(res);
+        if (parseErr) {
+          setAiParseError(parseErr);
+          throw new Error(parseErr);
+        }
+        if (!res.ok) {
+          const msg = String(json.error || 'AI parse failed. Check your XAI_API_KEY.');
+          setAiParseError(msg);
+          throw new Error(msg);
+        }
+        const aiLeads = (json.leads as Array<{
+          name: string | null; email: string | null; phone: string | null; company: string | null;
+          industry?: string | null; address?: string | null; city?: string | null;
+          state?: string | null; zip?: string | null; start_date?: string | null;
+        }>) ?? [];
+        const mapped: ParsedLead[] = [];
+        for (let i = 0; i < count; i++) {
+          const l = aiLeads[i] ?? {};
+          const merged = mergeSheetLead(l, dataRows[i] ?? []);
+          mapped.push({
+            name:      merged.name    || '',
+            email:     merged.email   || '',
+            phone:     merged.phone   || null,
+            company:   merged.company || null,
+            notes:     null,
+            industry:  merged.industry   || null,
+            address:   merged.address    || null,
+            city:      merged.city       || null,
+            state:     merged.state      || null,
+            zip:       merged.zip        || null,
+            startDate: merged.start_date || null,
+          });
+        }
+        saveAiParseResult({ listId, fingerprint, from, to, leads: mapped, at: Date.now() });
+        applyMappedAiLeads(mapped, from, snapshotRows);
+        return `Finished parsing ${count} leads`;
+      },
+    });
   };
 
   // ── Google Sheets import ────────────────────────────────────────────────
@@ -2083,12 +2110,12 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
           {/* AI parsing spinner */}
           {aiParsing && (
             <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
-              <svg className="w-4 h-4 animate-spin text-gray-600" fill="none" viewBox="0 0 24 24">
+              <svg className="w-4 h-4 animate-spin text-gray-600 shrink-0" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
               </svg>
               <span className="text-xs text-gray-600">
-                AI is reading Google Sheets rows {selectedRange().from}–{selectedRange().to}…
+                AI is reading rows {selectedRange().from}–{selectedRange().to}. You can close this and keep using the CRM — we’ll ping you when it’s done.
               </span>
             </div>
           )}

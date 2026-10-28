@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
-import { getPingSettings, recoverPingRepliesFromInbox, sendCasperPing } from '@/lib/casper/ping';
+import { getPingSettings, notifyParseFinished, recoverPingRepliesFromInbox, sendCasperPing } from '@/lib/casper/ping';
 import { catchUpUnansweredPing, runCasperPingReply } from '@/lib/casper/pingReply';
 
 export const maxDuration = 60;
@@ -52,6 +52,7 @@ export async function PATCH(req: NextRequest) {
   const phone = typeof body.phone === 'string' ? body.phone.trim() : undefined;
   const enabled = typeof body.enabled === 'boolean' ? body.enabled : undefined;
   const activity = typeof body.activity === 'boolean' ? body.activity : undefined;
+  const parse = typeof body.parse === 'boolean' ? body.parse : undefined;
 
   const { data: existing } = await supabase
     .from('user_settings')
@@ -62,6 +63,7 @@ export async function PATCH(req: NextRequest) {
   const payload: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (enabled !== undefined) payload.casper_ping_enabled = enabled;
   if (activity !== undefined) payload.casper_ping_activity = activity;
+  if (parse !== undefined) payload.casper_ping_parse = parse;
   if (phone !== undefined) payload.casper_ping_phone = phone || null;
 
   const write = existing
@@ -69,9 +71,10 @@ export async function PATCH(req: NextRequest) {
     : (row: Record<string, unknown>) => supabase.from('user_settings').insert({ user_id: user.id, ...row });
 
   let { error } = await write(payload);
-  if (error && activity !== undefined && /casper_ping_activity/i.test(error.message || '')) {
+  if (error && /casper_ping_parse|casper_ping_activity/i.test(error.message || '')) {
     const retry = { ...payload };
-    delete retry.casper_ping_activity;
+    if (/casper_ping_parse/i.test(error.message || '')) delete retry.casper_ping_parse;
+    if (/casper_ping_activity/i.test(error.message || '')) delete retry.casper_ping_activity;
     ({ error } = await write(retry));
   }
 
@@ -100,6 +103,16 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const text = String(body.body || '').trim();
   const test = body.test === true;
+
+  if (body.parseDone === true) {
+    const sent = await notifyParseFinished(supabase, {
+      userId: user.id,
+      ok: body.ok !== false,
+      what: String(body.what || 'your files'),
+      extra: typeof body.extra === 'string' ? body.extra : undefined,
+    });
+    return NextResponse.json({ ...sent, pinged: true });
+  }
 
   if (test) {
     const sent = await sendCasperPing(supabase, {

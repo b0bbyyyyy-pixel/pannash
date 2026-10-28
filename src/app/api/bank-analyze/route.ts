@@ -1,6 +1,8 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
+import { compactAnalyzerBody, persistAnalyzerSnapshotToLead } from '@/lib/leads/mergeParsedFields';
+import { notifyParseFinished, pingLeadLabel } from '@/lib/casper/ping';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -74,10 +76,11 @@ export async function POST(request: NextRequest) {
     .filter(Boolean);
 
   const fromStorage: { blob: Blob; name: string }[] = [];
+  let leadId = '';
   for (const id of attachmentIds) {
     const { data: att } = await supabase
       .from('lead_attachments')
-      .select('file_path, file_name')
+      .select('file_path, file_name, lead_id')
       .eq('id', id)
       .eq('user_id', user.id)
       .maybeSingle();
@@ -89,6 +92,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `Could not download ${att.file_name}` }, { status: 502 });
     }
     fromStorage.push({ blob, name: att.file_name });
+    if (!leadId && att.lead_id) leadId = String(att.lead_id);
   }
   for (const filePath of filePaths) {
     if (!filePath.startsWith(`${user.id}/`) || filePath.includes('..')) {
@@ -143,5 +147,33 @@ export async function POST(request: NextRequest) {
     body = { error: text || 'Invalid JSON from analyzer' };
   }
 
-  return NextResponse.json(body, { status: upstream.status });
+  const payload = body && typeof body === 'object' ? { ...(body as Record<string, unknown>) } : { error: 'Invalid analyzer response' };
+  const ok = upstream.ok && payload.metrics && typeof payload.metrics === 'object';
+  let pinged = false;
+
+  if (leadId && ok) {
+    await persistAnalyzerSnapshotToLead(supabase, {
+      userId: user.id,
+      leadId,
+      snapshot: compactAnalyzerBody(payload),
+    });
+    payload.persisted = true;
+    const { data: lead } = await supabase
+      .from('leads')
+      .select('name, company')
+      .eq('id', leadId)
+      .eq('user_id', user.id)
+      .maybeSingle();
+    await notifyParseFinished(supabase, {
+      userId: user.id,
+      ok: true,
+      what: `bank statements for ${pingLeadLabel(lead)}`,
+      extra: 'Numbers are on the lead.',
+    });
+    pinged = true;
+    payload.pinged = true;
+  }
+
+  void pinged;
+  return NextResponse.json(payload, { status: upstream.status });
 }

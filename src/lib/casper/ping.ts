@@ -2,14 +2,20 @@ import { toE164 } from '@/lib/dialer/e164';
 import { sendTwilioSms } from '@/lib/telephony/sms';
 import { getTwilioCreds } from '@/lib/telephony/twilio';
 
-export type PingKind = 'chat' | 'alert' | 'calendar' | 'needs_human' | 'docs' | 'test';
+export type PingKind = 'chat' | 'alert' | 'calendar' | 'needs_human' | 'docs' | 'test' | 'parse';
 
 export type PingSettings = {
   enabled: boolean;
   /** Docs-received / lead-activity texts. Off unless explicitly enabled. */
   activity: boolean;
+  /** SMS when AI finishes reading bank statements or parsing a lead sheet. */
+  parse: boolean;
   phone: string;
 };
+
+export function pingLeadLabel(lead?: { name?: string | null; company?: string | null } | null) {
+  return String(lead?.company || lead?.name || 'a lead').trim() || 'a lead';
+}
 
 export function pingDigits(raw: string | null | undefined) {
   return String(raw ?? '').replace(/\D/g, '').slice(-10);
@@ -27,25 +33,38 @@ export async function getPingSettings(
 ): Promise<PingSettings> {
   let enabled = false;
   let activity = false;
+  let parse = false;
   let phone = '';
 
   try {
     const { data, error } = await supabase
       .from('user_settings')
-      .select('casper_ping_enabled, casper_ping_phone, casper_ping_activity')
+      .select('casper_ping_enabled, casper_ping_phone, casper_ping_activity, casper_ping_parse')
       .eq('user_id', userId)
       .maybeSingle();
-    if (error && /casper_ping_activity/i.test(error.message || '')) {
+    if (error && /casper_ping_parse|casper_ping_activity/i.test(error.message || '')) {
       const fallback = await supabase
         .from('user_settings')
-        .select('casper_ping_enabled, casper_ping_phone')
+        .select('casper_ping_enabled, casper_ping_phone, casper_ping_activity')
         .eq('user_id', userId)
         .maybeSingle();
-      enabled = !!fallback.data?.casper_ping_enabled;
-      phone = String(fallback.data?.casper_ping_phone || '').trim();
+      if (fallback.error && /casper_ping_activity/i.test(fallback.error.message || '')) {
+        const basic = await supabase
+          .from('user_settings')
+          .select('casper_ping_enabled, casper_ping_phone')
+          .eq('user_id', userId)
+          .maybeSingle();
+        enabled = !!basic.data?.casper_ping_enabled;
+        phone = String(basic.data?.casper_ping_phone || '').trim();
+      } else {
+        enabled = !!fallback.data?.casper_ping_enabled;
+        activity = !!fallback.data?.casper_ping_activity;
+        phone = String(fallback.data?.casper_ping_phone || '').trim();
+      }
     } else {
       enabled = !!data?.casper_ping_enabled;
       activity = !!data?.casper_ping_activity;
+      parse = !!data?.casper_ping_parse;
       phone = String(data?.casper_ping_phone || '').trim();
     }
   } catch {
@@ -65,7 +84,31 @@ export async function getPingSettings(
     }
   }
 
-  return { enabled, activity, phone };
+  return { enabled, activity, parse, phone };
+}
+
+/** Text the user when a long AI parse finishes. Independent of the chat-ping toggle. */
+export async function notifyParseFinished(
+  supabase: { from: (table: string) => any },
+  args: {
+    userId: string;
+    ok: boolean;
+    what: string;
+    extra?: string;
+  },
+): Promise<{ sent: boolean; reason?: string }> {
+  const settings = await getPingSettings(supabase, args.userId);
+  if (!settings.parse) return { sent: false, reason: 'parse_off' };
+  const extra = args.extra ? ` ${args.extra}` : '';
+  const body = args.ok
+    ? `Casper: finished reading ${args.what}.${extra}`
+    : `Casper: could not finish reading ${args.what}.${extra}`;
+  return sendCasperPing(supabase, {
+    userId: args.userId,
+    body,
+    kind: 'alert',
+    requireEnabled: false,
+  });
 }
 
 export async function findUserByPingPhone(

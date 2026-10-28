@@ -10,6 +10,8 @@ import {
   statementMonthFromFields,
   type StatementMonth,
 } from '@/lib/bankAnalyzer';
+import { persistParsedFieldsToLead } from '@/lib/leads/mergeParsedFields';
+import { notifyParseFinished, pingLeadLabel } from '@/lib/casper/ping';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -25,11 +27,18 @@ export async function POST(request: Request) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const body = await request.json().catch(() => ({})) as { attachmentIds?: unknown };
+  const body = await request.json().catch(() => ({})) as {
+    attachmentIds?: unknown;
+    leadId?: unknown;
+    persist?: unknown;
+    notify?: unknown;
+  };
   const ids = (Array.isArray(body.attachmentIds) ? body.attachmentIds : [])
     .map(v => String(v || '').trim())
     .filter(Boolean);
   if (!ids.length) return NextResponse.json({ error: 'No statements selected' }, { status: 400 });
+  let leadId = typeof body.leadId === 'string' ? body.leadId.trim() : '';
+  const shouldNotify = body.notify !== false;
 
   let merged: Record<string, string> = {};
   const months: StatementMonth[] = [];
@@ -70,9 +79,55 @@ export async function POST(request: Request) {
   merged = normalizeParsedFields(merged);
   console.log('[analyze-bank-docs] merged', Object.keys(merged), perFile);
 
+  const ok = hasBankMetrics(merged);
+
+  if (!leadId && ids.length) {
+    const { data: att } = await supabase
+      .from('lead_attachments')
+      .select('lead_id')
+      .eq('id', ids[0])
+      .eq('user_id', user.id)
+      .maybeSingle();
+    leadId = String(att?.lead_id || '').trim();
+  }
+
+  let pinged = false;
+  let persisted = false;
+  let leadLabel = 'bank statements';
+  if (leadId) {
+    const { data: lead } = await supabase
+      .from('leads')
+      .select('name, company')
+      .eq('id', leadId)
+      .eq('user_id', user.id)
+      .maybeSingle();
+    leadLabel = `bank statements for ${pingLeadLabel(lead)}`;
+    if (body.persist !== false && Object.keys(merged).length) {
+      const wrote = await persistParsedFieldsToLead(supabase, {
+        userId: user.id,
+        leadId,
+        fields: merged,
+      });
+      persisted = wrote.ok;
+    }
+  }
+
+  if (shouldNotify) {
+    const sent = await notifyParseFinished(supabase, {
+      userId: user.id,
+      ok,
+      what: leadLabel,
+      extra: ok ? 'Numbers are on the lead.' : 'No deposit or balance totals found.',
+    });
+    pinged = true;
+    void sent;
+  }
+
   return NextResponse.json({
     fields: merged,
     perFile,
-    ok: hasBankMetrics(merged),
+    ok,
+    persisted,
+    pinged,
   });
 }

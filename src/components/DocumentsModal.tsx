@@ -17,6 +17,7 @@ import { downloadLeadAttachment } from '@/lib/attachments/downloadClient';
 import { downloadAttachmentBytes, readBankStatementPdf } from '@/lib/pdf/renderPdfPages';
 import { hasBankMetrics, reconcileBankMetrics } from '@/lib/pdf/extractBankMetrics';
 import { postLeadPatch } from '@/lib/pipeline/iframeMessages';
+import { useParseJobs } from '@/lib/parseJobs/ParseJobsProvider';
 import {
   parseMcaPositions,
   mergeMcaPositions,
@@ -164,6 +165,15 @@ function attachStatementMonths(merged: Record<string, string>, months: Statement
   if (avgs.depositsCount != null) merged.depositCount = String(avgs.depositsCount);
 }
 
+async function pingParseDone(what: string, ok: boolean, extra?: string) {
+  await fetch('/api/casper/ping', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ parseDone: true, what, ok, extra }),
+  }).catch(() => { /* ping is optional */ });
+}
+
 function formatReviewValue(key: string, value: string): string {
   if (key === 'hasOtherMCALoans') return value === 'true' ? 'Yes' : 'No';
   if (key === 'mcaPositions') {
@@ -188,6 +198,7 @@ const MAX_FILES     = 10;
 export default function DocumentsModal({
   leadId, leadName, leadCompany, onApplyParsed, onApplied, onClose,
 }: DocumentsModalProps) {
+  const parseJobs = useParseJobs();
   const [attachments, setAttachments]   = useState<Attachment[]>([]);
   const [loading, setLoading]           = useState(true);
   const [search, setSearch]             = useState('');
@@ -207,8 +218,7 @@ export default function DocumentsModal({
   const [parsedFields, setParsedFields]   = useState<Record<string, string>>({});
   const [parsedSelected, setParsedSelected] = useState<Set<string>>(new Set());
 
-  // Analyze selected docs (bank statement analysis)
-  const [analyzing, setAnalyzing]         = useState(false);
+  const analyzing = parseJobs.jobs.some(j => j.status === 'running' && (j.kind === 'banks' || j.kind === 'application'));
   const [applying, setApplying]           = useState(false);
 
   // Rename / download / delete / re-extract
@@ -249,7 +259,7 @@ export default function DocumentsModal({
 
   // ── Reset upload sub-modal ─────────────────────────────────────────────────
   const closeUpload = useCallback(() => {
-    if (uploading) return;
+    if (uploading && parseStep === 'upload') return;
     setShowUpload(false);
     setPendingFiles([]);
     setUploadProgress({});
@@ -261,7 +271,7 @@ export default function DocumentsModal({
     setUploadStatus(null);
     pendingBankSnapFiles.current = [];
     pendingBankAttIds.current = [];
-  }, [uploading]);
+  }, [uploading, parseStep]);
 
   const applyAndClose = async (fields: Record<string, string>, selectedKeys?: Set<string>) => {
     const selected = new Set(selectedKeys ?? Object.keys(fields));
@@ -365,7 +375,7 @@ export default function DocumentsModal({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ attachmentIds: [atts[i].id] }),
+        body: JSON.stringify({ attachmentIds: [atts[i].id], persist: false, notify: false }),
       });
       const json = await res.json().catch(() => ({})) as { fields?: Record<string, string>; error?: string };
       if (!res.ok) lastError = json.error || lastError;
@@ -446,142 +456,123 @@ export default function DocumentsModal({
     if (markedDocsIn) postLeadPatch(leadId, { lead_status: 'Docs In', in_pipeline: true });
 
     if (uploadKind === 'application' && newAttachments.length > 0) {
-      setUploading(false);
-      setPendingFiles([]);
-      setUploadProgress({});
-      setParseStep('parsing');
-      setUploadStatus('Parsing…');
-
-      const mergedFields: Record<string, string> = {};
-      const months: StatementMonth[] = [];
-
-      for (const att of newAttachments) {
-        try {
-          const { ok, json } = await parseAttachment(att);
-          if (ok && json.fields && Object.keys(json.fields).length > 0) {
-            const incoming = json.fields as Record<string, string>;
-            const row = statementMonthFromFields(incoming);
-            if (row) months.push(row);
-            mergeParseFields(mergedFields, incoming);
+      const subject = leadCompany || leadName;
+      parseJobs.start({
+        kind: 'application',
+        label: subject,
+        run: async () => {
+          const mergedFields: Record<string, string> = {};
+          const months: StatementMonth[] = [];
+          for (const att of newAttachments) {
+            try {
+              const { ok, json } = await parseAttachment(att);
+              if (ok && json.fields && Object.keys(json.fields).length > 0) {
+                const incoming = json.fields as Record<string, string>;
+                const row = statementMonthFromFields(incoming);
+                if (row) months.push(row);
+                mergeParseFields(mergedFields, incoming);
+              }
+            } catch {
+              console.warn('Parse failed for', att.file_name);
+            }
           }
-        } catch {
-          console.warn('Parse failed for', att.file_name);
-        }
-      }
-
-      attachStatementMonths(mergedFields, months);
-      const reviewFields = enrichParsedBusinessFields(normalizeParsedFields(mergedFields));
-
-      if (Object.keys(reviewFields).length > 0) {
-        await applyAndClose(reviewFields);
-      } else {
-        setParseStep('upload');
-        setUploadStatus('Could not extract application fields.');
-      }
+          attachStatementMonths(mergedFields, months);
+          const reviewFields = enrichParsedBusinessFields(normalizeParsedFields(mergedFields));
+          if (!Object.keys(reviewFields).length) {
+            await pingParseDone(`the application for ${subject}`, false);
+            throw new Error('Could not extract application fields.');
+          }
+          await applyParsed(reviewFields, new Set(Object.keys(reviewFields)));
+          onApplied?.();
+          await pingParseDone(`the application for ${subject}`, true, 'Fields are on the lead.');
+          return `Finished parsing the application for ${subject}`;
+        },
+      });
+      releaseParseOverlay();
       return;
     }
 
     if (uploadKind === 'bank' && newAttachments.length > 0) {
-      setUploading(false);
-      setParseStep('parsing');
-      pendingBankAttIds.current = newAttachments.map(a => a.id);
-      setUploadStatus(`Reading ${newAttachments.length} stored statement(s)…`);
-      try {
-        const { ok, fields, error } = await analyzeStoredStatements(newAttachments);
-        const incoming = fields;
-        const months: StatementMonth[] = [];
-        const row = statementMonthFromFields(incoming);
-        if (row) months.push(row);
-        const mergedFields: Record<string, string> = {};
-        mergeParseFields(mergedFields, incoming);
-        attachStatementMonths(mergedFields, months);
-        const reviewFields = enrichParsedBusinessFields(normalizeParsedFields(mergedFields));
-        setPendingFiles([]);
-        setUploadProgress({});
-        if (hasMeaningfulBankFields(reviewFields) || Object.keys(reviewFields).length > 0) {
-          await applyAndClose(reviewFields);
-        } else {
-          setParseStep('upload');
-          setUploadStatus(ok ? 'Could not read deposit or balance numbers from these files.' : (error || 'Could not read these statements.'));
-        }
-      } catch (e) {
-        setParseStep('upload');
-        setUploadStatus(e instanceof Error ? e.message : 'Bank statement parse failed');
-      }
+      const subject = leadCompany || leadName;
+      const ids = newAttachments.map(a => a.id);
+      parseJobs.start({
+        kind: 'banks',
+        label: subject,
+        run: async () => {
+          const res = await fetch('/api/leads/analyze-bank-docs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ attachmentIds: ids, leadId, persist: true }),
+          });
+          const json = await res.json().catch(() => ({})) as { ok?: boolean; error?: string };
+          if (!res.ok) throw new Error(json.error || 'Could not read these statements.');
+          onApplied?.();
+          if (!json.ok) throw new Error('Could not read deposit or balance numbers from these files.');
+          return `Finished reading bank statements for ${subject}`;
+        },
+      });
+      releaseParseOverlay();
       return;
     }
 
     if (uploadKind === 'fullpack' && newAttachments.length > 0) {
-      setUploading(false);
-      setParseStep('parsing');
+      const subject = leadCompany || leadName;
       const byName = new Map(newAttachments.map(a => [a.file_name, a]));
       const appAtts = (packSplit?.apps ?? []).map(f => byName.get(f.name)).filter(Boolean) as Attachment[];
       const bankAtts = (packSplit?.banks ?? []).map(f => byName.get(f.name)).filter(Boolean) as Attachment[];
-      pendingBankAttIds.current = bankAtts.map(a => a.id);
-      const mergedFields: Record<string, string> = {};
-      const months: StatementMonth[] = [];
-
-      try {
-        setUploadStatus('Parsing application…');
-        for (const att of appAtts) {
-          try {
-            const { ok, json } = await parseAttachment(att, 'application');
-            if (ok && json.fields && Object.keys(json.fields).length > 0) {
-              mergeParseFields(mergedFields, json.fields as Record<string, string>);
+      parseJobs.start({
+        kind: 'banks',
+        label: subject,
+        run: async () => {
+          const mergedFields: Record<string, string> = {};
+          const months: StatementMonth[] = [];
+          for (const att of appAtts) {
+            try {
+              const { ok, json } = await parseAttachment(att, 'application');
+              if (ok && json.fields && Object.keys(json.fields).length > 0) {
+                mergeParseFields(mergedFields, json.fields as Record<string, string>);
+              }
+            } catch {
+              console.warn('Parse failed for', att.file_name);
             }
-          } catch {
-            console.warn('Parse failed for', att.file_name);
           }
-        }
-
-        for (let i = 0; i < bankAtts.length; i++) {
-          setUploadStatus(`Parsing statement ${i + 1} of ${bankAtts.length}…`);
-          try {
-            const { ok, json } = await parseAttachment(bankAtts[i], 'bank_statement');
-            if (ok && json.fields && Object.keys(json.fields).length > 0) {
-              const incoming = json.fields as Record<string, string>;
-              const row = statementMonthFromFields(incoming);
-              if (row) months.push(row);
-              mergeParseFields(mergedFields, incoming);
-            } else if (!ok) {
-              setUploadStatus(json.error || `Could not parse ${bankAtts[i].file_name}`);
+          for (const att of bankAtts) {
+            try {
+              const { ok, json } = await parseAttachment(att, 'bank_statement');
+              if (ok && json.fields && Object.keys(json.fields).length > 0) {
+                const incoming = json.fields as Record<string, string>;
+                const row = statementMonthFromFields(incoming);
+                if (row) months.push(row);
+                mergeParseFields(mergedFields, incoming);
+              }
+            } catch {
+              console.warn('Parse failed for', att.file_name);
             }
-          } catch (e) {
-            setUploadStatus(e instanceof Error ? e.message : `Parse failed for ${bankAtts[i].file_name}`);
           }
-        }
-
-        attachStatementMonths(mergedFields, months);
-        const reviewFields = enrichParsedBusinessFields(normalizeParsedFields(mergedFields));
-        setPendingFiles([]);
-        setUploadProgress({});
-        if (Object.keys(reviewFields).length > 0) {
-          await applyAndClose(reviewFields);
-        } else if (bankAtts.length > 0) {
-          const result = await analyzeBankAttachmentsForLead(leadId, bankAtts.map(a => a.id));
-          if (result.ok) {
+          attachStatementMonths(mergedFields, months);
+          const reviewFields = enrichParsedBusinessFields(normalizeParsedFields(mergedFields));
+          if (Object.keys(reviewFields).length > 0) {
+            await applyParsed(reviewFields, new Set(Object.keys(reviewFields)));
+            if (bankAtts.length > 0 && !hasMeaningfulBankFields(reviewFields)) {
+              await analyzeBankAttachmentsForLead(leadId, bankAtts.map(a => a.id));
+            } else {
+              await pingParseDone(`the full pack for ${subject}`, true, 'Numbers are on the lead.');
+            }
             onApplied?.();
-            setShowUpload(false);
-            setParseStep('upload');
-            setUploadStatus(null);
-            setPendingFiles([]);
-          } else {
-            setParseStep('upload');
-            setUploadStatus('Statement reader found no deposit or balance totals in these files.');
+            return `Finished parsing the full pack for ${subject}`;
           }
-        } else {
-          setParsedFields({});
-          setParsedSelected(new Set());
-          setParseStep('upload');
-          setUploadStatus('Could not extract application fields.');
-        }
-      } catch (e) {
-        setParseStep('upload');
-        const raw = e instanceof Error ? e.message : 'Full pack parse failed';
-        setUploadStatus(/no text found|scanned image|XAI_API_KEY|OPENAI_API_KEY/i.test(raw)
-          ? 'These statements are scans. Use Analyze so AI can read the pages.'
-          : raw);
-      }
+          if (bankAtts.length > 0) {
+            const result = await analyzeBankAttachmentsForLead(leadId, bankAtts.map(a => a.id));
+            onApplied?.();
+            if (!result.ok) throw new Error('Statement reader found no deposit or balance totals in these files.');
+            return `Finished reading bank statements for ${subject}`;
+          }
+          await pingParseDone(`the full pack for ${subject}`, false);
+          throw new Error('Could not extract application fields.');
+        },
+      });
+      releaseParseOverlay();
       return;
     }
 
@@ -650,35 +641,51 @@ export default function DocumentsModal({
     }
   };
 
-  const handleAnalyzeFile = async (a: Attachment) => {
+  const handleAnalyzeFile = (a: Attachment) => {
+    const subject = leadCompany || leadName;
     setAnalyzingId(a.id);
-    try {
-      const result = await analyzeBankAttachmentForLead(leadId, a);
-      if (result.ok) {
-        onApplied?.();
-        return;
-      }
-      if (result.scanned) {
-        const { ok, json } = await parseAttachment(a, 'bank_statement');
-        const fields = enrichParsedBusinessFields(normalizeParsedFields({ ...(json.fields ?? {}) } as Record<string, string>));
-        if (ok && hasMeaningfulBankFields(fields)) {
-          await applyParsed(fields, new Set(Object.keys(fields)));
-          onApplied?.();
-          return;
+    parseJobs.start({
+      kind: 'banks',
+      label: a.file_name,
+      run: async () => {
+        try {
+          const result = await analyzeBankAttachmentForLead(leadId, a);
+          if (result.ok) {
+            onApplied?.();
+            return `Finished reading ${a.file_name}`;
+          }
+          if (result.scanned) {
+            const { ok, json } = await parseAttachment(a, 'bank_statement');
+            const fields = enrichParsedBusinessFields(normalizeParsedFields({ ...(json.fields ?? {}) } as Record<string, string>));
+            if (ok && hasMeaningfulBankFields(fields)) {
+              await applyParsed(fields, new Set(Object.keys(fields)));
+              onApplied?.();
+              await pingParseDone(`bank statements for ${subject}`, true, 'Numbers are on the lead.');
+              return `Finished reading ${a.file_name}`;
+            }
+            throw new Error('This statement is a scan. Use Analyze on all four together so AI can read the pages.');
+          }
+          throw new Error('Could not read this statement.');
+        } finally {
+          setAnalyzingId(null);
         }
-        alert('This statement is a scan. Use Analyze on all four together so AI can read the pages.');
-        return;
-      }
-    } catch (e) {
-      const raw = e instanceof Error ? e.message : 'Analyze failed';
-      if (!/no text found|scanned image|XAI_API_KEY|OPENAI_API_KEY|could not reach the bank analyzer|BANK_ANALYZER_URL|not configured/i.test(raw)) alert(raw);
-    } finally {
-      setAnalyzingId(null);
-    }
+      },
+    });
+  };
+
+  const releaseParseOverlay = () => {
+    setUploading(false);
+    setApplying(false);
+    setShowUpload(false);
+    setPendingFiles([]);
+    setUploadProgress({});
+    setParseStep('upload');
+    setUploadStatus(null);
+    onClose();
   };
 
   // Analyze selected (or all) docs: AI extract + combined bank financials
-  const handleAnalyzeSelected = async () => {
+  const handleAnalyzeSelected = () => {
     const targets = attachments.filter(a =>
       selected.size > 0 ? selected.has(a.id) : true
     );
@@ -686,56 +693,65 @@ export default function DocumentsModal({
     const asApps = targets.filter(looksLikeApplication);
     const asBanks = targets.filter(a => looksLikeStatement(a) || !looksLikeApplication(a));
     const bankOnly = asBanks.length > 0 && asApps.length === 0;
+    const subject = leadCompany || leadName;
 
-    setAnalyzing(true);
-    setParseStep('parsing');
-    setShowUpload(true);
-    setUploadStatus(null);
-    if (bankOnly) setUploadKind('bank');
-    pendingBankAttIds.current = asBanks.map(a => a.id);
-
-    const merged: Record<string, string> = {};
-    const months: StatementMonth[] = [];
-
-    if (asApps.length) {
-      for (let i = 0; i < asApps.length; i++) {
-        setUploadStatus(`Parsing application ${i + 1} of ${asApps.length}…`);
-        try {
-          const { ok, json } = await parseAttachment(asApps[i], 'application');
-          if (ok && json.fields && Object.keys(json.fields).length > 0) {
-            mergeParseFields(merged, json.fields as Record<string, string>);
-          }
-        } catch (e) {
-          setUploadStatus(e instanceof Error ? e.message : `Parse failed for ${asApps[i].file_name}`);
+    parseJobs.start({
+      kind: bankOnly || asBanks.length ? 'banks' : 'application',
+      label: subject,
+      run: async () => {
+        if (bankOnly) {
+          const res = await fetch('/api/leads/analyze-bank-docs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+              attachmentIds: asBanks.map(a => a.id),
+              leadId,
+              persist: true,
+            }),
+          });
+          const json = await res.json().catch(() => ({})) as { ok?: boolean; error?: string; pinged?: boolean };
+          if (!res.ok) throw new Error(json.error || 'Could not read statements');
+          onApplied?.();
+          if (!json.ok) throw new Error('Statement reader found no deposit or balance totals in these files.');
+          return `Finished reading bank statements for ${subject}`;
         }
-      }
-    }
 
-    if (asBanks.length) {
-      setUploadStatus(`Reading ${asBanks.length} stored statement(s)…`);
-      try {
-        const { fields, error } = await analyzeStoredStatements(asBanks);
-        if (error) setUploadStatus(error);
-        const row = statementMonthFromFields(fields);
-        if (row) months.push(row);
-        mergeParseFields(merged, fields);
-      } catch (e) {
-        setUploadStatus(e instanceof Error ? e.message : 'Could not read stored statements');
-      }
-    }
+        const merged: Record<string, string> = {};
+        const months: StatementMonth[] = [];
 
-    attachStatementMonths(merged, months);
-    const reviewFields = enrichParsedBusinessFields(normalizeParsedFields(merged));
-    const rich = hasMeaningfulBankFields(reviewFields) || asApps.length > 0 && Object.keys(reviewFields).length > 0;
+        for (let i = 0; i < asApps.length; i++) {
+          try {
+            const { ok, json } = await parseAttachment(asApps[i], 'application');
+            if (ok && json.fields && Object.keys(json.fields).length > 0) {
+              mergeParseFields(merged, json.fields as Record<string, string>);
+            }
+          } catch {
+            /* keep going */
+          }
+        }
 
-    setAnalyzing(false);
-    if (rich) {
-      await applyAndClose(reviewFields);
-    } else {
-      setParseStep('upload');
-      setShowUpload(false);
-      alert('Statement reader found no deposit or balance totals in these files.');
-    }
+        if (asBanks.length) {
+          const { fields } = await analyzeStoredStatements(asBanks);
+          const row = statementMonthFromFields(fields);
+          if (row) months.push(row);
+          mergeParseFields(merged, fields);
+        }
+
+        attachStatementMonths(merged, months);
+        const reviewFields = enrichParsedBusinessFields(normalizeParsedFields(merged));
+        const rich = hasMeaningfulBankFields(reviewFields) || (asApps.length > 0 && Object.keys(reviewFields).length > 0);
+        if (!rich) {
+          await pingParseDone(`documents for ${subject}`, false, 'No fields came back.');
+          throw new Error('Statement reader found no deposit or balance totals in these files.');
+        }
+        await applyParsed(reviewFields, new Set(Object.keys(reviewFields)));
+        onApplied?.();
+        await pingParseDone(`documents for ${subject}`, true, 'Numbers are on the lead.');
+        return `Finished parsing documents for ${subject}`;
+      },
+    });
+    releaseParseOverlay();
   };
 
   const startRename = (a: Attachment) => { setRenamingId(a.id); setRenameVal(a.file_name); };
@@ -1139,7 +1155,7 @@ export default function DocumentsModal({
 
             {/* ── Parsing step ─────────────────────────────────────────────── */}
             {parseStep === 'parsing' && (
-              <div className="py-20 flex flex-col items-center gap-4 px-6">
+              <div className="py-16 flex flex-col items-center gap-4 px-6">
                 <div className="w-14 h-14 rounded-2xl bg-blue-100 flex items-center justify-center">
                   <svg className="w-7 h-7 text-blue-600 animate-spin" fill="none" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
@@ -1148,8 +1164,15 @@ export default function DocumentsModal({
                 </div>
                 <div className="text-center">
                   <p className="text-sm font-semibold text-[#1a1a1a]">{uploadStatus || 'Parsing…'}</p>
-                  <p className="text-xs text-[#9b9b9b] mt-1">AI is reading the statements and building financials. Takes ~10–20 seconds per file.</p>
+                  <p className="text-xs text-[#9b9b9b] mt-1">You can close this and keep using the CRM. We’ll ping you when it’s done.</p>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => { closeUpload(); onClose(); }}
+                  className="mt-1 px-4 py-2 text-xs font-semibold rounded-xl bg-[#1a1a1a] text-white hover:bg-black"
+                >
+                  Keep working
+                </button>
               </div>
             )}
 

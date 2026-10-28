@@ -3,6 +3,7 @@ import { Barlow, Crimson_Text, Dancing_Script, Inter } from "next/font/google";
 import "./globals.css";
 import WebPhoneProvider from "@/components/webphone/WebPhone";
 import SyncProvider from "@/lib/sync/SyncProvider";
+import { ParseJobsProvider } from "@/lib/parseJobs/ParseJobsProvider";
 
 /** Load fonts via next/font (self-hosted) so a blocked Google Fonts @import can’t nuke the whole CSS bundle. */
 const barlow = Barlow({
@@ -48,7 +49,9 @@ export default function RootLayout({
         className={`${barlow.variable} ${crimsonText.variable} ${dancingScript.variable} ${inter.variable} font-sans antialiased`}
       >
         <SyncProvider>
-          <WebPhoneProvider>{children}</WebPhoneProvider>
+          <ParseJobsProvider>
+            <WebPhoneProvider>{children}</WebPhoneProvider>
+          </ParseJobsProvider>
         </SyncProvider>
       </body>
     </html>
