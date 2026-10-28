@@ -5,7 +5,7 @@ import { usePolling } from '@/lib/sync/usePolling';
 import { useRouter } from 'next/navigation';
 import { dripPauseChipLabel } from '@/lib/smsDrip/carrierBlock';
 import CampaignInsightsModal from '@/components/CampaignInsightsModal';
-import { BUILTIN_LEAD_SOURCES, slugLeadSource } from '@/lib/smsDrip/leadSources';
+import { BUILTIN_LEAD_SOURCES } from '@/lib/smsDrip/leadSources';
 
 interface DripJobSummary {
   id: string;
@@ -45,13 +45,6 @@ export default function CampaignTable({ campaigns, onRename }: Props) {
   const [editingName, setEditingName] = useState('');
   const [insightsId, setInsightsId] = useState<string | null>(null);
   const [sourceFilter, setSourceFilter] = useState('');
-  const [sources, setSources] = useState<Record<string, string>>(() => {
-    const map: Record<string, string> = {};
-    for (const c of campaigns) {
-      if (c.sourceKey) map[c.id] = c.sourceKey;
-    }
-    return map;
-  });
   const inputRef = useRef<HTMLInputElement>(null);
   const [dripJobs, setDripJobs] = useState<Map<string, DripJobSummary>>(new Map());
 
@@ -93,7 +86,7 @@ export default function CampaignTable({ campaigns, onRename }: Props) {
 
   const sourceOptions = useMemo(() => {
     const extras = campaigns
-      .map(c => ({ key: sources[c.id] || c.sourceKey || '', label: c.sourceLabel || '' }))
+      .map(c => ({ key: c.sourceKey || '', label: c.sourceLabel || '' }))
       .filter(s => s.key && !BUILTIN_LEAD_SOURCES.some(b => b.key === s.key));
     const seen = new Set<string>();
     const custom = extras.filter(s => {
@@ -102,27 +95,10 @@ export default function CampaignTable({ campaigns, onRename }: Props) {
       return true;
     });
     return [...BUILTIN_LEAD_SOURCES, ...custom];
-  }, [campaigns, sources]);
-
-  const setCampaignSource = async (id: string, key: string) => {
-    let next = key;
-    if (key === '__new__') {
-      const typed = window.prompt('New lead source name');
-      next = slugLeadSource(typed || '');
-      if (!next) return;
-    }
-    setSources(prev => ({ ...prev, [id]: next }));
-    try {
-      await fetch('/api/lead-lists', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listId: id, sourceCategory: next }),
-      });
-    } catch { /* keep optimistic */ }
-  };
+  }, [campaigns]);
 
   const visible = sourceFilter
-    ? campaigns.filter(c => (sources[c.id] || c.sourceKey || '') === sourceFilter)
+    ? campaigns.filter(c => (c.sourceKey || '') === sourceFilter)
     : campaigns;
 
   if (campaigns.length === 0) {
@@ -221,18 +197,12 @@ export default function CampaignTable({ campaigns, onRename }: Props) {
                   </div>
                 </td>
 
-                <td className="px-4 py-2" onClick={e => e.stopPropagation()}>
-                  <select
-                    value={sources[campaign.id] || campaign.sourceKey || ''}
-                    onChange={e => void setCampaignSource(campaign.id, e.target.value)}
-                    className="max-w-[9.5rem] text-[11px] text-[#6b6b6b] bg-transparent border-0 border-b border-transparent hover:border-[#e5e5e5] py-0.5 focus:outline-none focus:border-[#1a1a1a]"
-                  >
-                    <option value="">Uncategorized</option>
-                    {sourceOptions.map(s => (
-                      <option key={s.key} value={s.key}>{s.label}</option>
-                    ))}
-                    <option value="__new__">New source…</option>
-                  </select>
+                <td className="px-4 py-2">
+                  <span className="text-[11px] text-[#6b6b6b]">
+                    {sourceOptions.find(s => s.key === campaign.sourceKey)?.label
+                      || campaign.sourceLabel
+                      || 'Uncategorized'}
+                  </span>
                 </td>
 
                 {/* Total */}

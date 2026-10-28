@@ -10,6 +10,7 @@ import { zoneForLocation, formatLocal } from '@/lib/smsDrip/timezones';
 import UploadForm from './UploadForm';
 import { formatDripTally, tallyDripSends } from '@/lib/smsDrip/tally';
 import { dripPauseBanner, dripPauseChipLabel } from '@/lib/smsDrip/carrierBlock';
+import { BUILTIN_LEAD_SOURCES, slugLeadSource } from '@/lib/smsDrip/leadSources';
 
 interface DripJob {
   id: string;
@@ -140,6 +141,8 @@ function listedRevenue(notes: string | null | undefined): string {
 
 export default function CampaignLeadsView({ leads: initialLeads, campaignName, listId, sourceKey, sourceLabel, deleteCampaign }: Props) {
   const router = useRouter();
+  const [source, setSource] = useState(sourceKey || '');
+  useEffect(() => { setSource(sourceKey || ''); }, [sourceKey]);
   const [leads, setLeads] = useState<CampaignLead[]>(initialLeads);
   const [search, setSearch] = useState('');
   const [loadingId, setLoadingId] = useState<string | null>(null);
@@ -351,7 +354,44 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-xl font-bold text-[#1a1a1a]">{campaignName}</h2>
+          <div className="flex items-baseline gap-2">
+            <h2 className="text-xl font-bold text-[#1a1a1a]">{campaignName}</h2>
+            <select
+              value={source}
+              onChange={async e => {
+                let next = e.target.value;
+                if (next === '__new__') {
+                  const typed = window.prompt('New lead source name');
+                  next = slugLeadSource(typed || '');
+                  if (!next) return;
+                }
+                const prev = source;
+                setSource(next);
+                try {
+                  const res = await fetch('/api/lead-lists', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ listId, sourceCategory: next }),
+                  });
+                  if (!res.ok) setSource(prev);
+                  else router.refresh();
+                } catch {
+                  setSource(prev);
+                }
+              }}
+              className="text-[11px] text-[#9b9b9b] bg-transparent border-0 py-0 pr-5 focus:outline-none focus:text-[#1a1a1a] cursor-pointer"
+              title="Lead source"
+            >
+              <option value="">Uncategorized</option>
+              {BUILTIN_LEAD_SOURCES.map(s => (
+                <option key={s.key} value={s.key}>{s.label}</option>
+              ))}
+              {source && !BUILTIN_LEAD_SOURCES.some(s => s.key === source) ? (
+                <option value={source}>{sourceLabel || source}</option>
+              ) : null}
+              <option value="__new__">New source…</option>
+            </select>
+          </div>
           <div className="flex items-center gap-2 mt-2">
             <span className="text-[11px] text-[#6b6b6b] font-medium bg-gray-100 px-2 py-0.5 rounded-full">
               {leads.length} lead{leads.length !== 1 ? 's' : ''}
