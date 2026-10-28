@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import { resolveListSource } from '@/lib/smsDrip/leadSources';
 
 async function getSupabase() {
   const cookieStore = await cookies();
@@ -21,11 +22,21 @@ export async function GET() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { data: lists } = await supabase
+    type ListRow = { id: string; name: string; created_at: string; source_category?: string | null };
+    const withSource = await supabase
       .from('lead_lists')
-      .select('id, name, created_at')
+      .select('id, name, created_at, source_category')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false });
+    let lists: ListRow[] | null = withSource.data as ListRow[] | null;
+    if (withSource.error && /source_category/i.test(withSource.error.message || '')) {
+      const fallback = await supabase
+        .from('lead_lists')
+        .select('id, name, created_at')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+      lists = fallback.data as ListRow[] | null;
+    }
 
     if (!lists?.length) return NextResponse.json({ campaigns: [] });
 
@@ -38,7 +49,17 @@ export async function GET() {
         const total   = stats?.length ?? 0;
         const touched = stats?.filter((l) => l.call_made_at || l.sms_sent_at).length ?? 0;
         const called  = stats?.filter((l) => l.call_made_at).length ?? 0;
-        return { id: list.id, name: list.name, created_at: list.created_at, total, touched, called };
+        const source = resolveListSource(list);
+        return {
+          id: list.id,
+          name: list.name,
+          created_at: list.created_at,
+          total,
+          touched,
+          called,
+          sourceKey: source.key,
+          sourceLabel: source.label,
+        };
       })
     );
 

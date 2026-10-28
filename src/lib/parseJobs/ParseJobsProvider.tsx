@@ -48,7 +48,7 @@ function ParseJobsChip({
 }) {
   if (!jobs.length) return null;
   return (
-    <div className="fixed bottom-5 left-5 z-[90] flex flex-col gap-2 max-w-sm pointer-events-none">
+    <div className="fixed bottom-14 right-5 z-[120] flex flex-col gap-2 w-[min(20rem,calc(100vw-2.5rem))] pointer-events-none">
       {jobs.map(job => (
         <div
           key={job.id}

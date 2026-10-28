@@ -851,6 +851,8 @@ export interface Campaign {
   total: number;
   touched: number;
   called: number;
+  sourceKey?: string;
+  sourceLabel?: string;
 }
 
 // ─── Campaign picker modal ─────────────────────────────────────────────────────
@@ -900,9 +902,12 @@ export function CampaignPickerModal({
                     onClick={() => onSelect(c)}
                     className="px-5 py-3.5 hover:bg-[#fafafa] cursor-pointer transition-colors"
                   >
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-sm font-semibold text-[#1a1a1a]">{c.name}</span>
-                      <span className="text-xs text-[#9ca3af]">{c.called}/{c.total} called</span>
+                    <div className="flex items-center justify-between mb-1.5 gap-3">
+                      <div className="min-w-0">
+                        <span className="text-sm font-semibold text-[#1a1a1a] block truncate">{c.name}</span>
+                        <span className="text-[11px] text-[#9b9b9b]">{c.sourceLabel || 'Uncategorized'}</span>
+                      </div>
+                      <span className="text-xs text-[#9ca3af] shrink-0">{c.called}/{c.total} called</span>
                     </div>
                     <div className="w-full h-1.5 bg-[#f0f0f0] rounded-full overflow-hidden">
                       <div className="h-full bg-[#1a1a1a] rounded-full" style={{ width: `${pct}%` }} />
@@ -983,7 +988,12 @@ export default function DialerClient() {
                 title="Click to toggle call count"
                 className="flex items-center gap-2 min-w-0 cursor-pointer"
               >
-                <span className="text-sm font-semibold text-[#1a1a1a] truncate max-w-[200px]">{activeCampaign.name}</span>
+                <span className="text-sm font-semibold text-[#1a1a1a] truncate max-w-[200px]">
+                  {activeCampaign.name}
+                  {activeCampaign.sourceLabel && !/^uncategorized$/i.test(activeCampaign.sourceLabel) ? (
+                    <span className="font-normal text-[#9b9b9b]"> · {activeCampaign.sourceLabel}</span>
+                  ) : null}
+                </span>
                 <div className="w-24 h-1.5 bg-[#f0f0f0] rounded-full overflow-hidden shrink-0">
                   <div className="h-full bg-[#1a1a1a] rounded-full transition-all" style={{ width: `${campaignPct}%` }} />
                 </div>
