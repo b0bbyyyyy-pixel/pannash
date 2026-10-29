@@ -3,9 +3,11 @@ import { toE164, formatDisplay } from '@/lib/dialer/e164';
 export type BookContact = {
   id: string;
   name: string;
+  repName?: string;
   emails: string[];
   phones: string[];
   source: 'lender' | 'saved';
+  lenderId?: string;
 };
 
 export type PhoneBookStore = {
@@ -88,37 +90,47 @@ export function normalizeContact(raw: unknown): BookContact | null {
   const emails = uniqEmails(Array.isArray(r.emails) ? r.emails : [r.email, r.ccEmail, r.cc_email]);
   const phones = uniqPhones(Array.isArray(r.phones) ? r.phones : [r.phone, r.contactPhone, r.contact_phone, r.repDirectPhone, r.rep_direct_phone]);
   if (!name && !emails.length && !phones.length) return null;
-  const id = String(r.id || '').trim() || `saved:${slugContactId(name || emails[0] || phones[0] || 'contact')}`;
+  const lenderId = String(r.lenderId || r.lender_id || '').trim() || undefined;
+  const id = String(r.id || '').trim()
+    || (lenderId ? `lender:${lenderId}` : `saved:${slugContactId(name || emails[0] || phones[0] || 'contact')}`);
+  const source: BookContact['source'] = r.source === 'lender' || !!lenderId || id.startsWith('lender:')
+    ? 'lender'
+    : 'saved';
+  const repName = String(r.repName || r.rep_name || '').trim() || undefined;
   return {
     id,
     name: name || emails[0] || formatBookPhone(phones[0] || '') || 'Contact',
+    ...(repName ? { repName } : {}),
     emails,
     phones,
-    source: r.source === 'lender' ? 'lender' : 'saved',
+    source,
+    ...(lenderId ? { lenderId } : {}),
   };
 }
 
 export function contactFromLender(row: Record<string, unknown>): BookContact | null {
   const name = String(row.name || '').trim();
+  if (!name) return null;
   const emails = uniqEmails([row.email, row.cc_email, row.ccEmail]);
   const phones = uniqPhones([row.contact_phone, row.contactPhone, row.rep_direct_phone, row.repDirectPhone]);
-  if (!emails.length && !phones.length) return null;
   const rep = String(row.rep_name || row.repName || '').trim();
+  const lenderId = String(row.id || '').trim() || undefined;
   return {
-    id: `lender:${slugContactId(name || emails[0] || phones[0])}`,
-    name: rep && name && !name.toLowerCase().includes(rep.toLowerCase()) ? `${rep} · ${name}` : (name || rep),
+    id: lenderId ? `lender:${lenderId}` : `lender:${slugContactId(name)}`,
+    name,
+    ...(rep ? { repName: rep } : {}),
     emails,
     phones,
     source: 'lender',
+    ...(lenderId ? { lenderId } : {}),
   };
 }
 
 export function mergePhoneBook(store: PhoneBookStore, lenders: Array<Record<string, unknown>>): BookContact[] {
-  const hidden = new Set(store.hidden);
-  const extras = store.extras.filter(c => c.source === 'saved' && !hidden.has(c.id));
+  const extras = store.extras.filter(c => !!c.id);
   const extraIds = new Set(extras.map(c => c.id));
   const fromLenders = lenders
     .map(contactFromLender)
-    .filter((c): c is BookContact => !!c && !hidden.has(c.id) && !extraIds.has(c.id));
+    .filter((c): c is BookContact => !!c && !extraIds.has(c.id));
   return [...extras, ...fromLenders].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 }

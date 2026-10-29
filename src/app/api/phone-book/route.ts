@@ -60,7 +60,7 @@ async function saveStore(
 async function lendersForUser(supabase: any, userId: string) {
   const { data } = await supabase
     .from('lenders')
-    .select('name, email, cc_email, rep_name, contact_phone, rep_direct_phone')
+    .select('id, name, email, cc_email, rep_name, contact_phone, rep_direct_phone')
     .eq('user_id', userId)
     .order('name', { ascending: true });
   if (data?.length) return data as Array<Record<string, unknown>>;
@@ -124,16 +124,36 @@ export async function PATCH(req: NextRequest) {
 
   const existing = store.extras.find(c => c.id === id);
   const patched = normalizeContact({
-    ...(existing || { id, source: 'saved' }),
+    ...(existing || { id, source: body.lenderId ? 'lender' : 'saved' }),
     ...body,
     id,
-    source: 'saved',
   }) as BookContact;
+
+  if (patched.lenderId) {
+    await supabase
+      .from('lenders')
+      .update({
+        name: patched.name,
+        email: patched.emails[0] || null,
+        cc_email: patched.emails[1] || null,
+        contact_phone: patched.phones[0] || null,
+        rep_direct_phone: patched.phones[1] || null,
+        rep_name: patched.repName || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', patched.lenderId)
+      .eq('user_id', user.id);
+  }
+
+  if (!persistable) {
+    const lenders = await lendersForUser(supabase, user.id);
+    return NextResponse.json({ contact: patched, contacts: mergePhoneBook(store, lenders) });
+  }
 
   const extras = existing
     ? store.extras.map(c => (c.id === id ? patched : c))
     : [patched, ...store.extras];
-  const next: PhoneBookStore = { extras, hidden: store.hidden.filter(h => h !== id) };
+  const next: PhoneBookStore = { extras, hidden: store.hidden };
   const error = await saveStore(supabase, user.id, next);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 

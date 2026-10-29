@@ -81,10 +81,12 @@ export default function ManualDialPanel({
   const [contacts, setContacts] = useState<BookContact[]>([]);
   const [bookLoading, setBookLoading] = useState(false);
   const [bookQ, setBookQ] = useState('');
-  const [adding, setAdding] = useState(false);
-  const [addName, setAddName] = useState('');
-  const [addPhone, setAddPhone] = useState('');
-  const [addEmail, setAddEmail] = useState('');
+  const [openId, setOpenId] = useState<string | 'new' | null>(null);
+  const [draftName, setDraftName] = useState('');
+  const [draftRep, setDraftRep] = useState('');
+  const [draftEmails, setDraftEmails] = useState<string[]>(['']);
+  const [draftPhones, setDraftPhones] = useState<string[]>(['']);
+  const [savingContact, setSavingContact] = useState(false);
   const [copied, setCopied] = useState('');
 
   useEffect(() => {
@@ -172,46 +174,69 @@ export default function ManualDialPanel({
     } catch { /* ignore */ }
   };
 
-  const saveContact = async () => {
-    const name = addName.trim();
-    const phone = addPhone.trim();
-    const email = addEmail.trim();
-    if (!name && !phone && !email) return;
-    const res = await fetch('/api/phone-book', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, phones: phone ? [phone] : [], emails: email ? [email] : [] }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setError(data.error || 'Could not save contact');
+  const openContact = (c: BookContact | 'new') => {
+    if (c === 'new') {
+      setOpenId('new');
+      setDraftName('');
+      setDraftRep('');
+      setDraftEmails(['']);
+      setDraftPhones(['']);
       return;
     }
-    setContacts(Array.isArray(data.contacts) ? data.contacts : []);
-    setAddName('');
-    setAddPhone('');
-    setAddEmail('');
-    setAdding(false);
+    setOpenId(c.id);
+    setDraftName(c.name);
+    setDraftRep(c.repName || '');
+    setDraftEmails(c.emails.length ? [...c.emails] : ['']);
+    setDraftPhones(c.phones.length ? c.phones.map(formatBookPhone) : ['']);
   };
 
-  const removeContact = async (id: string) => {
-    const res = await fetch('/api/phone-book', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok && Array.isArray(data.contacts)) setContacts(data.contacts);
+  const saveOpenContact = async () => {
+    const name = draftName.trim();
+    const emails = draftEmails.map(e => e.trim()).filter(Boolean);
+    const phones = draftPhones.map(p => p.trim()).filter(Boolean);
+    if (!name && !emails.length && !phones.length) return;
+    const current = openId && openId !== 'new' ? contacts.find(c => c.id === openId) : null;
+    setSavingContact(true);
+    setError(null);
+    try {
+      const isNew = openId === 'new' || !current;
+      const res = await fetch('/api/phone-book', {
+        method: isNew ? 'POST' : 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: isNew ? undefined : current?.id,
+          lenderId: current?.lenderId,
+          name,
+          repName: draftRep.trim() || undefined,
+          emails,
+          phones,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error || 'Could not save contact');
+        return;
+      }
+      const list = Array.isArray(data.contacts) ? data.contacts as BookContact[] : [];
+      setContacts(list);
+      const saved = (data.contact as BookContact | undefined) || list.find(c => c.id === current?.id);
+      if (saved) openContact(saved);
+      else setOpenId(null);
+    } finally {
+      setSavingContact(false);
+    }
   };
 
   const q = bookQ.trim().toLowerCase();
   const shownContacts = q
     ? contacts.filter(c =>
         c.name.toLowerCase().includes(q)
+        || (c.repName || '').toLowerCase().includes(q)
         || c.emails.some(e => e.includes(q))
         || c.phones.some(p => p.replace(/\D/g, '').includes(q.replace(/\D/g, ''))),
       )
     : contacts;
+  const openContactRow = openId && openId !== 'new' ? contacts.find(c => c.id === openId) : null;
 
   const display = e164 ? formatDisplay(e164) : number;
 
@@ -224,11 +249,17 @@ export default function ManualDialPanel({
           </h3>
           <button
             type="button"
-            onClick={() => setView(v => v === 'book' ? 'pad' : 'book')}
+            onClick={() => setView(v => {
+              if (v === 'book') {
+                setOpenId(null);
+                return 'pad';
+              }
+              return 'book';
+            })}
             title="Contacts"
             aria-label="Contacts"
-            className={`p-1 rounded-md transition-colors ${
-              view === 'book' ? 'text-[#1a1a1a] bg-[#f3f3f3]' : 'text-[#9b9b9b] hover:text-[#1a1a1a] hover:bg-[#f5f5f5]'
+            className={`p-0.5 rounded-md focus:outline-none ${
+              view === 'book' ? 'text-[#1a1a1a]' : 'text-[#9b9b9b] hover:text-[#1a1a1a]'
             }`}
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -268,88 +299,149 @@ export default function ManualDialPanel({
 
       {view === 'book' ? (
         <div className="flex-1 min-h-0 flex flex-col">
-          <div className="flex items-center gap-2 mb-2 shrink-0">
-            <input
-              value={bookQ}
-              onChange={e => setBookQ(e.target.value)}
-              placeholder="Search lenders & contacts"
-              className="min-w-0 flex-1 h-8 rounded-lg bg-[#f5f5f5] px-2.5 text-[12px] text-[#1a1a1a] placeholder:text-[#b0b0b0] focus:outline-none"
-            />
-            <button
-              type="button"
-              onClick={() => setAdding(a => !a)}
-              className="shrink-0 text-[11px] font-medium text-[#5a7fc7] hover:underline"
-            >
-              {adding ? 'Cancel' : 'Add'}
-            </button>
-          </div>
-          {adding && (
-            <div className="mb-2 shrink-0 space-y-1.5">
-              <input value={addName} onChange={e => setAddName(e.target.value)} placeholder="Name" className="w-full h-8 rounded-lg border border-[#e5e5e5] px-2.5 text-[12px] focus:outline-none" />
-              <input value={addPhone} onChange={e => setAddPhone(e.target.value)} placeholder="Phone" className="w-full h-8 rounded-lg border border-[#e5e5e5] px-2.5 text-[12px] focus:outline-none" />
-              <input value={addEmail} onChange={e => setAddEmail(e.target.value)} placeholder="Email" className="w-full h-8 rounded-lg border border-[#e5e5e5] px-2.5 text-[12px] focus:outline-none" />
-              <button
-                type="button"
-                onClick={() => void saveContact()}
-                disabled={!addName.trim() && !addPhone.trim() && !addEmail.trim()}
-                className="w-full h-8 rounded-lg bg-[#1a1a1a] text-white text-[12px] font-medium disabled:opacity-40"
-              >
-                Save contact
-              </button>
-            </div>
-          )}
-          <div className="flex-1 min-h-0 overflow-y-auto -mx-1">
-            {bookLoading ? (
-              <p className="text-[11px] text-[#9ca3af] text-center py-10">Loading…</p>
-            ) : shownContacts.length === 0 ? (
-              <p className="text-[11px] text-[#9ca3af] text-center py-10">No contacts yet</p>
-            ) : (
-              shownContacts.map(c => (
-                <div key={c.id} className="px-1 py-2 border-b border-[#f0f0f0]">
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-[12px] font-medium text-[#1a1a1a] truncate">{c.name}</p>
-                    <button
-                      type="button"
-                      onClick={() => void removeContact(c.id)}
-                      className="text-[10px] text-[#b0b0b0] hover:text-[#1a1a1a] shrink-0"
-                    >
-                      Hide
-                    </button>
-                  </div>
-                  {c.phones.map(p => (
-                    <div key={p} className="mt-0.5 flex items-center justify-between gap-2">
-                      <button
-                        type="button"
-                        onClick={() => pickPhone(p)}
-                        className="text-[11px] text-[#6b6b6b] hover:text-[#1a1a1a] truncate"
-                      >
-                        {formatBookPhone(p)}
-                      </button>
+          {openId ? (
+            <div className="flex-1 min-h-0 flex flex-col">
+              <div className="flex items-center justify-between mb-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setOpenId(null)}
+                  className="text-[12px] text-[#6b6b6b] hover:text-[#1a1a1a]"
+                >
+                  ‹ Contacts
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void saveOpenContact()}
+                  disabled={savingContact}
+                  className="text-[12px] font-medium text-[#1a1a1a] disabled:opacity-40"
+                >
+                  {savingContact ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+              <div className="flex-1 min-h-0 overflow-y-auto space-y-3 pr-0.5">
+                <label className="block">
+                  <span className="text-[10px] text-[#9b9b9b]">Business</span>
+                  <input
+                    value={draftName}
+                    onChange={e => setDraftName(e.target.value)}
+                    className="mt-0.5 w-full border-b border-[#e5e5e5] py-1 text-[15px] font-semibold text-[#1a1a1a] focus:outline-none focus:border-[#1a1a1a]"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[10px] text-[#9b9b9b]">Contact</span>
+                  <input
+                    value={draftRep}
+                    onChange={e => setDraftRep(e.target.value)}
+                    placeholder="Rep name"
+                    className="mt-0.5 w-full border-b border-[#e5e5e5] py-1 text-[13px] text-[#1a1a1a] placeholder:text-[#d4d4d4] focus:outline-none focus:border-[#1a1a1a]"
+                  />
+                </label>
+                <div>
+                  <p className="text-[10px] text-[#9b9b9b] mb-1">Phone</p>
+                  {draftPhones.map((p, i) => (
+                    <div key={`ph-${i}`} className="flex items-center gap-2 mb-1.5">
+                      <input
+                        value={p}
+                        onChange={e => setDraftPhones(list => list.map((v, n) => n === i ? e.target.value : v))}
+                        placeholder="(555) 123-4567"
+                        className="min-w-0 flex-1 border-b border-[#e5e5e5] py-1 text-[13px] text-[#1a1a1a] placeholder:text-[#d4d4d4] focus:outline-none focus:border-[#1a1a1a]"
+                      />
                       <button
                         type="button"
                         onClick={() => void startCall(p)}
                         disabled={!webphone.ready || busy || !toE164(p)}
-                        className="text-[10px] font-medium text-[#1a1a1a] hover:underline disabled:opacity-40 shrink-0"
+                        className="text-[11px] font-medium text-[#1a1a1a] disabled:opacity-30 shrink-0"
                       >
                         Call
                       </button>
                     </div>
                   ))}
-                  {c.emails.map(email => (
-                    <button
-                      key={email}
-                      type="button"
-                      onClick={() => void copyEmail(email)}
-                      className="mt-0.5 block max-w-full truncate text-[11px] text-[#5a7fc7] hover:underline"
-                      title="Copy email"
-                    >
-                      {copied === email ? 'Copied' : email}
-                    </button>
-                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setDraftPhones(list => [...list, ''])}
+                    className="text-[11px] text-[#6b6b6b] hover:text-[#1a1a1a]"
+                  >
+                    + Phone
+                  </button>
                 </div>
-              ))
-            )}
-          </div>
+                <div>
+                  <p className="text-[10px] text-[#9b9b9b] mb-1">Email</p>
+                  {draftEmails.map((email, i) => (
+                    <div key={`em-${i}`} className="flex items-center gap-2 mb-1.5">
+                      <input
+                        value={email}
+                        onChange={e => setDraftEmails(list => list.map((v, n) => n === i ? e.target.value : v))}
+                        placeholder="name@company.com"
+                        className="min-w-0 flex-1 border-b border-[#e5e5e5] py-1 text-[13px] text-[#1a1a1a] placeholder:text-[#d4d4d4] focus:outline-none focus:border-[#1a1a1a]"
+                      />
+                      {email.trim() && (
+                        <button
+                          type="button"
+                          onClick={() => void copyEmail(email.trim())}
+                          className="text-[11px] text-[#6b6b6b] hover:text-[#1a1a1a] shrink-0"
+                        >
+                          {copied === email.trim() ? 'Copied' : 'Copy'}
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setDraftEmails(list => [...list, ''])}
+                    className="text-[11px] text-[#6b6b6b] hover:text-[#1a1a1a]"
+                  >
+                    + Email
+                  </button>
+                </div>
+                {openContactRow && draftPhones.some(p => toE164(p)) && (
+                  <button
+                    type="button"
+                    onClick={() => pickPhone(draftPhones.find(p => toE164(p)) || '')}
+                    className="text-[11px] text-[#6b6b6b] hover:text-[#1a1a1a]"
+                  >
+                    Use number on keypad
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 mb-2 shrink-0">
+                <input
+                  value={bookQ}
+                  onChange={e => setBookQ(e.target.value)}
+                  placeholder="Search"
+                  className="min-w-0 flex-1 h-8 rounded-lg bg-[#f5f5f5] px-2.5 text-[12px] text-[#1a1a1a] placeholder:text-[#b0b0b0] focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => openContact('new')}
+                  className="shrink-0 text-[11px] font-medium text-[#1a1a1a]"
+                >
+                  Add
+                </button>
+              </div>
+              <div className="flex-1 min-h-0 overflow-y-auto -mx-1">
+                {bookLoading ? (
+                  <p className="text-[11px] text-[#9ca3af] text-center py-10">Loading…</p>
+                ) : shownContacts.length === 0 ? (
+                  <p className="text-[11px] text-[#9ca3af] text-center py-10">No contacts yet</p>
+                ) : (
+                  shownContacts.map(c => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => openContact(c)}
+                      className="flex w-full items-center justify-between gap-2 px-1 py-2.5 border-b border-[#f0f0f0] text-left"
+                    >
+                      <span className="min-w-0 truncate text-[13px] font-medium text-[#1a1a1a]">{c.name}</span>
+                      <span className="text-[#c4c4c4] shrink-0 text-[13px]">›</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </>
+          )}
         </div>
       ) : view === 'history' ? (
         <div className="flex-1 min-h-0 overflow-y-auto -mx-1">
