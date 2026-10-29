@@ -1,6 +1,6 @@
 import { isCampaignInboxLead } from '@/lib/inbox/promoteCampaignReply';
 import { inboxActivityMs } from '@/lib/inbox/sortInboxLeads';
-import { normPersonName, phoneKeys } from '@/lib/leads/phone';
+import { isSamePersonLead, normPersonName, phoneKeys } from '@/lib/leads/phone';
 
 type DupLead = {
   id?: string;
@@ -113,7 +113,7 @@ export function groupDuplicateLeads<T extends DupLead>(leads: T[]): T[][] {
     const name = normPersonName(lead.name);
     if (name.length >= 10) {
       const prev = byName.get(name);
-      if (prev !== undefined) unite(prev, i);
+      if (prev !== undefined && isSamePersonLead(leads[prev], lead)) unite(prev, i);
       byName.set(name, i);
     }
   });

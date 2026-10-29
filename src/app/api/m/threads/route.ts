@@ -65,7 +65,7 @@ export async function GET(req: NextRequest) {
     .eq('user_id', user.id)
     .not('last_message_at', 'is', null)
     .order('last_message_at', { ascending: false })
-    .limit(120);
+    .limit(250);
 
   if (error) return NextResponse.json({ threads: [], error: error.message });
 
@@ -81,7 +81,7 @@ export async function GET(req: NextRequest) {
 
   const threads = (convs ?? [])
     .filter(c => !isHiddenInboxThread(byId.get(c.lead_id), c.last_message_preview))
-    .slice(0, 60)
+    .slice(0, 200)
     .map(c => {
       const lead = byId.get(c.lead_id);
       return {

@@ -1970,10 +1970,10 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
       });
 
       if (res.ok) {
-        // Refresh to sync with database
         router.refresh();
       } else {
-        // Revert on failure
+        const data = await res.json().catch(() => ({}));
+        alert(typeof data.error === 'string' ? data.error : 'Could not delete this lead.');
         router.refresh();
       }
     } catch (error) {

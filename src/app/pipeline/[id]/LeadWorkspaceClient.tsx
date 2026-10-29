@@ -1079,11 +1079,16 @@ export default function LeadWorkspaceClient({
   const handleDelete = async () => {
     setDeleting(true);
     try {
-      await fetch('/api/leads/delete', {
+      const res = await fetch('/api/leads/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ leadId: lead.id }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(typeof data.error === 'string' ? data.error : 'Could not delete this lead.');
+        return;
+      }
       if (isModal && isInIframe()) {
         postLeadDeleted(lead.id);
       } else {

@@ -30,6 +30,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const { count: smsCount } = await supabase
+      .from('inbox_messages')
+      .select('id', { count: 'exact', head: true })
+      .eq('lead_id', leadId);
+    if ((smsCount ?? 0) > 0) {
+      return NextResponse.json({
+        error: 'This lead has a text thread. Deleting it would erase the conversation. Take it out of Pipeline instead.',
+      }, { status: 409 });
+    }
+
     // Delete the lead
     const { error } = await supabase
       .from('leads')

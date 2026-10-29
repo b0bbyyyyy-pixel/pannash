@@ -428,18 +428,9 @@ export default function InboxClient({
       if ((activeListNameRef.current || activeStatusRef.current) && !debouncedSearch.trim()) return;
       const incoming = (data.leads ?? []) as InboxLead[];
       const pin = liveCallPinRef.current || selectedLeadIdRef.current;
-      let nextPin = pin;
-      if (pin && !incoming.some(l => l.id === pin)) {
-        const preferred = incoming[0];
-        if (preferred) {
-          nextPin = preferred.id;
-          selectedLeadIdRef.current = nextPin;
-          setSelectedLeadId(nextPin);
-        }
-      }
       setLeads(sortRail(
         debouncedSearch.trim() ? incoming : dedupeInboxLeadsByPhone(incoming),
-        nextPin,
+        pin,
       ));
       if (data.phoneConnection) setPhoneConn(data.phoneConnection);
       else if (initialConvsRef.current) setPhoneConn(null);
@@ -577,7 +568,6 @@ export default function InboxClient({
           if (id.startsWith('opt_') && outboundBodies.has(m.body)) map.delete(id);
         }
         for (const m of incoming) {
-          if (m.lead_id && m.lead_id !== leadId) continue;
           const cur = map.get(m.id);
           map.set(m.id, cur ? { ...cur, ...m } : m);
         }
@@ -587,7 +577,7 @@ export default function InboxClient({
         });
       } else {
         const prev = messagesRef.current;
-        merged = incoming.filter(m => !m.lead_id || m.lead_id === leadId);
+        merged = incoming;
         if (
           prev.length === incoming.length &&
           prev.every((m, i) =>

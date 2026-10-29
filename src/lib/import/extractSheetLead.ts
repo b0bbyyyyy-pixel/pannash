@@ -115,15 +115,60 @@ export function pickFilled(ai: string | null | undefined, heur: string | null | 
   return a || h;
 }
 
+function compact(v: string | null | undefined): string {
+  return String(v ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function last10Digits(v: string | null | undefined): string {
+  return String(v ?? '').replace(/\D/g, '').slice(-10);
+}
+
+function cellBlob(cells: unknown[]): string {
+  return cells.map(c => compact(String(c ?? ''))).join(' ');
+}
+
+function inRow(blob: string, value: string | null | undefined): boolean {
+  const n = compact(value);
+  return n.length >= 4 && blob.includes(n);
+}
+
+/** Prefer the spreadsheet cell when AI identity does not appear in that row. */
+export function preferRowValue(
+  ai: string | null | undefined,
+  heur: string | null | undefined,
+  blob: string,
+  kind: 'text' | 'phone' = 'text',
+): string | null {
+  const a = ai && !emptyish(String(ai)) ? String(ai).trim() : null;
+  const h = heur && !emptyish(String(heur)) ? String(heur).trim() : null;
+  if (h && a) {
+    if (kind === 'phone') {
+      const ad = last10Digits(a);
+      const hd = last10Digits(h);
+      if (hd.length === 10 && ad.length === 10 && hd !== ad) {
+        const hIn = blob.includes(hd);
+        const aIn = blob.includes(ad);
+        if (hIn && !aIn) return h;
+      }
+    } else if (compact(a) !== compact(h)) {
+      const hIn = inRow(blob, h);
+      const aIn = inRow(blob, a);
+      if (hIn && !aIn) return h;
+    }
+  }
+  return pickFilled(a, h);
+}
+
 export function mergeSheetLead<T>(ai: T, cells: unknown[]): T {
   const src = ai as Record<string, unknown>;
   const h = extractSheetLead(cells);
+  const blob = cellBlob(cells);
   return {
     ...(ai as object),
-    name: pickFilled(src.name as string | null, h.name),
-    email: pickFilled(src.email as string | null, h.email),
-    phone: pickFilled(src.phone as string | null, h.phone),
-    company: pickFilled(src.company as string | null, h.company),
+    name: preferRowValue(src.name as string | null, h.name, blob),
+    email: preferRowValue(src.email as string | null, h.email, blob),
+    phone: preferRowValue(src.phone as string | null, h.phone, blob, 'phone'),
+    company: preferRowValue(src.company as string | null, h.company, blob),
     industry: pickFilled(src.industry as string | null, h.industry),
     address: pickFilled(src.address as string | null, h.address),
   } as T;

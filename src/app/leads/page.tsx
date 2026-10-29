@@ -222,6 +222,11 @@ export default async function LeadsPage({
         },
       }
     );
+    const { count: smsCount } = await supabase
+      .from('inbox_messages')
+      .select('id', { count: 'exact', head: true })
+      .eq('lead_id', leadId);
+    if ((smsCount ?? 0) > 0) return;
     await supabase.from('leads').delete().eq('id', leadId);
     revalidatePath('/leads');
   }
@@ -265,7 +270,20 @@ export default async function LeadsPage({
     );
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-    await supabase.from('leads').delete().eq('list_id', listId).eq('user_id', user.id);
+    const { data: listLeads } = await supabase
+      .from('leads')
+      .select('id')
+      .eq('list_id', listId)
+      .eq('user_id', user.id);
+    const ids = (listLeads ?? []).map(l => l.id);
+    const { data: smsRows } = ids.length
+      ? await supabase.from('inbox_messages').select('lead_id').in('lead_id', ids)
+      : { data: [] };
+    const keep = new Set((smsRows ?? []).map(r => r.lead_id).filter(Boolean));
+    const drop = ids.filter(id => !keep.has(id));
+    if (drop.length) {
+      await supabase.from('leads').delete().in('id', drop).eq('user_id', user.id);
+    }
     await supabase.from('lead_lists').delete().eq('id', listId);
     revalidatePath('/leads');
   }

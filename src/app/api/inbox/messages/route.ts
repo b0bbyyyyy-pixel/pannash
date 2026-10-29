@@ -175,8 +175,10 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const inboundWithEmail = [...messages].reverse().find((m: { direction?: string; body?: string }) =>
-      m.direction === 'inbound' && extractEmailFromSms(String(m.body || '')).email
+    const inboundWithEmail = [...messages].reverse().find((m: { direction?: string; body?: string; lead_id?: string | null }) =>
+      m.direction === 'inbound'
+      && (!m.lead_id || m.lead_id === leadId)
+      && extractEmailFromSms(String(m.body || '')).email
     );
     if (inboundWithEmail?.body) {
       try {

@@ -12,7 +12,8 @@ const LEAD_COLS = 'id, name, company, phone, email, value, stage, month_key, las
 const LEAD_COLS_NO_LANG = 'id, name, company, phone, email, value, stage, month_key, last_contact, created_at, in_pipeline, lead_status, list_id, underwriting_data, sms_opt_out, casper_enabled';
 const LEAD_COLS_FALLBACK = 'id, name, company, phone, email, value, stage, month_key, last_contact, created_at, in_pipeline, lead_status, list_id, underwriting_data';
 const CONV_COLS = 'id, lead_id, last_message_at, last_inbound_at, last_direction, last_message_preview, unread_count';
-const LIMIT = 40;
+const LIMIT = 200;
+const FETCH = 300;
 
 function escapeIlike(s: string) {
   return s.replace(/[%_\\]/g, '\\$&');
@@ -111,7 +112,7 @@ export async function GET(req: NextRequest) {
           .eq('user_id', user.id)
           .or('last_inbound_at.not.is.null,last_direction.eq.inbound')
           .order('last_message_at', { ascending: false, nullsFirst: false })
-          .limit(80);
+          .limit(FETCH);
         if (error) {
           ({ data, error } = await supabase
             .from('inbox_conversations')
@@ -119,7 +120,7 @@ export async function GET(req: NextRequest) {
             .eq('user_id', user.id)
             .or('last_inbound_at.not.is.null,last_direction.eq.inbound')
             .order('last_message_at', { ascending: false, nullsFirst: false })
-            .limit(80));
+            .limit(FETCH));
         }
         if (error) {
           const { data: fallback } = await supabase
@@ -128,7 +129,7 @@ export async function GET(req: NextRequest) {
             .eq('user_id', user.id)
             .eq('last_direction', 'inbound')
             .order('last_message_at', { ascending: false, nullsFirst: false })
-            .limit(80);
+            .limit(FETCH);
           convs = fallback ?? [];
         } else {
           convs = data ?? [];
@@ -147,17 +148,20 @@ export async function GET(req: NextRequest) {
 
       // Pipeline threads whose last SMS is outbound never had last_inbound_at —
       // they still belong on Inbox (docs / Submitted live on that copy).
+      const pipelineIds = new Set<string>();
       try {
         const { data: pipeLeads } = await supabase
           .from('leads')
           .select('id')
           .eq('user_id', user.id)
           .eq('in_pipeline', true)
-          .limit(200);
+          .limit(400);
+        for (const row of pipeLeads ?? []) {
+          const id = String((row as { id: string }).id ?? '');
+          if (id) pipelineIds.add(id);
+        }
         const seen = new Set(convs.map(c => String(c.lead_id)));
-        const extraIds = ((pipeLeads ?? []) as { id: string }[])
-          .map(l => String(l.id))
-          .filter(id => id && !seen.has(id));
+        const extraIds = [...pipelineIds].filter(id => !seen.has(id));
         for (let i = 0; i < extraIds.length; i += 80) {
           const chunk = extraIds.slice(i, i + 80);
           let extra = await supabase
@@ -190,7 +194,20 @@ export async function GET(req: NextRequest) {
         const bT = inboxActivityMs({ conversation: b });
         return bT - aT;
       });
-      convs = convs.slice(0, LIMIT);
+      const kept: Record<string, unknown>[] = [];
+      let extraInbound = 0;
+      for (const c of convs) {
+        const id = String(c.lead_id ?? '');
+        if (!id) continue;
+        if (pipelineIds.has(id)) {
+          kept.push(c);
+          continue;
+        }
+        if (extraInbound >= LIMIT) continue;
+        kept.push(c);
+        extraInbound += 1;
+      }
+      convs = kept;
 
       const convLeadIds = convs.map(c => String(c.lead_id)).filter(Boolean);
       if (convLeadIds.length) {

@@ -110,12 +110,13 @@ BEGIN
   WHERE user_id = v_user AND lead_id = v_lead;
 
   IF v_conv IS NULL THEN
-    INSERT INTO inbox_conversations (user_id, lead_id, last_message_at, last_message_preview, last_direction, unread_count)
-    VALUES (v_user, v_lead, now(), v_preview, 'inbound', 1)
+    INSERT INTO inbox_conversations (user_id, lead_id, last_message_at, last_inbound_at, last_message_preview, last_direction, unread_count)
+    VALUES (v_user, v_lead, now(), now(), v_preview, 'inbound', 1)
     RETURNING id INTO v_conv;
   ELSE
     UPDATE inbox_conversations
     SET last_message_at = now(),
+        last_inbound_at = now(),
         last_message_preview = v_preview,
         last_direction = 'inbound',
         unread_count = coalesce(unread_count, 0) + 1

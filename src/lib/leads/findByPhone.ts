@@ -1,8 +1,8 @@
 import { pickPreferredDuplicate } from '@/lib/inbox/dedupeInboxLeads';
 import { countAttachmentsByLead } from '@/lib/leads/attachmentCounts';
-import { last10, phoneKeys, phoneVariants, phonesOverlap, normPersonName } from '@/lib/leads/phone';
+import { last10, phoneKeys, phoneVariants, phonesOverlap, isSamePersonLead } from '@/lib/leads/phone';
 
-export { last10, phoneKeys, phoneVariants, phonesOverlap, normPersonName };
+export { last10, phoneKeys, phoneVariants, phonesOverlap, normPersonName } from '@/lib/leads/phone';
 
 export type LeadByPhone = {
   id: string;
@@ -104,7 +104,7 @@ export async function findSiblingLeadIds(
 ): Promise<string[]> {
   const { data: lead } = await supabase
     .from('leads')
-    .select('id, phone, phone_e164, name')
+    .select('id, phone, phone_e164, name, company')
     .eq('id', leadId)
     .eq('user_id', userId)
     .maybeSingle();
@@ -112,11 +112,11 @@ export async function findSiblingLeadIds(
   const name = String(lead?.name ?? '').trim();
   const variants = [...new Set(keys.flatMap(k => phoneVariants(k)))];
 
-  const hits: { id: string; phone?: string | null; phone_e164?: string | null; name?: string | null }[] = [];
+  const hits: { id: string; phone?: string | null; phone_e164?: string | null; name?: string | null; company?: string | null }[] = [];
   if (variants.length) {
     const byPhone = await supabase
       .from('leads')
-      .select('id, phone, phone_e164, name')
+      .select('id, phone, phone_e164, name, company')
       .eq('user_id', userId)
       .in('phone', variants)
       .limit(40);
@@ -124,7 +124,7 @@ export async function findSiblingLeadIds(
   }
   const { data: pipeline } = await supabase
     .from('leads')
-    .select('id, phone, phone_e164, name')
+    .select('id, phone, phone_e164, name, company')
     .eq('user_id', userId)
     .eq('in_pipeline', true)
     .limit(400);
@@ -132,21 +132,15 @@ export async function findSiblingLeadIds(
   if (name) {
     const byName = await supabase
       .from('leads')
-      .select('id, phone, phone_e164, name')
+      .select('id, phone, phone_e164, name, company')
       .eq('user_id', userId)
       .ilike('name', name)
       .limit(20);
     hits.push(...(byName.data ?? []));
   }
 
-  const wantName = normPersonName(name);
   const ids = [...new Map(hits.map(r => [String(r.id), r])).values()]
-    .filter(r =>
-      phonesOverlap(r.phone, lead?.phone) ||
-      phonesOverlap(r.phone_e164, lead?.phone) ||
-      phonesOverlap(r.phone, lead?.phone_e164) ||
-      (wantName.length >= 10 && normPersonName(r.name) === wantName)
-    )
+    .filter(r => isSamePersonLead(r, lead ?? {}))
     .map(r => String(r.id));
   return ids.includes(leadId) ? ids : [leadId, ...ids];
 }
