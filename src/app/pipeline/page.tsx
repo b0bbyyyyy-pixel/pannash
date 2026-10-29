@@ -202,7 +202,7 @@ export default async function PipelinePage({
     const t = lastTextByLead[String(l.id)];
     if (t && !t.outbound && isSmsStopBody(t.preview)) return false;
     return true;
-  }).map(l => l.id);
+  }).map(l => String(l.id));
 
   if (prospectIds.length) {
     await supabase
