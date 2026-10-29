@@ -80,11 +80,11 @@ async function fundedThisMonth(supabase: SbClient, userId: string, month: string
       console.error('[switchboard] funded', error.message);
       break;
     }
-    const rows = data ?? [];
+    const rows = (data ?? []) as Record<string, unknown>[];
     for (const lead of rows) {
-      const ud = Object.keys(lead as object).some(k => k.startsWith('ud_'))
-        ? hydrateFundedUd({ ...(lead as Record<string, unknown>) })
-        : parseUd((lead as { underwriting_data?: unknown }).underwriting_data);
+      const ud = Object.keys(lead).some(k => k.startsWith('ud_'))
+        ? hydrateFundedUd({ ...lead })
+        : parseUd(lead.underwriting_data);
       const status = String(lead.lead_status ?? '').trim();
       const isFunded = isTruthy(ud.isFunded) || /^funded$/i.test(status);
       if (!isFunded) continue;

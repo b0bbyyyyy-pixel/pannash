@@ -57,12 +57,11 @@ async function fetchFundedLeads(
         .range(from, from + pageSize - 1));
     }
     if (error) return { rows: null, error };
-    const mapped = (data ?? []).map((lead) => {
-      const rec = lead as Record<string, unknown>;
+    const mapped = ((data ?? []) as Record<string, unknown>[]).map((rec) => {
       const ud = Object.keys(rec).some(k => k.startsWith('ud_'))
         ? hydrateFundedUd({ ...rec })
         : rec.underwriting_data;
-      return { lead_status: rec.lead_status as string | null, underwriting_data: ud };
+      return { lead_status: (rec.lead_status as string | null) ?? null, underwriting_data: ud };
     });
     rows.push(...mapped);
     if (!data || data.length < pageSize) break;
