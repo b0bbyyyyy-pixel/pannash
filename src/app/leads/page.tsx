@@ -144,7 +144,7 @@ export default async function LeadsPage({
         .eq('user_id', user.id)
         .order('created_at', { ascending: false }),
     ]);
-    campaignLeads = asRows(leadRes.data).map(l => hydrateCampaignUd({ ...l })) as CampaignLead[];
+    campaignLeads = asRows(leadRes.data).map(l => hydrateCampaignUd({ ...l })) as unknown as CampaignLead[];
   }
 
   // ── Server action: create campaign ────────────────────────────────────────
