@@ -28,6 +28,7 @@ const DOT: Record<string, string> = {
   status: 'bg-amber-500',
   lenders: 'bg-[#7d9b6e]',
   contact: 'bg-[#c4c4c4]',
+  call: 'bg-[#5a7fc7]',
   lead: 'bg-[#d4d4d4]',
 };
 

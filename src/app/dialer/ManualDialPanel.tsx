@@ -10,6 +10,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { toE164, formatDisplay } from '@/lib/dialer/e164';
 import { useWebPhone } from '@/components/webphone/WebPhone';
 import { isMissedCall, markMissedCallsSeen, missedClockLabel } from '@/lib/telephony/missed';
+import { formatBookPhone, type BookContact } from '@/lib/phoneBook';
 
 const KEYPAD: { d: string; letters: string }[] = [
   { d: '1', letters: '' },     { d: '2', letters: 'ABC' }, { d: '3', letters: 'DEF' },
@@ -74,9 +75,17 @@ export default function ManualDialPanel({
   initialNumber?: string;
 }) {
   const [number, setNumber] = useState(initialNumber);
-  const [view, setView] = useState<'pad' | 'history'>('pad');
+  const [view, setView] = useState<'pad' | 'history' | 'book'>('pad');
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [contacts, setContacts] = useState<BookContact[]>([]);
+  const [bookLoading, setBookLoading] = useState(false);
+  const [bookQ, setBookQ] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [addName, setAddName] = useState('');
+  const [addPhone, setAddPhone] = useState('');
+  const [addEmail, setAddEmail] = useState('');
+  const [copied, setCopied] = useState('');
 
   useEffect(() => {
     if (initialNumber) setNumber(initialNumber);
@@ -95,9 +104,20 @@ export default function ManualDialPanel({
     setHistoryLoading(false);
   }, []);
 
+  const loadBook = useCallback(async () => {
+    setBookLoading(true);
+    try {
+      const res = await fetch('/api/phone-book', { cache: 'no-store' });
+      const data = await res.json();
+      if (res.ok) setContacts(Array.isArray(data.contacts) ? data.contacts : []);
+    } catch { /* ignore */ }
+    setBookLoading(false);
+  }, []);
+
   useEffect(() => {
     if (view === 'history') void loadHistory();
-  }, [view, loadHistory]);
+    if (view === 'book') void loadBook();
+  }, [view, loadHistory, loadBook]);
 
   useEffect(() => {
     if (view !== 'history' || historyLoading) return;
@@ -136,12 +156,87 @@ export default function ManualDialPanel({
     setError(null);
   };
 
+  const pickPhone = (raw: string) => {
+    const dest = toE164(raw) || raw.replace(/[^\d+*#]/g, '');
+    if (!dest) return;
+    setNumber(dest.replace(/[^\d+*#]/g, ''));
+    setView('pad');
+    setError(null);
+  };
+
+  const copyEmail = async (email: string) => {
+    try {
+      await navigator.clipboard.writeText(email);
+      setCopied(email);
+      setTimeout(() => setCopied(''), 1500);
+    } catch { /* ignore */ }
+  };
+
+  const saveContact = async () => {
+    const name = addName.trim();
+    const phone = addPhone.trim();
+    const email = addEmail.trim();
+    if (!name && !phone && !email) return;
+    const res = await fetch('/api/phone-book', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, phones: phone ? [phone] : [], emails: email ? [email] : [] }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(data.error || 'Could not save contact');
+      return;
+    }
+    setContacts(Array.isArray(data.contacts) ? data.contacts : []);
+    setAddName('');
+    setAddPhone('');
+    setAddEmail('');
+    setAdding(false);
+  };
+
+  const removeContact = async (id: string) => {
+    const res = await fetch('/api/phone-book', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && Array.isArray(data.contacts)) setContacts(data.contacts);
+  };
+
+  const q = bookQ.trim().toLowerCase();
+  const shownContacts = q
+    ? contacts.filter(c =>
+        c.name.toLowerCase().includes(q)
+        || c.emails.some(e => e.includes(q))
+        || c.phones.some(p => p.replace(/\D/g, '').includes(q.replace(/\D/g, ''))),
+      )
+    : contacts;
+
   const display = e164 ? formatDisplay(e164) : number;
 
   return (
     <div className={`bg-white border border-[#e5e5e5] rounded-2xl shadow-sm p-5 h-[428px] flex flex-col ${className}`}>
       <div className="flex items-center justify-between mb-3 shrink-0">
-        <h3 className="text-sm font-semibold text-[#1a1a1a]">{view === 'history' ? 'History' : 'Phone'}</h3>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <h3 className="text-sm font-semibold text-[#1a1a1a]">
+            {view === 'history' ? 'History' : view === 'book' ? 'Contacts' : 'Phone'}
+          </h3>
+          <button
+            type="button"
+            onClick={() => setView(v => v === 'book' ? 'pad' : 'book')}
+            title="Contacts"
+            aria-label="Contacts"
+            className={`p-1 rounded-md transition-colors ${
+              view === 'book' ? 'text-[#1a1a1a] bg-[#f3f3f3]' : 'text-[#9b9b9b] hover:text-[#1a1a1a] hover:bg-[#f5f5f5]'
+            }`}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M5 4.5A1.5 1.5 0 016.5 3H18a2 2 0 012 2v14.5a.5.5 0 01-.8.4L16 17H6.5A1.5 1.5 0 015 15.5v-11z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12.5 8.2a1.6 1.6 0 11-3.2 0 1.6 1.6 0 013.2 0zM8.7 13.2c.4-.8 1.4-1.3 2.6-1.3s2.2.5 2.6 1.3" />
+            </svg>
+          </button>
+        </div>
         <div className="flex items-center gap-2.5">
           <button
             type="button"
@@ -171,7 +266,92 @@ export default function ManualDialPanel({
         </div>
       </div>
 
-      {view === 'history' ? (
+      {view === 'book' ? (
+        <div className="flex-1 min-h-0 flex flex-col">
+          <div className="flex items-center gap-2 mb-2 shrink-0">
+            <input
+              value={bookQ}
+              onChange={e => setBookQ(e.target.value)}
+              placeholder="Search lenders & contacts"
+              className="min-w-0 flex-1 h-8 rounded-lg bg-[#f5f5f5] px-2.5 text-[12px] text-[#1a1a1a] placeholder:text-[#b0b0b0] focus:outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => setAdding(a => !a)}
+              className="shrink-0 text-[11px] font-medium text-[#5a7fc7] hover:underline"
+            >
+              {adding ? 'Cancel' : 'Add'}
+            </button>
+          </div>
+          {adding && (
+            <div className="mb-2 shrink-0 space-y-1.5">
+              <input value={addName} onChange={e => setAddName(e.target.value)} placeholder="Name" className="w-full h-8 rounded-lg border border-[#e5e5e5] px-2.5 text-[12px] focus:outline-none" />
+              <input value={addPhone} onChange={e => setAddPhone(e.target.value)} placeholder="Phone" className="w-full h-8 rounded-lg border border-[#e5e5e5] px-2.5 text-[12px] focus:outline-none" />
+              <input value={addEmail} onChange={e => setAddEmail(e.target.value)} placeholder="Email" className="w-full h-8 rounded-lg border border-[#e5e5e5] px-2.5 text-[12px] focus:outline-none" />
+              <button
+                type="button"
+                onClick={() => void saveContact()}
+                disabled={!addName.trim() && !addPhone.trim() && !addEmail.trim()}
+                className="w-full h-8 rounded-lg bg-[#1a1a1a] text-white text-[12px] font-medium disabled:opacity-40"
+              >
+                Save contact
+              </button>
+            </div>
+          )}
+          <div className="flex-1 min-h-0 overflow-y-auto -mx-1">
+            {bookLoading ? (
+              <p className="text-[11px] text-[#9ca3af] text-center py-10">Loading…</p>
+            ) : shownContacts.length === 0 ? (
+              <p className="text-[11px] text-[#9ca3af] text-center py-10">No contacts yet</p>
+            ) : (
+              shownContacts.map(c => (
+                <div key={c.id} className="px-1 py-2 border-b border-[#f0f0f0]">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-[12px] font-medium text-[#1a1a1a] truncate">{c.name}</p>
+                    <button
+                      type="button"
+                      onClick={() => void removeContact(c.id)}
+                      className="text-[10px] text-[#b0b0b0] hover:text-[#1a1a1a] shrink-0"
+                    >
+                      Hide
+                    </button>
+                  </div>
+                  {c.phones.map(p => (
+                    <div key={p} className="mt-0.5 flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => pickPhone(p)}
+                        className="text-[11px] text-[#6b6b6b] hover:text-[#1a1a1a] truncate"
+                      >
+                        {formatBookPhone(p)}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void startCall(p)}
+                        disabled={!webphone.ready || busy || !toE164(p)}
+                        className="text-[10px] font-medium text-[#1a1a1a] hover:underline disabled:opacity-40 shrink-0"
+                      >
+                        Call
+                      </button>
+                    </div>
+                  ))}
+                  {c.emails.map(email => (
+                    <button
+                      key={email}
+                      type="button"
+                      onClick={() => void copyEmail(email)}
+                      className="mt-0.5 block max-w-full truncate text-[11px] text-[#5a7fc7] hover:underline"
+                      title="Copy email"
+                    >
+                      {copied === email ? 'Copied' : email}
+                    </button>
+                  ))}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      ) : view === 'history' ? (
         <div className="flex-1 min-h-0 overflow-y-auto -mx-1">
           {historyLoading ? (
             <p className="text-[11px] text-[#9ca3af] text-center py-10">Loading…</p>

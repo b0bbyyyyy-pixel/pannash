@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
+import { isMissedCall } from '@/lib/telephony/missed';
 
 export const dynamic = 'force-dynamic';
 
@@ -64,6 +65,49 @@ function casperEvent(run: Record<string, unknown>): LeadActivityEvent | null {
   return null;
 }
 
+const CALL_STATUS: Record<string, string> = {
+  dry_run: 'Dry run',
+  created: 'Started',
+  ringing_agent: 'Ringing',
+  agent_answered: 'Dialing',
+  in_progress: 'On call',
+  completed: '',
+  no_answer: 'No answer',
+  busy: 'Busy',
+  failed: 'Failed',
+  canceled: 'Canceled',
+  agent_no_answer: 'Desk missed',
+};
+
+function callDuration(seconds: unknown): string {
+  const s = Number(seconds);
+  if (!Number.isFinite(s) || s <= 0) return '';
+  const m = Math.floor(s / 60);
+  const sec = Math.round(s % 60);
+  return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+}
+
+function callEvent(row: Record<string, unknown>): LeadActivityEvent | null {
+  const at = String(row.started_at || '');
+  if (!at) return null;
+  const status = String(row.status || '');
+  if (status === 'dry_run') return null;
+  const inbound = String(row.direction || '') === 'inbound';
+  const missed = isMissedCall({
+    status,
+    direction: inbound ? 'inbound' : String(row.direction || 'outbound'),
+    answered_at: row.answered_at ? String(row.answered_at) : null,
+  });
+  const title = inbound ? (missed ? 'Missed call' : 'Call received') : 'Call made';
+  const detail = [
+    CALL_STATUS[status] ?? (status && status !== 'completed' ? status.replace(/_/g, ' ') : ''),
+    callDuration(row.duration_seconds),
+    row.disposition ? String(row.disposition).replace(/_/g, ' ') : '',
+    String(row.notes || '').trim(),
+  ].filter(Boolean).join(' · ');
+  return { at, title, detail: detail || undefined, source: 'call' };
+}
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -123,7 +167,7 @@ export async function GET(
     }
   }
 
-  const [{ data: files }, { data: runs }, { data: history }, { data: submissions }] = await Promise.all([
+  const [{ data: files }, { data: runs }, { data: history }, { data: submissions }, callsRes] = await Promise.all([
     supabase
       .from('lead_attachments')
       .select('file_name, column_field, created_at')
@@ -163,6 +207,25 @@ export async function GET(
       .eq('lead_id', leadId)
       .order('created_at', { ascending: false })
       .limit(40),
+    (async () => {
+      const full = await supabase
+        .from('dialer_calls')
+        .select('direction, status, disposition, notes, started_at, duration_seconds, answered_at')
+        .eq('lead_id', leadId)
+        .eq('agent_id', user.id)
+        .order('started_at', { ascending: false })
+        .limit(80);
+      if (full.error && /direction|answered_at|duration_seconds|schema cache|42703|PGRST/i.test(`${full.error.message || ''} ${full.error.code || ''}`)) {
+        return supabase
+          .from('dialer_calls')
+          .select('status, disposition, notes, started_at, duration_seconds')
+          .eq('lead_id', leadId)
+          .eq('agent_id', user.id)
+          .order('started_at', { ascending: false })
+          .limit(80);
+      }
+      return full;
+    })(),
   ]);
 
   for (const file of files ?? []) {
@@ -193,6 +256,11 @@ export async function GET(
       detail: notes,
       source: 'contact',
     });
+  }
+
+  for (const call of callsRes.data ?? []) {
+    const ev = callEvent(call as Record<string, unknown>);
+    if (ev) events.push(ev);
   }
 
   for (const sub of submissions ?? []) {
