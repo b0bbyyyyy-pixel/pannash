@@ -7,6 +7,7 @@ import { zoneForLocation, isInSendWindow, nextWindowStart } from '@/lib/smsDrip/
 import { toE164 } from '@/lib/dialer/e164';
 import { isCampaignInboxLead } from '@/lib/inbox/promoteCampaignReply';
 import { applySmsOptOutFromFailure, smsSendBlockReason } from '@/lib/leads/dnc';
+import { TZ_LEAD_COLS, hydrateTzUd } from '@/lib/leads/listColumns';
 
 interface DripJob {
   id: string;
@@ -336,11 +337,21 @@ export async function processTick(supabase: any, user: { id: string; email?: str
           break;
         }
 
-        const { data: nextLead } = await supabase
+        let { data: nextLead } = await supabase
           .from('leads')
-          .select('id, name, company, phone, sms_opt_out, underwriting_data, in_pipeline, lead_status')
+          .select(TZ_LEAD_COLS)
           .eq('id', claimedSend.lead_id)
           .single();
+        if (!nextLead) {
+          const fallback = await supabase
+            .from('leads')
+            .select('id, name, company, phone, sms_opt_out, underwriting_data, in_pipeline, lead_status')
+            .eq('id', claimedSend.lead_id)
+            .single();
+          nextLead = fallback.data;
+        } else {
+          hydrateTzUd(nextLead as Record<string, unknown>);
+        }
 
         const failSend = async (status: string, error: string) => {
           await supabase.from('sms_drip_sends')
@@ -507,11 +518,21 @@ export async function processTick(supabase: any, user: { id: string; email?: str
           }
           if (!next) break;
 
-          const { data: nextLead } = await supabase
+          let { data: nextLead } = await supabase
             .from('leads')
-            .select('id, name, company, phone, sms_opt_out, underwriting_data, in_pipeline, lead_status')
+            .select(TZ_LEAD_COLS)
             .eq('id', next.lead_id)
             .single();
+          if (!nextLead) {
+            const fallback = await supabase
+              .from('leads')
+              .select('id, name, company, phone, sms_opt_out, underwriting_data, in_pipeline, lead_status')
+              .eq('id', next.lead_id)
+              .single();
+            nextLead = fallback.data;
+          } else {
+            hydrateTzUd(nextLead as Record<string, unknown>);
+          }
           if (!nextLead || await smsSendBlockReason(supabase, nextLead)) {
             await supabase.from('sms_drip_sends')
               .update({ sms_status: 'skipped_dnc', error: nextLead ? 'Opted out' : 'Lead deleted', scheduled_for: null })

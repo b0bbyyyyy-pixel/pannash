@@ -10,6 +10,7 @@ import {
   PROSPECT_STATUSES,
   SUBMITTED_STATUSES,
 } from '@/lib/casper/stage';
+import { FUNDED_LIST_COLS, hydrateFundedUd } from '@/lib/leads/listColumns';
 
 export const dynamic = 'force-dynamic';
 
@@ -61,19 +62,29 @@ async function fundedThisMonth(supabase: SbClient, userId: string, month: string
   const pageSize = 1000;
   let funded = 0;
   for (let from = 0; ; from += pageSize) {
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('leads')
-      .select('lead_status, underwriting_data')
+      .select(FUNDED_LIST_COLS)
       .eq('user_id', userId)
       .or('lead_status.eq.Funded,underwriting_data->>isFunded.eq.true')
       .range(from, from + pageSize - 1);
+    if (error) {
+      ({ data, error } = await supabase
+        .from('leads')
+        .select('lead_status, underwriting_data')
+        .eq('user_id', userId)
+        .or('lead_status.eq.Funded,underwriting_data->>isFunded.eq.true')
+        .range(from, from + pageSize - 1));
+    }
     if (error) {
       console.error('[switchboard] funded', error.message);
       break;
     }
     const rows = data ?? [];
     for (const lead of rows) {
-      const ud = parseUd(lead.underwriting_data);
+      const ud = Object.keys(lead as object).some(k => k.startsWith('ud_'))
+        ? hydrateFundedUd({ ...(lead as Record<string, unknown>) })
+        : parseUd((lead as { underwriting_data?: unknown }).underwriting_data);
       const status = String(lead.lead_status ?? '').trim();
       const isFunded = isTruthy(ud.isFunded) || /^funded$/i.test(status);
       if (!isFunded) continue;

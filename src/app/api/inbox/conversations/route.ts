@@ -7,11 +7,17 @@ import { dedupeInboxLeadsByPhone, groupDuplicateLeads, mergeBestConversation, pi
 import { last10, normPersonName } from '@/lib/leads/phone';
 import { countAttachmentsByLead } from '@/lib/leads/attachmentCounts';
 import { getRequestUser } from '@/lib/auth/getRequestUser';
+import {
+  CONV_COLS,
+  CONV_COLS_MIN,
+  INBOX_LEAD_COLS,
+  INBOX_LEAD_COLS_MIN,
+  INBOX_LEAD_COLS_NO_ALIAS,
+  INBOX_LEAD_COLS_NO_LANG,
+  INBOX_SIBLING_COLS,
+  emailFromSmsFlag,
+} from '@/lib/leads/listColumns';
 
-const LEAD_COLS = 'id, name, company, phone, email, value, stage, month_key, last_contact, created_at, in_pipeline, lead_status, list_id, underwriting_data, sms_opt_out, casper_enabled, sms_language';
-const LEAD_COLS_NO_LANG = 'id, name, company, phone, email, value, stage, month_key, last_contact, created_at, in_pipeline, lead_status, list_id, underwriting_data, sms_opt_out, casper_enabled';
-const LEAD_COLS_FALLBACK = 'id, name, company, phone, email, value, stage, month_key, last_contact, created_at, in_pipeline, lead_status, list_id, underwriting_data';
-const CONV_COLS = 'id, lead_id, last_message_at, last_inbound_at, last_direction, last_message_preview, unread_count';
 const LIMIT = 200;
 const FETCH = 300;
 
@@ -44,14 +50,19 @@ export async function GET(req: NextRequest) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async function selectLeads(build: (cols: string) => any) {
-      let { data, error } = await build(LEAD_COLS);
+      let { data, error } = await build(INBOX_LEAD_COLS);
       if (error) {
-        const mid = await build(LEAD_COLS_NO_LANG);
+        const mid = await build(INBOX_LEAD_COLS_NO_LANG);
         data = mid.data;
         error = mid.error;
       }
       if (error) {
-        const fallback = await build(LEAD_COLS_FALLBACK);
+        const noAlias = await build(INBOX_LEAD_COLS_NO_ALIAS);
+        data = noAlias.data;
+        error = noAlias.error;
+      }
+      if (error) {
+        const fallback = await build(INBOX_LEAD_COLS_MIN);
         data = fallback.data;
         error = fallback.error;
       }
@@ -116,24 +127,13 @@ export async function GET(req: NextRequest) {
         if (error) {
           ({ data, error } = await supabase
             .from('inbox_conversations')
-            .select('*')
-            .eq('user_id', user.id)
-            .or('last_inbound_at.not.is.null,last_direction.eq.inbound')
-            .order('last_message_at', { ascending: false, nullsFirst: false })
-            .limit(FETCH));
-        }
-        if (error) {
-          const { data: fallback } = await supabase
-            .from('inbox_conversations')
-            .select('*')
+            .select(CONV_COLS_MIN)
             .eq('user_id', user.id)
             .eq('last_direction', 'inbound')
             .order('last_message_at', { ascending: false, nullsFirst: false })
-            .limit(FETCH);
-          convs = fallback ?? [];
-        } else {
-          convs = data ?? [];
+            .limit(FETCH));
         }
+        convs = data ?? [];
       } catch {
         // Table not created yet
       }
@@ -173,7 +173,7 @@ export async function GET(req: NextRequest) {
           if (extra.error) {
             extra = await supabase
               .from('inbox_conversations')
-              .select('*')
+              .select(CONV_COLS_MIN)
               .eq('user_id', user.id)
               .in('lead_id', chunk)
               .not('last_message_at', 'is', null);
@@ -222,9 +222,12 @@ export async function GET(req: NextRequest) {
     // Pipeline + same-name copies — Autova phones are often stored garbled
     // so last-10 ilike misses Autovova Auto Transport.
     async function loadSiblingPool(seed: Record<string, unknown>[]) {
-      const { data: pipeline } = await selectLeads((cols) =>
-        supabase.from('leads').select(cols).eq('user_id', userId).eq('in_pipeline', true).limit(400)
-      );
+      const { data: pipeline } = await supabase
+        .from('leads')
+        .select(INBOX_SIBLING_COLS)
+        .eq('user_id', userId)
+        .eq('in_pipeline', true)
+        .limit(400);
       const names = [...new Set(
         seed.map(l => String(l.name ?? '').trim()).filter(n => normPersonName(n).length >= 10)
       )];
@@ -304,7 +307,7 @@ export async function GET(req: NextRequest) {
         if (extraQ.error) {
           extraQ = await supabase
             .from('inbox_conversations')
-            .select('*')
+            .select(CONV_COLS_MIN)
             .eq('user_id', user.id)
             .in('lead_id', missingConvIds);
         }
@@ -330,7 +333,8 @@ export async function GET(req: NextRequest) {
         conversation: convMap[String(lead.id)] ?? null,
         lead_status: (optOut ? 'DNC' : lead.lead_status) ?? null,
         doc_count: docCountByLead[String(lead.id)] ?? 0,
-        email_from_sms: !!((lead as { underwriting_data?: { email_from_sms?: boolean } | null }).underwriting_data?.email_from_sms),
+        email_from_sms: emailFromSmsFlag(lead as Record<string, unknown>),
+        underwriting_data: undefined,
       };
     }).filter(lead => {
       if (q || statusFilter || (resolvedPin && lead.id === resolvedPin)) return true;
@@ -358,7 +362,7 @@ export async function GET(req: NextRequest) {
           if (extraQ.error) {
             extraQ = await supabase
               .from('inbox_conversations')
-              .select('*')
+              .select(CONV_COLS_MIN)
               .eq('user_id', user.id)
               .in('lead_id', missingSibIds);
           }

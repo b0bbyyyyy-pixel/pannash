@@ -191,7 +191,7 @@ export default function SwitchboardPanel({
   }, [applyFrozen, burst, emit, kick]);
 
   usePolling(loadCounts, 45_000, true, true);
-  usePolling(loadLive, 5_000, true, true);
+  usePolling(loadLive, 12_000, true, true);
 
   useEffect(() => {
     applyFrozen();

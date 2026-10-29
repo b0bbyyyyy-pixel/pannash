@@ -27,7 +27,7 @@ export default function AutoSMSProcessor() {
 
     // Process every 15 seconds
     processSMSQueue();
-    intervalRef.current = setInterval(processSMSQueue, 15000);
+    intervalRef.current = setInterval(processSMSQueue, 60_000);
 
     return () => {
       if (intervalRef.current) {

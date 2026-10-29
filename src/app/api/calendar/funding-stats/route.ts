@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import { FUNDED_LIST_COLS, hydrateFundedUd } from '@/lib/leads/listColumns';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,14 +42,29 @@ async function fetchFundedLeads(
   const pageSize = 1000;
   const rows: { lead_status: string | null; underwriting_data: unknown }[] = [];
   for (let from = 0; ; from += pageSize) {
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('leads')
-      .select('lead_status, underwriting_data')
+      .select(FUNDED_LIST_COLS)
       .eq('user_id', userId)
       .or('lead_status.eq.Funded,underwriting_data->>isFunded.eq.true')
       .range(from, from + pageSize - 1);
+    if (error) {
+      ({ data, error } = await supabase
+        .from('leads')
+        .select('lead_status, underwriting_data')
+        .eq('user_id', userId)
+        .or('lead_status.eq.Funded,underwriting_data->>isFunded.eq.true')
+        .range(from, from + pageSize - 1));
+    }
     if (error) return { rows: null, error };
-    rows.push(...(data ?? []));
+    const mapped = (data ?? []).map((lead) => {
+      const rec = lead as Record<string, unknown>;
+      const ud = Object.keys(rec).some(k => k.startsWith('ud_'))
+        ? hydrateFundedUd({ ...rec })
+        : rec.underwriting_data;
+      return { lead_status: rec.lead_status as string | null, underwriting_data: ud };
+    });
+    rows.push(...mapped);
     if (!data || data.length < pageSize) break;
   }
   return { rows, error: null };

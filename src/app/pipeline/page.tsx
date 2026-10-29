@@ -5,6 +5,7 @@ import Navbar from '@/components/Navbar';
 import PipelineClient from './PipelineClient';
 import { isSmsStopBody } from '@/lib/leads/dnc';
 import { countAttachmentsByLead } from '@/lib/leads/attachmentCounts';
+import { PIPELINE_LEAD_COLS, PIPELINE_LEAD_COLS_CORE, hydrateListUd } from '@/lib/leads/listColumns';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -34,12 +35,20 @@ export default async function PipelinePage({
 
   // Pipeline = explicitly sent (in_pipeline) OR legacy CRM leads (month_key, no campaign list).
   // Campaign leads stay out unless they were sent here (in_pipeline = true).
-  const { data: leads, error } = await supabase
+  let { data: leads, error } = await supabase
     .from('leads')
-    .select('*')
+    .select(PIPELINE_LEAD_COLS)
     .eq('user_id', user.id)
     .or('in_pipeline.eq.true,and(month_key.not.is.null,list_id.is.null)')
     .order('created_at', { ascending: false });
+  if (error) {
+    ({ data: leads, error } = await supabase
+      .from('leads')
+      .select(PIPELINE_LEAD_COLS_CORE)
+      .eq('user_id', user.id)
+      .or('in_pipeline.eq.true,and(month_key.not.is.null,list_id.is.null)')
+      .order('created_at', { ascending: false }));
+  }
 
   if (error) {
     console.error('Error fetching pipeline leads:', error);
@@ -47,20 +56,35 @@ export default async function PipelinePage({
 
   // Recover pipeline-created leads if the in_pipeline flag never stuck.
   const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
-  const { data: recentOrphans } = await supabase
+  let orphansRes = await supabase
     .from('leads')
-    .select('*')
+    .select(PIPELINE_LEAD_COLS)
     .eq('user_id', user.id)
     .is('list_id', null)
     .gte('created_at', weekAgo)
     .order('created_at', { ascending: false })
     .limit(40);
+  if (orphansRes.error) {
+    orphansRes = await supabase
+      .from('leads')
+      .select(PIPELINE_LEAD_COLS_CORE)
+      .eq('user_id', user.id)
+      .is('list_id', null)
+      .gte('created_at', weekAgo)
+      .order('created_at', { ascending: false })
+      .limit(40);
+  }
+  const recentOrphans = (orphansRes.data ?? []).map(l => hydrateListUd({ ...l }));
 
-  const leadMap = new Map((leads ?? []).map(l => [l.id, l]));
+  const leadMap = new Map((leads ?? []).map(l => {
+    const row = hydrateListUd({ ...(l as Record<string, unknown>) });
+    return [String(row.id), row];
+  }));
   const orphanIds: string[] = [];
   for (const l of recentOrphans ?? []) {
-    if (!leadMap.has(l.id)) leadMap.set(l.id, { ...l, in_pipeline: true });
-    if (l.in_pipeline !== true) orphanIds.push(l.id);
+    const oid = String(l.id);
+    if (!leadMap.has(oid)) leadMap.set(oid, { ...l, in_pipeline: true });
+    if (l.in_pipeline !== true) orphanIds.push(oid);
   }
   if (orphanIds.length) {
     await supabase.from('leads').update({ in_pipeline: true }).in('id', orphanIds).eq('user_id', user.id);

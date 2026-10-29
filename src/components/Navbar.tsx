@@ -65,7 +65,7 @@ export default function Navbar({ userName }: NavbarProps) {
     }
   }, []);
 
-  usePolling(loadDrip, dripJob ? 10_000 : 45_000);
+  usePolling(loadDrip, dripJob ? 20_000 : 45_000);
 
   const loadMissedPeek = useCallback(async () => {
     try {
@@ -78,7 +78,7 @@ export default function Navbar({ userName }: NavbarProps) {
     }
   }, []);
 
-  usePolling(loadMissedPeek, 15_000);
+  usePolling(loadMissedPeek, 30_000);
 
   useEffect(() => {
     const refresh = () => { void loadMissedPeek(); };

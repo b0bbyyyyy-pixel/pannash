@@ -7,6 +7,7 @@ import { isMissingSchema, warnMissingSchema } from '@/lib/casper/schema';
 import { isSmsStopBody, smsSendBlockReason } from '@/lib/leads/dnc';
 import { casperSmsToSend, isUnsendableCasperSms } from '@/lib/casper/smsGuard';
 import { formatLocal, isInSendWindow, nextWindowStart, zoneForLocation } from '@/lib/smsDrip/timezones';
+import { hydrateTzUd } from '@/lib/leads/listColumns';
 
 export type RailOk = { ok: true };
 export type RailBlocked = { ok: false; result: string };
@@ -97,18 +98,26 @@ export async function checkCasperSms(
 
   const push = (r: RailResult) => { results.push(r); };
 
-  const [{ data: settings }, { data: lead }] = await Promise.all([
-    supabase
-      .from('user_settings')
-      .select('casper_enabled, casper_capabilities, timezone')
-      .eq('user_id', args.userId)
-      .maybeSingle(),
-    supabase
+  const settingsP = supabase
+    .from('user_settings')
+    .select('casper_enabled, casper_capabilities, timezone')
+    .eq('user_id', args.userId)
+    .maybeSingle();
+  let leadP = await supabase
+    .from('leads')
+    .select('id, list_id, casper_enabled, sms_opt_out, lead_status, in_pipeline, dnc, ud_businessState:underwriting_data->>businessState, ud_state:underwriting_data->>state, ud_businessCity:underwriting_data->>businessCity, ud_city:underwriting_data->>city')
+    .eq('id', args.leadId)
+    .maybeSingle();
+  if (leadP.error || !leadP.data) {
+    leadP = await supabase
       .from('leads')
       .select('id, list_id, casper_enabled, sms_opt_out, lead_status, in_pipeline, underwriting_data, dnc')
       .eq('id', args.leadId)
-      .maybeSingle(),
-  ]);
+      .maybeSingle();
+  } else {
+    hydrateTzUd(leadP.data as Record<string, unknown>);
+  }
+  const [{ data: settings }, { data: lead }] = [await settingsP, leadP];
 
   let state: { phase?: string | null; paused_reason?: string | null } | null = null;
   try {

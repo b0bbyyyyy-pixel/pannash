@@ -25,7 +25,7 @@ import { kickSyncWorker } from './kick';
 
 const SKIP_PREFIXES = ['/portal', '/auth', '/privacy', '/terms', '/contact'];
 const PRESENCE_TTL_MS = 45_000;
-const PULSE_VISIBLE_MS = 8_000;
+const PULSE_VISIBLE_MS = 15_000;
 const PULSE_HIDDEN_MS = 60_000;
 const LS_HEARTBEAT_MS = 10_000;
 const LS_STALE_MS = 30_000;

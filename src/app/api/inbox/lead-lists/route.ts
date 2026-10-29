@@ -49,11 +49,18 @@ export async function GET(req: NextRequest) {
     }
 
     // ── Fetch all lists — use select('*') so it works with any schema ───────
-    const { data: lists } = await supabase
+    let { data: lists, error: listErr } = await supabase
       .from('lead_lists')
-      .select('*')
+      .select('id, name, created_at, source_category')
       .eq('user_id', user.id)
       .order('created_at', { ascending: true });
+    if (listErr) {
+      ({ data: lists } = await supabase
+        .from('lead_lists')
+        .select('id, name, created_at')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: true }));
+    }
 
     // Count leads with phones per list
     const { data: counts } = await supabase

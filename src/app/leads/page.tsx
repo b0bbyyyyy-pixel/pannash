@@ -9,6 +9,7 @@ import CampaignRenameWrapperComponent from './CampaignRenameWrapper';
 import NewCampaignModal from './NewCampaignModal';
 import CampaignOverviewInsights from './CampaignOverviewInsights';
 import { guessLeadSource, resolveListSource } from '@/lib/smsDrip/leadSources';
+import { CAMPAIGN_LEAD_COLS, CAMPAIGN_LEAD_COLS_MIN, hydrateCampaignUd } from '@/lib/leads/listColumns';
 
 export default async function LeadsPage({
   searchParams,
@@ -129,13 +130,21 @@ export default async function LeadsPage({
   const selectedList = leadLists?.find((l) => l.id === selectedListId);
 
   if (selectedListId) {
-    const { data: leads } = await supabase
+    let { data: leads, error: leadErr } = await supabase
       .from('leads')
-      .select('id, name, email, phone, company, notes, sms_sent_at, call_made_at, last_contact, created_at, underwriting_data')
+      .select(CAMPAIGN_LEAD_COLS)
       .eq('list_id', selectedListId)
       .eq('user_id', user.id)
       .order('created_at', { ascending: false });
-    campaignLeads = (leads || []) as CampaignLead[];
+    if (leadErr) {
+      ({ data: leads } = await supabase
+        .from('leads')
+        .select(CAMPAIGN_LEAD_COLS_MIN)
+        .eq('list_id', selectedListId)
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false }));
+    }
+    campaignLeads = (leads || []).map(l => hydrateCampaignUd({ ...l })) as CampaignLead[];
   }
 
   // ── Server action: create campaign ────────────────────────────────────────

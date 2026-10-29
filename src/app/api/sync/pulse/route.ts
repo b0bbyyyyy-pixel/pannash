@@ -20,8 +20,6 @@ export async function GET(req: NextRequest) {
   const serverNow = new Date().toISOString();
   const unreadCount = await countInboxUnread(supabase, user.id);
   const since = req.nextUrl.searchParams.get('since')?.trim() || '';
-  const openRaw = req.nextUrl.searchParams.get('open')?.trim() || '';
-  const openIds = [...new Set(openRaw.split(',').map(s => s.trim()).filter(Boolean))].slice(0, 5);
 
   if (!since) {
     return NextResponse.json({ unreadCount, serverNow, inboxChanged: [], threads: [] });
@@ -46,29 +44,5 @@ export async function GET(req: NextRequest) {
     inboxChanged = [];
   }
 
-  const cutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-  const threads: { leadId: string; sig: string }[] = [];
-  for (const leadId of openIds) {
-    const { data: recent } = await supabase
-      .from('inbox_messages')
-      .select('id, status, created_at')
-      .eq('lead_id', leadId)
-      .gt('created_at', cutoff)
-      .order('created_at', { ascending: false })
-      .limit(20);
-    let rows = recent ?? [];
-    if (!rows.length) {
-      const { data: latest } = await supabase
-        .from('inbox_messages')
-        .select('id, status, created_at')
-        .eq('lead_id', leadId)
-        .order('created_at', { ascending: false })
-        .limit(1);
-      rows = latest ?? [];
-    }
-    const sig = rows.map(r => `${r.id}:${r.created_at}:${r.status ?? ''}`).join('|');
-    threads.push({ leadId, sig });
-  }
-
-  return NextResponse.json({ unreadCount, serverNow, inboxChanged, threads });
+  return NextResponse.json({ unreadCount, serverNow, inboxChanged, threads: [] });
 }

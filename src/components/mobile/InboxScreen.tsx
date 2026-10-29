@@ -77,7 +77,7 @@ export default function InboxScreen() {
       .then(d => { if (d.threads) setThreads(d.threads); })
       .catch(() => {});
   }, [q, compose]);
-  usePolling(pollThreads, 8000, true, false);
+  usePolling(pollThreads, 25_000, true, false);
 
   useEffect(() => {
     fetch('/api/casper/ping', { cache: 'no-store' })

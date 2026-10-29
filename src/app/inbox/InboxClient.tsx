@@ -655,14 +655,16 @@ export default function InboxClient({
     return () => registerOpenLead('inbox', null);
   }, [selectedLeadId, registerOpenLead]);
 
-  const threadSig = pulse?.threads.find(t => t.leadId === selectedLeadId)?.sig ?? '';
-  const lastThreadSigRef = useRef('');
+  const lastPulseMsgAtRef = useRef('');
   useEffect(() => {
-    lastThreadSigRef.current = '';
+    lastPulseMsgAtRef.current = '';
   }, [selectedLeadId]);
   useEffect(() => {
-    if (!selectedLeadId || !threadSig || threadSig === lastThreadSigRef.current) return;
-    lastThreadSigRef.current = threadSig;
+    if (!selectedLeadId || !pulse?.inboxChanged?.length) return;
+    const row = pulse.inboxChanged.find(r => r.lead_id === selectedLeadId);
+    const at = String(row?.last_message_at ?? '');
+    if (!at || at === lastPulseMsgAtRef.current) return;
+    lastPulseMsgAtRef.current = at;
     const lastAt = messagesRef.current[messagesRef.current.length - 1]?.created_at;
     if (!lastAt) {
       void loadMessages(selectedLeadId, { quiet: true });
@@ -673,7 +675,7 @@ export default function InboxClient({
       since: lastAt,
       conversationId: conversationIdRef.current,
     });
-  }, [threadSig, selectedLeadId, loadMessages]);
+  }, [pulse, selectedLeadId, loadMessages]);
 
   const casperPoll = useCallback(() => {
     if (!selectedLeadId) return;
@@ -920,8 +922,6 @@ export default function InboxClient({
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [loadLeads]);
-
-  usePolling(loadLeads, 120_000, true, false);
 
   // ── List picker: open + fetch ───────────────────────────────────────────────
   const ensureCampaignsLoaded = async () => {

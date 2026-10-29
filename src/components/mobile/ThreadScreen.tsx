@@ -102,16 +102,20 @@ export default function ThreadScreen() {
     return () => registerOpenLead('mobile-thread', null);
   }, [threadId, registerOpenLead]);
 
-  const threadSig = pulse?.threads.find(t => t.leadId === threadId)?.sig ?? '';
-  const lastSigRef = useRef('');
+  const lastPulseMsgAtRef = useRef('');
   useEffect(() => {
-    if (!threadSig || threadSig === lastSigRef.current || sending) return;
-    lastSigRef.current = threadSig;
+    lastPulseMsgAtRef.current = '';
+  }, [threadId]);
+  useEffect(() => {
+    const row = pulse?.inboxChanged?.find(r => r.lead_id === threadId);
+    const at = String(row?.last_message_at ?? '');
+    if (!at || at === lastPulseMsgAtRef.current || sending) return;
+    lastPulseMsgAtRef.current = at;
     void load();
-  }, [threadSig, load, sending]);
+  }, [pulse, threadId, load, sending]);
 
   const pollThread = useCallback(() => { if (!sending) void load(); }, [sending, load]);
-  usePolling(pollThread, 8000, !pulse, false);
+  usePolling(pollThread, 20_000, !pulse, false);
 
   useEffect(() => {
     if (!stick.current) return;

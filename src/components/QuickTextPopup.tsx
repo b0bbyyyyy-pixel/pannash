@@ -112,18 +112,22 @@ export default function QuickTextPopup({
 
   useEffect(() => { messagesRef.current = messages; }, [messages]);
 
-  const threadSig = pulse?.threads.find(t => t.leadId === lead.id)?.sig ?? '';
-  const lastSigRef = useRef('');
+  const lastPulseMsgAtRef = useRef('');
   useEffect(() => {
-    if (!threadSig || threadSig === lastSigRef.current) return;
-    lastSigRef.current = threadSig;
+    lastPulseMsgAtRef.current = '';
+  }, [lead.id]);
+  useEffect(() => {
+    const row = pulse?.inboxChanged?.find(r => r.lead_id === lead.id);
+    const at = String(row?.last_message_at ?? '');
+    if (!at || at === lastPulseMsgAtRef.current) return;
+    lastPulseMsgAtRef.current = at;
     const lastAt = messagesRef.current[messagesRef.current.length - 1]?.created_at;
     if (!lastAt) {
       void load(true);
       return;
     }
     void load(true, lastAt);
-  }, [threadSig, load]);
+  }, [pulse, lead.id, load]);
 
   const markedReadRef = useRef('');
   useEffect(() => {
