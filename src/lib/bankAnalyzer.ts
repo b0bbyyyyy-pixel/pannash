@@ -480,11 +480,15 @@ export function mergeMcaPositions(...lists: Array<McaPosition[] | unknown>): Mca
         byKey.set(key, p);
         continue;
       }
+      const preferNew = (p.payment || 0) > (prev.payment || 0);
+      const keep = preferNew ? p : prev;
+      const other = preferNew ? prev : p;
       byKey.set(key, {
-        ...prev,
-        fundedDate: prev.fundedDate || p.fundedDate,
-        fundedAmount: prev.fundedAmount ?? p.fundedAmount,
-        outstanding: prev.outstanding ?? p.outstanding,
+        ...keep,
+        lender: keep.lender !== 'Unknown funder' ? keep.lender : other.lender,
+        fundedDate: keep.fundedDate || other.fundedDate,
+        fundedAmount: keep.fundedAmount ?? other.fundedAmount,
+        outstanding: keep.outstanding ?? other.outstanding,
       });
     }
   }

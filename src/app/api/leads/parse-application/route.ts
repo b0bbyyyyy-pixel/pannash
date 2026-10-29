@@ -6,6 +6,7 @@ import { loadPdfjsNode } from '@/lib/pdf/loadPdfjsNode';
 import { explodeFormLabels, fieldsFromLabeledText, mergeParsedFieldMaps, normalizeParsedFields } from '@/lib/normalizeParsedFields';
 import { extractPdfImages } from '@/lib/pdf/extractPdfImages';
 import { extractBankMetricsFromText, hasBankMetrics, reconcileBankMetrics } from '@/lib/pdf/extractBankMetrics';
+import { MCA_BANK_PROMPT } from '@/lib/pdf/extractMcaPositions';
 import { renameBankStatementAfterParse } from '@/lib/attachments/bankStatementFileName';
 
 export const runtime     = 'nodejs';
@@ -138,7 +139,9 @@ frequency must be "daily", "weekly", or "monthly".
 monthlyPayment = payment * 21 if daily, * 4.33 if weekly, * 1 if monthly.
 fundedDate is only the date of an incoming funding credit printed on the statement.
 fundedAmount is only the dollar amount of that same incoming credit (the original wire), never the payment/debit amount.
-If no MCA / advance remittances are found, omit mcaPositions and set hasOtherMCALoans to false.`;
+If no MCA / advance remittances are found, omit mcaPositions and set hasOtherMCALoans to false.
+
+${MCA_BANK_PROMPT}`;
 
 // ── Detect bank statement ──────────────────────────────────────────────────────
 function isBankStatement(filename: string, text: string): boolean {
@@ -285,7 +288,7 @@ function extractRawStringsFromPdf(buffer: Buffer): string {
   const out: string[] = [];
   for (const s of filtered) {
     if (!seen.has(s)) { seen.add(s); out.push(s); }
-    if (out.join(' ').length > 15000) break;
+    if (out.join(' ').length > 80000) break;
   }
   return out.join('\n');
 }

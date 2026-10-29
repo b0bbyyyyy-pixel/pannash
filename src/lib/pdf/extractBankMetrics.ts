@@ -1,5 +1,7 @@
 /** Pull deposit / balance totals from any common bank-statement text layer. */
 
+import { mcaFieldsFromText } from '@/lib/pdf/extractMcaPositions';
+
 const MONEY = '\\$?\\s*(-?[\\d,]+\\.\\d{2})';
 const MONEY_ONLY = '\\$?\\s*-?[\\d,]+\\.\\d{2}';
 
@@ -316,6 +318,7 @@ export function extractBankMetricsFromText(raw: string): Record<string, string> 
     }
   }
 
+  Object.assign(reconciled, mcaFieldsFromText(text));
   return reconciled;
 }
 

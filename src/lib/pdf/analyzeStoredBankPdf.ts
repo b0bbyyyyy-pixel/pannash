@@ -4,6 +4,7 @@ import { mergeParsedFieldMaps, normalizeParsedFields } from '@/lib/normalizePars
 import { extractPdfImages } from '@/lib/pdf/extractPdfImages';
 import { extractCcittStatementPages } from '@/lib/pdf/extractCcittPages';
 import { extractBankMetricsFromText, hasBankMetrics, reconcileBankMetrics, statementMonthFromFilename } from '@/lib/pdf/extractBankMetrics';
+import { MCA_BANK_PROMPT } from '@/lib/pdf/extractMcaPositions';
 
 const BANK_PROMPT = `You are a financial analyst extracting data from a business bank statement for MCA underwriting.
 Extract EVERY metric you can. Return ONLY a raw JSON object — no markdown fences.
@@ -30,7 +31,9 @@ If opening + deposits − |withdrawals| equals a printed ending balance, use tha
   "largestDeposit": "",
   "hasOtherMCALoans": false,
   "mcaPositions": []
-}`;
+}
+
+${MCA_BANK_PROMPT}`;
 
 let _pdfParse: ((buf: Buffer) => Promise<{ text: string }>) | null = null;
 function getPdfParse() {
@@ -79,7 +82,7 @@ function extractRawStringsFromPdf(buffer: Buffer): string {
   const out: string[] = [];
   for (const s of filtered) {
     if (!seen.has(s)) { seen.add(s); out.push(s); }
-    if (out.join(' ').length > 15000) break;
+    if (out.join(' ').length > 80000) break;
   }
   return out.join('\n');
 }

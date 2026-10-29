@@ -1,3 +1,5 @@
+import { unionMcaFields } from '@/lib/pdf/extractMcaPositions';
+
 /** Canonical application / underwriting keys used by the Application tab. */
 
 const LABEL_TO_KEY: { key: string; needles: string[]; owner2?: boolean }[] = [
@@ -415,7 +417,19 @@ export function mergeParsedFieldMaps(
   for (const part of parts) {
     if (!part) continue;
     const normalized = normalizeParsedFields(part);
-    for (const [k, v] of Object.entries(normalized)) setIfEmpty(out, k, v);
+    for (const [k, v] of Object.entries(normalized)) {
+      if (k === 'mcaPositions' || k === 'hasOtherMCALoans') continue;
+      setIfEmpty(out, k, v);
+    }
+  }
+  const mca = unionMcaFields(...parts);
+  if (mca.mcaPositions) {
+    out.mcaPositions = mca.mcaPositions;
+    out.hasOtherMCALoans = 'true';
+  } else {
+    for (const part of parts) {
+      if (part?.hasOtherMCALoans && !out.hasOtherMCALoans) out.hasOtherMCALoans = part.hasOtherMCALoans;
+    }
   }
   applyDateKeys(out);
   applyTib(out);
