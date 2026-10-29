@@ -15,7 +15,9 @@ import {
   INBOX_LEAD_COLS_NO_ALIAS,
   INBOX_LEAD_COLS_NO_LANG,
   INBOX_SIBLING_COLS,
+  asRows,
   emailFromSmsFlag,
+  selectFirst,
 } from '@/lib/leads/listColumns';
 
 const LIMIT = 200;
@@ -117,23 +119,23 @@ export async function GET(req: NextRequest) {
     } else {
       // Main inbox = people who texted back (including replies that never got last_inbound_at).
       try {
-        let { data, error } = await supabase
-          .from('inbox_conversations')
-          .select(CONV_COLS)
-          .eq('user_id', user.id)
-          .or('last_inbound_at.not.is.null,last_direction.eq.inbound')
-          .order('last_message_at', { ascending: false, nullsFirst: false })
-          .limit(FETCH);
-        if (error) {
-          ({ data, error } = await supabase
+        const convRes = await selectFirst([
+          () => supabase
+            .from('inbox_conversations')
+            .select(CONV_COLS)
+            .eq('user_id', user.id)
+            .or('last_inbound_at.not.is.null,last_direction.eq.inbound')
+            .order('last_message_at', { ascending: false, nullsFirst: false })
+            .limit(FETCH),
+          () => supabase
             .from('inbox_conversations')
             .select(CONV_COLS_MIN)
             .eq('user_id', user.id)
             .eq('last_direction', 'inbound')
             .order('last_message_at', { ascending: false, nullsFirst: false })
-            .limit(FETCH));
-        }
-        convs = data ?? [];
+            .limit(FETCH),
+        ]);
+        convs = asRows(convRes.data);
       } catch {
         // Table not created yet
       }
@@ -164,21 +166,21 @@ export async function GET(req: NextRequest) {
         const extraIds = [...pipelineIds].filter(id => !seen.has(id));
         for (let i = 0; i < extraIds.length; i += 80) {
           const chunk = extraIds.slice(i, i + 80);
-          let extra = await supabase
-            .from('inbox_conversations')
-            .select(CONV_COLS)
-            .eq('user_id', user.id)
-            .in('lead_id', chunk)
-            .not('last_message_at', 'is', null);
-          if (extra.error) {
-            extra = await supabase
+          const extra = await selectFirst([
+            () => supabase
+              .from('inbox_conversations')
+              .select(CONV_COLS)
+              .eq('user_id', user.id)
+              .in('lead_id', chunk)
+              .not('last_message_at', 'is', null),
+            () => supabase
               .from('inbox_conversations')
               .select(CONV_COLS_MIN)
               .eq('user_id', user.id)
               .in('lead_id', chunk)
-              .not('last_message_at', 'is', null);
-          }
-          for (const c of extra.data ?? []) {
+              .not('last_message_at', 'is', null),
+          ]);
+          for (const c of asRows(extra.data)) {
             const id = String(c.lead_id ?? '');
             if (!id || seen.has(id)) continue;
             convs.push(c);
@@ -299,20 +301,19 @@ export async function GET(req: NextRequest) {
     const missingConvIds = ids.filter(id => !convMap[id]);
     if (missingConvIds.length) {
       try {
-        let extraQ = await supabase
-          .from('inbox_conversations')
-          .select(CONV_COLS)
-          .eq('user_id', user.id)
-          .in('lead_id', missingConvIds);
-        if (extraQ.error) {
-          extraQ = await supabase
+        const extraQ = await selectFirst([
+          () => supabase
+            .from('inbox_conversations')
+            .select(CONV_COLS)
+            .eq('user_id', user.id)
+            .in('lead_id', missingConvIds),
+          () => supabase
             .from('inbox_conversations')
             .select(CONV_COLS_MIN)
             .eq('user_id', user.id)
-            .in('lead_id', missingConvIds);
-        }
-        const extra = extraQ.data;
-        for (const c of extra ?? []) convMap[c.lead_id as string] = c;
+            .in('lead_id', missingConvIds),
+        ]);
+        for (const c of asRows(extraQ.data)) convMap[String(c.lead_id)] = c;
       } catch {
         // Table not created yet — ignore
       }
@@ -354,19 +355,19 @@ export async function GET(req: NextRequest) {
       const missingSibIds = allSibIds.filter(id => !convMap[id]);
       if (missingSibIds.length) {
         try {
-          let extraQ = await supabase
-            .from('inbox_conversations')
-            .select(CONV_COLS)
-            .eq('user_id', user.id)
-            .in('lead_id', missingSibIds);
-          if (extraQ.error) {
-            extraQ = await supabase
+          const extraQ = await selectFirst([
+            () => supabase
+              .from('inbox_conversations')
+              .select(CONV_COLS)
+              .eq('user_id', user.id)
+              .in('lead_id', missingSibIds),
+            () => supabase
               .from('inbox_conversations')
               .select(CONV_COLS_MIN)
               .eq('user_id', user.id)
-              .in('lead_id', missingSibIds);
-          }
-          for (const c of extraQ.data ?? []) convMap[String(c.lead_id)] = c;
+              .in('lead_id', missingSibIds),
+          ]);
+          for (const c of asRows(extraQ.data)) convMap[String(c.lead_id)] = c;
         } catch { /* ignore */ }
       }
       const sibDocs = allSibIds.length ? await countAttachmentsByLead(supabase, allSibIds) : {};

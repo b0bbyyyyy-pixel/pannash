@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
-import { FUNDED_LIST_COLS, hydrateFundedUd } from '@/lib/leads/listColumns';
+import { FUNDED_LIST_COLS, asRows, hydrateFundedUd, selectFirst } from '@/lib/leads/listColumns';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,29 +42,30 @@ async function fetchFundedLeads(
   const pageSize = 1000;
   const rows: { lead_status: string | null; underwriting_data: unknown }[] = [];
   for (let from = 0; ; from += pageSize) {
-    let { data, error } = await supabase
-      .from('leads')
-      .select(FUNDED_LIST_COLS)
-      .eq('user_id', userId)
-      .or('lead_status.eq.Funded,underwriting_data->>isFunded.eq.true')
-      .range(from, from + pageSize - 1);
-    if (error) {
-      ({ data, error } = await supabase
+    const page = await selectFirst([
+      () => supabase
+        .from('leads')
+        .select(FUNDED_LIST_COLS)
+        .eq('user_id', userId)
+        .or('lead_status.eq.Funded,underwriting_data->>isFunded.eq.true')
+        .range(from, from + pageSize - 1),
+      () => supabase
         .from('leads')
         .select('lead_status, underwriting_data')
         .eq('user_id', userId)
         .or('lead_status.eq.Funded,underwriting_data->>isFunded.eq.true')
-        .range(from, from + pageSize - 1));
-    }
-    if (error) return { rows: null, error };
-    const mapped = ((data ?? []) as Record<string, unknown>[]).map((rec) => {
+        .range(from, from + pageSize - 1),
+    ]);
+    if (page.error) return { rows: null, error: page.error };
+    const batch = asRows(page.data);
+    const mapped = batch.map((rec) => {
       const ud = Object.keys(rec).some(k => k.startsWith('ud_'))
         ? hydrateFundedUd({ ...rec })
         : rec.underwriting_data;
       return { lead_status: (rec.lead_status as string | null) ?? null, underwriting_data: ud };
     });
     rows.push(...mapped);
-    if (!data || data.length < pageSize) break;
+    if (batch.length < pageSize) break;
   }
   return { rows, error: null };
 }

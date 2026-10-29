@@ -10,7 +10,7 @@ import {
   PROSPECT_STATUSES,
   SUBMITTED_STATUSES,
 } from '@/lib/casper/stage';
-import { FUNDED_LIST_COLS, hydrateFundedUd } from '@/lib/leads/listColumns';
+import { FUNDED_LIST_COLS, asRows, hydrateFundedUd, selectFirst } from '@/lib/leads/listColumns';
 
 export const dynamic = 'force-dynamic';
 
@@ -62,25 +62,25 @@ async function fundedThisMonth(supabase: SbClient, userId: string, month: string
   const pageSize = 1000;
   let funded = 0;
   for (let from = 0; ; from += pageSize) {
-    let { data, error } = await supabase
-      .from('leads')
-      .select(FUNDED_LIST_COLS)
-      .eq('user_id', userId)
-      .or('lead_status.eq.Funded,underwriting_data->>isFunded.eq.true')
-      .range(from, from + pageSize - 1);
-    if (error) {
-      ({ data, error } = await supabase
+    const page = await selectFirst([
+      () => supabase
+        .from('leads')
+        .select(FUNDED_LIST_COLS)
+        .eq('user_id', userId)
+        .or('lead_status.eq.Funded,underwriting_data->>isFunded.eq.true')
+        .range(from, from + pageSize - 1),
+      () => supabase
         .from('leads')
         .select('lead_status, underwriting_data')
         .eq('user_id', userId)
         .or('lead_status.eq.Funded,underwriting_data->>isFunded.eq.true')
-        .range(from, from + pageSize - 1));
-    }
-    if (error) {
-      console.error('[switchboard] funded', error.message);
+        .range(from, from + pageSize - 1),
+    ]);
+    if (page.error) {
+      console.error('[switchboard] funded', page.error.message);
       break;
     }
-    const rows = (data ?? []) as Record<string, unknown>[];
+    const rows = asRows(page.data);
     for (const lead of rows) {
       const ud = Object.keys(lead).some(k => k.startsWith('ud_'))
         ? hydrateFundedUd({ ...lead })

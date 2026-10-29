@@ -5,7 +5,7 @@ import { toE164 } from '@/lib/dialer/e164';
 import { normalizeState } from '@/lib/smsDrip/timezones';
 import { isCampaignInboxLead } from '@/lib/inbox/promoteCampaignReply';
 import { tallyDripSends } from '@/lib/smsDrip/tally';
-import { hydrateTzUd } from '@/lib/leads/listColumns';
+import { asRows, hydrateTzUd, selectFirst } from '@/lib/leads/listColumns';
 
 export const dynamic = 'force-dynamic';
 
@@ -126,22 +126,31 @@ export async function POST(req: NextRequest) {
     await supabase.from('lead_lists').update({ sms_templates: tpl }).eq('id', listId).eq('user_id', user.id);
 
     // Load the list's leads in list order
-    let { data: leads, error: leadsErr } = await supabase
-      .from('leads')
-      .select('id, phone, sms_opt_out, sms_sent_at, in_pipeline, lead_status, ud_businessState:underwriting_data->>businessState, ud_state:underwriting_data->>state')
-      .eq('user_id', user.id)
-      .eq('list_id', listId)
-      .order('created_at', { ascending: false });
-    if (leadsErr) {
-      ({ data: leads, error: leadsErr } = await supabase
+    const leadRes = await selectFirst([
+      () => supabase
+        .from('leads')
+        .select('id, phone, sms_opt_out, sms_sent_at, in_pipeline, lead_status, ud_businessState:underwriting_data->>businessState, ud_state:underwriting_data->>state')
+        .eq('user_id', user.id)
+        .eq('list_id', listId)
+        .order('created_at', { ascending: false }),
+      () => supabase
         .from('leads')
         .select('id, phone, sms_opt_out, sms_sent_at, underwriting_data, in_pipeline, lead_status')
         .eq('user_id', user.id)
         .eq('list_id', listId)
-        .order('created_at', { ascending: false }));
-    }
-    if (leadsErr) return NextResponse.json({ error: leadsErr.message }, { status: 500 });
-    for (const row of leads ?? []) hydrateTzUd(row as Record<string, unknown>);
+        .order('created_at', { ascending: false }),
+    ]);
+    if (leadRes.error) return NextResponse.json({ error: leadRes.error.message }, { status: 500 });
+    const leads = asRows(leadRes.data) as Array<{
+      id: string;
+      phone?: string | null;
+      sms_opt_out?: boolean | null;
+      sms_sent_at?: string | null;
+      in_pipeline?: boolean | null;
+      lead_status?: string | null;
+      underwriting_data?: Record<string, unknown> | null;
+    }>;
+    for (const row of leads) hydrateTzUd(row as Record<string, unknown>);
 
     const skip = new Set((skipStates as string[]).map(s => normalizeState(s)).filter(Boolean));
     const seenPhones = new Set<string>();

@@ -9,7 +9,7 @@ import CampaignRenameWrapperComponent from './CampaignRenameWrapper';
 import NewCampaignModal from './NewCampaignModal';
 import CampaignOverviewInsights from './CampaignOverviewInsights';
 import { guessLeadSource, resolveListSource } from '@/lib/smsDrip/leadSources';
-import { CAMPAIGN_LEAD_COLS, CAMPAIGN_LEAD_COLS_MIN, hydrateCampaignUd } from '@/lib/leads/listColumns';
+import { CAMPAIGN_LEAD_COLS, CAMPAIGN_LEAD_COLS_MIN, asRows, hydrateCampaignUd, selectFirst } from '@/lib/leads/listColumns';
 
 export default async function LeadsPage({
   searchParams,
@@ -130,21 +130,21 @@ export default async function LeadsPage({
   const selectedList = leadLists?.find((l) => l.id === selectedListId);
 
   if (selectedListId) {
-    let { data: leads, error: leadErr } = await supabase
-      .from('leads')
-      .select(CAMPAIGN_LEAD_COLS)
-      .eq('list_id', selectedListId)
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
-    if (leadErr) {
-      ({ data: leads } = await supabase
+    const leadRes = await selectFirst([
+      () => supabase
+        .from('leads')
+        .select(CAMPAIGN_LEAD_COLS)
+        .eq('list_id', selectedListId)
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false }),
+      () => supabase
         .from('leads')
         .select(CAMPAIGN_LEAD_COLS_MIN)
         .eq('list_id', selectedListId)
         .eq('user_id', user.id)
-        .order('created_at', { ascending: false }));
-    }
-    campaignLeads = (leads || []).map(l => hydrateCampaignUd({ ...l })) as CampaignLead[];
+        .order('created_at', { ascending: false }),
+    ]);
+    campaignLeads = asRows(leadRes.data).map(l => hydrateCampaignUd({ ...l })) as CampaignLead[];
   }
 
   // ── Server action: create campaign ────────────────────────────────────────

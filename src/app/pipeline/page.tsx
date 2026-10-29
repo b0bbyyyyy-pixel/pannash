@@ -5,7 +5,7 @@ import Navbar from '@/components/Navbar';
 import PipelineClient from './PipelineClient';
 import { isSmsStopBody } from '@/lib/leads/dnc';
 import { countAttachmentsByLead } from '@/lib/leads/attachmentCounts';
-import { PIPELINE_LEAD_COLS, PIPELINE_LEAD_COLS_CORE, hydrateListUd } from '@/lib/leads/listColumns';
+import { PIPELINE_LEAD_COLS, PIPELINE_LEAD_COLS_CORE, asRows, hydrateListUd, selectFirst } from '@/lib/leads/listColumns';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -35,49 +35,49 @@ export default async function PipelinePage({
 
   // Pipeline = explicitly sent (in_pipeline) OR legacy CRM leads (month_key, no campaign list).
   // Campaign leads stay out unless they were sent here (in_pipeline = true).
-  let { data: leads, error } = await supabase
-    .from('leads')
-    .select(PIPELINE_LEAD_COLS)
-    .eq('user_id', user.id)
-    .or('in_pipeline.eq.true,and(month_key.not.is.null,list_id.is.null)')
-    .order('created_at', { ascending: false });
-  if (error) {
-    ({ data: leads, error } = await supabase
+  const leadRes = await selectFirst([
+    () => supabase
+      .from('leads')
+      .select(PIPELINE_LEAD_COLS)
+      .eq('user_id', user.id)
+      .or('in_pipeline.eq.true,and(month_key.not.is.null,list_id.is.null)')
+      .order('created_at', { ascending: false }),
+    () => supabase
       .from('leads')
       .select(PIPELINE_LEAD_COLS_CORE)
       .eq('user_id', user.id)
       .or('in_pipeline.eq.true,and(month_key.not.is.null,list_id.is.null)')
-      .order('created_at', { ascending: false }));
-  }
-
-  if (error) {
-    console.error('Error fetching pipeline leads:', error);
+      .order('created_at', { ascending: false }),
+  ]);
+  const leads = asRows(leadRes.data);
+  if (leadRes.error) {
+    console.error('Error fetching pipeline leads:', leadRes.error);
   }
 
   // Recover pipeline-created leads if the in_pipeline flag never stuck.
   const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
-  let orphansRes = await supabase
-    .from('leads')
-    .select(PIPELINE_LEAD_COLS)
-    .eq('user_id', user.id)
-    .is('list_id', null)
-    .gte('created_at', weekAgo)
-    .order('created_at', { ascending: false })
-    .limit(40);
-  if (orphansRes.error) {
-    orphansRes = await supabase
+  const orphansRes = await selectFirst([
+    () => supabase
+      .from('leads')
+      .select(PIPELINE_LEAD_COLS)
+      .eq('user_id', user.id)
+      .is('list_id', null)
+      .gte('created_at', weekAgo)
+      .order('created_at', { ascending: false })
+      .limit(40),
+    () => supabase
       .from('leads')
       .select(PIPELINE_LEAD_COLS_CORE)
       .eq('user_id', user.id)
       .is('list_id', null)
       .gte('created_at', weekAgo)
       .order('created_at', { ascending: false })
-      .limit(40);
-  }
-  const recentOrphans = (orphansRes.data ?? []).map(l => hydrateListUd({ ...l }));
+      .limit(40),
+  ]);
+  const recentOrphans = asRows(orphansRes.data).map(l => hydrateListUd({ ...l }));
 
-  const leadMap = new Map((leads ?? []).map(l => {
-    const row = hydrateListUd({ ...(l as Record<string, unknown>) });
+  const leadMap = new Map(leads.map(l => {
+    const row = hydrateListUd({ ...l });
     return [String(row.id), row];
   }));
   const orphanIds: string[] = [];
@@ -239,7 +239,7 @@ export default async function PipelinePage({
     return (
       <div className="min-h-screen bg-[#fafafa]">
         <div className="px-3 py-3">
-          <PipelineClient leads={leadsWithText} userId={user.id} compact initialSelectedId={sp.selected ?? null} />
+          <PipelineClient leads={leadsWithText as never} userId={user.id} compact initialSelectedId={sp.selected ?? null} />
         </div>
       </div>
     );
@@ -250,7 +250,7 @@ export default async function PipelinePage({
       <Navbar userName={userName} />
       <main className="pt-20 min-h-screen bg-[#fafafa]">
         <div className="max-w-[1600px] mx-auto px-6 py-8">
-          <PipelineClient leads={leadsWithText} userId={user.id} />
+          <PipelineClient leads={leadsWithText as never} userId={user.id} />
         </div>
       </main>
     </div>

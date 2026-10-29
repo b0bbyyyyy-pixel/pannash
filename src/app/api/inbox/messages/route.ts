@@ -9,7 +9,7 @@ import { getRequestUser } from '@/lib/auth/getRequestUser';
 import { findSiblingLeadIds } from '@/lib/leads/findByPhone';
 import { extractEmailFromSms, runUpdateLeadEmailTool } from '@/lib/casper/updateLeadEmail';
 import { backfillThreadLanguage } from '@/lib/inbox/language';
-import { MSG_COLS, MSG_COLS_MIN, MSG_COLS_NO_LANG } from '@/lib/leads/listColumns';
+import { MSG_COLS, MSG_COLS_MIN, MSG_COLS_NO_LANG, selectFirst } from '@/lib/leads/listColumns';
 
 export async function GET(req: NextRequest) {
   try {
@@ -33,36 +33,34 @@ export async function GET(req: NextRequest) {
       const cutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
       const sinceIso = new Date(since).toISOString();
       const older = sinceIso < cutoff ? sinceIso : cutoff;
-      let { data, error } = await supabase
-        .from('inbox_messages')
-        .select(MSG_COLS)
-        .eq('lead_id', leadId)
-        .gt('created_at', older)
-        .order('created_at', { ascending: true })
-        .limit(200);
-      if (error) {
-        ({ data, error } = await supabase
+      const msgRes = await selectFirst([
+        () => supabase
+          .from('inbox_messages')
+          .select(MSG_COLS)
+          .eq('lead_id', leadId)
+          .gt('created_at', older)
+          .order('created_at', { ascending: true })
+          .limit(200),
+        () => supabase
           .from('inbox_messages')
           .select(MSG_COLS_NO_LANG)
           .eq('lead_id', leadId)
           .gt('created_at', older)
           .order('created_at', { ascending: true })
-          .limit(200));
-      }
-      if (error) {
-        ({ data, error } = await supabase
+          .limit(200),
+        () => supabase
           .from('inbox_messages')
           .select(MSG_COLS_MIN)
           .eq('lead_id', leadId)
           .gt('created_at', older)
           .order('created_at', { ascending: true })
-          .limit(200));
-      }
-      if (error) {
+          .limit(200),
+      ]);
+      if (msgRes.error) {
         return NextResponse.json({ messages: [], conversationId: conversationIdParam || null });
       }
       return NextResponse.json({
-        messages: data ?? [],
+        messages: Array.isArray(msgRes.data) ? msgRes.data : [],
         conversationId: conversationIdParam || null,
       });
     }
@@ -97,36 +95,35 @@ export async function GET(req: NextRequest) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let messages: any[] = [];
     try {
-      let byLead = await supabase
-        .from('inbox_messages')
-        .select(MSG_COLS)
-        .in('lead_id', siblingIds)
-        .order('created_at', { ascending: false })
-        .limit(300);
-      if (byLead.error) {
-        byLead = await supabase
+      const byLead = await selectFirst([
+        () => supabase
+          .from('inbox_messages')
+          .select(MSG_COLS)
+          .in('lead_id', siblingIds)
+          .order('created_at', { ascending: false })
+          .limit(300),
+        () => supabase
           .from('inbox_messages')
           .select(MSG_COLS_NO_LANG)
           .in('lead_id', siblingIds)
           .order('created_at', { ascending: false })
-          .limit(300);
-      }
-      if (byLead.error) {
-        byLead = await supabase
+          .limit(300),
+        () => supabase
           .from('inbox_messages')
           .select(MSG_COLS_MIN)
           .in('lead_id', siblingIds)
           .order('created_at', { ascending: false })
-          .limit(300);
-      }
-      const rows = byLead.error
-        ? (await supabase
-            .from('inbox_messages')
-            .select(MSG_COLS_MIN)
-            .eq('conversation_id', conv.id)
-            .order('created_at', { ascending: false })
-            .limit(300)).data
-        : byLead.data;
+          .limit(300),
+        () => supabase
+          .from('inbox_messages')
+          .select(MSG_COLS_MIN)
+          .eq('conversation_id', conv.id)
+          .order('created_at', { ascending: false })
+          .limit(300),
+      ]);
+      const rows = (Array.isArray(byLead.data) ? byLead.data : []) as Array<{
+        id?: string; twilio_sid?: string | null; body?: string; direction?: string;
+      }>;
       const seen = new Set<string>();
       messages = (rows ?? [])
         .filter((m: { id?: string; twilio_sid?: string | null }) => {

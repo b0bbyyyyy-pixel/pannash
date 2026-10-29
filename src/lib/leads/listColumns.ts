@@ -105,11 +105,14 @@ export function emailFromSmsFlag(row: Record<string, unknown>): boolean {
   return v === true || v === 'true' || v === 't';
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function selectFirst<T = any>(
-  attempts: Array<() => PromiseLike<{ data: T | null; error: { message?: string } | null }>>,
-): Promise<{ data: T | null; error: { message?: string } | null }> {
-  let last: { data: T | null; error: { message?: string } | null } = { data: null, error: { message: 'no attempts' } };
+export function asRows(data: unknown): Record<string, unknown>[] {
+  return Array.isArray(data) ? (data as Record<string, unknown>[]) : [];
+}
+
+export async function selectFirst(
+  attempts: Array<() => PromiseLike<{ data: unknown; error: { message?: string } | null }>>,
+): Promise<{ data: unknown; error: { message?: string } | null }> {
+  let last: { data: unknown; error: { message?: string } | null } = { data: null, error: { message: 'no attempts' } };
   for (const run of attempts) {
     last = await run();
     if (!last.error) return last;
