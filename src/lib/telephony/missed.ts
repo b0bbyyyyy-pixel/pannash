@@ -6,8 +6,9 @@ export function isMissedCall(c: {
   direction?: string | null;
   answered_at?: string | null;
 }) {
-  if (c.status === 'no_answer' || c.status === 'agent_no_answer') return true;
+  // Outbound no-answer is a call you placed, not a missed inbound.
   if (c.direction !== 'inbound') return false;
+  if (c.status === 'no_answer' || c.status === 'agent_no_answer') return true;
   if (c.answered_at) return false;
   return !['in_progress', 'created', 'ringing_agent', 'agent_answered'].includes(c.status ?? '');
 }
