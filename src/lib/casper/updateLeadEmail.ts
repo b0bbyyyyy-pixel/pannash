@@ -147,7 +147,7 @@ export async function runUpdateLeadEmailTool(
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function sendApplicationTemplate(
+export async function sendApplicationTemplate(
   supabase: any,
   args: {
     userId: string;
@@ -250,7 +250,7 @@ async function applicationAlreadySent(
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function markApplicationSent(
+export async function markApplicationSent(
   supabase: any,
   userId: string,
   lead: { id: string; notes?: string | null },

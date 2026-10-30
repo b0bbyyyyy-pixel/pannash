@@ -66,6 +66,13 @@ export default function ContactScreen() {
           <div className="mt-4 overflow-hidden rounded-xl bg-white">
             <button
               type="button"
+              onClick={() => router.push(`/m/text/${threadId}?plus=1`)}
+              className="block w-full border-b border-[#C6C6C8]/70 px-4 py-3 text-left text-[17px] text-[#007AFF]"
+            >
+              Email application
+            </button>
+            <button
+              type="button"
               onClick={() => router.push(`/m/text/${threadId}`)}
               className="block w-full border-b border-[#C6C6C8]/70 px-4 py-3 text-left text-[17px] text-[#007AFF]"
             >

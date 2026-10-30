@@ -129,7 +129,7 @@ export async function POST(req: NextRequest) {
       const lead = otherParty ? await findLeadByPhone(supabase, otherParty, userId) : null;
       if (!isOutgoing && lead) inboundLead = { id: lead.id, name: lead.name, company: lead.company };
 
-      const { data: row } = await supabase
+      const { data: row, error: insertErr } = await supabase
         .from('dialer_calls')
         .insert({
           lead_id: lead?.id ?? null,
@@ -138,12 +138,13 @@ export async function POST(req: NextRequest) {
           to_number: isOutgoing ? (outboundTo ?? params.To) : (fromNumber ?? params.To),
           from_number: isOutgoing ? (fromNumber ?? '') : caller,
           direction: isOutgoing ? 'outbound' : 'inbound',
-          status: 'in_progress',
+          status: isOutgoing ? 'in_progress' : 'ringing_agent',
           twilio_call_sid: callSid,
           started_at: new Date().toISOString(),
         })
         .select('id')
         .single();
+      if (insertErr) console.error('[twilio/voice-app] dialer_calls insert', insertErr);
       dbId = row?.id ?? null;
     }
 

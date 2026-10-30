@@ -22,7 +22,7 @@ const PAGE = 40;
 async function ownLead(supabase: Awaited<ReturnType<typeof mobileClient>>['supabase'], userId: string, leadId: string) {
   const { data } = await supabase
     .from('leads')
-    .select('id, phone, name, company, sms_opt_out, lead_status')
+    .select('id, phone, name, company, email, sms_opt_out, lead_status')
     .eq('id', leadId)
     .eq('user_id', userId)
     .maybeSingle();
@@ -128,7 +128,13 @@ export async function GET(
   return NextResponse.json({
     messages,
     nextCursor,
-    lead: { id: lead.id, name: lead.name, phone: lead.phone, company: (lead as { company?: string | null }).company ?? null },
+    lead: {
+      id: lead.id,
+      name: lead.name,
+      phone: lead.phone,
+      company: (lead as { company?: string | null }).company ?? null,
+      email: (lead as { email?: string | null }).email ?? null,
+    },
   });
 }
 

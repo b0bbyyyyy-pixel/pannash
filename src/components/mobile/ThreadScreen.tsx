@@ -42,12 +42,18 @@ export default function ThreadScreen() {
   const router = useRouter();
   const [name, setName] = useState('');
   const [company, setCompany] = useState('');
+  const [email, setEmail] = useState('');
   const [messages, setMessages] = useState<Msg[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [showTpls, setShowTpls] = useState(false);
   const [tpls, setTpls] = useState<Tpl[]>([]);
+  const [emailDraft, setEmailDraft] = useState('');
+  const [emailing, setEmailing] = useState(false);
+  const [emailNotice, setEmailNotice] = useState('');
+  const [emailError, setEmailError] = useState('');
+  const [appAlert, setAppAlert] = useState<{ title: string; body: string; ok?: boolean } | null>(null);
   const [staged, setStaged] = useState<{ id: string; file: File; preview: string; type: string }[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -62,6 +68,10 @@ export default function ThreadScreen() {
     const data = await res.json();
     if (data.lead?.name) setName(data.lead.name);
     if (data.lead?.company != null) setCompany(data.lead.company || '');
+    if (data.lead?.email != null) {
+      setEmail(data.lead.email || '');
+      if (data.lead.email) setEmailDraft(data.lead.email);
+    }
     const page: Msg[] = data.messages ?? [];
     setCursor(data.nextCursor ?? null);
     setMessages(prev => {
@@ -87,7 +97,16 @@ export default function ThreadScreen() {
   }, []);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (new URLSearchParams(window.location.search).get('plus') === '1') setShowTpls(true);
+  }, [threadId]);
+
+  useEffect(() => {
     setMessages([]);
+    setEmail('');
+    setEmailDraft('');
+    setEmailNotice('');
+    setEmailError('');
     load().then(() => {
       requestAnimationFrame(() => {
         const el = scroller.current;
@@ -204,10 +223,76 @@ export default function ThreadScreen() {
     }
   }
 
+  async function emailApplication() {
+    const to = (email || emailDraft).trim();
+    if (!to) {
+      setEmailError('Add an email, then send');
+      return;
+    }
+    setEmailing(true);
+    setEmailError('');
+    setEmailNotice('');
+    try {
+      const res = await fetch(`/api/m/threads/${threadId}/email-application`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.sent) {
+        throw new Error(json.error || 'Could not email the application');
+      }
+      if (json.to) setEmail(json.to);
+      setEmailNotice(`Application emailed to ${json.to}`);
+      setShowTpls(false);
+      setAppAlert({
+        title: 'Application sent',
+        body: `The APPLICATION email went through to ${json.to}.`,
+        ok: true,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Could not email the application';
+      setEmailError(msg);
+      setAppAlert({ title: 'Not sent', body: msg });
+    } finally {
+      setEmailing(false);
+    }
+  }
+
   const lastOutboundId = [...messages].reverse().find(m => m.direction === 'outbound')?.id;
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-white">
+      {appAlert && (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 px-10"
+          onClick={() => setAppAlert(null)}
+        >
+          <div
+            className="w-full max-w-[270px] overflow-hidden rounded-[14px] bg-[#F2F2F7] shadow-xl"
+            onClick={e => e.stopPropagation()}
+            role="alertdialog"
+            aria-labelledby="app-alert-title"
+            aria-describedby="app-alert-body"
+          >
+            <div className="px-4 pt-5 pb-4 text-center">
+              <p id="app-alert-title" className="text-[17px] font-semibold text-black">{appAlert.title}</p>
+              <p id="app-alert-body" className="mt-1 text-[13px] leading-snug text-[#3a3a3c] break-words">
+                {appAlert.body}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setAppAlert(null)}
+              className={`w-full border-t border-[#C6C6C8] py-2.5 text-[17px] font-semibold ${
+                appAlert.ok ? 'text-[#34C759]' : 'text-[#007AFF]'
+              }`}
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      )}
       <header className="flex items-center gap-2 border-b border-[#C6C6C8]/70 px-2 pt-[max(8px,env(safe-area-inset-top))] pb-2">
         <button type="button" onClick={() => router.push('/m/text')} className="px-1 text-[28px] leading-none text-[#007AFF]" aria-label="Back">
           ‹
@@ -315,9 +400,52 @@ export default function ThreadScreen() {
       <div className="bg-[#F9F9F9] px-2 pt-1 pb-[max(8px,env(safe-area-inset-bottom))]">
         <FullCrmLink />
         {showTpls && (
-          <div className="mb-2 max-h-[240px] overflow-y-auto rounded-2xl bg-[#E9E9EB]">
+          <div className="mb-2 max-h-[280px] overflow-y-auto rounded-2xl bg-[#E9E9EB]">
+            <div className={tpls.length ? 'border-b border-[#C6C6C8]/70' : ''}>
+              <button
+                type="button"
+                disabled={emailing}
+                onClick={() => {
+                  if (email || emailDraft.trim()) void emailApplication();
+                  else setEmailError('Add an email, then send');
+                }}
+                className="block w-full px-4 py-2.5 text-left disabled:opacity-60"
+              >
+                <span className="block truncate text-[17px] text-[#007AFF]">
+                  {emailing ? 'Emailing application…' : 'Email application'}
+                </span>
+                <span className="mt-0.5 block truncate text-[13px] text-[#8E8E93]">
+                  {emailNotice
+                    || (email ? `Send APPLICATION to ${email}` : 'Sends the APPLICATION email to this lead')}
+                </span>
+              </button>
+              {!email && (
+                <div className="flex items-center gap-2 px-4 pb-3">
+                  <input
+                    type="email"
+                    value={emailDraft}
+                    onChange={e => { setEmailDraft(e.target.value); setEmailError(''); }}
+                    placeholder="Lead email"
+                    inputMode="email"
+                    autoCapitalize="none"
+                    className="h-9 min-w-0 flex-1 rounded-full border border-[#C6C6C8] bg-white px-3 text-[15px] focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    disabled={emailing || !emailDraft.trim()}
+                    onClick={() => void emailApplication()}
+                    className="h-9 shrink-0 rounded-full bg-[#007AFF] px-3 text-[15px] font-medium text-white disabled:opacity-40"
+                  >
+                    Send
+                  </button>
+                </div>
+              )}
+              {emailError ? (
+                <p className="px-4 pb-2.5 text-[13px] text-red-600">{emailError}</p>
+              ) : null}
+            </div>
             {tpls.length === 0 ? (
-              <p className="px-4 py-3 text-[15px] text-[#8E8E93]">No templates yet. Add them in Inbox on desktop.</p>
+              <p className="px-4 py-3 text-[15px] text-[#8E8E93]">No text templates yet. Add them in Inbox on desktop.</p>
             ) : (
               tpls.map((t, i) => (
                 <button

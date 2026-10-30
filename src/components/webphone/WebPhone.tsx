@@ -68,6 +68,36 @@ function fmtNumber(n: string | null): string {
   return n;
 }
 
+function reportInboundCall(payload: {
+  callSid?: string | null;
+  from?: string | null;
+  to?: string | null;
+  leadId?: string | null;
+  leadName?: string | null;
+  status?: string;
+}) {
+  void fetch('/api/telephony/calls', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(payload),
+  }).catch(() => {});
+}
+
+function setIncomingTabTitle(on: boolean) {
+  if (typeof document === 'undefined') return;
+  if (!on) {
+    const orig = document.documentElement.dataset.phoneTitle;
+    if (orig != null) document.title = orig;
+    delete document.documentElement.dataset.phoneTitle;
+    return;
+  }
+  if (!document.documentElement.dataset.phoneTitle) {
+    document.documentElement.dataset.phoneTitle = document.title;
+  }
+  document.title = 'Incoming call…';
+}
+
 type MatchedLead = { id: string; name: string; company?: string | null };
 
 function customParam(call: Call, key: string): string | null {
@@ -260,6 +290,8 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     stopRingback();
     incomingSessionRef.current = false;
     callRef.current = null;
+    setIncomingFrom(null);
+    setIncomingTabTitle(false);
     setActiveNumber(null);
     setActiveName(null);
     setMuted(false);
@@ -287,15 +319,8 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     call.on('error', (e: Error) => { setError(voiceErrorMessage(e)); resetCallState(); });
   }, [resetCallState, stopRingback, startRingback]);
 
-  // ── Device init (runs once after login) ─────────────────────────────────────
+  // ── Device init (runs once after login). Stay registered on /m so inbound still rings. ─
   useEffect(() => {
-    if (onMobileText) {
-      deviceRef.current?.destroy();
-      deviceRef.current = null;
-      initStarted.current = false;
-      setStatus('offline');
-      return;
-    }
     if (initStarted.current) return;
     initStarted.current = true;
 
@@ -343,10 +368,27 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
           incomingRef.current = call;
           incomingSessionRef.current = true;
           const from = call.parameters.From ?? 'Unknown';
+          const callSid = call.parameters.CallSid ?? null;
           setIncomingFrom(from);
+          setIncomingTabTitle(true);
           const paramId = customParam(call, 'leadId');
           const paramName = customParam(call, 'leadName');
           const paramCompany = customParam(call, 'leadCompany');
+          reportInboundCall({
+            callSid,
+            from,
+            leadId: paramId,
+            leadName: paramName,
+            status: 'ringing_agent',
+          });
+          try {
+            if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && document.hidden) {
+              new Notification('Incoming call', {
+                body: paramName || from,
+                tag: 'gostwrk-incoming-call',
+              });
+            }
+          } catch { /* no notifications */ }
           if (paramId) {
             setMatchedLead({
               id: paramId,
@@ -370,6 +412,13 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
                     company: data.lead.company,
                   });
                   setActiveName(data.lead.name || null);
+                  reportInboundCall({
+                    callSid,
+                    from,
+                    leadId: data.lead.id,
+                    leadName: data.lead.name,
+                    status: 'ringing_agent',
+                  });
                 }
               } catch { /* unknown caller */ }
             })();
@@ -378,9 +427,16 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
             incomingRef.current = null;
             incomingSessionRef.current = false;
             setIncomingFrom(null);
+            setIncomingTabTitle(false);
+            reportInboundCall({ callSid, from, status: 'no_answer' });
             if (!showLeadCardRef.current) setMatchedLead(null);
           });
-          call.on('disconnect', () => { incomingRef.current = null; setIncomingFrom(null); resetCallState(); });
+          call.on('disconnect', () => {
+            incomingRef.current = null;
+            setIncomingFrom(null);
+            setIncomingTabTitle(false);
+            resetCallState();
+          });
         });
 
         await device.register();
@@ -391,7 +447,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     })();
 
     return () => { cancelled = true; };
-  }, [resetCallState, onMobileText]);
+  }, [resetCallState]);
 
   // ── Actions ─────────────────────────────────────────────────────────────────
   const connect = useCallback(async (e164: string, meta?: { name?: string; leadId?: string; company?: string }) => {
@@ -498,6 +554,15 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     setActiveNumber(from);
     setActiveName(prev => prev || customParam(call, 'leadName'));
     setIncomingFrom(null);
+    setIncomingTabTitle(false);
+    const sid = call.parameters.CallSid ?? null;
+    reportInboundCall({
+      callSid: sid,
+      from,
+      leadId: matchedLeadRef.current?.id,
+      leadName: matchedLeadRef.current?.name,
+      status: 'in_progress',
+    });
     wireCall(call);
     call.accept();
     setStatus('in-call');
@@ -505,15 +570,20 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   }, [wireCall]);
 
   const rejectIncoming = useCallback(() => {
-    incomingRef.current?.reject();
+    const call = incomingRef.current;
+    const from = call?.parameters.From ?? incomingFrom;
+    const sid = call?.parameters.CallSid ?? null;
+    call?.reject();
     incomingRef.current = null;
     incomingSessionRef.current = false;
     setIncomingFrom(null);
+    setIncomingTabTitle(false);
+    reportInboundCall({ callSid: sid, from, status: 'no_answer' });
     if (!showLeadCardRef.current) {
       setMatchedLead(null);
       setActiveName(null);
     }
-  }, []);
+  }, [incomingFrom]);
 
   // Incoming caller (ring or after Answer) → Inbox so you can text and edit notes.
   useEffect(() => {
@@ -563,7 +633,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
       {children}
 
       {/* ── Incoming call toast ── */}
-      {incomingFrom && !onMobileText && (
+      {incomingFrom && (
         <div className="fixed top-5 right-5 z-[110] w-80 rounded-2xl border border-[#e5e5e5] bg-white p-4 shadow-xl">
           <p className="mb-0.5 text-xs text-[#9ca3af]">Incoming call</p>
           <p className="text-base font-semibold text-[#1a1a1a]">
@@ -615,7 +685,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
       )}
 
       {/* ── Call bar ── */}
-      {inCall && !onMobileText && (
+      {inCall && !incomingFrom && (
         <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-[100]">
           <div className="bg-[#1a1a1a] text-white rounded-2xl shadow-2xl px-5 py-3 flex items-center gap-4">
             <div className="min-w-0">
