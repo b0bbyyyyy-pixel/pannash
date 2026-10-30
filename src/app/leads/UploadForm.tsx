@@ -10,14 +10,15 @@ import { toE164 } from '@/lib/dialer/e164';
 import { extractSheetLead, looksLikeHeaderRow, mergeSheetLead } from '@/lib/import/extractSheetLead';
 import { aiParseFingerprint, saveAiParseResult, takeAiParseForList, type CachedAiLead } from '@/lib/import/aiParseCache';
 import { useParseJobs } from '@/lib/parseJobs/ParseJobsProvider';
+import DrivePackImport from './DrivePackImport';
 
 interface UploadFormProps {
   selectedListId?: string;
   onSuccess?: () => void;
-  initialMode?: 'file' | 'paste' | 'zip' | 'quick' | 'sheets';
+  initialMode?: 'file' | 'paste' | 'zip' | 'quick' | 'sheets' | 'drive';
 }
 
-type UploadMode = 'file' | 'paste' | 'zip' | 'quick' | 'sheets';
+type UploadMode = 'file' | 'paste' | 'zip' | 'quick' | 'sheets' | 'drive';
 
 function sheetsConnectHref(listId?: string) {
   const redirect = listId
@@ -1626,6 +1627,7 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
           ['file', 'Upload File'],
           ['paste', 'Paste from Excel'],
           ['zip', 'Deal Pack ZIP'],
+          ['drive', 'Google Drive'],
           ['quick', 'Quick Paste'],
           ['sheets', 'Google Sheets'],
         ] as const).map(([id, label]) => (
@@ -1824,6 +1826,13 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
             {loading ? 'Importing…' : zipPreview.length > 0 ? `Import ${zipPreview.length} Lead${zipPreview.length !== 1 ? 's' : ''}` : 'Drop a ZIP above'}
           </button>
         </>
+      )}
+
+      {mode === 'drive' && (
+        <DrivePackImport
+          selectedListId={selectedListId}
+          onSuccess={() => { router.refresh(); onSuccess?.(); }}
+        />
       )}
 
       {/* ── Quick Paste panel ── */}

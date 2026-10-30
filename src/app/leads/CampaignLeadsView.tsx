@@ -736,7 +736,13 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
             <div className="px-6 py-4">
               <UploadForm
                 selectedListId={listId}
-                initialMode={typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('upload') === 'sheets' ? 'sheets' : 'file'}
+                initialMode={
+                  typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('upload') === 'drive'
+                    ? 'drive'
+                    : typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('upload') === 'sheets'
+                      ? 'sheets'
+                      : 'file'
+                }
                 onSuccess={() => {
                   setShowUpload(false);
                   router.refresh();

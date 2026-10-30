@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback, DragEvent } from 'react';
 import { createPortal } from 'react-dom';
 import DocumentVault from '@/components/DocumentVault';
+import GoogleDrivePick from '@/components/GoogleDrivePick';
 import AttachmentEditModal from '@/components/AttachmentEditModal';
 import { enrichParsedBusinessFields } from '@/lib/businessName';
 import { normalizeParsedFields } from '@/lib/normalizeParsedFields';
@@ -229,6 +230,7 @@ export default function DocumentsModal({
   const [reExtracting, setReExtracting] = useState<string | null>(null);
   const [analyzingId, setAnalyzingId]     = useState<string | null>(null);
   const [showVaultPick, setShowVaultPick] = useState(false);
+  const [showDrivePick, setShowDrivePick] = useState(false);
   const [uploadKind, setUploadKind]       = useState<'save' | 'application' | 'bank' | 'fullpack'>('fullpack');
   const [uploadStatus, setUploadStatus]   = useState<string | null>(null);
   const [editingDoc, setEditingDoc]       = useState<Attachment | null>(null);
@@ -902,9 +904,14 @@ export default function DocumentsModal({
                 </svg>
                 <p className="text-sm font-medium text-[#6b6b6b]">{search ? 'No documents match your search' : 'No documents yet'}</p>
                 {!search && (
-                  <button onClick={() => setShowUpload(true)} className="mt-3 text-xs text-[#5a7fc7] hover:text-[#4a6fb7] underline underline-offset-2">
-                    Upload the first document
-                  </button>
+                  <div className="mt-3 flex items-center justify-center gap-4">
+                    <button onClick={() => setShowUpload(true)} className="text-xs text-[#5a7fc7] hover:text-[#4a6fb7] underline underline-offset-2">
+                      Upload the first document
+                    </button>
+                    <button onClick={() => setShowDrivePick(true)} className="text-xs text-[#5a7fc7] hover:text-[#4a6fb7] underline underline-offset-2">
+                      Pull from Google Drive
+                    </button>
+                  </div>
                 )}
               </div>
             ) : (
@@ -1080,13 +1087,22 @@ export default function DocumentsModal({
                     ref={fileInputRef} type="file" multiple accept={ALLOWED_TYPES} className="hidden"
                     onChange={e => { if (e.target.files) addFiles(Array.from(e.target.files)); }}
                   />
-                  <button
-                    type="button"
-                    onClick={() => setShowVaultPick(true)}
-                    className="mt-3 w-full text-[11px] uppercase tracking-wide text-[#9b9b9b] hover:text-[#1a1a1a]"
-                  >
-                    Pull from vault
-                  </button>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowVaultPick(true)}
+                      className="text-[11px] uppercase tracking-wide text-[#9b9b9b] hover:text-[#1a1a1a]"
+                    >
+                      Pull from vault
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowDrivePick(true)}
+                      className="text-[11px] uppercase tracking-wide text-[#9b9b9b] hover:text-[#1a1a1a]"
+                    >
+                      Pull from Google Drive
+                    </button>
+                  </div>
                 </div>
 
                 {/* Pending file list */}
@@ -1358,6 +1374,31 @@ export default function DocumentsModal({
           onPick={(files) => addFiles(files)}
           onClose={() => setShowVaultPick(false)}
           zClass="z-[220]"
+        />
+      )}
+
+      {showDrivePick && (
+        <GoogleDrivePick
+          leadId={leadId}
+          leadName={leadName}
+          leadCompany={leadCompany}
+          zClass="z-[220]"
+          onClose={() => setShowDrivePick(false)}
+          onPulled={(atts, docsIn) => {
+            const mapped: Attachment[] = atts.map(a => ({
+              id: a.id,
+              file_name: a.file_name,
+              file_path: a.file_path,
+              file_size: a.file_size,
+              file_type: a.file_type,
+              column_field: a.column_field,
+              created_at: a.created_at || new Date().toISOString(),
+            }));
+            setAttachments(prev => [...mapped, ...prev]);
+            setShowUpload(false);
+            setShowDrivePick(false);
+            if (docsIn) postLeadPatch(leadId, { lead_status: 'Docs In', in_pipeline: true });
+          }}
         />
       )}
     </>
