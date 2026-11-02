@@ -9,6 +9,7 @@ import { addEmailTracking, convertToHtml, generateTrackingId } from '@/lib/email
 import { refreshGmailToken, isTokenExpired } from '@/lib/gmail-refresh';
 import { appendEmailSignature } from '@/lib/email-signature';
 import { resolveFromHeader } from '@/lib/email-from';
+import { pickSendConnection, signatureFor, type SendConnection } from '@/lib/email/sendAccounts';
 
 // Lazy initialization to avoid build-time errors
 function getResend() {
@@ -44,11 +45,11 @@ export async function POST(req: NextRequest) {
 
     const { data: settings } = await supabase
       .from('user_settings')
-      .select('email_signature, email_from_name')
+      .select('email_signature, email_from_name, preferred_send_connection_id')
       .eq('user_id', user.id)
       .maybeSingle();
-    const emailSignature = settings?.email_signature as string | undefined;
     const settingsFromName = settings?.email_from_name as string | undefined;
+    const preferredSendId = settings?.preferred_send_connection_id as string | undefined;
 
     // Fetch pending emails that are ready to send (scheduled_for <= now)
     // ONLY for active campaigns
@@ -114,8 +115,10 @@ export async function POST(req: NextRequest) {
           .select('*')
           .eq('user_id', user.id);
 
-        const gmailConnection = connections?.find((c) => c.provider === 'gmail');
-        const outlookConnection = connections?.find((c) => c.provider === 'outlook');
+        const picked = pickSendConnection(connections as SendConnection[] | null, preferredSendId);
+        const gmailConnection = picked?.provider === 'gmail' ? picked : connections?.find((c) => c.provider === 'gmail');
+        const outlookConnection = picked?.smtp_host ? picked : connections?.find((c) => c.provider === 'outlook');
+        const emailSignature = signatureFor(picked, settings?.email_signature);
 
         // Prepare email content
         const lead = item.leads as any;
@@ -152,7 +155,8 @@ export async function POST(req: NextRequest) {
               const refreshed = await refreshGmailToken(
                 user.id,
                 gmailConnection.refresh_token,
-                supabase
+                supabase,
+                { connectionId: gmailConnection.id },
               );
 
               if (refreshed) {

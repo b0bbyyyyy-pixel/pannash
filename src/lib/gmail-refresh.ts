@@ -8,7 +8,7 @@ export async function refreshGmailToken(
   userId: string,
   refreshToken: string,
   supabase: SupabaseClient,
-  opts?: { table?: 'email_connections' | 'email_read_connections' },
+  opts?: { table?: 'email_connections' | 'email_read_connections'; connectionId?: string | null },
 ): Promise<{ access_token: string; expiry_date: number } | null> {
   try {
     const oauth2Client = new google.auth.OAuth2(
@@ -38,9 +38,14 @@ export async function refreshGmailToken(
       expires_at: expiry,
       updated_at: new Date().toISOString(),
     };
-    let query = supabase.from(table).update(patch).eq('user_id', userId);
-    if (table === 'email_connections') query = query.eq('provider', 'gmail');
-    const { error } = await query;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const scoped = (q: any) => {
+      let query = q.eq('user_id', userId);
+      if (opts?.connectionId) query = query.eq('id', opts.connectionId);
+      else if (table === 'email_connections') query = query.eq('provider', 'gmail');
+      return query;
+    };
+    const { error } = await scoped(supabase.from(table).update(patch));
 
     if (error) {
       const slim = {
@@ -48,9 +53,7 @@ export async function refreshGmailToken(
         expiry_date: expiry,
         updated_at: new Date().toISOString(),
       };
-      let retry = supabase.from(table).update(slim).eq('user_id', userId);
-      if (table === 'email_connections') retry = retry.eq('provider', 'gmail');
-      const again = await retry;
+      const again = await scoped(supabase.from(table).update(slim));
       if (again.error) {
         console.error('Failed to save refreshed token:', again.error);
         return null;

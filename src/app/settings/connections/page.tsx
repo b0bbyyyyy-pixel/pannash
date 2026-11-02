@@ -41,8 +41,19 @@ export default async function ConnectionsPage({
     .select('*')
     .eq('user_id', user.id);
 
-  const gmailConnection = connections?.find(c => c.provider === 'gmail');
+  const gmailConnections = (connections ?? []).filter(c => c.provider === 'gmail');
+  const gmailConnection = gmailConnections[0];
   const outlookConnection = connections?.find(c => c.provider === 'outlook');
+
+  let preferredSendId: string | null | undefined = null;
+  const sendSettingsRes = await supabase
+    .from('user_settings')
+    .select('preferred_send_connection_id')
+    .eq('user_id', user.id)
+    .maybeSingle();
+  if (!sendSettingsRes.error) {
+    preferredSendId = sendSettingsRes.data?.preferred_send_connection_id as string | null | undefined;
+  }
 
   const { data: readRows } = await supabase
     .from('email_read_connections')
@@ -59,8 +70,8 @@ export default async function ConnectionsPage({
 
   const twilioConnection = phoneConnections?.[0];
 
-  // Server action to disconnect Gmail
-  async function disconnectGmail() {
+  // Server action to disconnect one Gmail send mailbox
+  async function disconnectGmail(connectionId: string) {
     'use server';
     
     const cookieStore = await cookies();
@@ -85,6 +96,7 @@ export default async function ConnectionsPage({
       .from('email_connections')
       .delete()
       .eq('user_id', user.id)
+      .eq('id', connectionId)
       .eq('provider', 'gmail');
 
     revalidatePath('/settings/connections');
@@ -243,7 +255,7 @@ export default async function ConnectionsPage({
               Connection Status
             </h2>
             
-            {!gmailConnection && !gmailReadConnection && !outlookConnection ? (
+            {!gmailConnections.length && !gmailReadConnection && !outlookConnection ? (
               <div className="text-center py-8">
                 <p className="text-gray-500 mb-4">
                   No email accounts connected yet
@@ -254,33 +266,41 @@ export default async function ConnectionsPage({
               </div>
             ) : (
               <div className="space-y-4">
-                {gmailConnection && (
-                  <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                {gmailConnections.map((conn, i) => {
+                  const email = conn.from_email || conn.email || conn.email_address || 'Connected';
+                  return (
+                  <div key={conn.id} className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-3">
                         <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white font-semibold">
                           G
                         </div>
                         <div>
-                          <div className="font-medium text-gray-900">Gmail send</div>
-                          <div className="text-sm text-gray-600">
-                            {gmailConnection.from_email || gmailConnection.email || 'Connected'}
+                          <div className="font-medium text-gray-900">
+                            Gmail send{gmailConnections.length > 1 ? ` ${i + 1}` : ''}
                           </div>
-                          <div className="text-xs text-gray-500 mt-0.5">Applications and outbound mail only</div>
+                          <div className="text-sm text-gray-600">{email}</div>
+                          <div className="text-xs text-gray-500 mt-0.5">
+                            Applications and outbound mail only
+                            {preferredSendId === conn.id ? ' · default' : ''}
+                          </div>
                         </div>
                       </div>
                       <DisconnectButton
-                        provider="Gmail send"
-                        disconnectAction={disconnectGmail}
+                        provider={`Gmail send (${email})`}
+                        disconnectAction={disconnectGmail.bind(null, conn.id)}
                       />
                     </div>
                     <EmailDisplayNameForm
-                      mailboxEmail={gmailConnection.from_email || gmailConnection.email}
-                      connectionId={gmailConnection.id}
-                      initialFromName={gmailConnection.from_name}
+                      mailboxEmail={email}
+                      connectionId={conn.id}
+                      initialFromName={conn.from_name}
+                      initialSignature={conn.email_signature}
+                      isPreferred={preferredSendId === conn.id}
                     />
                   </div>
-                )}
+                  );
+                })}
 
                 {gmailReadConnection && (
                   <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
@@ -336,20 +356,20 @@ export default async function ConnectionsPage({
             )}
           </div>
 
-          {!gmailConnection && (
-            <div className="bg-white border border-[#e5e5e5] rounded-md p-7">
-              <h2 className="text-lg font-bold text-[#1a1a1a] mb-2 tracking-tight">
-                Connect Gmail send
-              </h2>
-              <p className="text-sm text-[#6b6b6b] mb-5">
-                Send-only. Applications and outbound mail. Does not read your inbox.
-              </p>
-              <GmailConnectButton
-                kind="send"
-                error={connectKind === 'send' ? sp.gmail_error : null}
-              />
-            </div>
-          )}
+          <div className="bg-white border border-[#e5e5e5] rounded-md p-7">
+            <h2 className="text-lg font-bold text-[#1a1a1a] mb-2 tracking-tight">
+              {gmailConnections.length ? 'Connect another Gmail send' : 'Connect Gmail send'}
+            </h2>
+            <p className="text-sm text-[#6b6b6b] mb-5">
+              Send-only. Applications and outbound mail. Does not read your inbox.
+              {gmailConnections.length ? ' Sign in with the other Gmail to add a second send-from address.' : ''}
+            </p>
+            <GmailConnectButton
+              kind="send"
+              label={gmailConnections.length ? 'Connect another Gmail (send)' : undefined}
+              error={connectKind === 'send' ? sp.gmail_error : null}
+            />
+          </div>
 
           {!gmailReadConnection && (
             <div className="bg-white border border-[#e5e5e5] rounded-md p-7">

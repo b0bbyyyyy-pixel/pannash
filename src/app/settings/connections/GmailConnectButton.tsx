@@ -19,6 +19,8 @@ export default function GmailConnectButton({
         <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
           {error === 'run_read_sql'
             ? 'Run add-email-read-connections.sql in Supabase, then connect Gmail read again.'
+            : error === 'run_send_sql'
+              ? 'Run add-gmail-send-accounts.sql in Supabase, then connect the second Gmail send account.'
             : `Gmail connect failed (${error}). Try again.`}
         </p>
       )}

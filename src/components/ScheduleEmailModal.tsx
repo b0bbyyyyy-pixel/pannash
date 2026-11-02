@@ -159,6 +159,10 @@ export default function ScheduleEmailModal({ lead: initialLead, onClose, onSent 
   const [signature, setSignature]                   = useState('');
   const [fromName, setFromName]                     = useState('');
   const [fromEmail, setFromEmail]                   = useState('');
+  const [accounts, setAccounts]                     = useState<Array<{
+    id: string; email: string; fromName: string; signature: string; preferred: boolean;
+  }>>([]);
+  const [connectionId, setConnectionId]             = useState('');
   const [savingSignature, setSavingSignature]       = useState(false);
   const [signatureSaved, setSignatureSaved]         = useState(false);
 
@@ -186,9 +190,13 @@ export default function ScheduleEmailModal({ lead: initialLead, onClose, onSent 
     fetch('/api/settings/email-signature', { credentials: 'include' })
       .then(r => r.json())
       .then(d => {
-        setSignature(d.signature || '');
-        setFromName(d.fromName || 'Bob');
-        setFromEmail(d.fromEmail || '');
+        const list = Array.isArray(d.accounts) ? d.accounts : [];
+        setAccounts(list);
+        const active = list.find((a: { id: string }) => a.id === d.preferredId) || list[0];
+        setConnectionId(active?.id || '');
+        setSignature(active?.signature || d.signature || '');
+        setFromName(active?.fromName || d.fromName || 'Bob');
+        setFromEmail(active?.email || d.fromEmail || '');
       })
       .catch(console.error);
   }, []);
@@ -285,6 +293,16 @@ export default function ScheduleEmailModal({ lead: initialLead, onClose, onSent 
     }
   };
 
+  const applyAccount = (id: string) => {
+    const a = accounts.find(x => x.id === id);
+    if (!a) return;
+    setConnectionId(a.id);
+    setFromEmail(a.email);
+    setFromName(a.fromName || 'Bob');
+    setSignature(a.signature || '');
+    setSignatureSaved(false);
+  };
+
   const saveSignature = async () => {
     setSavingSignature(true);
     setSignatureSaved(false);
@@ -293,7 +311,7 @@ export default function ScheduleEmailModal({ lead: initialLead, onClose, onSent 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ signature, fromName }),
+        body: JSON.stringify({ signature, fromName, connectionId: connectionId || undefined, preferred: true }),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
@@ -301,6 +319,9 @@ export default function ScheduleEmailModal({ lead: initialLead, onClose, onSent 
         return;
       }
       setSignatureSaved(true);
+      setAccounts(prev => prev.map(a => a.id === connectionId
+        ? { ...a, signature, fromName, preferred: true }
+        : { ...a, preferred: false }));
     } finally {
       setSavingSignature(false);
     }
@@ -360,6 +381,7 @@ export default function ScheduleEmailModal({ lead: initialLead, onClose, onSent 
           leadId: lead.id,
           subject: replacePlaceholders(tpl.subject, lead),
           html: replacePlaceholders(tpl.body, lead),
+          connectionId: connectionId || undefined,
         }),
       });
       const d = await res.json().catch(() => ({}));
@@ -544,6 +566,27 @@ export default function ScheduleEmailModal({ lead: initialLead, onClose, onSent 
                   </ul>
                 )}
                 <div className="border-t border-[#e5e5e5] px-3 py-3 bg-[#fafafa] space-y-3">
+                  {accounts.length > 1 && (
+                    <div>
+                      <label className="block text-xs font-semibold text-[#1a1a1a] mb-1.5">Sender mailbox</label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {accounts.map(a => (
+                          <button
+                            key={a.id}
+                            type="button"
+                            onClick={() => applyAccount(a.id)}
+                            className={`px-2.5 py-1 rounded-full text-[11px] font-medium border ${
+                              connectionId === a.id
+                                ? 'bg-[#1a1a1a] text-white border-[#1a1a1a]'
+                                : 'bg-white text-[#1a1a1a] border-[#e5e5e5]'
+                            }`}
+                          >
+                            {a.email}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <div>
                     <label className="block text-xs font-semibold text-[#1a1a1a] mb-1.5">Display name</label>
                     <p className="text-[11px] text-[#9b9b9b] mb-2">Shown as the sender. Does not change your sending address.</p>
@@ -730,6 +773,32 @@ export default function ScheduleEmailModal({ lead: initialLead, onClose, onSent 
           {/* ── Sending options ── */}
           {!managing && !editingTemplate && (
           <div className="border-t border-[#e5e5e5] pt-4">
+            {accounts.length > 0 && (
+              <div className="mb-4">
+                <p className="text-xs font-semibold text-[#1a1a1a] mb-2">Send from</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {accounts.map(a => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      onClick={() => applyAccount(a.id)}
+                      className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                        connectionId === a.id
+                          ? 'bg-[#1a1a1a] text-white border-[#1a1a1a]'
+                          : 'bg-white text-[#1a1a1a] border-[#e5e5e5] hover:border-[#c4c4c4]'
+                      }`}
+                    >
+                      {a.email}
+                    </button>
+                  ))}
+                </div>
+                {fromEmail && (
+                  <p className="mt-1.5 text-[11px] text-[#9b9b9b]">
+                    {`"${fromName.trim() || 'Bob'}" <${fromEmail}>`}
+                  </p>
+                )}
+              </div>
+            )}
             <h3 className="text-sm font-semibold text-[#1a1a1a] mb-3">Sending Options</h3>
 
             {/* Send Now */}

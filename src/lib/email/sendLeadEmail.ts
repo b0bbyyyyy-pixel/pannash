@@ -4,6 +4,13 @@ import { refreshGmailToken, isTokenExpired } from '@/lib/gmail-refresh';
 import { appendEmailSignature } from '@/lib/email-signature';
 import { resolveFromHeader } from '@/lib/email-from';
 import { appendEmailSent } from '@/lib/leads/fileActivity';
+import {
+  isGmailSend,
+  isSmtpSend,
+  pickSendConnection,
+  signatureFor,
+  type SendConnection,
+} from '@/lib/email/sendAccounts';
 
 export type SendLeadEmailResult = {
   sent: boolean;
@@ -48,22 +55,72 @@ function isScopeError(msg: string) {
   return /insufficient.*scope/i.test(msg);
 }
 
+async function rememberPreferred(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  userId: string,
+  connectionId?: string | null,
+) {
+  if (!connectionId) return;
+  try {
+    await supabase
+      .from('user_settings')
+      .update({ preferred_send_connection_id: connectionId, updated_at: new Date().toISOString() })
+      .eq('user_id', userId);
+  } catch {
+    // column may not exist until add-gmail-send-accounts.sql
+  }
+}
+
 /** Same send path as Comms → Send Email (`/api/leads/send-email`). */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function sendLeadEmail(
   supabase: any,
-  args: { userId: string; leadId: string; to: string; subject: string; html: string },
+  args: {
+    userId: string;
+    leadId: string;
+    to: string;
+    subject: string;
+    html: string;
+    connectionId?: string | null;
+  },
 ): Promise<SendLeadEmailResult> {
   const to = args.to.trim();
   if (!to) return { sent: false, error: 'This lead has no email address' };
 
-  const { data: settings } = await supabase
+  let settings: {
+    email_signature?: string | null;
+    email_from_name?: string | null;
+    preferred_send_connection_id?: string | null;
+  } | null = null;
+  const withPreferred = await supabase
     .from('user_settings')
-    .select('email_signature, email_from_name')
+    .select('email_signature, email_from_name, preferred_send_connection_id')
     .eq('user_id', args.userId)
     .maybeSingle();
+  if (withPreferred.error && /preferred_send_connection_id/i.test(withPreferred.error.message || '')) {
+    const fallback = await supabase
+      .from('user_settings')
+      .select('email_signature, email_from_name')
+      .eq('user_id', args.userId)
+      .maybeSingle();
+    settings = fallback.data;
+  } else {
+    settings = withPreferred.data;
+  }
 
-  const htmlBody = toHtml(appendEmailSignature(args.html, settings?.email_signature));
+  const { data: emailConns } = await supabase
+    .from('email_connections')
+    .select('*')
+    .eq('user_id', args.userId);
+
+  const picked = pickSendConnection(
+    emailConns as SendConnection[] | null,
+    settings?.preferred_send_connection_id,
+    args.connectionId,
+  );
+
+  const htmlBody = toHtml(appendEmailSignature(args.html, signatureFor(picked, settings?.email_signature)));
   let lastError = '';
   let needsGmail = false;
 
@@ -79,32 +136,25 @@ export async function sendLeadEmail(
       to: to,
       subject: args.subject,
     });
+    await rememberPreferred(supabase, args.userId, picked?.id || args.connectionId);
   };
 
-  const { data: emailConns } = await supabase
-    .from('email_connections')
-    .select('*')
-    .eq('user_id', args.userId);
-
-  const gmailConn = (emailConns ?? []).find(
-    (c: { provider?: string; access_token?: string; refresh_token?: string }) =>
-      c.provider === 'gmail' && (c.access_token || c.refresh_token),
-  );
-
-  if (gmailConn) {
+  if (isGmailSend(picked)) {
     try {
-      let accessToken = (gmailConn.access_token as string | null) || null;
-      const refreshToken = (gmailConn.refresh_token as string | null) || null;
-      const expiry = (gmailConn.expiry_date || gmailConn.expires_at) as string | null;
+      let accessToken = (picked.access_token as string | null) || null;
+      const refreshToken = (picked.refresh_token as string | null) || null;
+      const expiry = (picked.expiry_date || picked.expires_at) as string | null;
       if (refreshToken && isTokenExpired(expiry)) {
-        const refreshed = await refreshGmailToken(args.userId, refreshToken, supabase);
+        const refreshed = await refreshGmailToken(args.userId, refreshToken, supabase, {
+          connectionId: picked.id,
+        });
         if (refreshed) accessToken = refreshed.access_token;
       }
       if (!accessToken) {
         throw new Error('Gmail token expired — reconnect in Settings');
       }
       const { from } = resolveFromHeader({
-        connection: gmailConn,
+        connection: picked,
         settingsFromName: settings?.email_from_name,
       });
       const oauth2Client = new google.auth.OAuth2(
@@ -132,9 +182,9 @@ export async function sendLeadEmail(
     }
   }
 
-  const smtpConn = (emailConns ?? []).find(
-    (c: { provider?: string; smtp_host?: string }) => c.provider === 'outlook' || c.smtp_host,
-  );
+  const smtpConn = isSmtpSend(picked)
+    ? picked
+    : (emailConns ?? []).find((c: SendConnection) => c.smtp_host);
   if (smtpConn?.smtp_host) {
     try {
       const transporter = nodemailer.createTransport({

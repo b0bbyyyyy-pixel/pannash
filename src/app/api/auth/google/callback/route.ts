@@ -100,12 +100,16 @@ export async function GET(request: NextRequest) {
     if (!googleEmail) {
       return NextResponse.redirect(`${origin}${redirectAfter}?gmail_error=no_email`);
     }
-    const { data: existingGmail } = await supabase
+    const emailKey = googleEmail.toLowerCase();
+    const { data: gmailRows } = await supabase
       .from('email_connections')
-      .select('refresh_token')
+      .select('id, refresh_token, from_email, email')
       .eq('user_id', userId)
-      .eq('provider', 'gmail')
-      .maybeSingle();
+      .eq('provider', 'gmail');
+    const existingGmail = (gmailRows ?? []).find(row => {
+      const addrs = [row.from_email, row.email].map(v => String(v || '').toLowerCase());
+      return addrs.includes(emailKey);
+    }) ?? null;
     const gmailRefresh = incomingRefreshToken(tokens) ?? existingGmail?.refresh_token ?? null;
 
     const gmailRow = {
@@ -116,26 +120,32 @@ export async function GET(request: NextRequest) {
       access_token: tokens.access_token,
       refresh_token: gmailRefresh,
       expiry_date: expiresAt,
+      expires_at: expiresAt,
       updated_at: new Date().toISOString(),
     };
-    let { error: upsertErr } = await supabase
-      .from('email_connections')
-      .upsert(gmailRow, { onConflict: 'user_id,provider' });
+    let upsertErr = existingGmail?.id
+      ? (await supabase.from('email_connections').update(gmailRow).eq('id', existingGmail.id)).error
+      : (await supabase.from('email_connections').insert(gmailRow)).error;
 
     if (upsertErr) {
-      const fallback = await supabase.from('email_connections').upsert(
-        {
-          user_id: userId,
-          provider: 'gmail',
-          email_address: googleEmail,
-          access_token: tokens.access_token,
-          refresh_token: gmailRefresh,
-          expires_at: expiresAt,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'user_id,provider' }
-      );
+      const slim = {
+        user_id: userId,
+        provider: 'gmail',
+        email: googleEmail,
+        from_email: googleEmail,
+        access_token: tokens.access_token,
+        refresh_token: gmailRefresh,
+        expiry_date: expiresAt,
+        updated_at: new Date().toISOString(),
+      };
+      const fallback = existingGmail?.id
+        ? await supabase.from('email_connections').update(slim).eq('id', existingGmail.id)
+        : await supabase.from('email_connections').insert(slim);
       upsertErr = fallback.error;
+    }
+
+    if (upsertErr && /duplicate|unique/i.test(upsertErr.message || '')) {
+      return NextResponse.redirect(`${origin}${redirectAfter}?gmail_error=run_send_sql`);
     }
 
     if (upsertErr) {
