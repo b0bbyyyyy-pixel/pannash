@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { findLeadByPhone } from '@/lib/leads/findByPhone';
+import { last10, phonesOverlap } from '@/lib/leads/phone';
 
 function getAdminClient() {
   return createClient(
@@ -27,6 +27,20 @@ async function leadRecord(supabase: SupabaseClient, userId: string, id: string):
     .maybeSingle();
   if (!data?.id) return null;
   return { id: data.id, notes: data.notes ?? null, company: data.company ?? null };
+}
+
+async function findLeadIdByPhone(supabase: SupabaseClient, userId: string, phone: string): Promise<string | null> {
+  const digits = last10(phone);
+  if (digits.length !== 10) return null;
+  const pattern = `%${digits.slice(0, 3)}%${digits.slice(3, 6)}%${digits.slice(6)}%`;
+  const { data } = await supabase
+    .from('leads')
+    .select('id, phone, phone_e164')
+    .eq('user_id', userId)
+    .or(`phone.ilike.${pattern},phone_e164.ilike.${pattern}`)
+    .limit(10);
+  const row = (data ?? []).find((lead) => phonesOverlap(lead.phone, phone) || phonesOverlap(lead.phone_e164, phone));
+  return row?.id ?? null;
 }
 
 async function findLeadByEmail(supabase: SupabaseClient, userId: string, email: string): Promise<ExistingLead | null> {
@@ -137,10 +151,10 @@ export async function POST(req: NextRequest) {
   ].join('\n');
 
   const businessPhone = field(form, 'businessPhone');
-  const phoneMatch = await findLeadByPhone(supabase, mobile, ownerUserId)
-    ?? (businessPhone ? await findLeadByPhone(supabase, businessPhone, ownerUserId) : null);
+  const phoneMatchId = await findLeadIdByPhone(supabase, ownerUserId, mobile)
+    ?? (businessPhone ? await findLeadIdByPhone(supabase, ownerUserId, businessPhone) : null);
   const emailMatch = await findLeadByEmail(supabase, ownerUserId, email);
-  const matchedId = phoneMatch?.id ?? emailMatch?.id ?? null;
+  const matchedId = phoneMatchId ?? emailMatch?.id ?? null;
   const existing = matchedId ? await leadRecord(supabase, ownerUserId, matchedId) : null;
 
   let leadId = existing?.id ?? '';
