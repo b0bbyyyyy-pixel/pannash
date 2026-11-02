@@ -3,6 +3,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { last10, phonesOverlap } from '@/lib/leads/phone';
 import type { FundingApplicationData } from '@/lib/fundingApplication';
 import { buildFundingApplicationPdf } from '@/lib/fundingApplicationPdf';
+import { notifyLeadActivity } from '@/lib/casper/ping';
 
 function getAdminClient() {
   return createClient(
@@ -389,5 +390,28 @@ export async function POST(req: NextRequest) {
   }
 
   console.log(`[one-funding application] Lead ${leadId} — ${firstName} ${lastName}${existing ? ' (matched)' : ''}`);
+
+  const who = `${firstName} ${lastName}`.trim() || legalName;
+  try {
+    await notifyLeadActivity(supabase, {
+      userId: ownerUserId,
+      body: `Casper: ${who} submitted a One Funding application${legalName ? ` for ${legalName}` : ''}.`,
+    });
+  } catch (err) {
+    console.warn('[one-funding application] activity ping failed', err);
+  }
+  try {
+    const { onCasperDocsReceived } = await import('@/lib/casper/docs');
+    await onCasperDocsReceived(supabase, {
+      userId: ownerUserId,
+      leadId,
+      fileName: 'One Funding application',
+      columnField: 'documents',
+      skipPing: true,
+    });
+  } catch (err) {
+    console.warn('[one-funding application] casper docs hook failed', err);
+  }
+
   return NextResponse.json({ ok: true, leadId, matched: Boolean(existing), failed });
 }

@@ -599,7 +599,7 @@ export function PingPanel() {
         <label className="flex items-center justify-between gap-3 mb-3">
           <span className="text-sm text-[#1a1a1a]">
             Lead activity updates
-            <span className="block text-[11px] text-gray-400 font-normal">Apps and bank statements landing in the CRM</span>
+            <span className="block text-[11px] text-gray-400 font-normal">Apps, One Funding submissions, and bank statements landing in the CRM</span>
           </span>
           <input
             type="checkbox"

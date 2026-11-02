@@ -108,6 +108,21 @@ export async function notifyParseFinished(
   });
 }
 
+/** Text the user when an application or other lead activity lands. Independent of the chat-ping toggle. */
+export async function notifyLeadActivity(
+  supabase: { from: (table: string) => any },
+  args: { userId: string; body: string },
+): Promise<{ sent: boolean; reason?: string }> {
+  const settings = await getPingSettings(supabase, args.userId);
+  if (!settings.activity) return { sent: false, reason: 'activity_off' };
+  return sendCasperPing(supabase, {
+    userId: args.userId,
+    body: args.body,
+    kind: 'docs',
+    requireEnabled: false,
+  });
+}
+
 /** Text the user when a lead texts the inbox. Independent of the chat-ping toggle. */
 export async function notifyInboxText(
   supabase: { from: (table: string) => any },

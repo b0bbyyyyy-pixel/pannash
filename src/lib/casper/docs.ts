@@ -34,6 +34,7 @@ export async function onCasperDocsReceived(
     columnField?: string | null;
     filePath?: string | null;
     attachmentId?: string | null;
+    skipPing?: boolean;
   },
 ) {
   const kind = classifyDoc(args.fileName, args.columnField);
@@ -107,15 +108,18 @@ export async function onCasperDocsReceived(
     },
   });
 
-  const ping = await getPingSettings(supabase, args.userId);
-  if (ping.activity) {
-    await sendCasperPing(supabase, {
-      userId: args.userId,
-      kind: 'docs',
-      body: kind === 'application'
-        ? `Casper: ${lead.name || 'A lead'} sent the funding application. Auto-replies are off.`
-        : `Casper: ${lead.name || 'A lead'} sent bank statements. Auto-replies are off.`,
-    });
+  if (!args.skipPing) {
+    const ping = await getPingSettings(supabase, args.userId);
+    if (ping.activity) {
+      await sendCasperPing(supabase, {
+        userId: args.userId,
+        kind: 'docs',
+        requireEnabled: false,
+        body: kind === 'application'
+          ? `Casper: ${lead.name || 'A lead'} sent the funding application. Auto-replies are off.`
+          : `Casper: ${lead.name || 'A lead'} sent bank statements. Auto-replies are off.`,
+      });
+    }
   }
 
   return { phase, runId, kind };
