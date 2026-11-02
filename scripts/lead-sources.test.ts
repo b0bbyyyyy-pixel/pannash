@@ -10,6 +10,7 @@ import {
   optimizedPackName,
   resolveListSource,
   slugLeadSource,
+  uniqueLeadSources,
 } from '../src/lib/smsDrip/leadSources';
 import { upsertOptimizedPack } from '../src/lib/smsDrip/optimizeTemplates';
 
@@ -38,6 +39,15 @@ assert(optimizedPackName('New Data') === 'Optimized · New Data', 'pack name');
 assert(isOptimizedPack({ id: 'optimized:new-data', name: 'Optimized · New Data' }), 'source pack is optimized');
 assert(!isOptimizedPack({ id: 'abc', name: 'Set 1' }), 'regular pack');
 assert(slugLeadSource('Broker Data!') === 'broker-data', 'custom slug');
+const known = uniqueLeadSources([
+  { key: 'new-data', label: 'New Data' },
+  { key: 'retail-full-packs', label: 'retail-full-packs' },
+  { key: 'restaurant-leads', label: 'restaurant-leads' },
+  { key: 'retail-full-packs', label: 'Retail Full Packs' },
+]);
+assert(known.some(s => s.key === 'ai-full-packs'), 'unique keeps builtins');
+assert(known.filter(s => s.key === 'retail-full-packs').length === 1, 'unique de-dupes custom');
+assert(known.some(s => s.key === 'restaurant-leads'), 'unique includes custom campaign sources');
 
 const merged = upsertOptimizedPack(
   [

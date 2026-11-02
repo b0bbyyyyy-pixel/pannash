@@ -10,6 +10,7 @@ import DocumentVault from '@/components/DocumentVault';
 import { usePolling } from '@/lib/sync/usePolling';
 import type { BillingCredits } from '@/lib/billing/credits';
 import { hasUnseenMissedCall, MISSED_CALLS_SEEN_EVENT } from '@/lib/telephony/missed';
+import InboxPingSwitch from '@/components/InboxPingSwitch';
 
 type DripJobSummary = {
   id: string;
@@ -278,20 +279,18 @@ export default function Navbar({ userName }: NavbarProps) {
                 >
                   User Profile
                 </Link>
-                <Link
-                  href="/settings/timezone"
-                  className="block px-4 py-2.5 text-sm text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors"
-                  onClick={() => setShowDropdown(false)}
-                >
-                  Timezone
-                </Link>
-                <Link
-                  href="/settings/mobile-text"
-                  className="block px-4 py-2.5 text-sm text-[#1a1a1a] hover:bg-[#f5f5f5] transition-colors"
-                  onClick={() => setShowDropdown(false)}
-                >
-                  Mobile Text
-                </Link>
+                <div className="flex items-center hover:bg-[#f5f5f5] transition-colors">
+                  <Link
+                    href="/settings/mobile-text"
+                    className="flex-1 px-4 py-2.5 text-sm text-[#1a1a1a]"
+                    onClick={() => setShowDropdown(false)}
+                  >
+                    Mobile Text
+                  </Link>
+                  <div className="pr-4 pl-2">
+                    <InboxPingSwitch />
+                  </div>
+                </div>
                 <hr className="my-2 border-[#e5e5e5]" />
                 <button
                   onClick={async () => {

@@ -8,7 +8,7 @@ import CampaignLeadsView, { CampaignLead } from './CampaignLeadsView';
 import CampaignRenameWrapperComponent from './CampaignRenameWrapper';
 import NewCampaignModal from './NewCampaignModal';
 import CampaignOverviewInsights from './CampaignOverviewInsights';
-import { guessLeadSource, resolveListSource } from '@/lib/smsDrip/leadSources';
+import { guessLeadSource, resolveListSource, uniqueLeadSources } from '@/lib/smsDrip/leadSources';
 import { CAMPAIGN_LEAD_COLS, CAMPAIGN_LEAD_COLS_MIN, asRows, hydrateCampaignUd, selectFirst } from '@/lib/leads/listColumns';
 
 export default async function LeadsPage({
@@ -124,6 +124,10 @@ export default async function LeadsPage({
       replyCount: stats.replyCount,
     };
   });
+
+  const existingSources = uniqueLeadSources(
+    campaigns.map(c => ({ key: c.sourceKey, label: c.sourceLabel })),
+  );
 
   // ── Fetch leads for selected campaign ────────────────────────────────────
   let campaignLeads: CampaignLead[] = [];
@@ -348,7 +352,7 @@ export default async function LeadsPage({
           {!selectedListId && (
             <div className="flex items-center gap-4">
               <CampaignOverviewInsights />
-              <NewCampaignModal createCampaign={createCampaignNamed} />
+              <NewCampaignModal createCampaign={createCampaignNamed} existingSources={existingSources} />
             </div>
           )}
         </div>
@@ -361,6 +365,7 @@ export default async function LeadsPage({
             listId={selectedListId}
             sourceKey={resolveListSource(selectedList || {}).key}
             sourceLabel={resolveListSource(selectedList || {}).label}
+            existingSources={existingSources}
             deleteCampaign={deleteListWithLeads}
           />
         ) : (

@@ -10,7 +10,7 @@ import { zoneForLocation, formatLocal } from '@/lib/smsDrip/timezones';
 import UploadForm from './UploadForm';
 import { formatDripTally, tallyDripSends } from '@/lib/smsDrip/tally';
 import { dripPauseBanner, dripPauseChipLabel } from '@/lib/smsDrip/carrierBlock';
-import { BUILTIN_LEAD_SOURCES, slugLeadSource } from '@/lib/smsDrip/leadSources';
+import { slugLeadSource, uniqueLeadSources, type LeadSource } from '@/lib/smsDrip/leadSources';
 
 interface DripJob {
   id: string;
@@ -56,6 +56,7 @@ interface Props {
   listId: string;
   sourceKey?: string;
   sourceLabel?: string;
+  existingSources?: LeadSource[];
   deleteCampaign?: (formData: FormData) => Promise<void>;
 }
 
@@ -139,10 +140,14 @@ function listedRevenue(notes: string | null | undefined): string {
   return '';
 }
 
-export default function CampaignLeadsView({ leads: initialLeads, campaignName, listId, sourceKey, sourceLabel, deleteCampaign }: Props) {
+export default function CampaignLeadsView({ leads: initialLeads, campaignName, listId, sourceKey, sourceLabel, existingSources = [], deleteCampaign }: Props) {
   const router = useRouter();
   const [source, setSource] = useState(sourceKey || '');
   useEffect(() => { setSource(sourceKey || ''); }, [sourceKey]);
+  const sourceChoices = uniqueLeadSources([
+    ...existingSources,
+    { key: sourceKey, label: sourceLabel },
+  ]).filter(s => s.key !== 'uncategorized');
   const [leads, setLeads] = useState<CampaignLead[]>(initialLeads);
   const [search, setSearch] = useState('');
   const [loadingId, setLoadingId] = useState<string | null>(null);
@@ -362,8 +367,10 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
                 let next = e.target.value;
                 if (next === '__new__') {
                   const typed = window.prompt('New lead source name');
-                  next = slugLeadSource(typed || '');
-                  if (!next) return;
+                  const key = slugLeadSource(typed || '');
+                  if (!key) return;
+                  const match = sourceChoices.find(s => s.key === key);
+                  next = match?.key || key;
                 }
                 const prev = source;
                 setSource(next);
@@ -383,10 +390,10 @@ export default function CampaignLeadsView({ leads: initialLeads, campaignName, l
               title="Lead source"
             >
               <option value="">Uncategorized</option>
-              {BUILTIN_LEAD_SOURCES.map(s => (
+              {sourceChoices.map(s => (
                 <option key={s.key} value={s.key}>{s.label}</option>
               ))}
-              {source && !BUILTIN_LEAD_SOURCES.some(s => s.key === source) ? (
+              {source && !sourceChoices.some(s => s.key === source) ? (
                 <option value={source}>{sourceLabel || source}</option>
               ) : null}
               <option value="__new__">New source…</option>

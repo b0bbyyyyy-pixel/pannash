@@ -36,6 +36,23 @@ export function sourceFromStored(raw: string | null | undefined): LeadSource | n
   return { key: slugLeadSource(stored), label: stored };
 }
 
+/** Built-in sources first, then unique custom sources from existing campaigns. */
+export function uniqueLeadSources(
+  rows: Array<{ key?: string | null; label?: string | null }>,
+): LeadSource[] {
+  const seen = new Set<string>(BUILTIN_LEAD_SOURCES.map(s => s.key));
+  const custom: LeadSource[] = [];
+  for (const row of rows) {
+    const rawKey = String(row.key || '').trim();
+    const rawLabel = String(row.label || '').trim();
+    const key = slugLeadSource(rawKey || rawLabel);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    custom.push({ key, label: rawLabel || rawKey || key });
+  }
+  return [...BUILTIN_LEAD_SOURCES, ...custom];
+}
+
 export function resolveListSource(list: { name?: string | null; source_category?: string | null }): LeadSource {
   return sourceFromStored(list.source_category) || guessLeadSource(list.name) || { key: 'uncategorized', label: 'Uncategorized' };
 }

@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import BusinessNameRow from '@/app/settings/profile/BusinessNameRow';
+import TimezoneClient from '@/app/settings/profile/TimezoneClient';
 
 export default async function ProfilePage() {
   const cookieStore = await cookies();
@@ -22,6 +23,12 @@ export default async function ProfilePage() {
 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/auth');
+
+  const { data: settings } = await supabase
+    .from('user_settings')
+    .select('timezone')
+    .eq('user_id', user.id)
+    .maybeSingle();
 
   return (
     <div className="min-h-screen bg-[#fdfdfd]">
@@ -75,6 +82,11 @@ export default async function ProfilePage() {
               </div>
             </div>
           </div>
+
+          <TimezoneClient
+            browserTimezone="America/New_York"
+            savedTimezone={settings?.timezone || null}
+          />
 
           {/* Update Profile (Coming Soon) */}
           <div className="bg-white border border-gray-200 rounded-lg p-6">

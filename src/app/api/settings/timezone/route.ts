@@ -107,7 +107,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    revalidatePath('/settings/timezone');
+    revalidatePath('/settings/profile');
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Error in timezone update:', error);

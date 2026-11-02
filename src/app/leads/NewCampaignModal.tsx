@@ -3,10 +3,11 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import UploadForm from './UploadForm';
-import { BUILTIN_LEAD_SOURCES, guessLeadSource, slugLeadSource } from '@/lib/smsDrip/leadSources';
+import { guessLeadSource, slugLeadSource, uniqueLeadSources, type LeadSource } from '@/lib/smsDrip/leadSources';
 
 interface Props {
   createCampaign: (name: string, sourceCategory?: string) => Promise<string | null>; // returns new list id
+  existingSources?: LeadSource[];
 }
 
 function todayLabel() {
@@ -15,7 +16,7 @@ function todayLabel() {
 
 type Step = 'name' | 'upload';
 
-export default function NewCampaignModal({ createCampaign }: Props) {
+export default function NewCampaignModal({ createCampaign, existingSources = [] }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<Step>('name');
@@ -24,6 +25,7 @@ export default function NewCampaignModal({ createCampaign }: Props) {
   const [listId, setListId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
+  const sourceOptions = uniqueLeadSources(existingSources).filter(s => s.key !== 'uncategorized');
 
   const handleOpen = () => {
     setStep('name');
@@ -113,7 +115,9 @@ export default function NewCampaignModal({ createCampaign }: Props) {
                       if (e.target.value === '__new__') {
                         const typed = window.prompt('New lead source name');
                         const key = slugLeadSource(typed || '');
-                        if (key) setSource(key);
+                        if (!key) return;
+                        const match = sourceOptions.find(s => s.key === key);
+                        setSource(match?.key || key);
                         return;
                       }
                       setSource(e.target.value);
@@ -121,10 +125,10 @@ export default function NewCampaignModal({ createCampaign }: Props) {
                     className="w-full border border-[#e5e5e5] rounded-lg px-4 py-2.5 text-sm text-[#1a1a1a] focus:outline-none focus:border-[#1a1a1a] transition-colors bg-white"
                   >
                     <option value="">Guess from the name</option>
-                    {BUILTIN_LEAD_SOURCES.map(s => (
+                    {sourceOptions.map(s => (
                       <option key={s.key} value={s.key}>{s.label}</option>
                     ))}
-                    {source && !BUILTIN_LEAD_SOURCES.some(s => s.key === source) ? (
+                    {source && !sourceOptions.some(s => s.key === source) ? (
                       <option value={source}>{source}</option>
                     ) : null}
                     <option value="__new__">New source…</option>

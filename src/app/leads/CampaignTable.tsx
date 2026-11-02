@@ -5,7 +5,7 @@ import { usePolling } from '@/lib/sync/usePolling';
 import { useRouter } from 'next/navigation';
 import { dripPauseChipLabel } from '@/lib/smsDrip/carrierBlock';
 import CampaignInsightsModal from '@/components/CampaignInsightsModal';
-import { BUILTIN_LEAD_SOURCES } from '@/lib/smsDrip/leadSources';
+import { uniqueLeadSources } from '@/lib/smsDrip/leadSources';
 
 interface DripJobSummary {
   id: string;
@@ -90,18 +90,10 @@ export default function CampaignTable({ campaigns, onRename }: Props) {
     if (e.key === 'Escape') setEditingId(null);
   };
 
-  const sourceOptions = useMemo(() => {
-    const extras = campaigns
-      .map(c => ({ key: c.sourceKey || '', label: c.sourceLabel || '' }))
-      .filter(s => s.key && !BUILTIN_LEAD_SOURCES.some(b => b.key === s.key));
-    const seen = new Set<string>();
-    const custom = extras.filter(s => {
-      if (seen.has(s.key)) return false;
-      seen.add(s.key);
-      return true;
-    });
-    return [...BUILTIN_LEAD_SOURCES, ...custom];
-  }, [campaigns]);
+  const sourceOptions = useMemo(
+    () => uniqueLeadSources(campaigns.map(c => ({ key: c.sourceKey, label: c.sourceLabel }))),
+    [campaigns],
+  );
 
   const visible = sourceFilter
     ? campaigns.filter(c => (c.sourceKey || '') === sourceFilter)
