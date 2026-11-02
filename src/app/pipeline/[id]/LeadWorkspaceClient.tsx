@@ -243,8 +243,8 @@ function SnapRow({
   };
 
   return (
-    <div className="flex items-start justify-between gap-3 py-1.5 border-b border-[#f5f5f5] last:border-b-0">
-      <span className="text-xs text-[#9b9b9b] min-w-0 pt-0.5">{label}</span>
+    <div className="flex items-start justify-between gap-1 py-1 border-b border-[#f5f5f5] last:border-b-0">
+      <span className="text-[10px] leading-tight text-[#9b9b9b] min-w-0 pt-px">{label}</span>
       {editing ? (
         <input
           type="text"
@@ -253,11 +253,11 @@ function SnapRow({
           onBlur={handleSave}
           onKeyDown={e => { if (e.key === 'Enter') void handleSave(); if (e.key === 'Escape') setEditing(false); }}
           autoFocus
-          className={`${wide ? 'w-[9.5rem]' : 'w-[6.75rem]'} px-1.5 py-0.5 text-sm text-right border border-[#e5e5e5] rounded focus:outline-none focus:ring-1 focus:ring-[#1a1a1a]`}
+          className={`${wide ? 'w-[4.75rem]' : 'w-[3.75rem]'} px-1 py-px text-[11px] text-right border border-[#e5e5e5] rounded focus:outline-none focus:ring-1 focus:ring-[#1a1a1a]`}
         />
       ) : (
         <span
-          className="text-sm text-[#1a1a1a] text-right break-words min-w-0 cursor-pointer hover:underline underline-offset-2 decoration-dotted"
+          className="text-[11px] leading-tight text-[#1a1a1a] text-right break-words min-w-0 cursor-pointer hover:underline underline-offset-2 decoration-dotted"
           title="Click to edit"
           onClick={start}
         >
@@ -302,18 +302,18 @@ function SnapTibRow({
   };
 
   return (
-    <div className="flex items-start justify-between gap-3 py-1.5 border-b border-[#f5f5f5] last:border-b-0">
-      <span className="text-xs text-[#9b9b9b] min-w-0 pt-0.5">{label}</span>
+    <div className="flex items-start justify-between gap-1 py-1 border-b border-[#f5f5f5] last:border-b-0">
+      <span className="text-[10px] leading-tight text-[#9b9b9b] min-w-0 pt-px">{label}</span>
       {editing ? (
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-0.5">
           <input
             type="number"
             min={0}
             value={years}
             onChange={e => setYears(Number(e.target.value) || 0)}
-            className="w-10 px-1 py-0.5 text-sm text-right border border-[#e5e5e5] rounded focus:outline-none focus:ring-1 focus:ring-[#1a1a1a]"
+            className="w-7 px-0.5 py-px text-[11px] text-right border border-[#e5e5e5] rounded focus:outline-none focus:ring-1 focus:ring-[#1a1a1a]"
           />
-          <span className="text-[10px] text-[#9b9b9b]">y</span>
+          <span className="text-[9px] text-[#9b9b9b]">y</span>
           <input
             type="number"
             min={0}
@@ -321,14 +321,14 @@ function SnapTibRow({
             value={mos}
             onChange={e => setMos(Number(e.target.value) || 0)}
             onKeyDown={e => { if (e.key === 'Enter') void handleSave(); if (e.key === 'Escape') setEditing(false); }}
-            className="w-10 px-1 py-0.5 text-sm text-right border border-[#e5e5e5] rounded focus:outline-none focus:ring-1 focus:ring-[#1a1a1a]"
+            className="w-7 px-0.5 py-px text-[11px] text-right border border-[#e5e5e5] rounded focus:outline-none focus:ring-1 focus:ring-[#1a1a1a]"
           />
-          <span className="text-[10px] text-[#9b9b9b]">m</span>
-          <button type="button" onClick={() => void handleSave()} className="text-[10px] text-[#1a1a1a] font-medium">Save</button>
+          <span className="text-[9px] text-[#9b9b9b]">m</span>
+          <button type="button" onClick={() => void handleSave()} className="text-[9px] text-[#1a1a1a] font-medium">Save</button>
         </div>
       ) : (
         <span
-          className="text-sm text-[#1a1a1a] text-right cursor-pointer hover:underline underline-offset-2 decoration-dotted"
+          className="text-[11px] leading-tight text-[#1a1a1a] text-right cursor-pointer hover:underline underline-offset-2 decoration-dotted"
           title="Click to edit"
           onClick={start}
         >
@@ -1701,10 +1701,10 @@ export default function LeadWorkspaceClient({
             const rsColor = !po ? '#9b9b9b' : po.riskScore >= 70 ? '#15803d' : po.riskScore >= 50 ? '#a16207' : '#b91c1c';
             return (
           <div className="flex h-full min-h-0 overflow-hidden">
-            <aside className="w-[300px] flex-shrink-0 min-w-0 overflow-x-hidden overflow-y-auto border-r border-[#e5e5e5] bg-[#fafafa] px-3 py-3 space-y-3">
-              <div className="bg-white border border-[#ececec] rounded-xl px-3 py-2.5">
-                <p className="text-[11px] font-semibold text-[#9b9b9b] uppercase tracking-wider mb-1">Deal Snapshot</p>
-                <p className="text-[10px] text-[#9b9b9b] mb-1">Click a value to correct OCR</p>
+            <aside className="w-[160px] flex-shrink-0 min-w-0 overflow-x-hidden overflow-y-auto border-r border-[#e5e5e5] bg-[#fafafa] px-1.5 py-2 space-y-2">
+              <div className="bg-white border border-[#ececec] rounded-lg px-2 py-1.5">
+                <p className="text-[9px] font-semibold text-[#9b9b9b] uppercase tracking-wider mb-0.5">Deal Snapshot</p>
+                <p className="text-[8px] text-[#9b9b9b] mb-0.5">Click a value to correct OCR</p>
                 <SnapRow
                   label="Requested"
                   value={money(lead.value ?? ud.requestedAmount)}
@@ -1785,7 +1785,7 @@ export default function LeadWorkspaceClient({
                   onSave={v => saveUdPatch({ purposeOfFunds: v.trim() || null })}
                 />
                 {snapFlags.length > 0 && (
-                  <p className="mt-2 text-[11px] text-[#6b6b6b]">
+                  <p className="mt-1.5 text-[9px] leading-tight text-[#6b6b6b]">
                     {snapFlags.map((f, i) => (
                       <span key={f}>{i > 0 ? ' · ' : ''}{f}</span>
                     ))}
@@ -1794,7 +1794,7 @@ export default function LeadWorkspaceClient({
               </div>
 
               {!finMeta.hasParsed ? (
-                <p className="text-xs text-[#9b9b9b] px-1">
+                <p className="text-[10px] leading-tight text-[#9b9b9b] px-0.5">
                   No bank statements parsed yet
                   {' '}
                   <button
@@ -1810,16 +1810,16 @@ export default function LeadWorkspaceClient({
                   <button
                     type="button"
                     onClick={() => setShowFullFinancials(true)}
-                    className="w-full flex items-center justify-between gap-3 bg-white border border-[#ececec] rounded-xl px-3 py-2"
+                    className="w-full flex items-center justify-between gap-1.5 bg-white border border-[#ececec] rounded-lg px-2 py-1.5"
                   >
-                    <span className="text-sm text-[#1a1a1a]">
+                    <span className="text-[10px] leading-tight text-[#1a1a1a]">
                       Full financials
                       <span className="text-[#9b9b9b]">
                         {' · '}{finMeta.monthCount} mo
                         {finMeta.analyzedAt ? ` · ${finMeta.analyzedAt}` : ''}
                       </span>
                     </span>
-                    <span className="text-[11px] text-[#6b6b6b] flex-shrink-0">Expand</span>
+                    <span className="text-[9px] text-[#6b6b6b] flex-shrink-0">Expand</span>
                   </button>
                 </div>
               )}
@@ -1828,7 +1828,7 @@ export default function LeadWorkspaceClient({
                 <button
                   type="button"
                   onClick={() => setShowProjectedOffer(v => !v)}
-                  className="w-full px-3 py-2 border border-[#e5e5e5] bg-white text-[#1a1a1a] text-xs font-medium rounded-md hover:bg-[#f5f5f5] transition-colors flex items-center justify-between gap-1.5"
+                  className="w-full px-2 py-1.5 border border-[#e5e5e5] bg-white text-[#1a1a1a] text-[10px] font-medium rounded-md hover:bg-[#f5f5f5] transition-colors flex items-center justify-between gap-1"
                 >
                   <span>Projected Offer</span>
                   <svg className={`w-3 h-3 transition-transform ${showProjectedOffer ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1838,31 +1838,31 @@ export default function LeadWorkspaceClient({
                 {showProjectedOffer && (
                   <div className="mt-2 bg-white border border-[#ececec] rounded-xl overflow-hidden">
                     {!po ? (
-                      <p className="text-xs text-[#9b9b9b] text-center py-3 px-3">Enter Avg Monthly Revenue to generate a projection.</p>
+                      <p className="text-[10px] text-[#9b9b9b] text-center py-2 px-2">Enter Avg Monthly Revenue to generate a projection.</p>
                     ) : (
                       <div className="divide-y divide-[#f0f0f0]">
-                        <div className="flex justify-between items-center px-3 py-2">
-                          <span className="text-xs text-[#9b9b9b]">Max Approved</span>
-                          <span className="text-sm font-bold text-[#1a1a1a]">${po.maxApproved.toLocaleString()}</span>
+                        <div className="flex justify-between items-center px-2 py-1.5">
+                          <span className="text-[10px] text-[#9b9b9b]">Max Approved</span>
+                          <span className="text-[11px] font-bold text-[#1a1a1a]">${po.maxApproved.toLocaleString()}</span>
                         </div>
-                        <div className="flex justify-between items-center px-3 py-2">
-                          <span className="text-xs text-[#9b9b9b]">Factor Rate</span>
-                          <span className="text-sm font-semibold text-[#1a1a1a]">{po.factorRate.toFixed(2)}x</span>
+                        <div className="flex justify-between items-center px-2 py-1.5">
+                          <span className="text-[10px] text-[#9b9b9b]">Factor Rate</span>
+                          <span className="text-[11px] font-semibold text-[#1a1a1a]">{po.factorRate.toFixed(2)}x</span>
                         </div>
-                        <div className="flex justify-between items-center px-3 py-2">
-                          <span className="text-xs text-[#9b9b9b]">Risk Score</span>
-                          <span className="text-sm font-semibold" style={{ color: rsColor }}>{po.riskScore} / 100</span>
+                        <div className="flex justify-between items-center px-2 py-1.5">
+                          <span className="text-[10px] text-[#9b9b9b]">Risk Score</span>
+                          <span className="text-[11px] font-semibold" style={{ color: rsColor }}>{po.riskScore} / 100</span>
                         </div>
-                        <div className="flex justify-between items-center px-3 py-2">
-                          <span className="text-xs text-[#9b9b9b]">Est. Weekly Payback</span>
-                          <span className="text-sm font-semibold text-[#1a1a1a]">${po.weeklyPayback.toLocaleString()}</span>
+                        <div className="flex justify-between items-center px-2 py-1.5">
+                          <span className="text-[10px] text-[#9b9b9b]">Est. Weekly Payback</span>
+                          <span className="text-[11px] font-semibold text-[#1a1a1a]">${po.weeklyPayback.toLocaleString()}</span>
                         </div>
-                        <div className="flex justify-between items-center px-3 py-2">
-                          <span className="text-xs text-[#9b9b9b]">Holdback %</span>
-                          <span className="text-sm font-semibold text-[#1a1a1a]">{po.holdback}%</span>
+                        <div className="flex justify-between items-center px-2 py-1.5">
+                          <span className="text-[10px] text-[#9b9b9b]">Holdback %</span>
+                          <span className="text-[11px] font-semibold text-[#1a1a1a]">{po.holdback}%</span>
                         </div>
-                        <div className="px-3 py-2 bg-[#fafafa]">
-                          <p className="text-[10px] text-[#9b9b9b]">Projection only — based on lead financials.</p>
+                        <div className="px-2 py-1.5 bg-[#fafafa]">
+                          <p className="text-[9px] text-[#9b9b9b]">Projection only — based on lead financials.</p>
                         </div>
                       </div>
                     )}
