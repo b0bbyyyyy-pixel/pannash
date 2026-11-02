@@ -23,12 +23,12 @@ export type SendAccountOption = {
   preferred: boolean;
 };
 
-export function isGmailSend(conn: SendConnection | null | undefined) {
-  return conn?.provider === 'gmail' && !!(conn.access_token || conn.refresh_token);
+export function isGmailSend(conn: SendConnection | null | undefined): conn is SendConnection {
+  return !!conn && conn.provider === 'gmail' && !!(conn.access_token || conn.refresh_token);
 }
 
-export function isSmtpSend(conn: SendConnection | null | undefined) {
-  return !!conn?.smtp_host;
+export function isSmtpSend(conn: SendConnection | null | undefined): conn is SendConnection {
+  return !!conn && !!conn.smtp_host;
 }
 
 export function canSendFrom(conn: SendConnection | null | undefined) {
