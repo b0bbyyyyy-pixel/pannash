@@ -30,13 +30,32 @@ const MUTED = rgb(0.45, 0.47, 0.50);
 const RULE = rgb(0.88, 0.89, 0.91);
 const WHITE = rgb(1, 1, 1);
 
-const LEGAL = [
-  'By signing below, each of the above listed business and business owner/officer (individually and collectively, "Applicant") certify that the Applicant is an owner of the above named business and that all information provided in the application is true and accurate.',
-  'Applicant shall immediately notify American Business Funding LLC of any change in such information or financial condition. Applicant authorizes American Business Funding LLC to share this application with each of its representatives, successors, assigns and designees ("Assignees") or any other parties that may be involved with the extension of credit pursuant to this application including those who offer commercial loans having daily repayment features or purchases of future receivables including Merchant Cash Advance transactions, including without limitation the application therefor (collectively, "Transactions"). Applicant further authorizes American Business Funding LLC and all Assignees to request and receive any third party consumer or personal, business and investigative reports and other information about Applicant, including credit card processor statements and bank statements, from one or more consumer reporting agencies, such as TransUnion, Experian, and Equifax, and from other credit bureaus, banks, creditors and other third parties.',
-  'You also authorize American Business Funding LLC to transmit this Application, with any of the foregoing information submitted/obtained in connection with this application, to any or all of the Assignees for the foregoing purposes. You also consent to the release, by any creditor or financial institution, of any information relating to any of you, to American Business Funding LLC and to each of the Assignees, on its own behalf.',
-  'You intend to sign this Application electronically and consent to transacting business with American Business Funding LLC and its affiliates electronically. You are providing your business cell phone and business e-mail address and hereby consent to the receipt of correspondence/messages regarding transactions with American Business Funding LLC and/or its affiliates on either medium. You also hereby consent to the receipt of text messages knowing that msg and data rates may apply (approximately 10 msgs/month).',
-  'You understand that consent to conduct business via electronic signatures and to receive text messages are not a condition of approval and you may opt-out of either/both by contacting American Business Funding LLC at info@Americanbusinessfunding.com. Your signature above certifies that you are authorized to sign this application on behalf of the Business and all the information contained herein is complete, true and accurate.',
-];
+const BRANDS = {
+  abf: {
+    header: 'AMERICAN BUSINESS FUND',
+    legalName: 'American Business Funding LLC',
+    email: 'info@Americanbusinessfunding.com',
+    broker: `Broker: ${APPLICATION_BROKER.name}  |  Email: ${APPLICATION_BROKER.email}`,
+    generated: 'Generated via American Business Funding LLC',
+  },
+  oneFunding: {
+    header: 'ONE FUNDING SOLUTION',
+    legalName: 'One Funding Solution',
+    email: 'hello@onefundingsolution.com',
+    broker: 'One Funding Solution  |  hello@onefundingsolution.com',
+    generated: 'Generated via One Funding Solution',
+  },
+} as const;
+
+function legalParagraphs(company: string, email: string) {
+  return [
+    'By signing below, each of the above listed business and business owner/officer (individually and collectively, "Applicant") certify that the Applicant is an owner of the above named business and that all information provided in the application is true and accurate.',
+    `Applicant shall immediately notify ${company} of any change in such information or financial condition. Applicant authorizes ${company} to share this application with each of its representatives, successors, assigns and designees ("Assignees") or any other parties that may be involved with the extension of credit pursuant to this application including those who offer commercial loans having daily repayment features or purchases of future receivables including Merchant Cash Advance transactions, including without limitation the application therefor (collectively, "Transactions"). Applicant further authorizes ${company} and all Assignees to request and receive any third party consumer or personal, business and investigative reports and other information about Applicant, including credit card processor statements and bank statements, from one or more consumer reporting agencies, such as TransUnion, Experian, and Equifax, and from other credit bureaus, banks, creditors and other third parties.`,
+    `You also authorize ${company} to transmit this Application, with any of the foregoing information submitted/obtained in connection with this application, to any or all of the Assignees for the foregoing purposes. You also consent to the release, by any creditor or financial institution, of any information relating to any of you, to ${company} and to each of the Assignees, on its own behalf.`,
+    `You intend to sign this Application electronically and consent to transacting business with ${company} and its affiliates electronically. You are providing your business cell phone and business e-mail address and hereby consent to the receipt of correspondence/messages regarding transactions with ${company} and/or its affiliates on either medium. You also hereby consent to the receipt of text messages knowing that msg and data rates may apply (approximately 10 msgs/month).`,
+    `You understand that consent to conduct business via electronic signatures and to receive text messages are not a condition of approval and you may opt-out of either/both by contacting ${company} at ${email}. Your signature above certifies that you are authorized to sign this application on behalf of the Business and all the information contained herein is complete, true and accurate.`,
+  ];
+}
 
 function drawTracked(
   page: PDFPage,
@@ -88,12 +107,13 @@ function wrap(text: string, font: PDFFont, size: number, maxWidth: number): stri
 
 export async function buildFundingApplicationPdf(
   data: FundingApplicationData,
-  opts: { signedAt?: Date; ip?: string } = {},
+  opts: { signedAt?: Date; ip?: string; brand?: keyof typeof BRANDS; signaturePng?: Uint8Array } = {},
 ): Promise<Uint8Array> {
   const signedAt = opts.signedAt ?? new Date();
   const stamp = formatStampDate(signedAt);
   const stampTime = formatStampDateTime(signedAt);
   const ip = (opts.ip || '').trim();
+  const brand = BRANDS[opts.brand ?? 'abf'];
 
   const doc = await PDFDocument.create();
   doc.registerFontkit(fontkit);
@@ -109,12 +129,12 @@ export async function buildFundingApplicationPdf(
   const contentW = right - ml;
   let y = 768;
 
-  drawTracked(page, 'AMERICAN BUSINESS FUND', W / 2, y, 11, bold, NAVY, 1.15, 'center');
+  drawTracked(page, brand.header, W / 2, y, 11, bold, NAVY, 1.15, 'center');
   y -= 14;
   drawTracked(page, 'ONLINE APPLICATION', W / 2, y, 8, bold, NAVY, 1.05, 'center');
   y -= 18;
 
-  page.drawText(`Broker: ${APPLICATION_BROKER.name}  |  Email: ${APPLICATION_BROKER.email}`, {
+  page.drawText(brand.broker, {
     x: ml,
     y,
     size: 8,
@@ -217,7 +237,7 @@ export async function buildFundingApplicationPdf(
   y -= 6;
   const legalSize = 5.7;
   const legalLead = 7.1;
-  for (const para of LEGAL) {
+  for (const para of legalParagraphs(brand.legalName, brand.email)) {
     const lines = wrap(para, font, legalSize, contentW);
     for (const line of lines) {
       if (y < sigTop + 22) break;
@@ -229,7 +249,7 @@ export async function buildFundingApplicationPdf(
 
   drawTracked(
     page,
-    `Generated via American Business Funding LLC - ${stamp}`,
+    `${brand.generated} - ${stamp}`,
     ml,
     sigTop + 10,
     6.5,
@@ -238,10 +258,39 @@ export async function buildFundingApplicationPdf(
     0.55,
   );
 
-  const drawSig = (title: string, signer: string, ipLine: string, date: string, x: number, width: number) => {
+  let signatureImage: Awaited<ReturnType<PDFDocument['embedPng']>> | null = null;
+  if (opts.signaturePng && opts.signaturePng.byteLength > 0) {
+    try {
+      signatureImage = await doc.embedPng(opts.signaturePng);
+    } catch {
+      signatureImage = null;
+    }
+  }
+
+  const drawSig = (
+    title: string,
+    signer: string,
+    ipLine: string,
+    date: string,
+    x: number,
+    width: number,
+    drawn?: boolean,
+  ) => {
     page.drawText(title, { x, y: sigTop - 6, size: 6.5, font: bold, color: MUTED });
     page.drawText('DATE', { x: x + width - 78, y: sigTop - 6, size: 6.5, font: bold, color: MUTED });
-    if (signer) {
+    if (drawn && signatureImage) {
+      const maxW = width - 96;
+      const maxH = 18;
+      const scale = Math.min(maxW / signatureImage.width, maxH / signatureImage.height);
+      const drawW = signatureImage.width * scale;
+      const drawH = signatureImage.height * scale;
+      page.drawImage(signatureImage, {
+        x,
+        y: sigTop - 26 - drawH + 16,
+        width: drawW,
+        height: drawH,
+      });
+    } else if (signer) {
       let sigSize = 22;
       const maxSig = width - 92;
       while (sigSize > 14 && script.widthOfTextAtSize(signer, sigSize) > maxSig) sigSize -= 1;
@@ -259,7 +308,7 @@ export async function buildFundingApplicationPdf(
 
   const half = contentW / 2;
   const ip1 = ip ? `IP: ${ip}  |  ${stampTime}` : `IP:  |  ${stampTime}`;
-  drawSig('OWNER 1 SIGNATURE', data.owner1Name, ip1, stamp, ml, half);
+  drawSig('OWNER 1 SIGNATURE', data.owner1Name, ip1, stamp, ml, half, Boolean(signatureImage));
   drawSig(
     'OWNER 2 SIGNATURE',
     o2?.name ?? '',

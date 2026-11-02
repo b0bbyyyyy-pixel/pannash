@@ -212,6 +212,16 @@ function parseSnapNumber(raw: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** A stored deal value of 0 is a placeholder, not an amount the owner requested. */
+function shownDealAmount(dealValue: unknown, requested: unknown): string {
+  const deal = Number(dealValue);
+  if (Number.isFinite(deal) && deal > 0) return String(dealValue);
+  if (requested == null) return '';
+  const text = String(requested).trim();
+  const n = Number(text.replace(/[^0-9.-]/g, ''));
+  return Number.isFinite(n) && n > 0 ? text : '';
+}
+
 function SnapRow({
   label,
   value,
@@ -1309,7 +1319,7 @@ export default function LeadWorkspaceClient({
   }), [lead.name, lead.email, lead.phone, lead.company, lead.value, ud]);
   const appComplete = appCheck.missing.length === 0;
   const missingList = appMissing.length ? appMissing : appCheck.missing;
-  const docsComplete = isDocsComplete(docCount);
+  const docsComplete = isDocsComplete(docCount, ud as Record<string, unknown>);
   const offersComplete = useMemo(
     () => isOffersComplete({ underwriting_data: ud, lead_status: lead.lead_status, submissions }),
     [ud, lead.lead_status, submissions],
@@ -1707,8 +1717,8 @@ export default function LeadWorkspaceClient({
                 <p className="text-[8px] text-[#9b9b9b] mb-0.5">Click a value to correct OCR</p>
                 <SnapRow
                   label="Requested"
-                  value={money(lead.value ?? ud.requestedAmount)}
-                  editValue={lead.value != null || ud.requestedAmount != null ? String(lead.value ?? ud.requestedAmount ?? '') : ''}
+                  value={money(shownDealAmount(lead.value, ud.requestedAmount))}
+                  editValue={shownDealAmount(lead.value, ud.requestedAmount)}
                   onSave={v => saveUdPatch({ requestedAmount: parseSnapNumber(v) }, { value: parseSnapNumber(v) })}
                 />
                 <SnapRow
@@ -1973,7 +1983,7 @@ export default function LeadWorkspaceClient({
               </Section>
 
               <Section title="Deal" collapsible defaultOpen={false} resetKey={initialLead.id}>
-                <Field label="Amount Requested"  value={lead.value != null ? String(lead.value) : str(ud.requestedAmount)} onSave={v => saveField('value', v)} />
+                <Field label="Amount Requested" value={shownDealAmount(lead.value, ud.requestedAmount)} onSave={v => saveField('value', v)} />
                 <Field
                   label="Follow-up"
                   value={lead.follow_up_at ? String(lead.follow_up_at).slice(0, 10) : null}

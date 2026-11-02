@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { last10, phonesOverlap } from '@/lib/leads/phone';
+import type { FundingApplicationData } from '@/lib/fundingApplication';
+import { buildFundingApplicationPdf } from '@/lib/fundingApplicationPdf';
 
 function getAdminClient() {
   return createClient(
@@ -55,6 +57,94 @@ async function findLeadByEmail(supabase: SupabaseClient, userId: string, email: 
     .limit(1);
   const row = Array.isArray(data) ? data[0] : null;
   return row?.id ? { id: row.id, notes: row.notes ?? null, company: row.company ?? null } : null;
+}
+
+function pdfMoney(raw: string) {
+  const n = Number(raw.replace(/[^0-9.]/g, ''));
+  if (!Number.isFinite(n) || n <= 0) return '';
+  return `$${Math.round(n).toLocaleString('en-US')}`;
+}
+
+function oneFundingPdfName(legalName: string) {
+  const safe = (legalName || 'Application').replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, '') || 'Application';
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `One_Funding_Application_${safe}_${y}-${m}-${d}.pdf`;
+}
+
+function blank(value: unknown) {
+  return value == null || String(value).trim() === '';
+}
+
+async function fillLeadFromApplication(
+  supabase: SupabaseClient,
+  userId: string,
+  leadId: string,
+  form: FormData,
+  legalName: string,
+  email: string,
+  fullName: string,
+) {
+  const { data: current } = await supabase
+    .from('leads')
+    .select('underwriting_data, company, email, name, value')
+    .eq('id', leadId)
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (!current) return;
+
+  const money = (name: string) => field(form, name).replace(/[$,\s]/g, '');
+  const incoming: Record<string, string> = {
+    ssn: field(form, 'ssn'),
+    ein: field(form, 'ein'),
+    dob: field(form, 'dob'),
+    creditScore: field(form, 'creditScore'),
+    homeAddress: field(form, 'homeAddress'),
+    city: field(form, 'homeCity'),
+    state: field(form, 'homeState'),
+    zip: field(form, 'ownerZip'),
+    businessAddress: field(form, 'businessAddress'),
+    businessCity: field(form, 'businessCity'),
+    businessState: field(form, 'businessState'),
+    businessZip: field(form, 'businessZip'),
+    dba: field(form, 'dba'),
+    entityType: field(form, 'entityType'),
+    industry: field(form, 'industry'),
+    businessStartDate: field(form, 'startDate'),
+    businessPhone: field(form, 'businessPhone'),
+    purposeOfFunds: field(form, 'useOfFunds'),
+    requestedAmount: money('amountRequested'),
+    monthlyRevenue: money('revenue'),
+    avgDailyBalance: money('averageBalance'),
+    ownershipPercent: field(form, 'ownership'),
+  };
+
+  const ud = current.underwriting_data && typeof current.underwriting_data === 'object'
+    ? { ...(current.underwriting_data as Record<string, unknown>) }
+    : {};
+  for (const [key, value] of Object.entries(incoming)) {
+    if (!value || !blank(ud[key])) continue;
+    ud[key] = value;
+  }
+  const startupAnswer = field(form, 'startup').toLowerCase();
+  if (startupAnswer === 'yes' || startupAnswer === 'no') ud.startup = startupAnswer;
+  const product = field(form, 'product');
+  if (product) ud.product = product;
+
+  const update: Record<string, unknown> = { underwriting_data: ud };
+  if (blank(current.company) && legalName) update.company = legalName;
+  if (blank(current.email) && email) update.email = email;
+  if (blank(current.name) && fullName) update.name = fullName;
+  const requestedNum = Number(incoming.requestedAmount);
+  const currentValue = Number(current.value);
+  if (Number.isFinite(requestedNum) && requestedNum > 0 && !(currentValue > 0)) {
+    update.value = requestedNum;
+  }
+
+  const { error } = await supabase.from('leads').update(update).eq('id', leadId).eq('user_id', userId);
+  if (error) console.error('Failed to copy application onto lead:', error.message);
 }
 
 export async function POST(req: NextRequest) {
@@ -192,47 +282,105 @@ export async function POST(req: NextRequest) {
     leadId = lead.id;
   }
 
-  const uploads: File[] = [];
+  await fillLeadFromApplication(supabase, ownerUserId, leadId, form, legalName, email, `${firstName} ${lastName}`);
+
+  const uploads: { file: File; name: string }[] = [];
   const signature = form.get('signature');
-  if (signature instanceof File && signature.size > 0) uploads.push(signature);
+  const signaturePng = signature instanceof File && signature.size > 0
+    ? new Uint8Array(await signature.arrayBuffer())
+    : undefined;
+  const revenueNum = Number(field(form, 'revenue').replace(/[^0-9.]/g, ''));
+  const requestedRaw = field(form, 'amountRequested');
+  const pdfData: FundingApplicationData = {
+    legalName,
+    dba: field(form, 'dba'),
+    businessAddress: field(form, 'businessAddress'),
+    businessCity: field(form, 'businessCity'),
+    businessState: field(form, 'businessState'),
+    businessZip: field(form, 'businessZip'),
+    businessPhone: field(form, 'businessPhone'),
+    businessEmail: email,
+    ein: field(form, 'ein'),
+    dateStarted: field(form, 'startDate'),
+    entityType: field(form, 'entityType'),
+    industry: field(form, 'industry'),
+    useOfProceeds: field(form, 'useOfFunds'),
+    annualRevenue: Number.isFinite(revenueNum) && revenueNum > 0 ? pdfMoney(String(revenueNum * 12)) : '',
+    requestedAmount: pdfMoney(requestedRaw) || requestedRaw,
+    owner1Name: `${firstName} ${lastName}`.trim(),
+    owner1Title: 'Owner',
+    owner1HomeAddress: [field(form, 'homeAddress'), field(form, 'homeCity'), field(form, 'homeState'), field(form, 'ownerZip')].filter(Boolean).join(', '),
+    owner1Email: email,
+    owner1Ssn: field(form, 'ssn'),
+    owner1Dob: field(form, 'dob'),
+    owner1Ownership: field(form, 'ownership'),
+    owner1Credit: field(form, 'creditScore') || 'N/A',
+    owner2: field(form, 'secondOwner') === 'yes'
+      ? {
+          name: [field(form, 'secondFirstName'), field(form, 'secondLastName')].filter(Boolean).join(' '),
+          title: 'Owner',
+          homeAddress: '',
+          email: field(form, 'secondEmail'),
+          ssn: '',
+          dob: '',
+          ownershipPercent: field(form, 'secondOwnership'),
+          creditScore: 'N/A',
+        }
+      : null,
+  };
+  try {
+    const pdfBytes = await buildFundingApplicationPdf(pdfData, {
+      signedAt: new Date(),
+      brand: 'oneFunding',
+      signaturePng,
+      ip: req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || '',
+    });
+    const pdfName = oneFundingPdfName(legalName);
+    uploads.push({
+      file: new File([pdfBytes], pdfName, { type: 'application/pdf' }),
+      name: pdfName,
+    });
+  } catch (err) {
+    console.error('One Funding application PDF failed:', err);
+  }
   for (const item of form.getAll('documents')) {
-    if (item instanceof File && item.size > 0) uploads.push(item);
+    if (item instanceof File && item.size > 0) uploads.push({ file: item, name: item.name });
   }
 
   const failed: string[] = [];
-  for (const file of uploads) {
-    if (file.size > MAX_FILE_BYTES) {
-      failed.push(file.name);
+  for (const item of uploads) {
+    if (item.file.size > MAX_FILE_BYTES) {
+      failed.push(item.name);
       continue;
     }
-    const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_') || 'file';
+    const safeName = item.name.replace(/[^a-zA-Z0-9.-]/g, '_') || 'file';
     const columnField = /bank|statement/i.test(safeName) ? 'bank_statements' : 'documents';
     const filePath = `${ownerUserId}/${leadId}/${columnField}/${Date.now()}_${safeName}`;
-    const buffer = Buffer.from(await file.arrayBuffer());
+    const buffer = Buffer.from(await item.file.arrayBuffer());
     const { error: uploadError } = await supabase.storage
       .from('lead-attachments')
       .upload(filePath, buffer, {
-        contentType: file.type || 'application/octet-stream',
+        contentType: item.file.type || 'application/octet-stream',
         upsert: false,
       });
     if (uploadError) {
       console.error('Application file upload failed:', uploadError.message);
-      failed.push(file.name);
+      failed.push(item.name);
       continue;
     }
     const { error: dbError } = await supabase.from('lead_attachments').insert({
       user_id: ownerUserId,
       lead_id: leadId,
       column_field: columnField,
-      file_name: file.name,
+      file_name: item.name,
       file_path: filePath,
-      file_size: file.size,
-      file_type: file.type || 'application/octet-stream',
+      file_size: item.file.size,
+      file_type: item.file.type || 'application/octet-stream',
     });
     if (dbError) {
       console.error('Application attachment row failed:', dbError.message);
       await supabase.storage.from('lead-attachments').remove([filePath]);
-      failed.push(file.name);
+      failed.push(item.name);
     }
   }
 

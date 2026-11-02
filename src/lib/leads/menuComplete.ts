@@ -1,4 +1,4 @@
-import { buildFundingApplication, type ApplicationLeadInput } from '@/lib/fundingApplication';
+import { buildFundingApplication, isStartupApplication, type ApplicationLeadInput } from '@/lib/fundingApplication';
 import type { LeadActionId } from '@/components/LeadActionsMenu';
 
 const DOCS_COMPLETE_MIN = 4;
@@ -28,8 +28,10 @@ const EMPTY_DOTS: MenuDotFlags = {
   offersComplete: false,
 };
 
-export function isDocsComplete(count: number): boolean {
-  return count >= DOCS_COMPLETE_MIN;
+export function isDocsComplete(count: number, ud?: Record<string, unknown> | null): boolean {
+  if (count >= DOCS_COMPLETE_MIN) return true;
+  // A startup does not send bank statements. The signed application is the file.
+  return isStartupApplication(ud) && count >= 1;
 }
 
 export function isOffersComplete(opts: {
@@ -57,7 +59,7 @@ export function menuDotsFromLead(lead: MenuLeadInput): MenuDotFlags {
   return {
     appComplete: isAppComplete(lead),
     lendersComplete: offerish,
-    docsComplete: isDocsComplete(lead.doc_count ?? 0),
+    docsComplete: isDocsComplete(lead.doc_count ?? 0, lead.underwriting_data),
     offersComplete: offerish,
   };
 }

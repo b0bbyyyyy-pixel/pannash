@@ -69,6 +69,20 @@ function num(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function positive(v: unknown): number | null {
+  const n = num(v);
+  return n != null && n > 0 ? n : null;
+}
+
+/** Pre-revenue applications do not have monthly revenue. */
+export function isStartupApplication(ud?: Record<string, unknown> | null): boolean {
+  if (!ud) return false;
+  if (ud.startup === true || ud.isStartup === true) return true;
+  const flag = String(ud.startup ?? ud.isStartup ?? '').trim().toLowerCase();
+  if (flag === 'yes' || flag === 'true') return true;
+  return String(ud.product ?? '').trim().toLowerCase() === 'startup';
+}
+
 function avgNums(values: unknown[]): number | null {
   const nums = values.map(num).filter((n): n is number => n != null && n > 0);
   if (!nums.length) return null;
@@ -138,7 +152,7 @@ export function buildFundingApplication(lead: ApplicationLeadInput): {
   const monthly = monthlyRev != null && monthlyRev > 0
     ? monthlyRev
     : avgNums([ud.month1Revenue, ud.month2Revenue, ud.month3Revenue, ud.month4Revenue]);
-  const existingRequested = num(lead.value) ?? num(ud.requestedAmount);
+  const existingRequested = positive(lead.value) ?? positive(ud.requestedAmount);
   const populatedRequested = existingRequested == null ? requestedAmountFromMonthlyRevenue(monthly) : null;
   const requested = existingRequested ?? populatedRequested;
   const inferredEntity = inferFromLegalName(str(lead.company)).entityType;
@@ -196,7 +210,9 @@ export function buildFundingApplication(lead: ApplicationLeadInput): {
   };
 
   const missing: string[] = [];
+  const startup = isStartupApplication(ud);
   for (const field of APPLICATION_REQUIRED) {
+    if (startup && field.key === 'annualRevenue') continue;
     const val = data[field.key];
     if (typeof val === 'string' && !isFilled(val) && !missing.includes(field.leadField)) {
       missing.push(field.leadField);
