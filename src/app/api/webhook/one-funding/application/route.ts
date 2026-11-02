@@ -336,8 +336,12 @@ export async function POST(req: NextRequest) {
       ip: req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || '',
     });
     const pdfName = oneFundingPdfName(legalName);
+    const pdfBuffer = pdfBytes.buffer.slice(
+      pdfBytes.byteOffset,
+      pdfBytes.byteOffset + pdfBytes.byteLength,
+    ) as ArrayBuffer;
     uploads.push({
-      file: new File([pdfBytes], pdfName, { type: 'application/pdf' }),
+      file: new File([pdfBuffer], pdfName, { type: 'application/pdf' }),
       name: pdfName,
     });
   } catch (err) {
