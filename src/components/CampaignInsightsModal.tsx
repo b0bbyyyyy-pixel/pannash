@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { OptimizedPack } from '@/lib/smsDrip/optimizeTemplates';
 import { BUILTIN_LEAD_SOURCES } from '@/lib/smsDrip/leadSources';
+import { recentMonthValues } from '@/lib/smsDrip/insightsRange';
 
 type Insights = {
   name: string;
@@ -57,6 +58,11 @@ type Insights = {
 function pct(part: number, whole: number) {
   if (!whole) return '0%';
   return `${Math.round((part / whole) * 100)}%`;
+}
+
+function rangeQuery(range: string) {
+  if (/^\d{4}-\d{2}$/.test(range)) return `month=${encodeURIComponent(range)}`;
+  return `days=${encodeURIComponent(range)}`;
 }
 
 function Row({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
@@ -164,8 +170,9 @@ export default function CampaignInsightsModal({
   const [data, setData] = useState<Insights | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState('Docs In');
-  const [days, setDays] = useState<'30' | '60' | '90' | 'all'>('30');
+  const [range, setRange] = useState('30');
   const [source, setSource] = useState('');
+  const [exporting, setExporting] = useState(false);
   const [tz] = useState(() => {
     try {
       return Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
@@ -184,7 +191,7 @@ export default function CampaignInsightsModal({
     setData(null);
     setError(null);
     const url = overview
-      ? `/api/sms/campaign-insights?days=${days}&tz=${encodeURIComponent(tz)}${source ? `&source=${encodeURIComponent(source)}` : ''}`
+      ? `/api/sms/campaign-insights?${rangeQuery(range)}&tz=${encodeURIComponent(tz)}${source ? `&source=${encodeURIComponent(source)}` : ''}`
       : `/api/sms/campaign-insights?listId=${encodeURIComponent(listId || '')}&tz=${encodeURIComponent(tz)}`;
     const ctrl = new AbortController();
     const timer = window.setTimeout(() => ctrl.abort(), 25_000);
@@ -210,7 +217,7 @@ export default function CampaignInsightsModal({
       })
       .finally(() => window.clearTimeout(timer));
     return () => { dead = true; ctrl.abort(); };
-  }, [listId, overview, days, tz, source]);
+  }, [listId, overview, range, tz, source]);
 
   useEffect(() => {
     setOptLoaded(false);
@@ -246,7 +253,7 @@ export default function CampaignInsightsModal({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          days: days === 'all' ? 30 : Number(days),
+          days: /^\d+$/.test(range) ? Number(range) : 30,
           source: source || insights.sourceKey,
           insights,
         }),
@@ -277,6 +284,42 @@ export default function CampaignInsightsModal({
     return [...fromData.filter(s => s.key), ...extras];
   }, [data?.sources]);
 
+  const monthChoices = useMemo(() => recentMonthValues(tz).slice(1), [tz]);
+
+  const exportCsv = async () => {
+    setExporting(true);
+    try {
+      const qs = overview
+        ? `${rangeQuery(range)}&tz=${encodeURIComponent(tz)}${source ? `&source=${encodeURIComponent(source)}` : ''}`
+        : `listId=${encodeURIComponent(listId || '')}&tz=${encodeURIComponent(tz)}`;
+      const res = await fetch(`/api/sms/campaign-insights/export?${qs}`, { cache: 'no-store' });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error((json as { error?: string }).error || 'Could not export texts');
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const stamp = /^\d{4}-\d{2}$/.test(range)
+        ? range
+        : range === 'month'
+          ? 'this-month'
+          : range === 'all'
+            ? 'all-time'
+            : `last-${range}-days`;
+      link.href = url;
+      link.download = overview ? `campaign-texts-${stamp}.csv` : `campaign-texts.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not export texts');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const mixTotal = data ? data.mix.positive + data.mix.negative + data.mix.opt_out + data.mix.other : 0;
   const statusCount = data ? (data.statusCounts[status] ?? 0) : 0;
   const statusRate = data && data.sent ? Math.round((statusCount / data.sent) * 100) : 0;
@@ -304,13 +347,17 @@ export default function CampaignInsightsModal({
                   ))}
                 </select>
                 <select
-                  value={days}
-                  onChange={e => setDays(e.target.value as typeof days)}
+                  value={range}
+                  onChange={e => setRange(e.target.value)}
                   className="text-xs text-[#6b6b6b] bg-transparent border-0 border-b border-[#e5e5e5] py-0.5 pr-4 focus:outline-none focus:border-[#1a1a1a]"
                 >
                   <option value="30">Last 30 days</option>
                   <option value="60">Last 60 days</option>
                   <option value="90">Last 90 days</option>
+                  <option value="month">This month</option>
+                  {monthChoices.map(m => (
+                    <option key={m.value} value={m.value}>{m.label}</option>
+                  ))}
                   <option value="all">All time</option>
                 </select>
               </div>
@@ -319,6 +366,14 @@ export default function CampaignInsightsModal({
             )}
           </div>
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => void exportCsv()}
+              disabled={exporting}
+              className="text-[11px] text-[#9b9b9b] hover:text-[#1a1a1a] transition-colors disabled:opacity-50"
+            >
+              {exporting ? 'Exporting…' : 'Export'}
+            </button>
             {overview ? (
               <button
                 type="button"
