@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { LENDERS, TIER_LABELS, LenderCriteria, LenderTier } from '@/data/lenders';
+import { LENDERS, TIER_LABELS, TIER_ORDER, LenderCriteria, LenderTier } from '@/data/lenders';
 import LenderSettingsModal, { LenderRecord } from '@/components/LenderSettingsModal';
 
 interface LenderMatchPanelProps {
@@ -92,7 +92,19 @@ function dbToLenderCriteria(r: LenderRecord): LenderCriteria & { id: string } {
   };
 }
 
+function isCatchAll(lender: LenderCriteria) {
+  return lender.tier === 6 || /catch-?all/i.test(String(lender.notes || '') + String(lender.otherRequirements || ''));
+}
+
 function computeMatch(lender: LenderCriteria, props: LenderMatchPanelProps): LenderMatch {
+  if (isCatchAll(lender)) {
+    return {
+      lender,
+      status: 'qualified',
+      reasons: [{ label: 'Marketplace catch-all — every deal qualifies', pass: true }],
+    };
+  }
+
   const newPosition = props.currentPositions + 1;
   const reasons: MatchReason[] = [];
 
@@ -170,19 +182,19 @@ function computeMatch(lender: LenderCriteria, props: LenderMatchPanelProps): Len
   };
 }
 
-const TIER_ORDER: LenderTier[] = [1, 2, 3, 4, 5];
 const TIER_COLORS: Record<LenderTier, string> = {
   1: 'text-indigo-700 bg-indigo-50 border-indigo-200',
   2: 'text-blue-700 bg-blue-50 border-blue-200',
   3: 'text-teal-700 bg-teal-50 border-teal-200',
   4: 'text-amber-700 bg-amber-50 border-amber-200',
   5: 'text-orange-700 bg-orange-50 border-orange-200',
+  6: 'text-emerald-700 bg-emerald-50 border-emerald-200',
 };
 
 export default function LenderMatchPanel(props: LenderMatchPanelProps) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState<FilterTab>('all');
-  const [expandedTiers, setExpandedTiers] = useState<Set<LenderTier>>(new Set([1, 2, 3]));
+  const [expandedTiers, setExpandedTiers] = useState<Set<LenderTier>>(new Set([1, 2, 3, 6]));
   const [showSettings, setShowSettings] = useState(false);
   const [lenders, setLenders] = useState<LenderCriteria[]>(LENDERS.filter(l => l.isActive !== false));
   const [loadedFromApi, setLoadedFromApi] = useState(false);

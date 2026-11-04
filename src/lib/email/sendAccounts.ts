@@ -88,3 +88,15 @@ export function toSendAccountOptions(
 export function emailsMatch(a?: string | null, b?: string | null) {
   return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
 }
+
+/** Lender submissions always send from this mailbox when it is connected. */
+export const LENDER_SUBMISSION_FROM = 'hello@onefundingsolution.com';
+
+export function pickConnectionByEmail(
+  rows: SendConnection[] | null | undefined,
+  email: string,
+): SendConnection | null {
+  const target = String(email || '').trim().toLowerCase();
+  if (!target) return null;
+  return listSendConnections(rows).find(c => emailsMatch(mailboxEmail(c), target)) || null;
+}

@@ -118,6 +118,21 @@ export async function GET(request: NextRequest) {
     rows = refreshed ?? rows;
   }
 
+  const hasElite = rows.some((l: { name: string }) => /elite\s*funders/i.test(l.name));
+  if (!hasElite) {
+    const elite = buildSeedRows(user.id).find(r => /elite\s*funders/i.test(r.name));
+    if (elite) {
+      await supabase.from('lenders').insert(elite);
+      const { data: withElite } = await supabase
+        .from('lenders')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('tier', { ascending: true })
+        .order('name', { ascending: true });
+      rows = withElite ?? rows;
+    }
+  }
+
   // Auto-seed default lenders on first load
   if (!rows.length) {
     const { data: seeded, error: seedErr } = await supabase

@@ -2,6 +2,8 @@
  * Run: npx tsx scripts/send-accounts.test.ts
  */
 import {
+  LENDER_SUBMISSION_FROM,
+  pickConnectionByEmail,
   pickSendConnection,
   signatureFor,
   toSendAccountOptions,
@@ -42,6 +44,15 @@ assert(signatureFor({ id: 'x', provider: 'gmail', access_token: 't' }, 'fallback
 const opts = toSendAccountOptions([a, b], { preferredId: 'a' });
 assert(opts.length === 2, 'lists both send accounts');
 assert(opts[0].preferred && !opts[1].preferred, 'marks preferred');
+
+const hello = {
+  id: 'hello',
+  provider: 'gmail',
+  from_email: 'hello@onefundingsolution.com',
+  access_token: 'tok',
+};
+assert(pickConnectionByEmail([a, hello, b], LENDER_SUBMISSION_FROM)?.id === 'hello', 'picks One Funding mailbox for submissions');
+assert(pickConnectionByEmail([a, b], LENDER_SUBMISSION_FROM) === null, 'returns null when One Funding mailbox is missing');
 
 if (failed) {
   console.error(`${failed} failed`);

@@ -1,4 +1,4 @@
-export type LenderTier = 1 | 2 | 3 | 4 | 5;
+export type LenderTier = 1 | 2 | 3 | 4 | 5 | 6;
 
 export const TIER_LABELS: Record<LenderTier, string> = {
   1: 'Tier A – Premium',
@@ -6,12 +6,15 @@ export const TIER_LABELS: Record<LenderTier, string> = {
   3: 'Tier C',
   4: 'Tier D',
   5: 'Reverse Consolidation',
+  6: 'Marketplace',
 };
+
+export const TIER_ORDER: LenderTier[] = [1, 2, 3, 4, 5, 6];
 
 export interface LenderCriteria {
   name: string;
   isActive: boolean;
-  tier: 1 | 2 | 3 | 4 | 5;
+  tier: LenderTier;
   // Contact
   email?: string;
   ccEmail?: string;
@@ -2561,5 +2564,43 @@ export const LENDERS: LenderCriteria[] = [
     industryPositionRestrictions: undefined,
     otherRequirements: 'MCA, term loans, SBA, and LOC products. Min 12 months TIB, min FICO 580, min $8K/mo revenue. Funding $5K–$1M. Daily/weekly payments. Personal guarantee required.',
     notes: undefined,
+  },
+  {
+    name: 'Elite Funders',
+    isActive: true,
+    tier: 6,
+    email: 'submissions@elitefunders.com',
+    ccEmail: undefined,
+    repName: undefined,
+    contactPhone: undefined,
+    repDirectPhone: undefined,
+    submissionMethod: 'email',
+    products: 'mca',
+    minMonthlyRevenue: undefined,
+    minTibMonths: undefined,
+    minFico: undefined,
+    minPosition: 1,
+    maxPosition: 99,
+    maxNsfs: undefined,
+    maxNegDays: undefined,
+    maxWithhold: undefined,
+    minDeposits: undefined,
+    avgDailyBalance: undefined,
+    minAmount: undefined,
+    maxAmount: undefined,
+    minTermDays: undefined,
+    maxTermDays: undefined,
+    acceptsMercury: true,
+    acceptsNonprofit: true,
+    acceptsDefaults: true,
+    acceptsSoleProp: true,
+    doesBuyout: true,
+    doesReverseConsolidation: false,
+    stateRestrictions: undefined,
+    prohibitedIndustries: undefined,
+    preferredIndustries: undefined,
+    industryPositionRestrictions: undefined,
+    otherRequirements: 'Marketplace catch-all. Every deal qualifies.',
+    notes: 'Marketplace catch-all',
   },
 ];

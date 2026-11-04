@@ -1,4 +1,4 @@
-import { TIER_LABELS, type LenderTier } from '@/data/lenders';
+import { TIER_LABELS, TIER_ORDER } from '@/data/lenders';
 
 type PrintLender = {
   name: string;
@@ -35,13 +35,13 @@ type PrintLender = {
   other_requirements?: string | null;
 };
 
-const TIER_ORDER: LenderTier[] = [1, 2, 3, 4, 5];
 const TIER_SHORT: Record<number, string> = {
   1: 'A',
   2: 'B',
   3: 'C',
   4: 'D',
   5: 'RC',
+  6: 'MP',
 };
 
 function esc(raw: unknown): string {

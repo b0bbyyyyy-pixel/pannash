@@ -1,9 +1,13 @@
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
-import nodemailer from 'nodemailer';
-import { resolveFromHeader } from '@/lib/email-from';
 import { logLeadStatusChange } from '@/lib/leads/fileActivity';
+import {
+  LENDER_SUBMISSION_FROM,
+  pickConnectionByEmail,
+  type SendConnection,
+} from '@/lib/email/sendAccounts';
+import { sendOutboundMail, type OutboundAttachment } from '@/lib/email/sendOutbound';
 
 export const runtime  = 'nodejs';
 export const dynamic  = 'force-dynamic';
@@ -76,14 +80,21 @@ export async function POST(request: Request) {
   }
   if (note) emailBody += `<br/><br/><em>Note: ${note}</em>`;
 
-  // ── Fetch SMTP connection ────────────────────────────────────────────────────
-  const { data: smtpConn } = await supabase
+  const { data: connections } = await supabase
     .from('email_connections')
     .select('*')
-    .eq('user_id', user.id)
-    .in('provider', ['smtp', 'outlook'])
-    .limit(1)
-    .single();
+    .eq('user_id', user.id);
+
+  const fromConn = pickConnectionByEmail(
+    connections as SendConnection[] | null,
+    LENDER_SUBMISSION_FROM,
+  );
+  if (!fromConn) {
+    return NextResponse.json(
+      { error: `Connect ${LENDER_SUBMISSION_FROM} in Settings → Connections, then send again.` },
+      { status: 400 },
+    );
+  }
 
   const { data: settings } = await supabase
     .from('user_settings')
@@ -91,19 +102,20 @@ export async function POST(request: Request) {
     .eq('user_id', user.id)
     .maybeSingle();
 
-  // ── Get signed URLs for attached documents ────────────────────────────────
-  const attachments: { filename: string; path: string; contentType: string }[] = [];
+  const attachments: OutboundAttachment[] = [];
   for (const doc of (documents || [])) {
-    const { data: signed } = await supabase.storage
+    const { data: blob, error: dlErr } = await supabase.storage
       .from('lead-attachments')
-      .createSignedUrl(doc.file_path, 3600);
-    if (signed?.signedUrl) {
-      attachments.push({
-        filename:    doc.name,
-        path:        signed.signedUrl,
-        contentType: doc.file_type || 'application/octet-stream',
-      });
+      .download(doc.file_path);
+    if (dlErr || !blob) {
+      console.error(`[send-to-lenders] Could not download ${doc.name}:`, dlErr?.message);
+      continue;
     }
+    attachments.push({
+      filename:    doc.name,
+      content:     Buffer.from(await blob.arrayBuffer()),
+      contentType: doc.file_type || 'application/octet-stream',
+    });
   }
 
   // ── Send to each lender and record ────────────────────────────────────────
@@ -113,39 +125,25 @@ export async function POST(request: Request) {
     let status  = 'Sent';
     let errMsg: string | undefined;
 
-    if (lender.email && smtpConn) {
-      try {
-        const transporter = nodemailer.createTransport({
-          host:   smtpConn.smtp_host,
-          port:   smtpConn.smtp_port,
-          secure: smtpConn.smtp_port === 465,
-          auth:   { user: smtpConn.smtp_username, pass: smtpConn.smtp_password },
-        });
-
-        const { from } = resolveFromHeader({
-          connection: smtpConn,
-          settingsFromName: settings?.email_from_name,
-          extraName: senderName,
-        });
-        await transporter.sendMail({
-          from,
-          to:          lender.email,
-          cc:          lender.ccEmail || undefined,
-          subject:     emailSubject,
-          html:        emailBody,
-          attachments,
-        });
-      } catch (e: unknown) {
-        status = 'Failed';
-        errMsg = e instanceof Error ? e.message : String(e);
-        console.error(`[send-to-lenders] Failed for ${lender.name}:`, errMsg);
-      }
-    } else if (!lender.email) {
-      // No email on file — record as "Sent" (manual submission)
+    if (!lender.email) {
       status = 'Sent';
     } else {
-      // Email on file but no SMTP — record intent
-      status = 'Sent';
+      const sent = await sendOutboundMail(supabase, {
+        userId: user.id,
+        connection: fromConn,
+        to: lender.email,
+        cc: lender.ccEmail,
+        subject: emailSubject,
+        html: emailBody,
+        attachments,
+        settingsFromName: settings?.email_from_name,
+        extraName: senderName,
+      });
+      if (!sent.sent) {
+        status = 'Failed';
+        errMsg = sent.error;
+        console.error(`[send-to-lenders] Failed for ${lender.name}:`, errMsg);
+      }
     }
 
     // ── Insert submission record ────────────────────────────────────────────

@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo, DragEvent } from 'react';
 import dynamic from 'next/dynamic';
 import DocumentVault from './DocumentVault';
+import { TIER_LABELS } from '@/data/lenders';
+import { LENDER_SUBMISSION_FROM } from '@/lib/email/sendAccounts';
 
 const LenderSettingsModal = dynamic(() => import('./LenderSettingsModal'), { ssr: false });
 
@@ -26,6 +28,7 @@ const TIER_COLORS: Record<number, { bg: string; text: string; border: string; la
   3: { bg: 'bg-amber-100',  text: 'text-amber-700',  border: 'border-amber-200',  label: 'T3' },
   4: { bg: 'bg-gray-100',   text: 'text-gray-600',   border: 'border-gray-200',   label: 'T4' },
   5: { bg: 'bg-gray-100',   text: 'text-gray-500',   border: 'border-gray-200',   label: 'T5' },
+  6: { bg: 'bg-emerald-100', text: 'text-emerald-700', border: 'border-emerald-200', label: 'MP' },
 };
 
 interface Document {
@@ -103,6 +106,12 @@ function fmtTib(m: number) {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function computeMatch(lender: Record<string, any>, c: LeadCriteria): LenderMatch {
+  if (
+    lender.tier === 6
+    || /catch-?all/i.test(String(lender.notes || '') + String(lender.other_requirements || ''))
+  ) {
+    return { status: 'qualified', reasons: [{ label: 'Marketplace catch-all — every deal qualifies', pass: true }] };
+  }
   const reasons: MatchReason[] = [];
   const pos = c.currentPositions + 1;
 
@@ -193,7 +202,8 @@ export default function SendToLenderModal({
 
   const [lenderFilter, setLenderFilter] = useState<'All' | 'Recent'>('All');
   const [sending, setSending]         = useState(false);
-  const [sendResult, setSendResult]   = useState<{ sent: number; failed: number } | null>(null);
+  const [sendResult, setSendResult]   = useState<{ sent: number; failed: number; error?: string } | null>(null);
+  const [fromMailboxReady, setFromMailboxReady] = useState<boolean | null>(null);
 
   // Upload docs state
   const [showUpload, setShowUpload]     = useState(false);
@@ -227,11 +237,12 @@ export default function SendToLenderModal({
 
   // ── Load data ──────────────────────────────────────────────────────────────
   const loadAll = useCallback(async () => {
-    const [lRes, dRes, sRes, tRes] = await Promise.all([
+    const [lRes, dRes, sRes, tRes, mRes] = await Promise.all([
       fetch('/api/lenders', { credentials: 'include' }),
       fetch(`/api/attachments?leadId=${leadId}`, { credentials: 'include' }),
       fetch(`/api/leads/submissions?leadId=${leadId}`, { credentials: 'include' }),
       fetch('/api/email-templates', { credentials: 'include' }),
+      fetch('/api/settings/email-signature', { credentials: 'include' }),
     ]);
 
     const lJson = lRes.ok ? await lRes.json() : {};
@@ -265,6 +276,11 @@ export default function SendToLenderModal({
     setDocuments(docs);
     // Pre-select all documents
     setSelectedDocIds(new Set(docs.map((d: Document) => d.id)));
+
+    const mJson = mRes.ok ? await mRes.json() : {};
+    const accounts = Array.isArray(mJson.accounts) ? mJson.accounts as { email?: string }[] : [];
+    const from = LENDER_SUBMISSION_FROM.toLowerCase();
+    setFromMailboxReady(accounts.some(a => String(a.email || '').trim().toLowerCase() === from));
   }, [leadId]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
@@ -355,6 +371,8 @@ export default function SendToLenderModal({
         setSelectedLenderIds(new Set());
         setNote('');
         setTemplateId('');
+      } else {
+        setSendResult({ sent: 0, failed: selectedLenderIds.size, error: json.error || 'Send failed' });
       }
     } finally {
       setSending(false);
@@ -570,7 +588,7 @@ export default function SendToLenderModal({
                           rows.push(
                             <div key={`tier-${tier}`} className="flex items-center gap-2 px-1 pt-2 pb-0.5">
                               <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${tc.bg} ${tc.text} ${tc.border}`}>
-                                Tier {tier}
+                                {TIER_LABELS[tier as keyof typeof TIER_LABELS] || `Tier ${tier}`}
                               </span>
                               <div className="flex-1 h-px bg-[#f0f0f0]" />
                             </div>
@@ -725,16 +743,27 @@ export default function SendToLenderModal({
 
               {/* Send footer */}
               <div className="flex-shrink-0 px-5 py-4 border-t border-[#ebebeb] space-y-2">
+                {fromMailboxReady === false && (
+                  <div className="px-3 py-2 rounded-lg text-xs font-medium bg-amber-50 text-amber-800">
+                    Connect {LENDER_SUBMISSION_FROM} in Settings → Connections so lender submissions can send.
+                  </div>
+                )}
+                {fromMailboxReady !== false && (
+                  <p className="text-[11px] text-[#6b6b6b]">
+                    From <span className="font-medium text-[#1a1a1a]">{LENDER_SUBMISSION_FROM}</span>
+                  </p>
+                )}
                 {sendResult && (
-                  <div className={`px-3 py-2 rounded-lg text-xs font-medium ${sendResult.failed > 0 ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
-                    ✓ Sent to {sendResult.sent} lender{sendResult.sent !== 1 ? 's' : ''}
-                    {sendResult.failed > 0 && ` · ${sendResult.failed} failed`}
+                  <div className={`px-3 py-2 rounded-lg text-xs font-medium ${sendResult.error || sendResult.failed > 0 ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                    {sendResult.error
+                      ? sendResult.error
+                      : `✓ Sent to ${sendResult.sent} lender${sendResult.sent !== 1 ? 's' : ''}${sendResult.failed > 0 ? ` · ${sendResult.failed} failed` : ''}`}
                   </div>
                 )}
                 <div className="flex gap-2">
                   <button
                     onClick={handleSend}
-                    disabled={sending || selectedLenderIds.size === 0}
+                    disabled={sending || selectedLenderIds.size === 0 || fromMailboxReady === false}
                     className="flex-1 py-3 bg-[#22c55e] text-white rounded-xl text-sm font-semibold hover:bg-[#16a34a] disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
                   >
                     {sending ? (

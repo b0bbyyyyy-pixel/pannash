@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useEffect, useCallback } from 'react';
-import { TIER_LABELS, LenderTier } from '@/data/lenders';
+import { TIER_LABELS, TIER_ORDER, LenderTier } from '@/data/lenders';
 import { printLenderList } from '@/lib/lenders/printLenderList';
 
 export interface LenderRecord {
@@ -177,8 +177,6 @@ function formToPayload(f: FormState) {
     tib_fico_tiers: null,
   };
 }
-
-const TIER_ORDER: LenderTier[] = [1, 2, 3, 4, 5];
 
 interface Props {
   onClose: () => void;
