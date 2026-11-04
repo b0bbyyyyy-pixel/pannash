@@ -647,6 +647,34 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     }
   }, [incomingFrom, showMissedBanner]);
 
+  const blockIncoming = useCallback(async () => {
+    const call = incomingRef.current;
+    const from = call?.parameters.From ?? incomingFrom ?? missedBanner?.from ?? null;
+    const sid = call?.parameters.CallSid ?? null;
+    const leadId = matchedLeadRef.current?.id || missedBanner?.leadId || null;
+    call?.reject();
+    incomingRef.current = null;
+    incomingSessionRef.current = false;
+    setIncomingFrom(null);
+    setMissedBanner(null);
+    setIncomingTabTitle(false);
+    if (from) {
+      reportInboundCall({ callSid: sid, from, leadId, status: 'blocked' });
+      try {
+        await fetch('/api/telephony/block', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ phone: from, leadId }),
+        });
+      } catch { /* still hang up */ }
+    }
+    if (!showLeadCardRef.current) {
+      setMatchedLead(null);
+      setActiveName(null);
+    }
+  }, [incomingFrom, missedBanner]);
+
   // Incoming caller (ring or after Answer) → Inbox so you can text and edit notes.
   useEffect(() => {
     if (onMobileText || !matchedLead?.id) return;
@@ -729,6 +757,13 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
                   Reject
                 </button>
               </div>
+              <button
+                type="button"
+                onClick={() => void blockIncoming()}
+                className="mt-2 w-full rounded-xl border border-[#e5e5e5] py-2 text-sm font-medium text-[#1a1a1a] transition-colors hover:bg-[#f5f5f5]"
+              >
+                Block this number
+              </button>
               {matchedLead && (
                 <button
                   type="button"
@@ -740,7 +775,31 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
               )}
             </>
           ) : (
-            <div className="mt-3 flex gap-2">
+            <>
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const n = missedBanner?.from;
+                    setMissedBanner(null);
+                    if (n) void connect(n, {
+                      name: missedBanner?.name || undefined,
+                      leadId: missedBanner?.leadId || undefined,
+                      company: missedBanner?.company || undefined,
+                    }).catch(() => {});
+                  }}
+                  className="flex-1 rounded-xl bg-[#1a1a1a] py-2 text-sm font-medium text-white hover:bg-black"
+                >
+                  Call back
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void blockIncoming()}
+                  className="flex-1 rounded-xl border border-[#e5e5e5] py-2 text-sm font-medium text-[#1a1a1a] hover:bg-[#f5f5f5]"
+                >
+                  Block
+                </button>
+              </div>
               {missedBanner?.leadId && (
                 <button
                   type="button"
@@ -754,27 +813,12 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
                       });
                     }
                   }}
-                  className="flex-1 rounded-xl border border-[#e5e5e5] py-2 text-sm font-medium text-[#1a1a1a] hover:bg-[#f5f5f5]"
+                  className="mt-2 w-full rounded-xl border border-[#e5e5e5] py-2 text-sm font-medium text-[#1a1a1a] hover:bg-[#f5f5f5]"
                 >
                   Open lead card
                 </button>
               )}
-              <button
-                type="button"
-                onClick={() => {
-                  const n = missedBanner?.from;
-                  setMissedBanner(null);
-                  if (n) void connect(n, {
-                    name: missedBanner?.name || undefined,
-                    leadId: missedBanner?.leadId || undefined,
-                    company: missedBanner?.company || undefined,
-                  }).catch(() => {});
-                }}
-                className="flex-1 rounded-xl bg-[#1a1a1a] py-2 text-sm font-medium text-white hover:bg-black"
-              >
-                Call back
-              </button>
-            </div>
+            </>
           )}
         </div>
       )}

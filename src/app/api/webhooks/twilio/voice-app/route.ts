@@ -21,6 +21,7 @@ import {
 } from '@/lib/telephony/twilio';
 import { pickDialerCallerId } from '@/lib/dialerCallerId';
 import { findLeadByPhone } from '@/lib/leads/findByPhone';
+import { isCallerBlocked } from '@/lib/telephony/blockCaller';
 
 function twimlResponse(xml: string, status = 200) {
   return new NextResponse(xml, { status, headers: { 'Content-Type': 'text/xml' } });
@@ -30,6 +31,12 @@ function hangupTwiml(message?: string) {
   const vr = new twilio.twiml.VoiceResponse();
   if (message) vr.say({ voice: 'Polly.Joanna' }, message);
   vr.hangup();
+  return vr.toString();
+}
+
+function rejectTwiml() {
+  const vr = new twilio.twiml.VoiceResponse();
+  vr.reject({ reason: 'rejected' });
   return vr.toString();
 }
 
@@ -124,6 +131,25 @@ export async function POST(req: NextRequest) {
 
     let dbId: string | null = null;
     let inboundLead: { id: string; name: string | null; company: string | null } | null = null;
+    if (!isOutgoing && userId && caller) {
+      const blocked = await isCallerBlocked(supabase, userId, caller);
+      if (blocked) {
+        console.log('[twilio/voice-app] blocked inbound', caller);
+        const lead = await findLeadByPhone(supabase, caller, userId);
+        await supabase.from('dialer_calls').insert({
+          lead_id: lead?.id ?? null,
+          agent_id: userId,
+          lead_name: lead?.name ?? caller,
+          to_number: fromNumber ?? params.To,
+          from_number: caller,
+          direction: 'inbound',
+          status: 'blocked',
+          twilio_call_sid: callSid,
+          started_at: new Date().toISOString(),
+        });
+        return twimlResponse(rejectTwiml());
+      }
+    }
     if (userId) {
       const otherParty = isOutgoing ? (outboundTo ?? params.To ?? '') : caller;
       const lead = otherParty ? await findLeadByPhone(supabase, otherParty, userId) : null;

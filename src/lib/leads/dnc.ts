@@ -1,4 +1,5 @@
 import { last10, phoneVariants } from '@/lib/leads/phone';
+import { toE164 } from '@/lib/dialer/e164';
 
 export const DNC_STATUS = {
   name: 'DNC',
@@ -149,9 +150,18 @@ export async function markPhoneDnc(
   if (userId && phone) {
     for (const id of await findLeadIdsByPhone(supabase, phone, userId)) ids.add(id);
   }
-  if (!ids.size) return;
   if (userId) await ensureDncStatus(supabase, userId);
   for (const id of ids) await markLeadDnc(supabase, id, userId);
+  const e164 = toE164(phone);
+  if (userId && e164) {
+    const { error } = await supabase.from('dnc_numbers').upsert(
+      { user_id: userId, e164, reason: 'dnc' },
+      { onConflict: 'user_id,e164' },
+    );
+    if (error && !/dnc_numbers/i.test(error.message)) {
+      console.error('[dnc] dnc_numbers upsert', error);
+    }
+  }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
