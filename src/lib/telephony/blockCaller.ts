@@ -79,8 +79,14 @@ export async function unblockCaller(supabase: any, userId: string, phone: string
   }
 }
 
+export type BlockedCallerRow = {
+  e164: string;
+  reason: string | null;
+  created_at: string;
+};
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function listBlockedCallers(supabase: any, userId: string) {
+export async function listBlockedCallers(supabase: any, userId: string): Promise<BlockedCallerRow[]> {
   const { data, error } = await supabase
     .from('dnc_numbers')
     .select('e164, reason, created_at')
@@ -90,5 +96,5 @@ export async function listBlockedCallers(supabase: any, userId: string) {
     if (missingTable(error.message)) return [];
     throw error;
   }
-  return data ?? [];
+  return (data ?? []) as BlockedCallerRow[];
 }
