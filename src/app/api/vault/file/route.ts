@@ -24,6 +24,9 @@ export async function GET(req: NextRequest) {
     .single();
 
   if (error || !row) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (row.file_type === 'folder' || !row.file_path) {
+    return NextResponse.json({ error: 'Not a file' }, { status: 400 });
+  }
 
   const asUrl = req.nextUrl.searchParams.get('url') === '1';
   if (asUrl) {
