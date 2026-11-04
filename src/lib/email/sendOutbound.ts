@@ -2,7 +2,7 @@ import nodemailer from 'nodemailer';
 import { google } from 'googleapis';
 import { refreshGmailToken, isTokenExpired } from '@/lib/gmail-refresh';
 import { mailboxEmail, resolveFromHeader } from '@/lib/email-from';
-import { isGmailSend, isSmtpSend, type SendConnection } from '@/lib/email/sendAccounts';
+import { type SendConnection } from '@/lib/email/sendAccounts';
 
 export type OutboundAttachment = {
   filename: string;
@@ -70,25 +70,27 @@ export async function sendOutboundMail(
     extraName?: string | null;
   },
 ): Promise<SendOutboundResult> {
+  const conn = args.connection;
   const { from } = resolveFromHeader({
-    connection: args.connection,
+    connection: conn,
     settingsFromName: args.settingsFromName,
     extraName: args.extraName,
   });
 
-  if (isGmailSend(args.connection)) {
+  const isGmail = conn.provider === 'gmail' && !!(conn.access_token || conn.refresh_token);
+  if (isGmail) {
     try {
-      let accessToken = (args.connection.access_token as string | null) || null;
-      const refreshToken = (args.connection.refresh_token as string | null) || null;
-      const expiry = (args.connection.expiry_date || args.connection.expires_at) as string | null;
+      let accessToken = (conn.access_token as string | null) || null;
+      const refreshToken = (conn.refresh_token as string | null) || null;
+      const expiry = (conn.expiry_date || conn.expires_at) as string | null;
       if (refreshToken && isTokenExpired(expiry)) {
         const refreshed = await refreshGmailToken(args.userId, refreshToken, supabase, {
-          connectionId: args.connection.id,
+          connectionId: conn.id,
         });
         if (refreshed) accessToken = refreshed.access_token;
       }
       if (!accessToken) {
-        return { sent: false, error: `Gmail token expired for ${mailboxEmail(args.connection) || 'this mailbox'} — reconnect in Settings` };
+        return { sent: false, error: `Gmail token expired for ${mailboxEmail(conn) || 'this mailbox'} — reconnect in Settings` };
       }
       const oauth2Client = new google.auth.OAuth2(
         process.env.GOOGLE_CLIENT_ID!,
@@ -118,15 +120,15 @@ export async function sendOutboundMail(
     }
   }
 
-  if (isSmtpSend(args.connection)) {
+  if (conn.smtp_host) {
     try {
       const transporter = nodemailer.createTransport({
-        host: args.connection.smtp_host!,
-        port: args.connection.smtp_port || 587,
-        secure: args.connection.smtp_port === 465,
+        host: conn.smtp_host,
+        port: conn.smtp_port || 587,
+        secure: conn.smtp_port === 465,
         auth: {
-          user: args.connection.smtp_username,
-          pass: args.connection.smtp_password,
+          user: conn.smtp_username,
+          pass: conn.smtp_password,
         },
       });
       await transporter.sendMail({
