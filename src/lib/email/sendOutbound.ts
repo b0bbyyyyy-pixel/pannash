@@ -1,4 +1,6 @@
 import nodemailer from 'nodemailer';
+import type SMTPTransport from 'nodemailer/lib/smtp-transport';
+import type StreamTransport from 'nodemailer/lib/stream-transport';
 import { google } from 'googleapis';
 import { refreshGmailToken, isTokenExpired } from '@/lib/gmail-refresh';
 import { mailboxEmail, resolveFromHeader } from '@/lib/email-from';
@@ -39,7 +41,7 @@ async function buildRfc2822(opts: {
     streamTransport: true,
     buffer: true,
     newline: 'unix',
-  });
+  } as StreamTransport.Options);
   const info = await transporter.sendMail({
     from: opts.from,
     to: opts.to,
@@ -127,10 +129,10 @@ export async function sendOutboundMail(
         port: conn.smtp_port || 587,
         secure: conn.smtp_port === 465,
         auth: {
-          user: conn.smtp_username,
-          pass: conn.smtp_password,
+          user: conn.smtp_username || '',
+          pass: conn.smtp_password || '',
         },
-      });
+      } as SMTPTransport.Options);
       await transporter.sendMail({
         from,
         to: args.to,
