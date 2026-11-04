@@ -12,6 +12,7 @@ import { dealStageFromLead, dealStageLabel } from '@/lib/casper/stage';
 import { useWebPhone } from '@/components/webphone/WebPhone';
 import LeadUpdatesTimeline from '@/components/LeadUpdatesTimeline';
 import LeadActionsMenu, { type LeadActionId } from '@/components/LeadActionsMenu';
+import { markUploadSeenClient } from '@/lib/inbox/markUploadSeenClient';
 
 const UnderwritingSuite    = dynamic(() => import('@/components/UnderwritingSuite'), { ssr: false });
 const ScheduleEmailModal   = dynamic(() => import('@/components/ScheduleEmailModal'), { ssr: false });
@@ -1411,6 +1412,7 @@ export default function LeadWorkspaceClient({
   }, []);
 
   const deepLinkRan = useRef(false);
+  const ignoreNextAppSeen = useRef(false);
   useEffect(() => {
     if (deepLinkRan.current) return;
     const qs = new URLSearchParams(window.location.search);
@@ -1418,6 +1420,9 @@ export default function LeadWorkspaceClient({
     const action = qs.get('action');
     if (!tab && !action) return;
     deepLinkRan.current = true;
+    if ((tab && tab !== 'application') || (action && action !== 'edit')) {
+      ignoreNextAppSeen.current = true;
+    }
 
     if (tab && (SURFACE_TABS as string[]).includes(tab)) {
       setSurfaceTab(tab as SurfaceTab);
@@ -1445,6 +1450,15 @@ export default function LeadWorkspaceClient({
     // One-shot after lead is mounted.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lead.id]);
+
+  useEffect(() => {
+    if (surfaceTab !== 'application') return;
+    if (ignoreNextAppSeen.current) {
+      ignoreNextAppSeen.current = false;
+      return;
+    }
+    markUploadSeenClient(lead.id, 'application');
+  }, [surfaceTab, lead.id]);
 
   const money = (n: unknown) => {
     const v = Number(n);

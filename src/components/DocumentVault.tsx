@@ -102,6 +102,9 @@ export default function DocumentVault({
   const [savingFolder, setSavingFolder] = useState(false);
   const [dragFileId, setDragFileId] = useState<string | null>(null);
   const [moving, setMoving] = useState<VaultFile | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameVal, setRenameVal] = useState('');
+  const [savingRename, setSavingRename] = useState(false);
   const clickTimer = useRef<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -326,6 +329,55 @@ export default function DocumentVault({
       n.has(id) ? n.delete(id) : n.add(id);
       return n;
     });
+  }
+
+  function startRename(f: VaultFile) {
+    setMoving(null);
+    setFolderOpen(false);
+    setNoteOpen(false);
+    setRenamingId(f.id);
+    setRenameVal(f.file_name);
+  }
+
+  async function saveRename(f: VaultFile) {
+    const next = renameVal.trim();
+    if (!next) {
+      setError('Give the folder a name.');
+      return;
+    }
+    if (next === f.file_name) {
+      setRenamingId(null);
+      return;
+    }
+    setSavingRename(true);
+    setError('');
+    try {
+      const res = await fetch('/api/vault', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ id: f.id, name: next }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || 'Could not rename folder');
+      const from = typeof d.from === 'string' ? d.from : folderPathOf(f);
+      const to = typeof d.to === 'string' ? d.to : (String(f.folder || '') ? `${f.folder}/${next}` : next);
+      setFiles(prev => prev.map(row => {
+        if (row.id === f.id) return { ...row, file_name: next };
+        const current = String(row.folder || '');
+        if (current === from) return { ...row, folder: to };
+        if (current.startsWith(`${from}/`)) return { ...row, folder: `${to}${current.slice(from.length)}` };
+        return row;
+      }));
+      if (path === from || path.startsWith(`${from}/`)) {
+        setPath(path === from ? to : `${to}${path.slice(from.length)}`);
+      }
+      setRenamingId(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not rename folder');
+    } finally {
+      setSavingRename(false);
+    }
   }
 
   async function moveFile(id: string, dest: string) {
@@ -596,41 +648,6 @@ export default function DocumentVault({
             <p className="text-xs text-[#9b9b9b] py-8 text-center">{path ? 'This folder is empty.' : 'Vault is empty.'}</p>
           ) : folders.length > 0 || visible.length > 0 ? (
             <div className="space-y-1.5">
-              {folders.map(f => (
-                <div
-                  key={f.id}
-                  className={`flex items-center gap-2 py-1.5 border-b border-[#f5f5f5] last:border-0 ${dragFileId ? 'outline-dashed outline-1 outline-[#d4d4d4] rounded-sm' : ''}`}
-                  onDragOver={e => { if (dragFileId) { e.preventDefault(); e.stopPropagation(); } }}
-                  onDrop={e => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (dragFileId) void moveFile(dragFileId, folderPathOf(f));
-                    setDragFileId(null);
-                  }}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setPath(folderPathOf(f))}
-                    className="flex-1 min-w-0 flex items-center gap-2.5 text-left"
-                  >
-                    <FolderGlyph className="w-4 h-4 text-[#1a1a1a] shrink-0" />
-                    <span className="min-w-0">
-                      <p className="text-xs font-medium text-[#1a1a1a] truncate">{f.file_name}</p>
-                      <p className="text-[10px] text-[#9b9b9b]">Folder</p>
-                    </span>
-                  </button>
-                  {!pick && (
-                    <button
-                      type="button"
-                      onClick={() => remove(f)}
-                      disabled={deleting === f.id}
-                      className="text-[10px] uppercase tracking-wide text-[#9b9b9b] hover:text-[#1a1a1a]"
-                    >
-                      {deleting === f.id ? '…' : 'Remove'}
-                    </button>
-                  )}
-                </div>
-              ))}
               {visible.map(f => (
                 <div
                   key={f.id}
@@ -681,6 +698,88 @@ export default function DocumentVault({
                       </button>
                     )}
                   </div>
+                </div>
+              ))}
+              {folders.map(f => (
+                <div
+                  key={f.id}
+                  className={`flex items-center gap-2 py-1.5 border-b border-[#f5f5f5] last:border-0 ${dragFileId ? 'outline-dashed outline-1 outline-[#d4d4d4] rounded-sm' : ''}`}
+                  onDragOver={e => { if (dragFileId) { e.preventDefault(); e.stopPropagation(); } }}
+                  onDrop={e => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (dragFileId) void moveFile(dragFileId, folderPathOf(f));
+                    setDragFileId(null);
+                  }}
+                >
+                  {renamingId === f.id ? (
+                    <div className="flex-1 min-w-0 flex items-center gap-2">
+                      <FolderGlyph className="w-4 h-4 text-[#1a1a1a] shrink-0" />
+                      <input
+                        autoFocus
+                        value={renameVal}
+                        onChange={e => setRenameVal(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') { e.preventDefault(); void saveRename(f); }
+                          if (e.key === 'Escape') setRenamingId(null);
+                        }}
+                        className="flex-1 min-w-0 px-2 py-1 border border-[#e5e5e5] rounded-md text-xs text-[#1a1a1a] focus:outline-none focus:border-[#1a1a1a]"
+                      />
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setPath(folderPathOf(f))}
+                      className="flex-1 min-w-0 flex items-center gap-2.5 text-left"
+                    >
+                      <FolderGlyph className="w-4 h-4 text-[#1a1a1a] shrink-0" />
+                      <span className="min-w-0">
+                        <p className="text-xs font-medium text-[#1a1a1a] truncate">{f.file_name}</p>
+                        <p className="text-[10px] text-[#9b9b9b]">Folder</p>
+                      </span>
+                    </button>
+                  )}
+                  {!pick && (
+                    <div className="flex items-center gap-3 shrink-0">
+                      {renamingId === f.id ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => void saveRename(f)}
+                            disabled={savingRename}
+                            className="text-[10px] uppercase tracking-wide text-[#1a1a1a] hover:text-[#333] disabled:opacity-40"
+                          >
+                            {savingRename ? '…' : 'Save'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setRenamingId(null)}
+                            className="text-[10px] uppercase tracking-wide text-[#9b9b9b] hover:text-[#1a1a1a]"
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => startRename(f)}
+                            className="text-[10px] uppercase tracking-wide text-[#9b9b9b] hover:text-[#1a1a1a]"
+                          >
+                            Rename
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => remove(f)}
+                            disabled={deleting === f.id}
+                            className="text-[10px] uppercase tracking-wide text-[#9b9b9b] hover:text-[#1a1a1a]"
+                          >
+                            {deleting === f.id ? '…' : 'Remove'}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

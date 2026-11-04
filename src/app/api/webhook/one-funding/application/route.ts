@@ -391,6 +391,16 @@ export async function POST(req: NextRequest) {
 
   console.log(`[one-funding application] Lead ${leadId} — ${firstName} ${lastName}${existing ? ' (matched)' : ''}`);
 
+  const extraDocs = form.getAll('documents').filter((item) => item instanceof File && item.size > 0);
+  try {
+    const { notifyLeadUpload } = await import('@/lib/inbox/uploadUnread');
+    const kinds: Array<'application' | 'documents'> = ['application'];
+    if (extraDocs.length) kinds.push('documents');
+    await notifyLeadUpload(supabase, { userId: ownerUserId, leadId, kinds });
+  } catch (err) {
+    console.warn('[one-funding application] inbox unread failed', err);
+  }
+
   const who = `${firstName} ${lastName}`.trim() || legalName;
   try {
     await notifyLeadActivity(supabase, {

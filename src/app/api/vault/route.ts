@@ -170,7 +170,73 @@ export async function PUT(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { id, title, body, folder } = await req.json();
+  const { id, title, body, folder, name: renameTo } = await req.json();
+
+  if (id && typeof renameTo === 'string' && typeof folder !== 'string' && typeof body !== 'string') {
+    const nextName = cleanFolderName(renameTo);
+    if (!nextName) return NextResponse.json({ error: 'Give the folder a name.' }, { status: 400 });
+
+    const { data: row, error: rowError } = await supabase
+      .from('document_vault')
+      .select('id, file_name, file_type, folder')
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .maybeSingle();
+    if (rowError) {
+      if (missingFolderColumn(rowError.message)) {
+        return NextResponse.json({ error: 'Run add-vault-folders.sql in Supabase first.' }, { status: 400 });
+      }
+      return NextResponse.json({ error: rowError.message }, { status: 500 });
+    }
+    if (!row || row.file_type !== FOLDER_TYPE) {
+      return NextResponse.json({ error: 'Folder not found' }, { status: 404 });
+    }
+    if (row.file_name === nextName) return NextResponse.json({ file: row });
+
+    const parent = cleanFolderPath(row.folder);
+    const { data: clash } = await supabase
+      .from('document_vault')
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('file_type', FOLDER_TYPE)
+      .eq('folder', parent)
+      .eq('file_name', nextName)
+      .neq('id', id)
+      .maybeSingle();
+    if (clash) return NextResponse.json({ error: 'A folder with that name already exists here.' }, { status: 409 });
+
+    const oldPath = childPath(parent, row.file_name);
+    const newPath = childPath(parent, nextName);
+
+    const { data: updated, error: nameError } = await supabase
+      .from('document_vault')
+      .update({ file_name: nextName })
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .select()
+      .single();
+    if (nameError || !updated) {
+      return NextResponse.json({ error: nameError?.message || 'Could not rename folder' }, { status: 500 });
+    }
+
+    const { data: descendants } = await supabase
+      .from('document_vault')
+      .select('id, folder')
+      .eq('user_id', user.id);
+    for (const child of descendants ?? []) {
+      const current = cleanFolderPath(child.folder);
+      if (current !== oldPath && !current.startsWith(`${oldPath}/`)) continue;
+      const nextFolder = current === oldPath ? newPath : `${newPath}${current.slice(oldPath.length)}`;
+      await supabase
+        .from('document_vault')
+        .update({ folder: nextFolder })
+        .eq('id', child.id)
+        .eq('user_id', user.id);
+    }
+
+    return NextResponse.json({ file: updated, from: oldPath, to: newPath });
+  }
+
   if (id && typeof folder === 'string' && typeof body !== 'string') {
     const dest = cleanFolderPath(folder);
     if (dest) {

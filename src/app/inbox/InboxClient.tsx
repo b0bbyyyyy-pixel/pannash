@@ -116,6 +116,17 @@ type StagedMms = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+const COMPOSER_MAX_PX = 120;
+
+function sizeComposer(el: HTMLTextAreaElement | null) {
+  if (!el) return;
+  // 1px first — `height: auto` inside a flex column reads the leftover viewport
+  // as scrollHeight and the box keeps growing until refresh.
+  el.style.height = '1px';
+  el.style.maxHeight = `${COMPOSER_MAX_PX}px`;
+  el.style.height = `${Math.min(el.scrollHeight, COMPOSER_MAX_PX)}px`;
+}
+
 function fmt(phone: string) {
   const d = phone.replace(/\D/g, '');
   if (d.length === 11 && d[0] === '1') {
@@ -635,6 +646,7 @@ export default function InboxClient({
     stickToBottomRef.current = true;
     lastScrolledMsgIdRef.current = null;
     setComposerText(selectedLeadId ? (draftsRef.current[selectedLeadId] ?? '') : '');
+    requestAnimationFrame(() => sizeComposer(composerRef.current));
     setStagedFiles(prev => {
       for (const item of prev) {
         if (item.preview) URL.revokeObjectURL(item.preview);
@@ -645,6 +657,10 @@ export default function InboxClient({
     setDropActive(false);
     if (selectedLeadId) loadMessages(selectedLeadId);
   }, [selectedLeadId, loadMessages]);
+
+  useEffect(() => {
+    sizeComposer(composerRef.current);
+  }, [composerText]);
 
   const { pulse, registerOpenLead } = useSync();
   useEffect(() => { conversationIdRef.current = conversationId; }, [conversationId]);
@@ -1227,8 +1243,7 @@ export default function InboxClient({
       const el = composerRef.current;
       if (!el) return;
       el.focus();
-      el.style.height = 'auto';
-      el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+      sizeComposer(el);
     });
   };
 
@@ -1622,7 +1637,7 @@ export default function InboxClient({
             {/* Messages */}
             <div
               ref={threadScrollerRef}
-              className="flex-1 overflow-y-auto overflow-x-hidden px-6 py-4 space-y-1"
+              className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-6 py-4 space-y-1"
               onScroll={e => {
                 const el = e.currentTarget;
                 stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 96;
@@ -1772,7 +1787,7 @@ export default function InboxClient({
             </div>
 
             {/* Composer */}
-            <div className="px-4 py-3 border-t border-[#e5e5e5] bg-white flex-shrink-0">
+            <div className="px-4 py-3 border-t border-[#e5e5e5] bg-white shrink-0">
               {(sendError || attachError) && (
                 <p className="text-xs text-amber-600 mb-1.5 px-1">⚠ {sendError || attachError}</p>
               )}
@@ -1891,7 +1906,7 @@ export default function InboxClient({
                   ) : null}
                 </div>
               )}
-              <div className="flex items-end gap-2">
+              <div className="flex items-end gap-2 min-h-0">
                 <button
                   type="button"
                   onClick={() => setShowTpls(v => !v)}
@@ -1928,7 +1943,7 @@ export default function InboxClient({
                   </svg>
                 </button>
                 <div
-                  className={`flex-1 bg-[#f5f5f5] rounded-2xl px-4 py-2.5 border transition-colors ${
+                  className={`min-w-0 flex-1 self-end bg-[#f5f5f5] rounded-2xl px-4 py-2.5 border transition-colors max-h-[180px] overflow-hidden ${
                     dropActive
                       ? 'border-[#1a1a1a] bg-[#ececec]'
                       : 'border-[#e5e5e5] focus-within:border-gray-300'
@@ -2001,13 +2016,8 @@ export default function InboxClient({
                           : 'Type a message or drop a JPEG, PNG, or PDF…'
                     }
                     rows={1}
-                    className="w-full bg-transparent text-sm text-[#1a1a1a] resize-none focus:outline-none disabled:opacity-50 placeholder-gray-400"
-                    style={{ maxHeight: '120px', overflowY: 'auto' }}
-                    onInput={e => {
-                      const el = e.currentTarget;
-                      el.style.height = 'auto';
-                      el.style.height = Math.min(el.scrollHeight, 120) + 'px';
-                    }}
+                    className="w-full bg-transparent text-sm text-[#1a1a1a] resize-none focus:outline-none disabled:opacity-50 placeholder-gray-400 block max-h-[120px] overflow-y-auto"
+                    onInput={e => sizeComposer(e.currentTarget)}
                   />
                   {composerText && (
                     <p className="text-[10px] text-gray-400 mt-1 text-right">

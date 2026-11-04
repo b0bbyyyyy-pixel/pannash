@@ -18,6 +18,7 @@ import { downloadLeadAttachment } from '@/lib/attachments/downloadClient';
 import { downloadAttachmentBytes, readBankStatementPdf } from '@/lib/pdf/renderPdfPages';
 import { hasBankMetrics, reconcileBankMetrics } from '@/lib/pdf/extractBankMetrics';
 import { postLeadPatch } from '@/lib/pipeline/iframeMessages';
+import { markUploadSeenClient } from '@/lib/inbox/markUploadSeenClient';
 import { useParseJobs } from '@/lib/parseJobs/ParseJobsProvider';
 import {
   parseMcaPositions,
@@ -258,6 +259,7 @@ export default function DocumentsModal({
   }, [leadId]);
 
   useEffect(() => { fetchDocs(); }, [fetchDocs]);
+  useEffect(() => { markUploadSeenClient(leadId, 'documents'); }, [leadId]);
 
   // ── Reset upload sub-modal ─────────────────────────────────────────────────
   const closeUpload = useCallback(() => {

@@ -1,0 +1,54 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { createServerClient } from '@supabase/ssr';
+import { cookies } from 'next/headers';
+import { getRequestUser } from '@/lib/auth/getRequestUser';
+import { countUploadUnread, listUploadUnread, markUploadSeen, type UploadUnreadKind } from '@/lib/inbox/uploadUnread';
+
+export const dynamic = 'force-dynamic';
+
+async function client() {
+  const cookieStore = await cookies();
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { cookies: { get: (n) => cookieStore.get(n)?.value, set: () => {}, remove: () => {} } },
+  );
+}
+
+export async function GET() {
+  try {
+    const supabase = await client();
+    const user = await getRequestUser(supabase);
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const items = await listUploadUnread(supabase, user.id);
+    const count = items.reduce((n, i) => n + i.application + i.documents, 0);
+    return NextResponse.json({ count, items });
+  } catch {
+    return NextResponse.json({ count: 0, items: [] });
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const supabase = await client();
+    const user = await getRequestUser(supabase);
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    const body = await req.json().catch(() => ({}));
+    const leadId = String(body.leadId || '').trim();
+    const kind = body.kind === 'documents' ? 'documents' : body.kind === 'application' ? 'application' : '';
+    if (!leadId || !kind) {
+      return NextResponse.json({ error: 'leadId and kind required' }, { status: 400 });
+    }
+
+    await markUploadSeen(supabase, {
+      userId: user.id,
+      leadId,
+      kind: kind as UploadUnreadKind,
+    });
+    const count = await countUploadUnread(supabase, user.id);
+    return NextResponse.json({ ok: true, count });
+  } catch {
+    return NextResponse.json({ ok: false, count: 0 });
+  }
+}

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import ManualDialPanel from '@/app/dialer/ManualDialPanel';
 import { useWebPhone } from '@/components/webphone/WebPhone';
 import BillingClient from '@/app/settings/billing/BillingClient';
@@ -11,6 +11,8 @@ import { usePolling } from '@/lib/sync/usePolling';
 import type { BillingCredits } from '@/lib/billing/credits';
 import { hasUnseenMissedCall, MISSED_CALLS_SEEN_EVENT } from '@/lib/telephony/missed';
 import InboxPingSwitch from '@/components/InboxPingSwitch';
+import { UPLOAD_UNREAD_EVENT } from '@/lib/inbox/markUploadSeenClient';
+import type { UploadUnreadItem } from '@/lib/inbox/uploadUnread';
 
 type DripJobSummary = {
   id: string;
@@ -54,6 +56,10 @@ export default function Navbar({ userName }: NavbarProps) {
   const [dripJob, setDripJob] = useState<DripJobSummary | null>(null);
   const [billingPeek, setBillingPeek] = useState<{ twilio: number | null; xai: number | null } | null>(null);
   const [unseenMissed, setUnseenMissed] = useState(false);
+  const [uploadUnread, setUploadUnread] = useState(0);
+  const [uploadItems, setUploadItems] = useState<UploadUnreadItem[]>([]);
+  const [showUploadPeek, setShowUploadPeek] = useState(false);
+  const uploadPeekTimer = useRef<number | null>(null);
 
   const loadDrip = useCallback(async () => {
     try {
@@ -80,6 +86,35 @@ export default function Navbar({ userName }: NavbarProps) {
   }, []);
 
   usePolling(loadMissedPeek, 30_000);
+
+  const loadUploadUnread = useCallback(async () => {
+    try {
+      const res = await fetch('/api/inbox/upload-unread', { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json() as { count?: number; items?: UploadUnreadItem[] };
+      const items = Array.isArray(data.items) ? data.items : [];
+      setUploadItems(items);
+      setUploadUnread(Number(data.count) || items.reduce((n, i) => n + i.application + i.documents, 0));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  usePolling(loadUploadUnread, 15_000);
+
+  useEffect(() => {
+    const refresh = () => { void loadUploadUnread(); };
+    const onMsg = (e: MessageEvent) => {
+      if (e.origin !== window.location.origin) return;
+      if (e.data?.type === UPLOAD_UNREAD_EVENT) refresh();
+    };
+    window.addEventListener(UPLOAD_UNREAD_EVENT, refresh);
+    window.addEventListener('message', onMsg);
+    return () => {
+      window.removeEventListener(UPLOAD_UNREAD_EVENT, refresh);
+      window.removeEventListener('message', onMsg);
+    };
+  }, [loadUploadUnread]);
 
   useEffect(() => {
     const refresh = () => { void loadMissedPeek(); };
@@ -145,6 +180,63 @@ export default function Navbar({ userName }: NavbarProps) {
 
           {/* Right Side - Calendar popup + Settings menu */}
           <div className="relative flex items-center gap-4">
+            {uploadUnread > 0 && (
+              <div
+                className="relative"
+                onMouseEnter={() => {
+                  if (uploadPeekTimer.current) window.clearTimeout(uploadPeekTimer.current);
+                  setShowUploadPeek(true);
+                }}
+                onMouseLeave={() => {
+                  if (uploadPeekTimer.current) window.clearTimeout(uploadPeekTimer.current);
+                  uploadPeekTimer.current = window.setTimeout(() => setShowUploadPeek(false), 160);
+                }}
+              >
+                <Link
+                  href="/inbox"
+                  className="text-[18px] font-bold font-serif text-red-600 leading-none tracking-tight hover:opacity-80"
+                >
+                  {uploadUnread > 99 ? '99+' : uploadUnread}
+                </Link>
+                {showUploadPeek && (
+                  <div className="absolute right-0 top-full mt-2 w-72 bg-white border border-[#e5e5e5] rounded-md shadow-lg py-2 z-[60]">
+                    <p className="px-3 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-[#9b9b9b]">
+                      New submissions
+                    </p>
+                    {uploadItems.length === 0 ? (
+                      <p className="px-3 py-2 text-xs text-[#6b6b6b]">Nothing waiting.</p>
+                    ) : (
+                      <div className="max-h-72 overflow-y-auto">
+                        {uploadItems.map(item => {
+                          const parts: string[] = [];
+                          if (item.application > 0) {
+                            parts.push(item.application === 1 ? 'Application' : `${item.application} applications`);
+                          }
+                          if (item.documents > 0) {
+                            parts.push(item.documents === 1 ? 'Documents' : `${item.documents} document uploads`);
+                          }
+                          return (
+                            <Link
+                              key={item.leadId}
+                              href={`/inbox?leadId=${item.leadId}`}
+                              className="block px-3 py-2 hover:bg-[#f5f5f5] transition-colors"
+                            >
+                              <p className="text-sm font-medium text-[#1a1a1a] truncate">
+                                {item.company || item.name}
+                              </p>
+                              {item.company && (
+                                <p className="text-[11px] text-[#6b6b6b] truncate">{item.name}</p>
+                              )}
+                              <p className="text-[11px] text-red-600 mt-0.5">{parts.join(' · ')}</p>
+                            </Link>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
             {/* Calendar icon → popup */}
             <button
               onClick={() => { setShowCalendar(true); setShowAgent(false); setShowBilling(false); setShowVault(false); webphone.closeDialPad(); setShowDropdown(false); }}
