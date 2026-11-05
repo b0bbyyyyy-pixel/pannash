@@ -37,6 +37,12 @@ export default function LetterEmailPreview({ html, fontSizePt = DEFAULT_EMAIL_FO
     img, table { max-width: 100% !important; }
     img { height: auto; }
     a { color: #1155cc; }
+    .email-notice {
+      margin-top: 1.4em;
+      font-size: 11px;
+      line-height: 1.45;
+      color: #6b6b6b;
+    }
   </style>
 </head>
 <body>${body}</body>

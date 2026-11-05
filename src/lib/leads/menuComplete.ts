@@ -78,13 +78,15 @@ export function applyLeadStateMsg(
 ): LeadMenuState {
   const sameLead = !incoming.id || !prev?.id || incoming.id === prev.id;
   const base = sameLead ? prev : null;
+  const keep = (next: boolean | undefined, was: boolean | undefined) =>
+    !!(was || next);
   return {
     id: incoming.id ?? base?.id,
     section: incoming.section as LeadActionId,
-    appComplete: incoming.appComplete !== undefined ? !!incoming.appComplete : (base?.appComplete ?? false),
-    lendersComplete: incoming.lendersComplete !== undefined ? !!incoming.lendersComplete : (base?.lendersComplete ?? false),
-    docsComplete: incoming.docsComplete !== undefined ? !!incoming.docsComplete : (base?.docsComplete ?? false),
-    offersComplete: incoming.offersComplete !== undefined ? !!incoming.offersComplete : (base?.offersComplete ?? false),
+    appComplete: keep(incoming.appComplete, base?.appComplete),
+    lendersComplete: keep(incoming.lendersComplete, base?.lendersComplete),
+    docsComplete: keep(incoming.docsComplete, base?.docsComplete),
+    offersComplete: keep(incoming.offersComplete, base?.offersComplete),
   };
 }
 

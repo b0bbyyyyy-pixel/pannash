@@ -17,12 +17,39 @@ export function sanitizeEmailHtml(html: string) {
     .replace(/\son\w+='[^']*'/gi, '');
 }
 
+function brNewlinesOutsideTags(html: string) {
+  let out = '';
+  let inTag = false;
+  for (const c of html) {
+    if (c === '<') inTag = true;
+    if (inTag) {
+      out += c;
+      if (c === '>') inTag = false;
+      continue;
+    }
+    if (c === '\r') continue;
+    out += c === '\n' ? '<br/>' : c;
+  }
+  return out;
+}
+
 /** Turn stored template HTML/plain text into body markup. */
 export function prepareEmailBodyHtml(raw: string) {
   const trimmed = (raw || '').trim();
   if (!trimmed) return '';
   const hasMarkup = /<\/?[a-z][\s\S]*>/i.test(trimmed);
-  const html = hasMarkup ? trimmed : escapeHtml(trimmed).replace(/\n/g, '<br/>');
+  let html = hasMarkup ? trimmed : escapeHtml(trimmed);
+  if (!/<br\s*\/?>/i.test(html) && html.includes('\n')) {
+    html = brNewlinesOutsideTags(html);
+  } else if (!/<br\s*\/?>/i.test(html) && !html.includes('\n')) {
+    html = html
+      .replace(/(Thank you!?)/i, '<br/>$1')
+      .replace(/\s+(Website:)/i, '<br/>$1')
+      .replace(/\s+(NOTICE:)/i, '<br/><br/>NOTICE:');
+  }
+  if (/NOTICE:/i.test(html) && !/email-notice/.test(html)) {
+    html = html.replace(/(NOTICE:\s*[\s\S]*)$/i, '<div class="email-notice">$1</div>');
+  }
   return sanitizeEmailHtml(html);
 }
 

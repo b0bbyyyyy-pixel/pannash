@@ -916,7 +916,9 @@ export default function LeadWorkspaceClient({
         ...(next.email != null ? { email: next.email } : {}),
         ...(next.phone !== undefined ? { phone: next.phone } : {}),
         ...(next.company !== undefined ? { company: next.company } : {}),
-        ...(next.underwriting_data ? { underwriting_data: next.underwriting_data } : {}),
+        ...(next.underwriting_data
+          ? { underwriting_data: { ...(prev.underwriting_data || {}), ...next.underwriting_data } }
+          : {}),
       }));
       postLeadPatch(lead.id, {
         ...(next.name != null ? { name: next.name } : {}),
@@ -1379,14 +1381,16 @@ export default function LeadWorkspaceClient({
     return false;
   }, [ud.actualOffers, submissions, lead.lead_status]);
 
+  const udHydrated = Object.keys((lead.underwriting_data || {}) as object).length > 0;
   useEffect(() => {
+    if (!appComplete && !udHydrated) return;
     postLeadState(surfaceTab, appComplete, lendersComplete, {
       id: lead.id,
       docsComplete,
       offersComplete,
     });
     postLeadPatch(lead.id, { doc_count: docCount });
-  }, [lead.id, surfaceTab, appComplete, lendersComplete, docsComplete, offersComplete, docCount]);
+  }, [lead.id, surfaceTab, appComplete, lendersComplete, docsComplete, offersComplete, docCount, udHydrated]);
 
   const lenderCriteria = useMemo(() => ({
     timeInBusiness:    derivedTIB ?? Number(ud.timeInBusiness ?? 0),
