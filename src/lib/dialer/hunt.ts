@@ -17,22 +17,26 @@ export interface HuntCallSnapshot {
 const MACHINE = /^(machine_|fax$)/i;
 const DONE = new Set(['completed', 'no_answer', 'no-answer', 'busy', 'failed', 'canceled', 'cancelled']);
 
+/** Wait for Twilio AMD (timeout 5s) before treating an unanswered pickup as a person. */
+export const AMD_HUMAN_FALLBACK_MS = 6_500;
+
 /** Map Twilio AnsweredBy + call row → what hunt should do. */
 export function huntVerdict(snap: HuntCallSnapshot, now = Date.now()): HuntVerdict {
   const by = String(snap.answered_by || '').trim().toLowerCase();
   const status = String(snap.status || '').trim().toLowerCase().replace('-', '_');
 
-  if (by === 'human' || snap.answering_machine === false) return 'human';
+  // Machine always wins — never beep / wrap-up a voicemail.
   if (MACHINE.test(by) || by === 'fax' || snap.answering_machine === true) return 'voicemail';
+  if (by === 'human' || snap.answering_machine === false) return 'human';
   if (status === 'busy') return 'busy';
 
   const answered = !!snap.answered_at;
   if (answered && (by === 'unknown' || by === '')) {
-    // AMD stalled after pickup — don't leave a live person muted.
     const started = snap.started_at ? Date.parse(snap.started_at) : NaN;
     const answeredAt = Date.parse(snap.answered_at!);
     const age = now - (Number.isFinite(answeredAt) ? answeredAt : Number.isFinite(started) ? started : now);
-    if (age >= 2_500) return 'human';
+    // Only assume a quiet person after AMD has had its full window.
+    if (age >= AMD_HUMAN_FALLBACK_MS) return 'human';
     return 'wait';
   }
 
@@ -46,6 +50,5 @@ export function isMachineAnsweredBy(answeredBy: string | null | undefined): bool
 }
 
 export function isHumanAnsweredBy(answeredBy: string | null | undefined): boolean {
-  const by = String(answeredBy || '').trim().toLowerCase();
-  return by === 'human' || by === 'unknown';
+  return String(answeredBy || '').trim().toLowerCase() === 'human';
 }

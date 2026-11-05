@@ -228,7 +228,7 @@ export async function POST(req: NextRequest) {
       };
       if (hunt && dbId) {
         numberOpts.machineDetection = 'Enable';
-        numberOpts.machineDetectionTimeout = 5;
+        numberOpts.machineDetectionTimeout = 6;
         numberOpts.amdStatusCallback = `${base}/api/webhooks/twilio/voice-app-amd?dbId=${dbId}`;
         numberOpts.amdStatusCallbackMethod = 'POST';
       }

@@ -348,15 +348,16 @@ export function useDialerSession() {
               if (res.ok) {
                 const snap = await res.json();
                 verdict = huntVerdict(snap);
-                if (verdict === 'wait') verdict = snap.answered_at ? 'human' : 'no_answer';
+                // Call ended while AMD was still running — almost always a machine hangup.
+                if (verdict === 'wait') verdict = snap.answered_at ? 'voicemail' : 'no_answer';
               }
             } catch { /* default no_answer */ }
           }
-          if (verdict === 'human' || verdict === 'wait') {
+          if (verdict === 'human') {
             setState('wrap_up');
             return;
           }
-          await skipHunt(verdict);
+          await skipHunt(verdict === 'wait' ? 'no_answer' : verdict);
         })();
         return;
       }
