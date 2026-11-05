@@ -232,7 +232,16 @@ export async function GET(req: NextRequest) {
       } catch { /* ignore */ }
     }
 
-    return NextResponse.json({ messages, conversationId: conv.id });
+    let leadStatus: string | null = null;
+    try {
+      const { maybeMarkDocsIn } = await import('@/lib/leads/markDocsIn');
+      const docsIn = await maybeMarkDocsIn(supabase, { leadId, userId: user.id });
+      if (docsIn) leadStatus = 'Docs In';
+    } catch {
+      /* ignore */
+    }
+
+    return NextResponse.json({ messages, conversationId: conv.id, leadStatus });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     console.error('[inbox/messages] unexpected error:', err);

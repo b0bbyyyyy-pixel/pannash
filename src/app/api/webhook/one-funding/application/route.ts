@@ -353,6 +353,7 @@ export async function POST(req: NextRequest) {
   }
 
   const failed: string[] = [];
+  let stored = 0;
   for (const item of uploads) {
     if (item.file.size > MAX_FILE_BYTES) {
       failed.push(item.name);
@@ -386,7 +387,9 @@ export async function POST(req: NextRequest) {
       console.error('Application attachment row failed:', dbError.message);
       await supabase.storage.from('lead-attachments').remove([filePath]);
       failed.push(item.name);
+      continue;
     }
+    stored += 1;
   }
 
   console.log(`[one-funding application] Lead ${leadId} — ${firstName} ${lastName}${existing ? ' (matched)' : ''}`);
@@ -399,6 +402,19 @@ export async function POST(req: NextRequest) {
     await notifyLeadUpload(supabase, { userId: ownerUserId, leadId, kinds });
   } catch (err) {
     console.warn('[one-funding application] inbox unread failed', err);
+  }
+
+  if (stored > 0) {
+    try {
+      const { maybeMarkDocsIn } = await import('@/lib/leads/markDocsIn');
+      await maybeMarkDocsIn(supabase, {
+        leadId,
+        userId: ownerUserId,
+        fromOutside: true,
+      });
+    } catch (err) {
+      console.warn('[one-funding application] Docs In update failed', err);
+    }
   }
 
   const who = `${firstName} ${lastName}`.trim() || legalName;

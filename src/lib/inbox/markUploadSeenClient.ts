@@ -13,11 +13,17 @@ export function pingUploadUnreadListeners() {
 }
 
 export function markUploadSeenClient(leadId: string, kind: UploadUnreadKind | 'all' = 'all') {
-  if (!leadId) return;
-  void fetch('/api/inbox/upload-unread', {
+  if (!leadId) return Promise.resolve({ docsIn: false });
+  return fetch('/api/inbox/upload-unread', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
     body: JSON.stringify({ leadId, kind: 'all' }),
-  }).finally(() => pingUploadUnreadListeners());
+  })
+    .then(async res => {
+      const data = await res.json().catch(() => ({})) as { docsIn?: boolean };
+      return { docsIn: Boolean(data.docsIn) };
+    })
+    .catch(() => ({ docsIn: false }))
+    .finally(() => pingUploadUnreadListeners());
 }

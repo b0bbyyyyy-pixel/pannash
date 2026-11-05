@@ -47,8 +47,15 @@ export async function POST(req: NextRequest) {
       leadId,
       kind: kind as UploadUnreadKind | 'all',
     });
+    let docsIn = false;
+    try {
+      const { maybeMarkDocsIn } = await import('@/lib/leads/markDocsIn');
+      docsIn = await maybeMarkDocsIn(supabase, { leadId, userId: user.id });
+    } catch {
+      /* status update is best-effort */
+    }
     const count = await countUploadUnread(supabase, user.id);
-    return NextResponse.json({ ok: true, count });
+    return NextResponse.json({ ok: true, count, docsIn });
   } catch {
     return NextResponse.json({ ok: false, count: 0 });
   }

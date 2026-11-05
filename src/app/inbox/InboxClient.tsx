@@ -619,6 +619,7 @@ export default function InboxClient({
         const bump = !!(last && nextAt >= prevAt);
         return {
           ...l,
+          ...(data.leadStatus ? { lead_status: data.leadStatus } : {}),
           ...(capturedEmail ? { email: capturedEmail, email_from_sms: true } : {}),
           conversation: {
             id: l.conversation?.id ?? data.conversationId ?? '',
@@ -1456,7 +1457,12 @@ export default function InboxClient({
                 <button
                   key={lead.id}
                   onClick={() => {
-                    markUploadSeenClient(lead.id);
+                    void markUploadSeenClient(lead.id).then(data => {
+                      if (!data.docsIn) return;
+                      setLeads(prev => prev.map(l => (
+                        l.id === lead.id ? { ...l, lead_status: 'Docs In' } : l
+                      )));
+                    });
                     if (lead.id === selectedLeadIdRef.current) return;
                     setSelectedLeadId(lead.id);
                   }}

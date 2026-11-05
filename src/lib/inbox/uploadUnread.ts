@@ -65,6 +65,7 @@ async function bumpLeadUnseen(
   const cur = readUnseenUploads(ud);
   for (const kind of kinds) cur[kind] += 1;
   ud.unseenUploads = cur;
+  ud.docsFromOutside = true;
   delete ud.uploadUnreadClearedAt;
   await supabase
     .from('leads')
@@ -164,6 +165,17 @@ export async function notifyLeadUpload(
       .from('leads')
       .update({ last_contact: now, in_pipeline: true })
       .eq('id', args.leadId);
+  }
+
+  try {
+    const { maybeMarkDocsIn } = await import('@/lib/leads/markDocsIn');
+    await maybeMarkDocsIn(supabase, {
+      leadId: args.leadId,
+      userId: args.userId,
+      fromOutside: true,
+    });
+  } catch {
+    /* status update is best-effort */
   }
 }
 
