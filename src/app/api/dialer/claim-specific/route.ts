@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
-import { isEligible } from '@/lib/dialer/canDial';
+import { isEligible, type DialerLeadShape } from '@/lib/dialer/canDial';
 import { peekQueue } from '@/lib/dialer/queue';
 import { getTelephonySettings } from '@/lib/telephony/twilio';
 
@@ -58,7 +58,18 @@ export async function POST(req: Request) {
     }
 
     const settings = await getTelephonySettings(supabase, user.id);
-    const unlocked = { ...lead, locked_by: null, locked_at: null };
+    const row = lead as DialerLeadShape;
+    const unlocked: DialerLeadShape = {
+      phone_e164: row.phone_e164,
+      dnc: row.dnc,
+      dialer_status: row.dialer_status,
+      next_eligible_at: row.next_eligible_at,
+      locked_by: null,
+      locked_at: null,
+      attempts_today: row.attempts_today,
+      attempts_today_on: row.attempts_today_on,
+      timezone: row.timezone,
+    };
     if (!isEligible(unlocked, {
       windowStart: settings.calling_window_start,
       windowEnd: settings.calling_window_end,
