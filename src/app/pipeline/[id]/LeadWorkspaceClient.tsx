@@ -1955,7 +1955,10 @@ export default function LeadWorkspaceClient({
                 leadStatus={lead.lead_status || undefined}
                 userName={userName}
                 criteria={lenderCriteria}
-                onSent={loadSubmissions}
+                onSent={() => {
+                  loadSubmissions();
+                  void saveLeadStatus('Submitted');
+                }}
                 onOpenOffers={() => setSurfaceTab('offers')}
               />
             </div>
