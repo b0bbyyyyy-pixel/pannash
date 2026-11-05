@@ -41,14 +41,7 @@ export async function POST(req: Request) {
     // Fetch the specific lead (must belong to this user)
     const { data: lead, error: fetchErr } = await supabase
       .from('leads')
-      .select([
-        'id', 'name', 'company', 'email', 'phone_e164', 'timezone',
-        'dnc', 'dialer_status', 'next_eligible_at',
-        'last_disposition', 'last_called_at', 'last_call_notes',
-        'notes', 'stage', 'lead_status', 'month_key', 'list_id', 'in_pipeline',
-        'attempts_today', 'attempts_today_on',
-        'locked_by', 'locked_at',
-      ].join(', '))
+      .select('id, name, company, email, phone_e164, timezone, dnc, dialer_status, next_eligible_at, last_disposition, last_called_at, last_call_notes, notes, stage, lead_status, month_key, list_id, in_pipeline, attempts_today, attempts_today_on, locked_by, locked_at')
       .eq('id', leadId)
       .eq('user_id', user.id)
       .maybeSingle();
@@ -58,7 +51,7 @@ export async function POST(req: Request) {
     }
 
     const settings = await getTelephonySettings(supabase, user.id);
-    const row = lead as DialerLeadShape;
+    const row = lead as unknown as DialerLeadShape;
     const unlocked: DialerLeadShape = {
       phone_e164: row.phone_e164,
       dnc: row.dnc,
