@@ -19,7 +19,9 @@ export default function InboxDialer({
   const {
     state, lead, error, setError,
     activeCampaign, showPicker, setShowPicker,
-    testMode, toggleTestMode, autoCall, toggleAutoCall, showCallCount, setShowCallCount,
+    testMode, toggleTestMode, autoCall, toggleAutoCall,
+    hunt, toggleHunt, hunting, huntFlash,
+    showCallCount, setShowCallCount,
     showEmailModal, setShowEmailModal,
     webphone, campaignPct, claimNext,
     handleLoadCampaign, handleClearCampaign,
@@ -48,6 +50,16 @@ export default function InboxDialer({
       {open && (
         <div>
           <div className="flex flex-wrap items-center justify-end gap-x-1.5 gap-y-1 pl-6 pr-3 pb-2">
+            <button
+              onClick={toggleHunt}
+              title="Hunt — one number at a time until a person answers"
+              className="flex items-center gap-1 shrink-0"
+            >
+              <span className={`text-[9px] ${hunt ? 'text-[#1a1a1a] font-medium' : 'text-[#c4c4c4]'}`}>Hunt</span>
+              <span className={`relative inline-block w-5 h-3 rounded-full transition-colors ${hunt ? 'bg-[#1a1a1a]' : 'bg-[#e5e5e5]'}`}>
+                <span className={`absolute top-0.5 w-2 h-2 rounded-full bg-white transition-all ${hunt ? 'left-2.5' : 'left-0.5'}`} />
+              </span>
+            </button>
             <button
               onClick={toggleAutoCall}
               title="Auto call — dial the next lead after you save a status"
@@ -113,6 +125,9 @@ export default function InboxDialer({
           ) : state === 'empty' ? (
             <div className="px-4 py-6 text-center">
               <p className="text-sm font-medium text-[#1a1a1a]">Queue&apos;s clear</p>
+              <p className="mt-1 text-[11px] text-[#9ca3af]">
+                Remaining numbers may be outside 8am–9pm local time.
+              </p>
               <button
                 onClick={() => claimNext(null)}
                 className="mt-2 text-xs text-[#6b6b6b] hover:text-[#1a1a1a] underline"
@@ -126,6 +141,8 @@ export default function InboxDialer({
               view={state === 'on_call' ? 'on_call' : state === 'ready' ? 'idle' : 'wrap'}
               onCall={handleCall}
               phoneStatus={webphone.status}
+              hunting={hunting}
+              huntFlash={huntFlash}
               onHangup={handleHangup}
               onSave={handleDisposition}
               saving={state === 'saving'}

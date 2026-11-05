@@ -18,7 +18,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { toE164, isValidE164, formatDisplay } from '@/lib/dialer/e164';
-import { isWithinDialingHours, attemptsExceeded, todayInTz } from '@/lib/dialer/canDial';
+import { isWithinDialingHours, attemptsExceeded, todayInTz, callingTimezone } from '@/lib/dialer/canDial';
 import { getTwilioCreds, getTelephonySettings } from '@/lib/telephony/twilio';
 import { makeProvider } from '@/lib/telephony/provider';
 
@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
     // ── Resolve the target number (lead mode vs manual mode) ─────────────────
     let toNumber: string | null = null;
     let leadRow: {
-      id: string; name: string; timezone: string | null;
+      id: string; name: string; timezone: string | null; phone_e164: string | null;
       attempts_today: number | null; attempts_today_on: string | null;
     } | null = null;
 
@@ -72,10 +72,11 @@ export async function POST(req: NextRequest) {
       if (lead.dnc || ['bad_number', 'do_not_contact'].includes(lead.dialer_status ?? '')) {
         return NextResponse.json({ error: 'Lead is DNC / bad number' }, { status: 422 });
       }
-      if (!isWithinDialingHours(lead.timezone, settings.calling_window_start, settings.calling_window_end)) {
+      const tz = callingTimezone(lead);
+      if (!tz || !isWithinDialingHours(tz, settings.calling_window_start, settings.calling_window_end)) {
         return NextResponse.json({ error: 'Outside calling window for this lead\u2019s timezone' }, { status: 422 });
       }
-      if (attemptsExceeded(lead.attempts_today, lead.attempts_today_on, lead.timezone, settings.max_attempts_per_day)) {
+      if (attemptsExceeded(lead.attempts_today, lead.attempts_today_on, tz, settings.max_attempts_per_day)) {
         return NextResponse.json({ error: 'Daily attempt cap reached for this lead' }, { status: 422 });
       }
 
@@ -131,7 +132,7 @@ export async function POST(req: NextRequest) {
 
     // ── Increment attempt counter (lead mode only) ────────────────────────────
     if (leadRow) {
-      const today = todayInTz(leadRow.timezone);
+      const today = todayInTz(callingTimezone(leadRow));
       const currentCount = leadRow.attempts_today_on === today ? (leadRow.attempts_today ?? 0) : 0;
       await supabase
         .from('leads')

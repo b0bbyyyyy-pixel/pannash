@@ -188,20 +188,28 @@ export async function POST(req: NextRequest) {
         return twimlResponse(hangupTwiml('Caller I D is not set.'), 500);
       }
       const callerId = pickDialerCallerId(outboundTo, fromNumber);
-      console.log('[twilio/voice-app] callerId', callerId);
+      const hunt = params.hunt === '1' || params.Hunt === '1';
+      console.log('[twilio/voice-app] callerId', callerId, 'hunt', hunt);
       const dial = vr.dial({
         callerId,
         answerOnBridge: true,
-        timeout: 30,
+        timeout: hunt ? 22 : 30,
+        ...(hunt ? { action: statusCb, method: 'POST' as const } : {}),
       });
-      dial.number(
-        {
-          statusCallback: statusCb,
-          statusCallbackMethod: 'POST',
-          statusCallbackEvent: ['answered', 'completed'],
-        },
-        outboundTo
-      );
+      const numberOpts: Record<string, unknown> = {
+        statusCallback: statusCb,
+        statusCallbackMethod: 'POST',
+        statusCallbackEvent: hunt
+          ? ['initiated', 'ringing', 'answered', 'completed']
+          : ['answered', 'completed'],
+      };
+      if (hunt && dbId) {
+        numberOpts.machineDetection = 'Enable';
+        numberOpts.machineDetectionTimeout = 5;
+        numberOpts.amdStatusCallback = `${base}/api/webhooks/twilio/voice-app-amd?dbId=${dbId}`;
+        numberOpts.amdStatusCallbackMethod = 'POST';
+      }
+      dial.number(numberOpts as Parameters<typeof dial.number>[0], outboundTo);
     } else {
       const dial = vr.dial({ timeout: 25, action: statusCb, method: 'POST' });
       const client = dial.client({

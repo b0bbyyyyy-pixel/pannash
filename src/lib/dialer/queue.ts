@@ -5,9 +5,12 @@
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SupabaseClient = any;
 
-import { isEligible, todayInTz, type DialerLeadShape } from './canDial';
+import { isEligible, todayInTz, callingTimezone, type DialerHoursOpts, type DialerLeadShape } from './canDial';
+import { getTelephonySettings } from '@/lib/telephony/twilio';
 
 const LOCK_TTL_MS = 5 * 60 * 1_000;
+const SCAN_PAGE = 80;
+const SCAN_CAP = 400;
 
 /** Full lead shape returned to the UI */
 export interface QueueLead {
@@ -44,7 +47,74 @@ const LEAD_SELECT = [
   'locked_by', 'locked_at',
 ].join(', ');
 
+const PEEK_SELECT = [
+  'id', 'name', 'company', 'phone_e164', 'timezone', 'next_eligible_at',
+  'last_disposition', 'dnc', 'dialer_status', 'locked_by', 'locked_at',
+  'attempts_today', 'attempts_today_on',
+].join(', ');
+
 const staleLockIso = () => new Date(Date.now() - LOCK_TTL_MS).toISOString();
+
+async function hoursOpts(supabase: SupabaseClient, userId: string): Promise<DialerHoursOpts> {
+  const s = await getTelephonySettings(supabase, userId);
+  return {
+    windowStart: s.calling_window_start,
+    windowEnd: s.calling_window_end,
+    maxAttempts: s.max_attempts_per_day,
+  };
+}
+
+function eligibleNow(lead: DialerLeadShape, opts: DialerHoursOpts): boolean {
+  if (['bad_number', 'do_not_contact'].includes(lead.dialer_status ?? '')) return false;
+  return isEligible(lead, opts);
+}
+
+/**
+ * Walk the ordered candidate list until we have `want` leads that are in
+ * the called party's local calling window (skips CA at 6am, etc.).
+ */
+async function scanEligible(
+  supabase: SupabaseClient,
+  userId: string,
+  listId: string | null | undefined,
+  excludeId: string | null,
+  opts: DialerHoursOpts,
+  want: number,
+  select: string,
+): Promise<QueueLead[]> {
+  const found: QueueLead[] = [];
+  const nowIso = new Date().toISOString();
+  const stale = staleLockIso();
+
+  for (let offset = 0; offset < SCAN_CAP && found.length < want; offset += SCAN_PAGE) {
+    let query = supabase
+      .from('leads')
+      .select(select)
+      .eq('user_id', userId)
+      .eq('dnc', false)
+      .not('phone_e164', 'is', null)
+      .or(`locked_by.is.null,locked_at.lt.${stale}`)
+      .or(`next_eligible_at.is.null,next_eligible_at.lte.${nowIso}`)
+      .order('next_eligible_at', { ascending: true, nullsFirst: true })
+      .range(offset, offset + SCAN_PAGE - 1);
+
+    if (listId) query = query.eq('list_id', listId);
+    if (excludeId) query = query.neq('id', excludeId);
+
+    const { data, error } = await query;
+    if (error || !data?.length) break;
+
+    for (const row of data as QueueLead[]) {
+      if (eligibleNow(row, opts)) {
+        found.push(row);
+        if (found.length >= want) break;
+      }
+    }
+    if (data.length < SCAN_PAGE) break;
+  }
+
+  return found;
+}
 
 // ─── claim ────────────────────────────────────────────────────────────────────
 
@@ -57,28 +127,8 @@ export async function claimNextLead(
   userId: string,
   listId?: string | null
 ): Promise<QueueLead | null> {
-  // Fetch a generous batch; filter timezone/attempts in JS
-  let query = supabase
-    .from('leads')
-    .select(LEAD_SELECT)
-    .eq('user_id', userId)
-    .eq('dnc', false)
-    .not('phone_e164', 'is', null)
-    .or(`locked_by.is.null,locked_at.lt.${staleLockIso()}`)
-    .or(`next_eligible_at.is.null,next_eligible_at.lte.${new Date().toISOString()}`)
-    .order('next_eligible_at', { ascending: true, nullsFirst: true })
-    .limit(40);
-
-  if (listId) query = query.eq('list_id', listId);
-
-  const { data: candidates, error } = await query;
-
-  if (error || !candidates?.length) return null;
-
-  const eligible = (candidates as QueueLead[]).filter((l) =>
-    !['bad_number', 'do_not_contact'].includes(l.dialer_status ?? '') &&
-    isEligible(l)
-  );
+  const opts = await hoursOpts(supabase, userId);
+  const eligible = await scanEligible(supabase, userId, listId, null, opts, 1, LEAD_SELECT);
   if (!eligible.length) return null;
 
   const lead = eligible[0];
@@ -152,7 +202,17 @@ export async function getCurrentLead(
   if (listId) query = query.eq('list_id', listId);
 
   const { data } = await query.maybeSingle();
-  return (data as QueueLead | null) ?? null;
+  if (!data) return null;
+
+  const lead = data as QueueLead;
+  const opts = await hoursOpts(supabase, userId);
+  // Locked leads fail isEligible's lock check — clear it to evaluate hours/DNC.
+  const unlocked: DialerLeadShape = { ...lead, locked_by: null, locked_at: null };
+  if (!eligibleNow(unlocked, opts)) {
+    await unlockLead(supabase, lead.id, userId);
+    return null;
+  }
+  return lead;
 }
 
 export interface QueuePreview {
@@ -173,26 +233,17 @@ export async function peekQueue(
   limit = 10,
   listId?: string | null
 ): Promise<QueuePreview[]> {
-  let query = supabase
-    .from('leads')
-    .select('id, name, company, phone_e164, timezone, next_eligible_at, last_disposition, dnc, dialer_status, locked_by, locked_at, attempts_today, attempts_today_on')
-    .eq('user_id', userId)
-    .eq('dnc', false)
-    .not('phone_e164', 'is', null)
-    .neq('id', excludeId ?? '00000000-0000-0000-0000-000000000000')
-    .or(`locked_by.is.null,locked_at.lt.${staleLockIso()}`)
-    .or(`next_eligible_at.is.null,next_eligible_at.lte.${new Date().toISOString()}`)
-    .order('next_eligible_at', { ascending: true, nullsFirst: true })
-    .limit(40);
-
-  if (listId) query = query.eq('list_id', listId);
-
-  const { data } = await query;
-
-  if (!data) return [];
-  // Cast to the full shape needed by isEligible, then strip to QueuePreview on return
-  type PeekRow = QueuePreview & DialerLeadShape;
-  return (data as PeekRow[]).filter((l) => isEligible(l)).slice(0, limit);
+  const opts = await hoursOpts(supabase, userId);
+  const rows = await scanEligible(supabase, userId, listId, excludeId, opts, limit, PEEK_SELECT);
+  return rows.map((l) => ({
+    id: l.id,
+    name: l.name,
+    company: l.company,
+    phone_e164: l.phone_e164,
+    timezone: l.timezone,
+    next_eligible_at: l.next_eligible_at,
+    last_disposition: l.last_disposition,
+  }));
 }
 
 /** Increment attempts_today (resetting if date changed in lead tz) */
@@ -201,7 +252,8 @@ export async function incrementAttempts(
   lead: QueueLead,
   userId: string
 ) {
-  const today = todayInTz(lead.timezone);
+  const tz = callingTimezone(lead);
+  const today = todayInTz(tz);
   const currentCount = lead.attempts_today_on === today ? (lead.attempts_today ?? 0) : 0;
 
   await supabase

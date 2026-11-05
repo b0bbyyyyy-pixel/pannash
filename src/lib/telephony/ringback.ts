@@ -62,6 +62,35 @@ export function createRingback(): RingbackHandle {
   return { start, stop };
 }
 
+/** Short two-tone beep when hunt hands a live person to the agent. */
+export function playPickupBeep(): void {
+  if (typeof window === 'undefined') return;
+  const AC = window.AudioContext
+    || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AC) return;
+  const ctx = new AC();
+  const beep = (freq: number, start: number, dur: number) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = freq;
+    osc.type = 'sine';
+    gain.gain.setValueAtTime(0, start);
+    gain.gain.linearRampToValueAtTime(0.18, start + 0.02);
+    gain.gain.setValueAtTime(0.18, start + dur);
+    gain.gain.linearRampToValueAtTime(0, start + dur + 0.04);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(start);
+    osc.stop(start + dur + 0.05);
+  };
+  void ctx.resume().then(() => {
+    const t = ctx.currentTime;
+    beep(880, t, 0.12);
+    beep(1175, t + 0.16, 0.18);
+    window.setTimeout(() => { void ctx.close().catch(() => {}); }, 800);
+  }).catch(() => {});
+}
+
 export function voiceErrorMessage(e: unknown): string {
   const err = e as { code?: number; message?: string };
   const code = err.code;

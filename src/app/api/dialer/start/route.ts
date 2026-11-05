@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
-import { incrementAttempts, lockLead } from '@/lib/dialer/queue';
+import { incrementAttempts, lockLead, unlockLead } from '@/lib/dialer/queue';
 import { isValidE164 } from '@/lib/dialer/e164';
+import { callingTimezone, isWithinDialingHours } from '@/lib/dialer/canDial';
+import { getTelephonySettings } from '@/lib/telephony/twilio';
 
 async function getSupabase() {
   const cookieStore = await cookies();
@@ -43,6 +45,16 @@ export async function POST(req: NextRequest) {
 
     if (current.dnc) {
       return NextResponse.json({ error: 'Lead is on DNC list' }, { status: 422 });
+    }
+
+    const settings = await getTelephonySettings(supabase, user.id);
+    const tz = callingTimezone(current);
+    if (!tz || !isWithinDialingHours(tz, settings.calling_window_start, settings.calling_window_end)) {
+      await unlockLead(supabase, current.id, user.id);
+      return NextResponse.json(
+        { error: 'Outside calling hours for this lead\'s local time' },
+        { status: 422 }
+      );
     }
 
     // Insert call row (no disposition yet)

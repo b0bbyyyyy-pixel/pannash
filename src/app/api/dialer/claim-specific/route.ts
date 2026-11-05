@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import { isEligible } from '@/lib/dialer/canDial';
+import { peekQueue } from '@/lib/dialer/queue';
+import { getTelephonySettings } from '@/lib/telephony/twilio';
 
 async function getSupabase() {
   const cookieStore = await cookies();
@@ -15,9 +18,8 @@ async function getSupabase() {
  * POST /api/dialer/claim-specific
  * Body: { leadId: string; listId?: string }
  *
- * Claims a specific lead by ID, bypassing the eligibility/ordering logic
- * (used as a fallback when claimNextLead returns null but peekQueue has leads).
- * Also clears any other locks this agent holds, then returns the full lead + updated queue.
+ * Claims a specific lead by ID. Still enforces calling-hours / DNC eligibility
+ * so Auto cannot skip the timezone gate. Returns the full lead + updated queue.
  */
 export async function POST(req: Request) {
   try {
@@ -55,6 +57,19 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
     }
 
+    const settings = await getTelephonySettings(supabase, user.id);
+    const unlocked = { ...lead, locked_by: null, locked_at: null };
+    if (!isEligible(unlocked, {
+      windowStart: settings.calling_window_start,
+      windowEnd: settings.calling_window_end,
+      maxAttempts: settings.max_attempts_per_day,
+    })) {
+      return NextResponse.json(
+        { error: 'This lead is outside calling hours or not eligible to dial' },
+        { status: 422 }
+      );
+    }
+
     // Try to lock (non-blocking — if it fails we proceed anyway)
     const { error: lockErr } = await supabase
       .from('leads')
@@ -64,8 +79,6 @@ export async function POST(req: Request) {
 
     if (lockErr) console.warn('[claim-specific] lock failed:', lockErr.message);
 
-    // Build queue preview (next lead after this one)
-    const { peekQueue } = await import('@/lib/dialer/queue');
     const queue = await peekQueue(supabase, user.id, leadId, 10, listId ?? null);
 
     return NextResponse.json({ current: lead, queue });

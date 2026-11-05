@@ -14,7 +14,7 @@ import {
   createContext, useContext, useCallback, useEffect, useRef, useState,
 } from 'react';
 import type { Call, Device } from '@twilio/voice-sdk';
-import { createRingback, voiceErrorMessage } from '@/lib/telephony/ringback';
+import { createRingback, playPickupBeep, voiceErrorMessage } from '@/lib/telephony/ringback';
 import { usePathname, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { BACK_TO_PIPELINE_MSG, CALL_MSG, LEAD_DELETED_MSG, LEAD_STATE_MSG, postLeadActionToFrame } from '@/lib/pipeline/iframeMessages';
@@ -34,9 +34,11 @@ interface WebPhoneContextValue {
   activeName: string | null;
   incomingFrom: string | null;
   muted: boolean;
+  waitingForHuman: boolean;
   error: string | null;
-  connect: (e164: string, meta?: { name?: string; leadId?: string; company?: string }) => Promise<void>;
+  connect: (e164: string, meta?: { name?: string; leadId?: string; company?: string; hunt?: boolean }) => Promise<void>;
   hangup: () => void;
+  handOffLive: () => void;
   toggleMute: () => void;
   sendDigits: (digits: string) => void;
   acceptIncoming: () => void;
@@ -243,6 +245,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   const [matchedLead, setMatchedLead] = useState<MatchedLead | null>(null);
   const [showLeadCard, setShowLeadCard] = useState(false);
   const [muted, setMuted] = useState(false);
+  const [waitingForHuman, setWaitingForHuman] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showKeypad, setShowKeypad] = useState(false);
   const [dialPadOpen, setDialPadOpen] = useState(false);
@@ -269,6 +272,14 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   const ringbackRef = useRef<ReturnType<typeof createRingback> | null>(null);
   const ringWaitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const missedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const huntRef = useRef(false);
+
+  function setRemoteVolume(on: boolean) {
+    if (typeof document === 'undefined') return;
+    document.querySelectorAll('audio').forEach((el) => {
+      if (el instanceof HTMLAudioElement) el.volume = on ? 1 : 0;
+    });
+  }
 
   const showMissedBanner = useCallback((row: {
     from: string;
@@ -308,6 +319,9 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     stopRingback();
     incomingSessionRef.current = false;
     callRef.current = null;
+    huntRef.current = false;
+    setWaitingForHuman(false);
+    setRemoteVolume(true);
     setIncomingFrom(null);
     setIncomingTabTitle(false);
     setActiveNumber(null);
@@ -322,6 +336,10 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     callRef.current = call;
     call.on('ringing', (hasEarlyMedia?: boolean) => {
       setStatus('ringing');
+      if (huntRef.current) {
+        stopRingback();
+        return;
+      }
       // Carrier is already playing ringback — don't stack a second tone.
       if (hasEarlyMedia) stopRingback();
       else startRingback();
@@ -504,7 +522,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   }, []);
 
   // ── Actions ─────────────────────────────────────────────────────────────────
-  const connect = useCallback(async (e164: string, meta?: { name?: string; leadId?: string; company?: string }) => {
+  const connect = useCallback(async (e164: string, meta?: { name?: string; leadId?: string; company?: string; hunt?: boolean }) => {
     const device = deviceRef.current;
     if (!device) {
       const msg = 'Phone not ready — check Twilio setup in Settings.';
@@ -545,18 +563,27 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
       throw new Error(msg);
     }
 
+    huntRef.current = !!meta?.hunt;
+    setWaitingForHuman(!!meta?.hunt);
     stopRingback();
-    ringWaitRef.current = setTimeout(() => {
-      if (callRef.current) startRingback();
-    }, 900);
+    if (!meta?.hunt) {
+      ringWaitRef.current = setTimeout(() => {
+        if (callRef.current) startRingback();
+      }, 900);
+    }
 
     try {
       // `phone` not `To` — Twilio's own `To` on Client calls is client:agent, not the PSTN number.
       const call = await device.connect({
-        params: { phone: e164 },
+        params: { phone: e164, ...(meta?.hunt ? { hunt: '1' } : {}) },
         rtcConstraints: { audio: true },
       });
       wireCall(call);
+      if (meta?.hunt) {
+        call.mute(true);
+        setMuted(true);
+        setRemoteVolume(false);
+      }
     } catch (e) {
       const msg = voiceErrorMessage(e);
       setError(msg);
@@ -587,13 +614,49 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     deviceRef.current?.disconnectAll();
   }, [stopRingback]);
 
+  const handOffLive = useCallback(() => {
+    const call = callRef.current;
+    huntRef.current = false;
+    setWaitingForHuman(false);
+    setRemoteVolume(true);
+    if (call) {
+      call.mute(false);
+      setMuted(false);
+    }
+    playPickupBeep();
+    try {
+      if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        new Notification('Person answered', {
+          body: activeName || activeNumber || 'Talk now',
+          tag: 'gostwrk-hunt-live',
+        });
+      }
+    } catch { /* no notifications */ }
+    if (typeof document !== 'undefined') {
+      if (!document.documentElement.dataset.phoneTitle) {
+        document.documentElement.dataset.phoneTitle = document.title;
+      }
+      document.title = 'Person answered — talk now';
+      window.setTimeout(() => {
+        const orig = document.documentElement.dataset.phoneTitle;
+        if (orig != null) document.title = orig;
+        delete document.documentElement.dataset.phoneTitle;
+      }, 4000);
+    }
+  }, [activeName, activeNumber]);
+
   const toggleMute = useCallback(() => {
     const call = callRef.current;
     if (!call) return;
     const next = !call.isMuted();
     call.mute(next);
     setMuted(next);
-  }, []);
+    if (!next && waitingForHuman) {
+      setWaitingForHuman(false);
+      huntRef.current = false;
+      setRemoteVolume(true);
+    }
+  }, [waitingForHuman]);
 
   const sendDigits = useCallback((digits: string) => {
     callRef.current?.sendDigits(digits);
@@ -710,8 +773,8 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   const value: WebPhoneContextValue = {
     status,
     ready: status !== 'offline',
-    activeNumber, activeName, incomingFrom, muted, error,
-    connect, hangup, toggleMute, sendDigits, acceptIncoming, rejectIncoming,
+    activeNumber, activeName, incomingFrom, muted, waitingForHuman, error,
+    connect, hangup, handOffLive, toggleMute, sendDigits, acceptIncoming, rejectIncoming,
     activeLead: matchedLead,
     dialPadOpen, dialPadNumber, fromNumber, openDialPad, closeDialPad,
   };

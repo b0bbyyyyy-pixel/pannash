@@ -261,6 +261,8 @@ export function DialerCard({
   onLeadDeleted,
   className = '',
   compact = false,
+  hunting = false,
+  huntFlash = false,
 }: {
   lead: Lead;
   view: CardView;
@@ -275,6 +277,8 @@ export function DialerCard({
   onLeadDeleted?: (id: string) => void;
   className?: string;
   compact?: boolean;
+  hunting?: boolean;
+  huntFlash?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const [showText, setShowText] = useState(false);
@@ -432,11 +436,15 @@ export function DialerCard({
   const statusMeta =
     view === 'wrap'
       ? { label: 'Call Ended', live: false }
-      : view === 'on_call' && phoneStatus === 'in-call'
-        ? { label: 'Connected', live: true }
-        : view === 'on_call'
-          ? { label: 'In Progress', live: true }
-          : { label: 'Ready', live: false };
+      : hunting
+        ? { label: 'Hunting', live: true }
+        : huntFlash
+          ? { label: 'They\'re on', live: true }
+          : view === 'on_call' && phoneStatus === 'in-call'
+            ? { label: 'Connected', live: true }
+            : view === 'on_call'
+              ? { label: 'In Progress', live: true }
+              : { label: 'Ready', live: false };
 
   const statusPill = (
     <span className="inline-flex items-center gap-1.5 text-[13px] text-[#6b7280] bg-[#f4f4f4] px-3 py-1.5 rounded-full shrink-0">
@@ -736,18 +744,34 @@ export function DialerCard({
         </div>
       ) : view === 'on_call' ? (
         <div>
+          {huntFlash && !hunting && (
+            <p className={`text-center font-medium text-green-700 ${compact ? 'text-[11px] mb-1' : 'text-sm mb-2'}`}>
+              Person answered — you&apos;re live
+            </p>
+          )}
           <button
             onClick={onHangup}
-            className={`w-full bg-[#f4f4f4] text-[#1a1a1a] font-medium hover:bg-[#ececec] transition-all flex items-center justify-center gap-2 ${
+            className={`w-full font-medium transition-all flex items-center justify-center gap-2 ${
+              hunting
+                ? 'bg-[#1a1a1a] text-white hover:bg-[#333]'
+                : 'bg-[#f4f4f4] text-[#1a1a1a] hover:bg-[#ececec]'
+            } ${
               compact ? 'rounded-none py-1 px-2.5 text-sm' : 'rounded-xl py-4 text-base active:scale-[0.98]'
             }`}
           >
-            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-            {phoneStatus === 'ringing' && 'Ringing…'}
-            {phoneStatus === 'connecting' && 'Connecting…'}
-            {phoneStatus === 'in-call' && 'On call'}
-            {phoneStatus !== 'ringing' && phoneStatus !== 'connecting' && phoneStatus !== 'in-call' && 'Call in progress'}
-            <span className={`text-[#9ca3af] font-normal ${compact ? 'text-xs' : 'text-sm'}`}>· Hang up</span>
+            <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${hunting ? 'bg-amber-400' : 'bg-green-500'}`} />
+            {hunting
+              ? 'Hunting… waiting for a person'
+              : phoneStatus === 'ringing'
+                ? 'Ringing…'
+                : phoneStatus === 'connecting'
+                  ? 'Connecting…'
+                  : phoneStatus === 'in-call'
+                    ? 'On call'
+                    : 'Call in progress'}
+            <span className={`font-normal ${compact ? 'text-xs' : 'text-sm'} ${hunting ? 'text-white/60' : 'text-[#9ca3af]'}`}>
+              · {hunting ? 'Skip' : 'Hang up'}
+            </span>
           </button>
           {callerFrom && (
             <p
@@ -829,7 +853,7 @@ function EmptyState({ onRefresh, queueLen }: { onRefresh: () => void; queueLen: 
         <>
           <h2 className="text-xl font-semibold text-[#1a1a1a] mb-2">Queue&apos;s clear</h2>
           <p className="text-sm text-[#6b7280] mb-6 max-w-xs mx-auto">
-            No eligible leads right now — load a campaign or check back soon.
+            No leads in calling hours right now (8am–9pm in each number’s time zone). Load a campaign or check back later.
           </p>
         </>
       )}
@@ -929,7 +953,9 @@ export default function DialerClient() {
   const {
     state, lead, queue, error, setError,
     activeCampaign, showPicker, setShowPicker,
-    testMode, toggleTestMode, autoCall, toggleAutoCall, showCallCount, setShowCallCount,
+    testMode, toggleTestMode, autoCall, toggleAutoCall,
+    hunt, toggleHunt, hunting, huntFlash,
+    showCallCount, setShowCallCount,
     showEmailModal, setShowEmailModal,
     webphone, campaignPct, claimNext,
     handleLoadCampaign, handleClearCampaign,
@@ -962,6 +988,16 @@ export default function DialerClient() {
         {/* Left: lead card / empty / loading */}
         <div className="lg:col-span-2">
           <div className="flex items-center justify-end gap-3 mb-2 min-h-[20px]">
+            <button
+              onClick={toggleHunt}
+              title="Hunt — dial one number at a time until a person answers, then beep and hand off"
+              className="flex items-center gap-1.5 shrink-0"
+            >
+              <span className={`text-xs ${hunt ? 'text-[#1a1a1a] font-medium' : 'text-[#c4c4c4]'}`}>Hunt</span>
+              <span className={`relative inline-block w-7 h-4 rounded-full transition-colors ${hunt ? 'bg-[#1a1a1a]' : 'bg-[#e5e5e5]'}`}>
+                <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${hunt ? 'left-3.5' : 'left-0.5'}`} />
+              </span>
+            </button>
             <button
               onClick={toggleAutoCall}
               title="Auto call — dial the next lead after you save a status"
@@ -1033,6 +1069,8 @@ export default function DialerClient() {
               view={state === 'on_call' ? 'on_call' : state === 'ready' ? 'idle' : 'wrap'}
               onCall={handleCall}
               phoneStatus={webphone.status}
+              hunting={hunting}
+              huntFlash={huntFlash}
               onHangup={handleHangup}
               onSave={handleDisposition}
               saving={state === 'saving'}
