@@ -12,12 +12,12 @@ export function pingUploadUnreadListeners() {
   }
 }
 
-export function markUploadSeenClient(leadId: string, kind: UploadUnreadKind) {
+export function markUploadSeenClient(leadId: string, kind: UploadUnreadKind | 'all' = 'all') {
   if (!leadId) return;
   void fetch('/api/inbox/upload-unread', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({ leadId, kind }),
+    body: JSON.stringify({ leadId, kind: 'all' }),
   }).finally(() => pingUploadUnreadListeners());
 }

@@ -24,6 +24,7 @@ assert(isUploadPreview('Application and documents received'), 'app+docs preview'
 assert(isUploadPreview('Application received'), 'app preview');
 assert(isUploadPreview('Documents received'), 'docs preview');
 assert(!isUploadPreview('I sent the application yesterday'), 'regular sms is not an upload');
+assert(!isUploadPreview('Casper: a lead sent the funding application'), 'casper ping is not the badge');
 
 const merged = mergeUnseenUploads(
   { application: 0, documents: 0 },

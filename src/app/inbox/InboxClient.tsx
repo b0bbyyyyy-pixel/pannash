@@ -41,6 +41,7 @@ import { useSync } from '@/lib/sync/SyncProvider';
 import { usePolling } from '@/lib/sync/usePolling';
 import { extractEmailFromSms } from '@/lib/leads/extractEmailFromSms';
 import SmsEmailCheck from '@/components/SmsEmailCheck';
+import { markUploadSeenClient } from '@/lib/inbox/markUploadSeenClient';
 
 const DocumentsModal = dynamic(() => import('@/components/DocumentsModal'), { ssr: false });
 const ScheduleEmailModal = dynamic(() => import('@/components/ScheduleEmailModal'), { ssr: false });
@@ -1455,6 +1456,7 @@ export default function InboxClient({
                 <button
                   key={lead.id}
                   onClick={() => {
+                    markUploadSeenClient(lead.id);
                     if (lead.id === selectedLeadIdRef.current) return;
                     setSelectedLeadId(lead.id);
                   }}

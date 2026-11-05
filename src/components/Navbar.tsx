@@ -11,7 +11,7 @@ import { usePolling } from '@/lib/sync/usePolling';
 import type { BillingCredits } from '@/lib/billing/credits';
 import { hasUnseenMissedCall, MISSED_CALLS_SEEN_EVENT } from '@/lib/telephony/missed';
 import InboxPingSwitch from '@/components/InboxPingSwitch';
-import { UPLOAD_UNREAD_EVENT } from '@/lib/inbox/markUploadSeenClient';
+import { markUploadSeenClient, UPLOAD_UNREAD_EVENT } from '@/lib/inbox/markUploadSeenClient';
 import type { UploadUnreadItem } from '@/lib/inbox/uploadUnread';
 
 type DripJobSummary = {
@@ -220,6 +220,7 @@ export default function Navbar({ userName }: NavbarProps) {
                               key={item.leadId}
                               href={`/inbox?leadId=${item.leadId}`}
                               className="block px-3 py-2 hover:bg-[#f5f5f5] transition-colors"
+                              onClick={() => markUploadSeenClient(item.leadId)}
                             >
                               <p className="text-sm font-medium text-[#1a1a1a] truncate">
                                 {item.company || item.name}

@@ -35,15 +35,17 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json().catch(() => ({}));
     const leadId = String(body.leadId || '').trim();
-    const kind = body.kind === 'documents' ? 'documents' : body.kind === 'application' ? 'application' : '';
-    if (!leadId || !kind) {
-      return NextResponse.json({ error: 'leadId and kind required' }, { status: 400 });
+    const kind = body.kind === 'documents' || body.kind === 'application' || body.kind === 'all'
+      ? body.kind
+      : 'all';
+    if (!leadId) {
+      return NextResponse.json({ error: 'leadId required' }, { status: 400 });
     }
 
     await markUploadSeen(supabase, {
       userId: user.id,
       leadId,
-      kind: kind as UploadUnreadKind,
+      kind: kind as UploadUnreadKind | 'all',
     });
     const count = await countUploadUnread(supabase, user.id);
     return NextResponse.json({ ok: true, count });
