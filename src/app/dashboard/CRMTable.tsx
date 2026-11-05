@@ -8,6 +8,7 @@ import { parseLeadPasteText } from '@/lib/parse-lead-paste';
 import dynamic from 'next/dynamic';
 import { kickSyncWorker } from '@/lib/sync/kick';
 import { downloadLeadAttachment } from '@/lib/attachments/downloadClient';
+import { EMAIL_FONT_SIZES } from '@/lib/email/letterHtml';
 
 const UnderwritingSuite = dynamic(() => import('@/components/UnderwritingSuite'), { ssr: false });
 
@@ -1049,6 +1050,24 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
         textarea.setSelectionRange(start + 8, start + 8 + 9); // Select "Bold text"
       }, 0);
     }
+  };
+
+  const insertFontSize = (px: number) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const selectedText = templateBody.substring(start, end) || 'Text';
+    const open = `<span style="font-size:${px}px">`;
+    const close = '</span>';
+    const before = templateBody.substring(0, start);
+    const after = templateBody.substring(end);
+    setTemplateBody(`${before}${open}${selectedText}${close}${after}`);
+    setTimeout(() => {
+      textarea.focus();
+      const innerStart = start + open.length;
+      textarea.setSelectionRange(innerStart, innerStart + selectedText.length);
+    }, 0);
   };
 
   const insertImage = () => {
@@ -3572,6 +3591,21 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                           >
                             B
                           </button>
+                          <select
+                            defaultValue=""
+                            onChange={e => {
+                              const v = Number(e.target.value);
+                              if (v) insertFontSize(v);
+                              e.currentTarget.value = '';
+                            }}
+                            className="px-2 py-1 bg-white border border-[#e5e5e5] rounded text-xs"
+                            title="Font size — select text first"
+                          >
+                            <option value="">Size</option>
+                            {EMAIL_FONT_SIZES.map(n => (
+                              <option key={n} value={n}>{n}px</option>
+                            ))}
+                          </select>
                           <button
                             type="button"
                             onClick={insertImage}
@@ -3831,6 +3865,21 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                       >
                         <strong>B</strong>
                       </button>
+                      <select
+                        defaultValue=""
+                        onChange={e => {
+                          const v = Number(e.target.value);
+                          if (v) insertFontSize(v);
+                          e.currentTarget.value = '';
+                        }}
+                        className="px-2 py-1 bg-white border border-[#e5e5e5] rounded text-xs"
+                        title="Font size — select text first"
+                      >
+                        <option value="">Size</option>
+                        {EMAIL_FONT_SIZES.map(n => (
+                          <option key={n} value={n}>{n}px</option>
+                        ))}
+                      </select>
                       <button
                         type="button"
                         onClick={insertImage}

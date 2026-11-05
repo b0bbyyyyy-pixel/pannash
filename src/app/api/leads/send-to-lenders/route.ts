@@ -8,6 +8,7 @@ import {
   type SendConnection,
 } from '@/lib/email/sendAccounts';
 import { sendOutboundMail, type OutboundAttachment } from '@/lib/email/sendOutbound';
+import { clampEmailFontPt, wrapLetterHtml } from '@/lib/email/letterHtml';
 
 export const runtime  = 'nodejs';
 export const dynamic  = 'force-dynamic';
@@ -48,6 +49,7 @@ export async function POST(request: Request) {
     templateName,
     note,
     senderName,
+    fontSizePt,
   }: {
     leadId: string;
     lenders: SelectedLender[];
@@ -56,6 +58,7 @@ export async function POST(request: Request) {
     templateName?: string;
     note?: string;
     senderName?: string;
+    fontSizePt?: number;
   } = await request.json();
 
   if (!leadId || !lenders?.length) {
@@ -79,6 +82,7 @@ export async function POST(request: Request) {
     }
   }
   if (note) emailBody += `<br/><br/><em>Note: ${note}</em>`;
+  emailBody = wrapLetterHtml(emailBody, clampEmailFontPt(fontSizePt));
 
   const { data: connections } = await supabase
     .from('email_connections')

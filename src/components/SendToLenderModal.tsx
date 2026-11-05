@@ -5,6 +5,13 @@ import dynamic from 'next/dynamic';
 import DocumentVault from './DocumentVault';
 import { TIER_LABELS } from '@/data/lenders';
 import { LENDER_SUBMISSION_FROM } from '@/lib/email/sendAccounts';
+import {
+  DEFAULT_EMAIL_FONT_PT,
+  EMAIL_FONT_SIZES,
+  clampEmailFontPt,
+  escapeHtml,
+} from '@/lib/email/letterHtml';
+import LetterEmailPreview from './LetterEmailPreview';
 
 const LenderSettingsModal = dynamic(() => import('./LenderSettingsModal'), { ssr: false });
 
@@ -199,6 +206,7 @@ export default function SendToLenderModal({
   const [selectedDocIds, setSelectedDocIds]       = useState<Set<string>>(new Set());
   const [templateId, setTemplateId]               = useState('');
   const [note, setNote]                           = useState('');
+  const [emailFontSize, setEmailFontSize]         = useState(DEFAULT_EMAIL_FONT_PT);
 
   const [lenderFilter, setLenderFilter] = useState<'All' | 'Recent'>('All');
   const [sending, setSending]         = useState(false);
@@ -361,6 +369,7 @@ export default function SendToLenderModal({
           templateName: tpl?.name || undefined,
           note:         note || undefined,
           senderName:   userName || undefined,
+          fontSizePt:   emailFontSize,
         }),
       });
       const json = await res.json();
@@ -429,6 +438,19 @@ export default function SendToLenderModal({
   const totalFailed = submissions.filter(s => s.status === 'Failed' || s.status === 'Declined').length;
 
   const valueStr = leadValue ? `$${Number(leadValue).toLocaleString()}` : null;
+
+  const selectedTemplate = templates.find(t => t.id === templateId);
+  const composing = selectedLenderIds.size > 0 || !!templateId || !!note.trim();
+  const previewTo = filteredLenders
+    .filter(l => selectedLenderIds.has(l.id))
+    .map(l => l.email || l.name)
+    .filter(Boolean);
+  const previewSubject = selectedTemplate?.subject?.trim() || 'Business Funding Application';
+  const previewAttach = documents.filter(d => selectedDocIds.has(d.id));
+  const previewBodyHtml = [
+    selectedTemplate?.body?.trim() || '<p>Please find the attached funding application for your review.</p>',
+    note.trim() ? `<br/><br/><em>Note: ${escapeHtml(note.trim())}</em>` : '',
+  ].join('');
 
   const STATUSES = ['Sent', 'Awaiting Response', 'Needs Docs', 'Declined', 'Approved', 'Failed'];
 
@@ -783,15 +805,32 @@ export default function SendToLenderModal({
               </div>
             </div>
 
-            {/* ── RIGHT PANEL: Submission History ──────────────────────── */}
+            {/* ── RIGHT PANEL: Email preview (while composing) + Submission History ── */}
             <div className="flex-1 min-w-0 flex flex-col overflow-hidden bg-[#fafafa]">
               {/* History header */}
               <div className="flex-shrink-0 px-5 py-4 bg-white border-b border-[#ebebeb]">
                 <div className="flex items-center justify-between mb-2 gap-2">
                   <p className="text-sm font-bold text-[#1a1a1a]">
-                    Submission History
-                    <span className="ml-2 text-[#9b9b9b] font-normal">({submissions.length})</span>
+                    {composing ? 'Email Preview' : 'Submission History'}
+                    {!composing && (
+                      <span className="ml-2 text-[#9b9b9b] font-normal">({submissions.length})</span>
+                    )}
                   </p>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {composing && (
+                      <label className="flex items-center gap-1.5 text-[11px] text-[#6b6b6b]">
+                        Size
+                        <select
+                          value={emailFontSize}
+                          onChange={e => setEmailFontSize(clampEmailFontPt(e.target.value))}
+                          className="px-1.5 py-1 bg-white border border-[#e5e5e5] rounded-md text-[11px] text-[#1a1a1a] focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                        >
+                          {EMAIL_FONT_SIZES.map(n => (
+                            <option key={n} value={n}>{n} pt</option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
                   {onOpenOffers && (
                     <button
                       type="button"
@@ -801,8 +840,9 @@ export default function SendToLenderModal({
                       Offers
                     </button>
                   )}
+                  </div>
                 </div>
-                {submissions.length > 0 && (
+                {!composing && submissions.length > 0 && (
                   <div className="flex items-center flex-wrap gap-x-3 gap-y-1 text-xs text-[#6b6b6b]">
                     <span><strong className="text-[#1a1a1a]">{submissions.length}</strong> Total</span>
                     <span>·</span>
@@ -818,9 +858,40 @@ export default function SendToLenderModal({
                 )}
               </div>
 
-              {/* History list */}
+              {/* History list + letter preview */}
               <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-                {Object.keys(groupedSubs).length === 0 ? (
+                {composing && (
+                  <div className="space-y-3">
+                    <div className="rounded-lg border border-[#e5e5e5] bg-white px-3.5 py-2.5 space-y-0.5">
+                      <p className="text-[10px] text-[#9b9b9b] truncate">
+                        <span className="font-semibold text-[#6b6b6b]">From</span>{' '}
+                        {LENDER_SUBMISSION_FROM}
+                      </p>
+                      <p className="text-[10px] text-[#9b9b9b] truncate">
+                        <span className="font-semibold text-[#6b6b6b]">To</span>{' '}
+                        {previewTo.length ? previewTo.join(', ') : 'Select a lender'}
+                      </p>
+                      <p className="text-[11px] text-[#1a1a1a] truncate">
+                        <span className="font-semibold text-[#6b6b6b] text-[10px]">Subject</span>{' '}
+                        {previewSubject}
+                      </p>
+                      {previewAttach.length > 0 && (
+                        <p className="text-[10px] text-[#9b9b9b] truncate">
+                          <span className="font-semibold text-[#6b6b6b]">Attach</span>{' '}
+                          {previewAttach.map(d => d.file_name).join(', ')}
+                        </p>
+                      )}
+                    </div>
+                    <LetterEmailPreview html={previewBodyHtml} fontSizePt={emailFontSize} />
+                    {submissions.length > 0 && (
+                      <p className="pt-2 text-[11px] font-semibold text-[#6b6b6b]">
+                        Submission History
+                        <span className="ml-1 text-[#9b9b9b] font-normal">({submissions.length})</span>
+                      </p>
+                    )}
+                  </div>
+                )}
+                {Object.keys(groupedSubs).length === 0 && !composing ? (
                   <div className="py-16 text-center">
                     <div className="w-12 h-12 rounded-full bg-[#f0f0f0] flex items-center justify-center mx-auto mb-3">
                       <svg className="w-6 h-6 text-[#d4d4d4]" fill="none" stroke="currentColor" viewBox="0 0 24 24">

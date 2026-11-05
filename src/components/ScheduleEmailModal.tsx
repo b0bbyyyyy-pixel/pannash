@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { postLeadPatch } from '@/lib/pipeline/iframeMessages';
+import { EMAIL_FONT_SIZES } from '@/lib/email/letterHtml';
 
 function emailPortalTarget(): HTMLElement | null {
   if (typeof document === 'undefined') return null;
@@ -211,6 +212,20 @@ export default function ScheduleEmailModal({ lead: initialLead, onClose, onSent 
       ? editBody.substring(0, s) + `<strong>${selected}</strong>` + editBody.substring(e)
       : editBody.substring(0, s) + '<strong></strong>' + editBody.substring(s);
     setEditBody(newText);
+  }, [editBody]);
+
+  const insertFontSize = useCallback((px: number) => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const { selectionStart: s, selectionEnd: e } = el;
+    const selected = editBody.substring(s, e) || 'Text';
+    const open = `<span style="font-size:${px}px">`;
+    const close = '</span>';
+    setEditBody(editBody.substring(0, s) + open + selected + close + editBody.substring(e));
+    setTimeout(() => {
+      el.focus();
+      el.setSelectionRange(s + open.length, s + open.length + selected.length);
+    }, 0);
   }, [editBody]);
 
   const insertImage = useCallback(() => {
@@ -671,6 +686,21 @@ export default function ScheduleEmailModal({ lead: initialLead, onClose, onSent 
                   {/* Toolbar */}
                   <div className="flex flex-wrap gap-1.5 mb-2">
                     <button onClick={insertBold} className="px-2.5 py-1 bg-white border border-[#e5e5e5] rounded text-xs font-bold hover:bg-[#f5f5f5]" title="Bold">B</button>
+                    <select
+                      defaultValue=""
+                      onChange={e => {
+                        const v = Number(e.target.value);
+                        if (v) insertFontSize(v);
+                        e.currentTarget.value = '';
+                      }}
+                      className="px-2 py-1 bg-white border border-[#e5e5e5] rounded text-xs"
+                      title="Font size — select text first"
+                    >
+                      <option value="">Size</option>
+                      {EMAIL_FONT_SIZES.map(n => (
+                        <option key={n} value={n}>{n}px</option>
+                      ))}
+                    </select>
                     <button onClick={insertImage} className="px-2.5 py-1 bg-white border border-[#e5e5e5] rounded text-xs hover:bg-[#f5f5f5]">🖼 Image</button>
                     {/* Placeholder dropdown */}
                     <div className="relative group">
