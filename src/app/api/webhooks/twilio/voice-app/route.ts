@@ -22,6 +22,7 @@ import {
 import { pickDialerCallerId } from '@/lib/dialerCallerId';
 import { findLeadByPhone } from '@/lib/leads/findByPhone';
 import { isCallerBlocked } from '@/lib/telephony/blockCaller';
+import { twilioClientIdentity } from '@/lib/telephony/voiceIdentity';
 
 function twimlResponse(xml: string, status = 200) {
   return new NextResponse(xml, { status, headers: { 'Content-Type': 'text/xml' } });
@@ -240,7 +241,7 @@ export async function POST(req: NextRequest) {
         statusCallbackMethod: 'POST',
         statusCallbackEvent: ['answered', 'completed'],
       });
-      client.identity('agent');
+      client.identity(twilioClientIdentity());
       if (inboundLead?.id) client.parameter({ name: 'leadId', value: inboundLead.id });
       if (inboundLead?.name) client.parameter({ name: 'leadName', value: inboundLead.name.slice(0, 80) });
       if (inboundLead?.company) client.parameter({ name: 'leadCompany', value: inboundLead.company.slice(0, 80) });

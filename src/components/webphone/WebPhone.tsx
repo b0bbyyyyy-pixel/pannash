@@ -4,7 +4,7 @@
  * WebPhone — Twilio Voice JS (WebRTC) in-app dialer.
  *
  * <WebPhoneProvider> mounts once in the root layout:
- *   - registers a Twilio Device (identity "agent") when the user is logged in
+ *   - registers one Twilio Device when this tab is the live phone session
  *   - exposes useWebPhone() for click-to-dial anywhere in the app
  *   - renders the call bar (mute / keypad / hangup) and incoming-call toast
  *
@@ -15,6 +15,13 @@ import {
 } from 'react';
 import type { Call, Device } from '@twilio/voice-sdk';
 import { createRingback, playPickupBeep, voiceErrorMessage } from '@/lib/telephony/ringback';
+import {
+  WEBPHONE_LOCK_KEY,
+  isPhoneBrowser,
+  newWebphoneTabId,
+  parseWebphoneLock,
+  shouldTakeWebphoneLock,
+} from '@/lib/telephony/webphoneLock';
 import { usePathname, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { BACK_TO_PIPELINE_MSG, CALL_MSG, LEAD_DELETED_MSG, LEAD_STATE_MSG, postLeadActionToFrame } from '@/lib/pipeline/iframeMessages';
@@ -266,7 +273,9 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   const matchedLeadRef = useRef<MatchedLead | null>(null);
   matchedLeadRef.current = matchedLead;
   const incomingSessionRef = useRef(false);
-  const initStarted = useRef(false);
+  const tabIdRef = useRef(newWebphoneTabId());
+  const startingDeviceRef = useRef(false);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showLeadCardRef = useRef(false);
   showLeadCardRef.current = showLeadCard;
   const ringbackRef = useRef<ReturnType<typeof createRingback> | null>(null);
@@ -310,10 +319,18 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
 
   const resetCallState = useCallback(() => {
     stopRingback();
-    incomingSessionRef.current = false;
-    callRef.current = null;
     huntRef.current = false;
     setWaitingForHuman(false);
+    callRef.current = null;
+    if (incomingRef.current) {
+      setActiveNumber(null);
+      setMuted(false);
+      setShowKeypad(false);
+      setCallStartedAt(null);
+      setStatus(deviceRef.current ? 'ready' : 'offline');
+      return;
+    }
+    incomingSessionRef.current = false;
     setIncomingFrom(null);
     setIncomingTabTitle(false);
     setActiveNumber(null);
@@ -347,174 +364,310 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     call.on('error', (e: Error) => { setError(voiceErrorMessage(e)); resetCallState(); });
   }, [resetCallState, stopRingback, startRingback]);
 
-  // ── Device init (runs once after login). Stay registered on /m so inbound still rings. ─
-  useEffect(() => {
-    if (initStarted.current) return;
-    initStarted.current = true;
-
-    // Iframes (lead overlay, settings preview) must not steal the "agent" registration.
-    if (typeof window !== 'undefined' && window.top && window.top !== window.self) {
-      initStarted.current = false;
-      return;
-    }
-
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const res = await fetch('/api/telephony/token');
-        if (!res.ok) return; // not logged in / not configured — stay offline quietly
-        const { token, fromNumber: from } = await res.json();
-        if (from) setFromNumber(from);
-        if (cancelled) {
-          initStarted.current = false;
-          return;
-        }
-
-        const { Device } = await import('@twilio/voice-sdk');
-        const device = new Device(token, {
-          logLevel: 'error',
-          codecPreferences: ['opus', 'pcmu'] as Call.Codec[],
-          closeProtection: true,
-          dscp: true,
-          edge: 'roaming',
-          // Default false: Twilio returns busy in ~1s and never fires `incoming`,
-          // so you hear a blip of ring with no card.
-          allowIncomingWhileBusy: true,
-        });
-        deviceRef.current = device;
-
-        device.on('registered', () => setStatus('ready'));
-        device.on('unregistered', () => setStatus('offline'));
-        device.on('error', (e: Error) => setError(voiceErrorMessage(e)));
-
-        device.on('tokenWillExpire', async () => {
-          try {
-            const r = await fetch('/api/telephony/token');
-            if (r.ok) {
-              const { token: fresh } = await r.json();
-              device.updateToken(fresh);
-            }
-          } catch { /* next expiry will retry */ }
-        });
-
-        device.on('incoming', (call: Call) => {
-          if (callRef.current && callRef.current.status() !== 'open' && callRef.current.status() !== 'connecting') {
-            try { callRef.current.disconnect(); } catch { /* stale */ }
-            callRef.current = null;
-          }
-          incomingRef.current = call;
-          incomingSessionRef.current = true;
-          const from = call.parameters.From ?? 'Unknown';
-          const callSid = call.parameters.CallSid ?? null;
-          setMissedBanner(null);
-          setIncomingFrom(from);
-          setIncomingTabTitle(true);
-          const paramId = customParam(call, 'leadId');
-          const paramName = customParam(call, 'leadName');
-          const paramCompany = customParam(call, 'leadCompany');
-          reportInboundCall({
-            callSid,
-            from,
-            leadId: paramId,
-            leadName: paramName,
-            status: 'ringing_agent',
-          });
-          try {
-            if (typeof Notification !== 'undefined') {
-              if (Notification.permission === 'default') void Notification.requestPermission();
-              if (Notification.permission === 'granted') {
-                new Notification('Incoming call', {
-                  body: paramName || from,
-                  tag: 'gostwrk-incoming-call',
-                });
-              }
-            }
-          } catch { /* no notifications */ }
-          if (paramId) {
-            setMatchedLead({
-              id: paramId,
-              name: paramName || from,
-              company: paramCompany,
-            });
-            setActiveName(paramName);
-          } else {
-            setMatchedLead(null);
-            setActiveName(null);
-            void (async () => {
-              try {
-                const res = await fetch(`/api/telephony/lookup?phone=${encodeURIComponent(from)}`);
-                if (!res.ok) return;
-                const data = await res.json();
-                if (!incomingRef.current && !callRef.current) return;
-                if (data.lead?.id) {
-                  setMatchedLead({
-                    id: data.lead.id,
-                    name: data.lead.name || from,
-                    company: data.lead.company,
-                  });
-                  setActiveName(data.lead.name || null);
-                  reportInboundCall({
-                    callSid,
-                    from,
-                    leadId: data.lead.id,
-                    leadName: data.lead.name,
-                    status: 'ringing_agent',
-                  });
-                }
-              } catch { /* unknown caller */ }
-            })();
-          }
-          call.on('cancel', () => {
-            incomingRef.current = null;
-            incomingSessionRef.current = false;
-            setIncomingFrom(null);
-            setIncomingTabTitle(false);
-            showMissedBanner({
-              from,
-              name: paramName || matchedLeadRef.current?.name || null,
-              company: paramCompany || matchedLeadRef.current?.company || null,
-              leadId: paramId || matchedLeadRef.current?.id || null,
-            });
-            reportInboundCall({ callSid, from, status: 'no_answer' });
-            if (!showLeadCardRef.current) setMatchedLead(null);
-          });
-          call.on('disconnect', () => {
-            incomingRef.current = null;
-            setIncomingFrom(null);
-            setIncomingTabTitle(false);
-            resetCallState();
-          });
-        });
-
-        await device.register();
-        try { device.audio?.outgoing(false); } catch { /* older SDK */ }
-      } catch (e) {
-        console.warn('[WebPhone] init failed:', e);
-      }
-    })();
-
-    return () => { cancelled = true; };
-  }, [resetCallState, showMissedBanner]);
-
-  useEffect(() => {
-    const reclaim = () => {
-      const device = deviceRef.current;
-      if (!device || document.hidden) return;
-      if (device.state !== 'registered' && device.state !== 'registering') {
-        void device.register().catch(() => {});
-      }
-    };
-    window.addEventListener('focus', reclaim);
-    document.addEventListener('visibilitychange', reclaim);
-    return () => {
-      window.removeEventListener('focus', reclaim);
-      document.removeEventListener('visibilitychange', reclaim);
-    };
+  const writeLock = useCallback((busy: boolean) => {
+    try {
+      localStorage.setItem(WEBPHONE_LOCK_KEY, JSON.stringify({
+        id: tabIdRef.current,
+        at: Date.now(),
+        busy,
+      }));
+    } catch { /* private mode */ }
   }, []);
+
+  const weOwnLock = useCallback(() => {
+    try {
+      return parseWebphoneLock(localStorage.getItem(WEBPHONE_LOCK_KEY))?.id === tabIdRef.current;
+    } catch {
+      return true;
+    }
+  }, []);
+
+  const takeLock = useCallback((steal: boolean) => {
+    try {
+      const existing = parseWebphoneLock(localStorage.getItem(WEBPHONE_LOCK_KEY));
+      if (existing?.busy && existing.id !== tabIdRef.current && Date.now() - existing.at < 15_000) {
+        return false;
+      }
+      if (!shouldTakeWebphoneLock({
+        mine: tabIdRef.current,
+        existing,
+        now: Date.now(),
+        steal,
+      })) return false;
+      writeLock(!!incomingRef.current || !!callRef.current);
+      return true;
+    } catch {
+      return true;
+    }
+  }, [writeLock]);
+
+  const destroyDevice = useCallback(() => {
+    const device = deviceRef.current;
+    deviceRef.current = null;
+    startingDeviceRef.current = false;
+    if (incomingRef.current) {
+      try { incomingRef.current.reject(); } catch { /* already gone */ }
+      incomingRef.current = null;
+    }
+    if (callRef.current) {
+      try { callRef.current.removeAllListeners(); } catch { /* older SDK */ }
+      try { callRef.current.disconnect(); } catch { /* already gone */ }
+      callRef.current = null;
+    }
+    if (device) {
+      try { device.removeAllListeners(); } catch { /* older SDK */ }
+      try { void device.unregister(); } catch { /* already gone */ }
+      try { device.destroy(); } catch { /* already gone */ }
+    }
+    incomingSessionRef.current = false;
+    stopRingback();
+    setIncomingFrom(null);
+    setIncomingTabTitle(false);
+    setActiveNumber(null);
+    setStatus('offline');
+  }, [stopRingback]);
+
+  const attachIncoming = useCallback((call: Call) => {
+    incomingRef.current = call;
+    incomingSessionRef.current = true;
+    const from = call.parameters.From ?? 'Unknown';
+    const callSid = call.parameters.CallSid ?? null;
+    setMissedBanner(null);
+    setIncomingFrom(from);
+    setIncomingTabTitle(true);
+    writeLock(true);
+    const paramId = customParam(call, 'leadId');
+    const paramName = customParam(call, 'leadName');
+    const paramCompany = customParam(call, 'leadCompany');
+    reportInboundCall({
+      callSid,
+      from,
+      leadId: paramId,
+      leadName: paramName,
+      status: 'ringing_agent',
+    });
+    try {
+      if (typeof Notification !== 'undefined') {
+        if (Notification.permission === 'default') void Notification.requestPermission();
+        if (Notification.permission === 'granted') {
+          new Notification('Incoming call', {
+            body: paramName || from,
+            tag: 'gostwrk-incoming-call',
+          });
+        }
+      }
+    } catch { /* no notifications */ }
+    if (paramId) {
+      setMatchedLead({
+        id: paramId,
+        name: paramName || from,
+        company: paramCompany,
+      });
+      setActiveName(paramName);
+    } else {
+      setMatchedLead(null);
+      setActiveName(null);
+      void (async () => {
+        try {
+          const res = await fetch(`/api/telephony/lookup?phone=${encodeURIComponent(from)}`);
+          if (!res.ok) return;
+          const data = await res.json();
+          if (!incomingRef.current && !callRef.current) return;
+          if (data.lead?.id) {
+            setMatchedLead({
+              id: data.lead.id,
+              name: data.lead.name || from,
+              company: data.lead.company,
+            });
+            setActiveName(data.lead.name || null);
+            reportInboundCall({
+              callSid,
+              from,
+              leadId: data.lead.id,
+              leadName: data.lead.name,
+              status: 'ringing_agent',
+            });
+          }
+        } catch { /* unknown caller */ }
+      })();
+    }
+    call.on('cancel', () => {
+      incomingRef.current = null;
+      incomingSessionRef.current = false;
+      setIncomingFrom(null);
+      setIncomingTabTitle(false);
+      writeLock(!!callRef.current);
+      showMissedBanner({
+        from,
+        name: paramName || matchedLeadRef.current?.name || null,
+        company: paramCompany || matchedLeadRef.current?.company || null,
+        leadId: paramId || matchedLeadRef.current?.id || null,
+      });
+      reportInboundCall({ callSid, from, status: 'no_answer' });
+      if (!showLeadCardRef.current) setMatchedLead(null);
+    });
+    call.on('disconnect', () => {
+      incomingRef.current = null;
+      setIncomingFrom(null);
+      setIncomingTabTitle(false);
+      writeLock(!!callRef.current);
+      resetCallState();
+    });
+  }, [resetCallState, showMissedBanner, writeLock]);
+
+  const startDevice = useCallback(async () => {
+    if (deviceRef.current || startingDeviceRef.current) return;
+    if (typeof window !== 'undefined' && window.top && window.top !== window.self) return;
+    startingDeviceRef.current = true;
+    try {
+      const res = await fetch('/api/telephony/token');
+      if (!res.ok) return;
+      const { token, fromNumber: from } = await res.json();
+      if (from) setFromNumber(from);
+      if (!weOwnLock()) return;
+
+      const { Device } = await import('@twilio/voice-sdk');
+      if (!weOwnLock()) return;
+      const device = new Device(token, {
+        logLevel: 'error',
+        codecPreferences: ['opus', 'pcmu'] as Call.Codec[],
+        closeProtection: true,
+        dscp: true,
+        edge: 'roaming',
+        allowIncomingWhileBusy: true,
+      });
+      deviceRef.current = device;
+
+      device.on('registered', () => setStatus('ready'));
+      device.on('unregistered', () => {
+        if (deviceRef.current === device) setStatus('offline');
+      });
+      device.on('error', (e: Error) => setError(voiceErrorMessage(e)));
+
+      device.on('tokenWillExpire', async () => {
+        try {
+          const r = await fetch('/api/telephony/token');
+          if (r.ok) {
+            const { token: fresh } = await r.json();
+            device.updateToken(fresh);
+          }
+        } catch { /* next expiry will retry */ }
+      });
+
+      device.on('incoming', (call: Call) => {
+        const live = callRef.current;
+        const liveStatus = live?.status?.();
+        if (live && liveStatus === 'closed') {
+          try { live.removeAllListeners(); } catch { /* older SDK */ }
+          callRef.current = null;
+        }
+        attachIncoming(call);
+      });
+
+      await device.register();
+      try { device.audio?.outgoing(false); } catch { /* older SDK */ }
+      if (!weOwnLock()) {
+        destroyDevice();
+      }
+    } catch (e) {
+      console.warn('[WebPhone] init failed:', e);
+    } finally {
+      startingDeviceRef.current = false;
+    }
+  }, [attachIncoming, destroyDevice, weOwnLock]);
+
+  // One Twilio Device per browser. Phone browsers unregister as soon as the
+  // tab is backgrounded so you don't hear a ring with no incoming card.
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.top && window.top !== window.self) return;
+
+    const phone = isPhoneBrowser(navigator.userAgent);
+
+    const goLive = (steal: boolean) => {
+      if (hideTimerRef.current) {
+        clearTimeout(hideTimerRef.current);
+        hideTimerRef.current = null;
+      }
+      if (takeLock(steal)) void startDevice();
+      else destroyDevice();
+    };
+
+    const onHidden = () => {
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+      const delay = phone ? 400 : 45_000;
+      hideTimerRef.current = setTimeout(() => {
+        hideTimerRef.current = null;
+        if (document.hidden) destroyDevice();
+      }, delay);
+    };
+
+    const onVisible = () => goLive(true);
+
+    if (document.hidden) onHidden();
+    else goLive(true);
+
+    const heartbeat = window.setInterval(() => {
+      if (document.hidden) return;
+      if (weOwnLock()) {
+        writeLock(!!incomingRef.current || !!callRef.current);
+        const device = deviceRef.current;
+        if (device && device.state !== 'registered' && device.state !== 'registering') {
+          void device.register().catch(() => {});
+        }
+      } else if (takeLock(false)) {
+        void startDevice();
+      }
+    }, 3000);
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== WEBPHONE_LOCK_KEY) return;
+      const lock = parseWebphoneLock(e.newValue);
+      if (lock && lock.id !== tabIdRef.current) destroyDevice();
+    };
+
+    const onPageHide = () => {
+      if (weOwnLock()) {
+        try { localStorage.removeItem(WEBPHONE_LOCK_KEY); } catch { /* private mode */ }
+      }
+      destroyDevice();
+    };
+
+    const onVisibility = () => {
+      if (document.hidden) onHidden();
+      else onVisible();
+    };
+
+    window.addEventListener('focus', onVisible);
+    window.addEventListener('pageshow', onVisible);
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('pagehide', onPageHide);
+
+    return () => {
+      window.clearInterval(heartbeat);
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+      window.removeEventListener('focus', onVisible);
+      window.removeEventListener('pageshow', onVisible);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('pagehide', onPageHide);
+      if (weOwnLock()) {
+        try { localStorage.removeItem(WEBPHONE_LOCK_KEY); } catch { /* private mode */ }
+      }
+      destroyDevice();
+    };
+  }, [destroyDevice, startDevice, takeLock, weOwnLock, writeLock]);
 
   // ── Actions ─────────────────────────────────────────────────────────────────
   const connect = useCallback(async (e164: string, meta?: { name?: string; leadId?: string; company?: string; hunt?: boolean; callDbId?: string }) => {
+    if (!deviceRef.current) {
+      if (!takeLock(true)) {
+        const msg = 'Phone is active in another tab — click that window, then dial.';
+        setError(msg);
+        throw new Error(msg);
+      }
+      await startDevice();
+    }
     const device = deviceRef.current;
     if (!device) {
       const msg = 'Phone not ready — check Twilio setup in Settings.';
@@ -585,7 +738,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
       }
       throw new Error(msg);
     }
-  }, [wireCall, resetCallState, stopRingback, startRingback]);
+  }, [wireCall, resetCallState, stopRingback, startRingback, takeLock, startDevice]);
 
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
@@ -645,6 +798,12 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   const acceptIncoming = useCallback(() => {
     const call = incomingRef.current;
     if (!call) return;
+    const live = callRef.current;
+    if (live && live !== call) {
+      try { live.removeAllListeners(); } catch { /* older SDK */ }
+      try { live.disconnect(); } catch { /* already gone */ }
+      callRef.current = null;
+    }
     incomingRef.current = null;
     incomingSessionRef.current = true;
     const from = call.parameters.From ?? null;

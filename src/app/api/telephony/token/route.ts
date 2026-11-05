@@ -2,7 +2,7 @@
  * GET /api/telephony/token
  *
  * Issues a Twilio Voice access token for the browser (Twilio Voice JS SDK).
- * Single-agent CRM: identity is always "agent".
+ * Client identity is `agent` in production (see twilioClientIdentity).
  *
  * Required env vars:
  *   TWILIO_API_KEY_SID     — API key SID   (SKxxxx…)
@@ -17,6 +17,7 @@ import twilio from 'twilio';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { getTwilioCreds } from '@/lib/telephony/twilio';
+import { twilioClientIdentity } from '@/lib/telephony/voiceIdentity';
 
 export const dynamic = 'force-dynamic';
 
@@ -54,8 +55,9 @@ export async function GET() {
     const AccessToken = twilio.jwt.AccessToken;
     const VoiceGrant  = AccessToken.VoiceGrant;
 
+    const identity = twilioClientIdentity();
     const token = new AccessToken(creds.accountSid, apiKeySid, apiKeySecret, {
-      identity: 'agent',
+      identity,
       ttl: 3600, // 1 hour; the SDK fires tokenWillExpire so the client refreshes
     });
 
@@ -66,7 +68,7 @@ export async function GET() {
 
     return NextResponse.json({
       token: token.toJwt(),
-      identity: 'agent',
+      identity,
       fromNumber: creds.fromNumber || null,
     });
   } catch (err) {
