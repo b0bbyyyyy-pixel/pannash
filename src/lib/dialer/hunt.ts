@@ -28,11 +28,11 @@ export function huntVerdict(snap: HuntCallSnapshot, now = Date.now()): HuntVerdi
 
   const answered = !!snap.answered_at;
   if (answered && (by === 'unknown' || by === '')) {
-    // AMD stalled after pickup — don't drop a live person.
+    // AMD stalled after pickup — don't leave a live person muted.
     const started = snap.started_at ? Date.parse(snap.started_at) : NaN;
     const answeredAt = Date.parse(snap.answered_at!);
     const age = now - (Number.isFinite(answeredAt) ? answeredAt : Number.isFinite(started) ? started : now);
-    if (age >= 8_000) return 'human';
+    if (age >= 2_500) return 'human';
     return 'wait';
   }
 

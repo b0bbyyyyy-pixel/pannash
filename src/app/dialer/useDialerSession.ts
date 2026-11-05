@@ -229,6 +229,15 @@ export function useDialerSession() {
     pendingHuntRef.current = false;
     handedOffRef.current = false;
     try {
+      const res = await fetch('/api/dialer/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadId: current.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Failed to start call');
+      setCallId(data.callId);
+      callIdRef.current = data.callId;
       if (!testMode) {
         try {
           await webphone.connect(current.phone_e164, {
@@ -236,24 +245,14 @@ export function useDialerSession() {
             leadId: current.id,
             company: current.company ?? undefined,
             hunt: hunting,
+            callDbId: data.callId,
           });
         } catch (e: unknown) {
           setError(e instanceof Error ? e.message : 'Could not start call');
+          setState('wrap_up');
           return;
         }
       }
-      const res = await fetch('/api/dialer/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ leadId: current.id }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        try { webphone.hangup(); } catch { /* ignore */ }
-        throw new Error(data.error ?? 'Failed to start call');
-      }
-      setCallId(data.callId);
-      callIdRef.current = data.callId;
       setState(testMode ? 'wrap_up' : 'on_call');
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error starting call');

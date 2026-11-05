@@ -36,7 +36,7 @@ interface WebPhoneContextValue {
   muted: boolean;
   waitingForHuman: boolean;
   error: string | null;
-  connect: (e164: string, meta?: { name?: string; leadId?: string; company?: string; hunt?: boolean }) => Promise<void>;
+  connect: (e164: string, meta?: { name?: string; leadId?: string; company?: string; hunt?: boolean; callDbId?: string }) => Promise<void>;
   hangup: () => void;
   handOffLive: () => void;
   toggleMute: () => void;
@@ -274,13 +274,6 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   const missedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const huntRef = useRef(false);
 
-  function setRemoteVolume(on: boolean) {
-    if (typeof document === 'undefined') return;
-    document.querySelectorAll('audio').forEach((el) => {
-      if (el instanceof HTMLAudioElement) el.volume = on ? 1 : 0;
-    });
-  }
-
   const showMissedBanner = useCallback((row: {
     from: string;
     name: string | null;
@@ -321,7 +314,6 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     callRef.current = null;
     huntRef.current = false;
     setWaitingForHuman(false);
-    setRemoteVolume(true);
     setIncomingFrom(null);
     setIncomingTabTitle(false);
     setActiveNumber(null);
@@ -522,7 +514,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   }, []);
 
   // ── Actions ─────────────────────────────────────────────────────────────────
-  const connect = useCallback(async (e164: string, meta?: { name?: string; leadId?: string; company?: string; hunt?: boolean }) => {
+  const connect = useCallback(async (e164: string, meta?: { name?: string; leadId?: string; company?: string; hunt?: boolean; callDbId?: string }) => {
     const device = deviceRef.current;
     if (!device) {
       const msg = 'Phone not ready — check Twilio setup in Settings.';
@@ -575,15 +567,14 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     try {
       // `phone` not `To` — Twilio's own `To` on Client calls is client:agent, not the PSTN number.
       const call = await device.connect({
-        params: { phone: e164, ...(meta?.hunt ? { hunt: '1' } : {}) },
+        params: {
+          phone: e164,
+          ...(meta?.hunt ? { hunt: '1' } : {}),
+          ...(meta?.callDbId ? { callDbId: meta.callDbId } : {}),
+        },
         rtcConstraints: { audio: true },
       });
       wireCall(call);
-      if (meta?.hunt) {
-        call.mute(true);
-        setMuted(true);
-        setRemoteVolume(false);
-      }
     } catch (e) {
       const msg = voiceErrorMessage(e);
       setError(msg);
@@ -615,14 +606,8 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   }, [stopRingback]);
 
   const handOffLive = useCallback(() => {
-    const call = callRef.current;
     huntRef.current = false;
     setWaitingForHuman(false);
-    setRemoteVolume(true);
-    if (call) {
-      call.mute(false);
-      setMuted(false);
-    }
     playPickupBeep();
     try {
       if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
@@ -651,12 +636,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     const next = !call.isMuted();
     call.mute(next);
     setMuted(next);
-    if (!next && waitingForHuman) {
-      setWaitingForHuman(false);
-      huntRef.current = false;
-      setRemoteVolume(true);
-    }
-  }, [waitingForHuman]);
+  }, []);
 
   const sendDigits = useCallback((digits: string) => {
     callRef.current?.sendDigits(digits);

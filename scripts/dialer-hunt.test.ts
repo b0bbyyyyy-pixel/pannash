@@ -31,17 +31,17 @@ assert(huntVerdict({ status: 'completed' }) === 'no_answer', 'completed with no 
 assert(huntVerdict({ status: 'in_progress' }) === 'wait', 'in progress, no AMD yet → wait');
 assert(
   huntVerdict({
-    answered_at: new Date(Date.now() - 2000).toISOString(),
+    answered_at: new Date(Date.now() - 1000).toISOString(),
     status: 'in_progress',
   }) === 'wait',
   'just answered, AMD pending → wait'
 );
 assert(
   huntVerdict({
-    answered_at: new Date(Date.now() - 9000).toISOString(),
+    answered_at: new Date(Date.now() - 3000).toISOString(),
     status: 'in_progress',
   }) === 'human',
-  'answered 8s+ with no AMD → hand off (do not drop)'
+  'answered 2.5s+ with no AMD → hand off (do not leave muted)'
 );
 
 if (failed) {

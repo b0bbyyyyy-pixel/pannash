@@ -155,23 +155,46 @@ export async function POST(req: NextRequest) {
       const lead = otherParty ? await findLeadByPhone(supabase, otherParty, userId) : null;
       if (!isOutgoing && lead) inboundLead = { id: lead.id, name: lead.name, company: lead.company };
 
-      const { data: row, error: insertErr } = await supabase
-        .from('dialer_calls')
-        .insert({
-          lead_id: lead?.id ?? null,
-          agent_id: userId,
-          lead_name: lead?.name ?? otherParty,
-          to_number: isOutgoing ? (outboundTo ?? params.To) : (fromNumber ?? params.To),
-          from_number: isOutgoing ? (fromNumber ?? '') : caller,
-          direction: isOutgoing ? 'outbound' : 'inbound',
-          status: isOutgoing ? 'in_progress' : 'ringing_agent',
-          twilio_call_sid: callSid,
-          started_at: new Date().toISOString(),
-        })
-        .select('id')
-        .single();
-      if (insertErr) console.error('[twilio/voice-app] dialer_calls insert', insertErr);
-      dbId = row?.id ?? null;
+      const callDbId = (params.callDbId || params.CallDbId || '').trim();
+      if (isOutgoing && callDbId) {
+        const { data: existing } = await supabase
+          .from('dialer_calls')
+          .select('id')
+          .eq('id', callDbId)
+          .eq('agent_id', userId)
+          .maybeSingle();
+        if (existing?.id) {
+          await supabase
+            .from('dialer_calls')
+            .update({
+              twilio_call_sid: callSid,
+              from_number: fromNumber ?? '',
+              direction: 'outbound',
+              status: 'in_progress',
+            })
+            .eq('id', existing.id);
+          dbId = existing.id;
+        }
+      }
+      if (!dbId) {
+        const { data: row, error: insertErr } = await supabase
+          .from('dialer_calls')
+          .insert({
+            lead_id: lead?.id ?? null,
+            agent_id: userId,
+            lead_name: lead?.name ?? otherParty,
+            to_number: isOutgoing ? (outboundTo ?? params.To) : (fromNumber ?? params.To),
+            from_number: isOutgoing ? (fromNumber ?? '') : caller,
+            direction: isOutgoing ? 'outbound' : 'inbound',
+            status: isOutgoing ? 'in_progress' : 'ringing_agent',
+            twilio_call_sid: callSid,
+            started_at: new Date().toISOString(),
+          })
+          .select('id')
+          .single();
+        if (insertErr) console.error('[twilio/voice-app] dialer_calls insert', insertErr);
+        dbId = row?.id ?? null;
+      }
     }
 
     const statusCb = dbId
