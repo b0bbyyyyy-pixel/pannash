@@ -4,6 +4,7 @@ import { buildFundingApplicationPdf } from '@/lib/fundingApplicationPdf';
 import { resolveFromHeader } from '@/lib/email-from';
 import { appendEmailSent } from '@/lib/leads/fileActivity';
 import { getBusinessName } from '@/lib/casper/businessName';
+import { loadApplicationBrand } from '@/lib/applicationBrandStore';
 
 export type EmailAppResult = {
   sent: boolean;
@@ -46,8 +47,9 @@ export async function emailApplicationToLead(
   const biz = await getBusinessName(supabase, args.userId);
   const brand = biz.name || 'our team';
 
-  const pdf = await buildFundingApplicationPdf(data);
-  const fileName = applicationFileName(String(args.lead.company || args.lead.name || 'Application'));
+  const appBrand = await loadApplicationBrand(supabase, args.userId);
+  const pdf = await buildFundingApplicationPdf(data, { brand: appBrand });
+  const fileName = applicationFileName(String(args.lead.company || args.lead.name || 'Application'), new Date(), appBrand);
 
   const transporter = nodemailer.createTransport({
     host: smtpConn.smtp_host,

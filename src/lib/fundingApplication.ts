@@ -230,12 +230,17 @@ export function buildFundingApplication(lead: ApplicationLeadInput): {
   return { data, missing, populatedRequested };
 }
 
-export function applicationFileName(legalName: string, now = new Date()): string {
+export function applicationFileName(
+  legalName: string,
+  now = new Date(),
+  brand?: string,
+): string {
   const safe = (legalName || 'Application').replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, '');
   const y = now.getFullYear();
   const m = String(now.getMonth() + 1).padStart(2, '0');
   const d = String(now.getDate()).padStart(2, '0');
-  return `ABF_Application_${safe}_${y}-${m}-${d}.pdf`;
+  const prefix = brand === 'abf' ? 'ABF_Application' : 'One_Funding_Application';
+  return `${prefix}_${safe}_${y}-${m}-${d}.pdf`;
 }
 
 export function formatStampDate(now = new Date()): string {

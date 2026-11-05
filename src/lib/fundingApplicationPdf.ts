@@ -3,11 +3,11 @@ import { join } from 'path';
 import fontkit from '@pdf-lib/fontkit';
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
 import {
-  APPLICATION_BROKER,
   formatStampDate,
   formatStampDateTime,
   type FundingApplicationData,
 } from '@/lib/fundingApplication';
+import { APPLICATION_BRANDS, parseApplicationBrand } from '@/lib/applicationBrands';
 
 function loadSignatureFont(): Uint8Array {
   const candidates = [
@@ -30,22 +30,7 @@ const MUTED = rgb(0.45, 0.47, 0.50);
 const RULE = rgb(0.88, 0.89, 0.91);
 const WHITE = rgb(1, 1, 1);
 
-const BRANDS = {
-  abf: {
-    header: 'AMERICAN BUSINESS FUND',
-    legalName: 'American Business Funding LLC',
-    email: 'info@Americanbusinessfunding.com',
-    broker: `Broker: ${APPLICATION_BROKER.name}  |  Email: ${APPLICATION_BROKER.email}`,
-    generated: 'Generated via American Business Funding LLC',
-  },
-  oneFunding: {
-    header: 'ONE FUNDING SOLUTION',
-    legalName: 'One Funding Solution',
-    email: 'hello@onefundingsolution.com',
-    broker: 'One Funding Solution  |  hello@onefundingsolution.com',
-    generated: 'Generated via One Funding Solution',
-  },
-} as const;
+const BRANDS = APPLICATION_BRANDS;
 
 function legalParagraphs(company: string, email: string) {
   return [
@@ -113,7 +98,7 @@ export async function buildFundingApplicationPdf(
   const stamp = formatStampDate(signedAt);
   const stampTime = formatStampDateTime(signedAt);
   const ip = (opts.ip || '').trim();
-  const brand = BRANDS[opts.brand ?? 'abf'];
+  const brand = BRANDS[parseApplicationBrand(opts.brand)];
 
   const doc = await PDFDocument.create();
   doc.registerFontkit(fontkit);

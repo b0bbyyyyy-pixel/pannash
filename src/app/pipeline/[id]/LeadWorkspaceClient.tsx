@@ -7,6 +7,13 @@ import { isInIframe, LEAD_ACTION_MSG, postBackToPipeline, postCallToTop, postLea
 import { saveLeadStatusWrite } from '@/lib/pipeline/saveLeadStatus';
 import { toE164 } from '@/lib/dialer/e164';
 import { buildFundingApplication } from '@/lib/fundingApplication';
+import {
+  APPLICATION_BRANDS,
+  APPLICATION_BRAND_LIST,
+  DEFAULT_APPLICATION_BRAND,
+  parseApplicationBrand,
+  type ApplicationBrandId,
+} from '@/lib/applicationBrands';
 import { isDocsComplete, isOffersComplete } from '@/lib/leads/menuComplete';
 import { dealStageFromLead, dealStageLabel } from '@/lib/casper/stage';
 import { useWebPhone } from '@/components/webphone/WebPhone';
@@ -520,6 +527,8 @@ export default function LeadWorkspaceClient({
   const [pasteParseText, setPasteParseText] = useState('');
   const [pasteParseBusy, setPasteParseBusy] = useState(false);
   const [pasteParseMsg, setPasteParseMsg] = useState<string | null>(null);
+  const [appBrand, setAppBrand] = useState<ApplicationBrandId>(DEFAULT_APPLICATION_BRAND);
+  const [appBrandSaving, setAppBrandSaving] = useState(false);
   const [inFrame, setInFrame]     = useState(false);
   useEffect(() => { setInFrame(isInIframe()); }, []);
 
@@ -563,7 +572,11 @@ export default function LeadWorkspaceClient({
     setAppMissing([]);
     setAppMsg(null);
     try {
-      const res = await fetch(`/api/leads/${lead.id}/application`, { method: 'POST' });
+      const res = await fetch(`/api/leads/${lead.id}/application`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ brand: appBrand }),
+      });
       const json = await res.json().catch(() => ({}));
       if (res.status === 422 && Array.isArray(json.missing)) {
         setAppMissing(json.missing);
@@ -588,7 +601,40 @@ export default function LeadWorkspaceClient({
     } finally {
       setAppBusy(false);
     }
-  }, [lead, openChildOverlay]);
+  }, [lead, openChildOverlay, appBrand]);
+
+  useEffect(() => {
+    let cancelled = false;
+    try {
+      const saved = localStorage.getItem('application_brand');
+      if (saved) setAppBrand(parseApplicationBrand(saved));
+    } catch { /* ignore */ }
+    fetch('/api/settings/application-brand', { credentials: 'include' })
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancelled || !d?.brand) return;
+        const next = parseApplicationBrand(d.brand);
+        setAppBrand(next);
+        try { localStorage.setItem('application_brand', next); } catch { /* ignore */ }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  const saveAppBrand = async (next: ApplicationBrandId) => {
+    setAppBrand(next);
+    try { localStorage.setItem('application_brand', next); } catch { /* ignore */ }
+    setAppBrandSaving(true);
+    try {
+      await fetch('/api/settings/application-brand', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ brand: next }),
+      });
+    } catch { /* local choice still applies */ }
+    finally { setAppBrandSaving(false); }
+  };
 
   // Load dynamic statuses
   useEffect(() => {
@@ -2038,6 +2084,76 @@ export default function LeadWorkspaceClient({
                     <Field label="Total MCA / Mo" value={str(ud.otherMCAMonthlyPayment)} onSave={v => saveField('otherMCAMonthlyPayment', v)} type="number" />
                   </>
                 )}
+              </Section>
+
+              <Section title="Settings" collapsible defaultOpen={false} resetKey={initialLead.id}>
+                <p className="text-[11px] text-[#6b6b6b] mb-2">
+                  Business name printed at the top of Create Application.
+                </p>
+                <div className="space-y-1.5 mb-3">
+                  {APPLICATION_BRAND_LIST.map((b) => (
+                    <label
+                      key={b.id}
+                      className={`flex items-center gap-2 px-2.5 py-2 rounded-md border cursor-pointer ${
+                        appBrand === b.id ? 'border-[#1a1a1a] bg-[#fafafa]' : 'border-[#e5e5e5] hover:bg-[#fafafa]'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="application-brand"
+                        checked={appBrand === b.id}
+                        onChange={() => void saveAppBrand(b.id)}
+                        className="accent-[#1a1a1a]"
+                      />
+                      <span className="text-sm text-[#1a1a1a]">{b.label}</span>
+                    </label>
+                  ))}
+                </div>
+                {appBrandSaving && <p className="text-[11px] text-[#9b9b9b] mb-2">Saving…</p>}
+                {(() => {
+                  const brand = APPLICATION_BRANDS[appBrand];
+                  return (
+                    <div className="border border-[#e5e5e5] rounded-md overflow-hidden bg-white">
+                      <div className="px-4 pt-5 pb-4">
+                        <p
+                          className="text-center text-[11px] font-bold tracking-[0.18em] text-[#17203d]"
+                        >
+                          {brand.header}
+                        </p>
+                        <p className="text-center text-[9px] font-bold tracking-[0.16em] text-[#17203d] mt-1">
+                          ONLINE APPLICATION
+                        </p>
+                        <p className="text-[10px] text-[#1a1a1a] mt-3">{brand.broker}</p>
+                        <div className="mt-2 h-[2px] bg-[#17203d]" />
+                        <div className="mt-3 bg-[#17203d] text-white text-[9px] font-semibold tracking-[0.12em] px-2 py-1">
+                          BUSINESS INFORMATION
+                        </div>
+                        <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2">
+                          <div>
+                            <p className="text-[8px] uppercase tracking-wide text-[#9b9b9b]">Legal/Corporate Name</p>
+                            <p className="text-[11px] text-[#1a1a1a] truncate">{lead.company || '—'}</p>
+                          </div>
+                          <div>
+                            <p className="text-[8px] uppercase tracking-wide text-[#9b9b9b]">Owner</p>
+                            <p className="text-[11px] text-[#1a1a1a] truncate">{lead.name || '—'}</p>
+                          </div>
+                        </div>
+                        <p className="text-[9px] text-[#9b9b9b] mt-3">{brand.generated}</p>
+                      </div>
+                    </div>
+                  );
+                })()}
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.open(`/api/leads/${lead.id}/application?brand=${appBrand}`, '_blank', 'noopener');
+                  }}
+                  disabled={!appComplete}
+                  title={appComplete ? 'Open a PDF preview with this lead filled in' : 'Fill required fields first'}
+                  className="mt-2 text-[11px] text-[#6b6b6b] hover:text-[#1a1a1a] underline underline-offset-2 disabled:opacity-40 disabled:no-underline"
+                >
+                  Open full PDF preview
+                </button>
               </Section>
 
               {!appComplete && (
