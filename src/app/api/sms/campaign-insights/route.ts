@@ -622,7 +622,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const signals = await loadInboundSignals(supabase, userId);
+    const signals = await loadInboundSignals(supabase, user.id);
     const repliedIds = expandRepliedByPhone({
       leads: leadRows.filter(l => textedIds.has(l.id)),
       inboundLeadIds: signals.inboundLeadIds,
