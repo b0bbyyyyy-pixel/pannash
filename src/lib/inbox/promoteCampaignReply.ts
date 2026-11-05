@@ -25,7 +25,7 @@ export async function stopCampaignDripForLead(supabase: any, leadId: string) {
       .from('sms_drip_sends')
       .update({ sms_status: 'replied', error: 'Moved to pipeline' })
       .eq('lead_id', leadId)
-      .in('sms_status', ['queued', 'scheduled', 'sending']);
+      .in('sms_status', ['queued', 'scheduled', 'sending', 'sent', 'delivered']);
   } catch {
     // Drip tables not created yet
   }

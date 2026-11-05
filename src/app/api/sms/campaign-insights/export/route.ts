@@ -12,6 +12,7 @@ import {
   outboundRowsFromSends,
   sendInRange,
 } from '@/lib/smsDrip/insightsData';
+import { expandRepliedByPhone, loadInboundSignals } from '@/lib/smsDrip/campaignReplyIds';
 
 export const dynamic = 'force-dynamic';
 
@@ -85,18 +86,12 @@ export async function GET(req: NextRequest) {
       return !!listIdForSend && sourceListIds.has(listIdForSend);
     });
 
-    const leadIds = [...new Set(scoped.map(s => s.lead_id))];
-    const repliedIds = new Set<string>();
-    for (const slice of chunk(leadIds, 200)) {
-      const { data: convs } = await supabase
-        .from('inbox_conversations')
-        .select('lead_id, last_inbound_at, last_direction')
-        .eq('user_id', user.id)
-        .in('lead_id', slice);
-      for (const c of convs ?? []) {
-        if (c.last_inbound_at || c.last_direction === 'inbound') repliedIds.add(c.lead_id);
-      }
-    }
+    const signals = await loadInboundSignals(supabase, user.id);
+    const repliedIds = expandRepliedByPhone({
+      leads,
+      inboundLeadIds: signals.inboundLeadIds,
+      inboundPhones: signals.inboundPhones,
+    });
     for (const s of scoped) {
       if (s.sms_status === 'replied' && s.lead_id) repliedIds.add(s.lead_id);
     }

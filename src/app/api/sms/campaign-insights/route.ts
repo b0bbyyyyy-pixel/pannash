@@ -21,6 +21,7 @@ import {
   type InsightLead,
   type InsightSend,
 } from '@/lib/smsDrip/insightsData';
+import { expandRepliedByPhone, loadInboundSignals } from '@/lib/smsDrip/campaignReplyIds';
 
 export const dynamic = 'force-dynamic';
 
@@ -380,7 +381,6 @@ async function overviewInsights(
     .from('inbox_conversations')
     .select('lead_id, last_inbound_at, last_direction, last_message_preview')
     .eq('user_id', userId)
-    .or('last_inbound_at.not.is.null,last_direction.eq.inbound')
     .limit(10000);
   let convs: ConvRow[] = [];
   if (inboundRes.error) {
@@ -388,20 +388,20 @@ async function overviewInsights(
       .from('inbox_conversations')
       .select('lead_id, last_direction, last_message_preview')
       .eq('user_id', userId)
-      .eq('last_direction', 'inbound')
       .limit(10000);
     convs = (retry.data ?? []) as ConvRow[];
   } else {
     convs = (inboundRes.data ?? []) as ConvRow[];
   }
 
-  const repliedIds = new Set<string>();
-  for (const c of convs) {
-    if (!textedIds.has(c.lead_id)) continue;
-    if (c.last_inbound_at || c.last_direction === 'inbound') repliedIds.add(c.lead_id);
-  }
+  const signals = await loadInboundSignals(supabase, userId);
+  const repliedIds = expandRepliedByPhone({
+    leads: textedLeads,
+    inboundLeadIds: signals.inboundLeadIds,
+    inboundPhones: signals.inboundPhones,
+  });
   for (const s of sendsInRange) {
-    if (s.sms_status === 'replied' && s.lead_id) repliedIds.add(s.lead_id);
+    if (s.sms_status === 'replied' && s.lead_id && textedIds.has(s.lead_id)) repliedIds.add(s.lead_id);
   }
 
   const previewByLead = new Map<string, string>();
@@ -622,14 +622,14 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const repliedIds = new Set(
-      (convs ?? [])
-        .filter(c => c.last_inbound_at || c.last_direction === 'inbound')
-        .map(c => c.lead_id)
-        .filter(id => textedIds.has(id)),
-    );
+    const signals = await loadInboundSignals(supabase, userId);
+    const repliedIds = expandRepliedByPhone({
+      leads: leadRows.filter(l => textedIds.has(l.id)),
+      inboundLeadIds: signals.inboundLeadIds,
+      inboundPhones: signals.inboundPhones,
+    });
     for (const s of sends) {
-      if (s.sms_status === 'replied' && s.lead_id) repliedIds.add(s.lead_id);
+      if (s.sms_status === 'replied' && s.lead_id && textedIds.has(s.lead_id)) repliedIds.add(s.lead_id);
     }
 
     const previewByLead = new Map<string, string>();

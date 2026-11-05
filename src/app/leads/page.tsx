@@ -10,6 +10,9 @@ import NewCampaignModal from './NewCampaignModal';
 import CampaignOverviewInsights from './CampaignOverviewInsights';
 import { guessLeadSource, resolveListSource, uniqueLeadSources } from '@/lib/smsDrip/leadSources';
 import { CAMPAIGN_LEAD_COLS, CAMPAIGN_LEAD_COLS_MIN, asRows, hydrateCampaignUd, selectFirst } from '@/lib/leads/listColumns';
+import { expandRepliedByPhone, loadInboundSignals } from '@/lib/smsDrip/campaignReplyIds';
+
+export const dynamic = 'force-dynamic';
 
 export default async function LeadsPage({
   searchParams,
@@ -44,29 +47,7 @@ export default async function LeadsPage({
     .eq('user_id', user.id)
     .order('created_at', { ascending: false });
 
-  const inboundRes = await supabase
-    .from('inbox_conversations')
-    .select('lead_id, last_inbound_at, last_direction')
-    .eq('user_id', user.id)
-    .or('last_inbound_at.not.is.null,last_direction.eq.inbound')
-    .limit(10000);
-
-  let inboundRows = inboundRes.data as { lead_id: string; last_inbound_at?: string | null; last_direction?: string | null }[] | null;
-  if (inboundRes.error) {
-    const retry = await supabase
-      .from('inbox_conversations')
-      .select('lead_id, last_direction')
-      .eq('user_id', user.id)
-      .eq('last_direction', 'inbound')
-      .limit(10000);
-    inboundRows = retry.data as typeof inboundRows;
-  }
-
-  const repliedIds = new Set(
-    (inboundRows ?? [])
-      .filter(c => c.last_inbound_at || c.last_direction === 'inbound')
-      .map(c => c.lead_id),
-  );
+  const inboundSignals = await loadInboundSignals(supabase, user.id);
 
   const { data: dripRuns } = await supabase
     .from('sms_drip_jobs')
@@ -85,13 +66,19 @@ export default async function LeadsPage({
     (leadLists || []).map(async (list) => {
       const { data: stats } = await supabase
         .from('leads')
-        .select('id, sms_sent_at, call_made_at')
+        .select('id, phone, sms_sent_at, call_made_at')
         .eq('list_id', list.id);
       const total = stats?.length || 0;
       const smsCount = stats?.filter((l) => l.sms_sent_at).length || 0;
       const callCount = stats?.filter((l) => l.call_made_at).length || 0;
       const touchedCount = stats?.filter((l) => l.sms_sent_at || l.call_made_at).length || 0;
-      const replyCount = stats?.filter((l) => l.sms_sent_at && repliedIds.has(l.id)).length || 0;
+      const texted = (stats ?? []).filter(l => l.sms_sent_at);
+      const repliedIds = expandRepliedByPhone({
+        leads: texted,
+        inboundLeadIds: inboundSignals.inboundLeadIds,
+        inboundPhones: inboundSignals.inboundPhones,
+      });
+      const replyCount = repliedIds.size;
       const firstSms = (stats ?? [])
         .map(l => l.sms_sent_at)
         .filter((v): v is string => Boolean(v))

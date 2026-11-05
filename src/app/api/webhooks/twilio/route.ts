@@ -1,7 +1,7 @@
 import { after, NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { toE164 } from '@/lib/dialer/e164';
-import { promoteCampaignLeadOnReply, stampInboxInbound } from '@/lib/inbox/promoteCampaignReply';
+import { promoteCampaignLeadOnReply, stampInboxInbound, stopCampaignDripForLead } from '@/lib/inbox/promoteCampaignReply';
 import { noteInbound, runWhenSettled } from '@/lib/casper/burst';
 import { runCasperInboundSms } from '@/lib/casper/reply';
 import { notifyUserOfInboundSms } from '@/lib/mobile/notifyInbound';
@@ -10,7 +10,7 @@ import { isSmsStopBody, markPhoneDnc } from '@/lib/leads/dnc';
 import { markOutboundReadAfterReply } from '@/lib/inbox/markOutboundRead';
 import { findUserByPingPhone, notifyInboxText, recordPingMessage } from '@/lib/casper/ping';
 import { runCasperPingReply } from '@/lib/casper/pingReply';
-import { findLeadByPhone as findPreferredLeadByPhone } from '@/lib/leads/findByPhone';
+import { findLeadByPhone as findPreferredLeadByPhone, findSiblingLeadIds } from '@/lib/leads/findByPhone';
 import { extractEmailFromSms, runUpdateLeadEmailTool } from '@/lib/casper/updateLeadEmail';
 import { applyInboundLanguage } from '@/lib/inbox/language';
 import { formDataToParams, publicAppUrl, validateTwilioSignatureUrls } from '@/lib/telephony/twilio';
@@ -202,6 +202,12 @@ export async function POST(req: NextRequest) {
     const rpcOk = Boolean(ingested && typeof ingested === 'object' && (ingested as { ok?: boolean }).ok);
     if (!stopped) {
       try { await promoteCampaignLeadOnReply(supabase, lead.id); } catch { /* ignore */ }
+      try {
+        const siblings = await findSiblingLeadIds(supabase, ownerId, lead.id);
+        for (const id of siblings) {
+          if (id !== lead.id) await stopCampaignDripForLead(supabase, id);
+        }
+      } catch { /* ignore */ }
       try { await markOutboundReadAfterReply(supabase, lead.id); } catch { /* ignore */ }
     }
     try {
@@ -299,7 +305,7 @@ export async function POST(req: NextRequest) {
           .from('sms_drip_sends')
           .update({ sms_status: 'replied' })
           .eq('lead_id', lead.id)
-          .in('sms_status', ['queued', 'scheduled', 'sending', 'sent']);
+          .in('sms_status', ['queued', 'scheduled', 'sending', 'sent', 'delivered']);
       } catch {
         // Drip tables not created yet — fine
       }
