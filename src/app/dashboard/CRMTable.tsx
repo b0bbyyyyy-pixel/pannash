@@ -9,6 +9,7 @@ import dynamic from 'next/dynamic';
 import { kickSyncWorker } from '@/lib/sync/kick';
 import { downloadLeadAttachment } from '@/lib/attachments/downloadClient';
 import { EMAIL_FONT_SIZES } from '@/lib/email/letterHtml';
+import EmailFieldInsert, { insertFieldToken } from '@/components/EmailFieldInsert';
 
 const UnderwritingSuite = dynamic(() => import('@/components/UnderwritingSuite'), { ssr: false });
 
@@ -235,6 +236,7 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
   const [templateBody, setTemplateBody] = useState('');
   const [editingInScheduleModal, setEditingInScheduleModal] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const subjectRef = useRef<HTMLInputElement>(null);
   
   // Text template states
   const [savedTextTemplates, setSavedTextTemplates] = useState<{ id: string; name: string; body: string }[]>([]);
@@ -3571,11 +3573,18 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                     </div>
                     <div className="space-y-3">
                       <div>
-                        <label className="block text-xs text-[#6b6b6b] mb-1">Subject</label>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="block text-xs text-[#6b6b6b]">Subject</label>
+                          <EmailFieldInsert
+                            onInsert={key => insertFieldToken(templateSubject, key, subjectRef.current, setTemplateSubject)}
+                          />
+                        </div>
                         <input
+                          ref={subjectRef}
                           type="text"
                           value={templateSubject}
                           onChange={(e) => setTemplateSubject(e.target.value)}
+                          placeholder="e.g. {{company}} — Application Submission"
                           className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
                         />
                       </div>
@@ -3844,12 +3853,18 @@ export default function CRMTable({ leads: initialLeads, monthKey, stages, column
                     />
                   </div>
                   <div>
-                    <label className="block text-xs text-[#6b6b6b] mb-1">Email Subject *</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs text-[#6b6b6b]">Email Subject *</label>
+                      <EmailFieldInsert
+                        onInsert={key => insertFieldToken(templateSubject, key, subjectRef.current, setTemplateSubject)}
+                      />
+                    </div>
                     <input
+                      ref={subjectRef}
                       type="text"
                       value={templateSubject}
                       onChange={(e) => setTemplateSubject(e.target.value)}
-                      placeholder="e.g., Following up on our conversation"
+                      placeholder="e.g. {{company}} — Application Submission"
                       className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm"
                     />
                   </div>

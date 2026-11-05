@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { postLeadPatch } from '@/lib/pipeline/iframeMessages';
 import { EMAIL_FONT_SIZES } from '@/lib/email/letterHtml';
+import EmailFieldInsert, { insertFieldToken } from '@/components/EmailFieldInsert';
 
 function emailPortalTarget(): HTMLElement | null {
   if (typeof document === 'undefined') return null;
@@ -179,6 +180,7 @@ export default function ScheduleEmailModal({ lead: initialLead, onClose, onSent 
   const [needsGmail, setNeedsGmail]                 = useState(false);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const subjectRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
 
   // ── Fetch templates on mount ───────────────────────────────────────────────
@@ -672,12 +674,18 @@ export default function ScheduleEmailModal({ lead: initialLead, onClose, onSent 
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-[#6b6b6b] mb-1">Subject</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs text-[#6b6b6b]">Subject</label>
+                    <EmailFieldInsert
+                      onInsert={key => insertFieldToken(editSubject, key, subjectRef.current, setEditSubject)}
+                    />
+                  </div>
                   <input
+                    ref={subjectRef}
                     type="text"
                     value={editSubject}
                     onChange={e => setEditSubject(e.target.value)}
-                    placeholder="e.g. Your Funding Offer — {{company}}"
+                    placeholder="e.g. {{company}} — Application Submission"
                     className="w-full px-3 py-2 border border-[#e5e5e5] rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-[#1a1a1a]"
                   />
                 </div>

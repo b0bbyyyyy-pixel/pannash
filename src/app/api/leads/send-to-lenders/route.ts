@@ -8,7 +8,8 @@ import {
   type SendConnection,
 } from '@/lib/email/sendAccounts';
 import { sendOutboundMail, type OutboundAttachment } from '@/lib/email/sendOutbound';
-import { clampEmailFontPt, wrapLetterHtml } from '@/lib/email/letterHtml';
+import { wrapLetterHtml } from '@/lib/email/letterHtml';
+import { fillLeadPlaceholders } from '@/lib/email/fillLeadPlaceholders';
 
 export const runtime  = 'nodejs';
 export const dynamic  = 'force-dynamic';
@@ -49,7 +50,6 @@ export async function POST(request: Request) {
     templateName,
     note,
     senderName,
-    fontSizePt,
   }: {
     leadId: string;
     lenders: SelectedLender[];
@@ -58,7 +58,6 @@ export async function POST(request: Request) {
     templateName?: string;
     note?: string;
     senderName?: string;
-    fontSizePt?: number;
   } = await request.json();
 
   if (!leadId || !lenders?.length) {
@@ -82,7 +81,18 @@ export async function POST(request: Request) {
     }
   }
   if (note) emailBody += `<br/><br/><em>Note: ${note}</em>`;
-  emailBody = wrapLetterHtml(emailBody, clampEmailFontPt(fontSizePt));
+
+  const { data: lead } = await supabase
+    .from('leads')
+    .select('name, email, phone, company, underwriting_data')
+    .eq('id', leadId)
+    .eq('user_id', user.id)
+    .maybeSingle();
+  if (lead) {
+    emailSubject = fillLeadPlaceholders(emailSubject, lead);
+    emailBody = fillLeadPlaceholders(emailBody, lead);
+  }
+  emailBody = wrapLetterHtml(emailBody);
 
   const { data: connections } = await supabase
     .from('email_connections')

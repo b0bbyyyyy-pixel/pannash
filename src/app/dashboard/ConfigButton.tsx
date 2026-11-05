@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import EmailFieldInsert from '@/components/EmailFieldInsert';
 import {
   DndContext,
   closestCenter,
@@ -1176,11 +1177,17 @@ export default function ConfigButton({ stages: initialStages, stats: initialStat
                         </div>
                       </div>
                       <div className="mb-3">
-                        <label className="block text-xs font-medium text-[#6b6b6b] mb-1">Subject</label>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="block text-xs font-medium text-[#6b6b6b]">Subject</label>
+                          <EmailFieldInsert
+                            onInsert={key => updateEmailTemplate(index, 'subject', `${template.subject || ''}{{${key}}}`)}
+                          />
+                        </div>
                         <input
                           type="text"
                           value={template.subject || ''}
                           onChange={(e) => updateEmailTemplate(index, 'subject', e.target.value)}
+                          placeholder="e.g. {{company}} — Application Submission"
                           className="w-full px-3 py-2 border border-[#e5e5e5] rounded text-sm"
                         />
                       </div>

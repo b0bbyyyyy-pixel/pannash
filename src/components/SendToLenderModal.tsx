@@ -5,12 +5,8 @@ import dynamic from 'next/dynamic';
 import DocumentVault from './DocumentVault';
 import { TIER_LABELS } from '@/data/lenders';
 import { LENDER_SUBMISSION_FROM } from '@/lib/email/sendAccounts';
-import {
-  DEFAULT_EMAIL_FONT_PT,
-  EMAIL_FONT_SIZES,
-  clampEmailFontPt,
-  escapeHtml,
-} from '@/lib/email/letterHtml';
+import { escapeHtml } from '@/lib/email/letterHtml';
+import { fillLeadPlaceholders } from '@/lib/email/fillLeadPlaceholders';
 import LetterEmailPreview from './LetterEmailPreview';
 
 const LenderSettingsModal = dynamic(() => import('./LenderSettingsModal'), { ssr: false });
@@ -206,7 +202,6 @@ export default function SendToLenderModal({
   const [selectedDocIds, setSelectedDocIds]       = useState<Set<string>>(new Set());
   const [templateId, setTemplateId]               = useState('');
   const [note, setNote]                           = useState('');
-  const [emailFontSize, setEmailFontSize]         = useState(DEFAULT_EMAIL_FONT_PT);
 
   const [lenderFilter, setLenderFilter] = useState<'All' | 'Recent'>('All');
   const [sending, setSending]         = useState(false);
@@ -369,7 +364,6 @@ export default function SendToLenderModal({
           templateName: tpl?.name || undefined,
           note:         note || undefined,
           senderName:   userName || undefined,
-          fontSizePt:   emailFontSize,
         }),
       });
       const json = await res.json();
@@ -445,12 +439,19 @@ export default function SendToLenderModal({
     .filter(l => selectedLenderIds.has(l.id))
     .map(l => l.email || l.name)
     .filter(Boolean);
-  const previewSubject = selectedTemplate?.subject?.trim() || 'Business Funding Application';
+  const leadForFields = { name: leadName, company: leadCompany };
+  const previewSubject = fillLeadPlaceholders(
+    selectedTemplate?.subject?.trim() || 'Business Funding Application',
+    leadForFields,
+  );
   const previewAttach = documents.filter(d => selectedDocIds.has(d.id));
-  const previewBodyHtml = [
-    selectedTemplate?.body?.trim() || '<p>Please find the attached funding application for your review.</p>',
-    note.trim() ? `<br/><br/><em>Note: ${escapeHtml(note.trim())}</em>` : '',
-  ].join('');
+  const previewBodyHtml = fillLeadPlaceholders(
+    [
+      selectedTemplate?.body?.trim() || '<p>Please find the attached funding application for your review.</p>',
+      note.trim() ? `<br/><br/><em>Note: ${escapeHtml(note.trim())}</em>` : '',
+    ].join(''),
+    leadForFields,
+  );
 
   const STATUSES = ['Sent', 'Awaiting Response', 'Needs Docs', 'Declined', 'Approved', 'Failed'];
 
@@ -816,21 +817,6 @@ export default function SendToLenderModal({
                       <span className="ml-2 text-[#9b9b9b] font-normal">({submissions.length})</span>
                     )}
                   </p>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    {composing && (
-                      <label className="flex items-center gap-1.5 text-[11px] text-[#6b6b6b]">
-                        Size
-                        <select
-                          value={emailFontSize}
-                          onChange={e => setEmailFontSize(clampEmailFontPt(e.target.value))}
-                          className="px-1.5 py-1 bg-white border border-[#e5e5e5] rounded-md text-[11px] text-[#1a1a1a] focus:outline-none focus:ring-1 focus:ring-indigo-400"
-                        >
-                          {EMAIL_FONT_SIZES.map(n => (
-                            <option key={n} value={n}>{n} pt</option>
-                          ))}
-                        </select>
-                      </label>
-                    )}
                   {onOpenOffers && (
                     <button
                       type="button"
@@ -840,7 +826,6 @@ export default function SendToLenderModal({
                       Offers
                     </button>
                   )}
-                  </div>
                 </div>
                 {!composing && submissions.length > 0 && (
                   <div className="flex items-center flex-wrap gap-x-3 gap-y-1 text-xs text-[#6b6b6b]">
@@ -882,7 +867,7 @@ export default function SendToLenderModal({
                         </p>
                       )}
                     </div>
-                    <LetterEmailPreview html={previewBodyHtml} fontSizePt={emailFontSize} />
+                    <LetterEmailPreview html={previewBodyHtml} />
                     {submissions.length > 0 && (
                       <p className="pt-2 text-[11px] font-semibold text-[#6b6b6b]">
                         Submission History
