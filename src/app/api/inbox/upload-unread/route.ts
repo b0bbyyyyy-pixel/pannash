@@ -21,8 +21,7 @@ export async function GET() {
     const user = await getRequestUser(supabase);
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const items = await listUploadUnread(supabase, user.id);
-    const count = items.reduce((n, i) => n + i.application + i.documents, 0);
-    return NextResponse.json({ count, items });
+    return NextResponse.json({ count: items.length, items });
   } catch {
     return NextResponse.json({ count: 0, items: [] });
   }

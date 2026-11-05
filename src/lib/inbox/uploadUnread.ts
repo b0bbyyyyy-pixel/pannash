@@ -1,5 +1,12 @@
 export type UploadUnreadKind = 'application' | 'documents';
 
+export type UnseenUploads = {
+  application: number;
+  documents: number;
+};
+
+const UPLOAD_PREVIEW_RE = /^(application and documents received|documents received|application received)\b/i;
+
 function previewFor(kinds: UploadUnreadKind[]) {
   const app = kinds.includes('application');
   const docs = kinds.includes('documents');
@@ -8,8 +15,61 @@ function previewFor(kinds: UploadUnreadKind[]) {
   return 'Application received';
 }
 
+export function isUploadPreview(preview: string | null | undefined) {
+  return UPLOAD_PREVIEW_RE.test(String(preview ?? '').trim());
+}
+
+export function readUnseenUploads(ud: unknown): UnseenUploads {
+  const rec = ud && typeof ud === 'object' ? ud as Record<string, unknown> : {};
+  const raw = rec.unseenUploads;
+  const o = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
+  return {
+    application: Math.max(0, Number(o.application) || 0),
+    documents: Math.max(0, Number(o.documents) || 0),
+  };
+}
+
+export function unseenUploadsCleared(ud: unknown) {
+  const rec = ud && typeof ud === 'object' ? ud as Record<string, unknown> : {};
+  return typeof rec.uploadUnreadClearedAt === 'string' && rec.uploadUnreadClearedAt.length > 0;
+}
+
+export function mergeUnseenUploads(a: UnseenUploads, b: UnseenUploads): UnseenUploads {
+  return {
+    application: Math.max(a.application, b.application),
+    documents: Math.max(a.documents, b.documents),
+  };
+}
+
 function kindColumn(kind: UploadUnreadKind) {
   return kind === 'application' ? 'unseen_application_count' : 'unseen_documents_count';
+}
+
+function asUd(raw: unknown): Record<string, unknown> {
+  return raw && typeof raw === 'object' ? { ...(raw as Record<string, unknown>) } : {};
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function bumpLeadUnseen(
+  supabase: any,
+  leadId: string,
+  kinds: UploadUnreadKind[],
+  now: string,
+) {
+  const { data: lead } = await supabase
+    .from('leads')
+    .select('underwriting_data')
+    .eq('id', leadId)
+    .maybeSingle();
+  const ud = asUd(lead?.underwriting_data);
+  const cur = readUnseenUploads(ud);
+  for (const kind of kinds) cur[kind] += 1;
+  ud.unseenUploads = cur;
+  delete ud.uploadUnreadClearedAt;
+  await supabase
+    .from('leads')
+    .update({ underwriting_data: ud, last_contact: now, in_pipeline: true })
+    .eq('id', leadId);
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -60,65 +120,51 @@ export async function notifyLeadUpload(
   const preview = (args.preview || previewFor(kinds)).slice(0, 100);
 
   const conv = await getOrCreateConv(supabase, args.userId, args.leadId);
-  if (!conv?.id) return;
-
-  const patch: Record<string, unknown> = {
-    last_message_at: now,
-    last_inbound_at: now,
-    last_message_preview: preview,
-    last_direction: 'inbound',
-    unread_count: (Number(conv.unread_count) || 0) + 1,
-  };
-  for (const kind of kinds) {
-    const col = kindColumn(kind);
-    patch[col] = (Number((conv as Record<string, unknown>)[col]) || 0) + 1;
-  }
-
-  const { error } = await supabase.from('inbox_conversations').update(patch).eq('id', conv.id);
-  if (error) {
-    const fallback = {
+  if (conv?.id) {
+    const patch: Record<string, unknown> = {
       last_message_at: now,
+      last_inbound_at: now,
       last_message_preview: preview,
       last_direction: 'inbound',
       unread_count: (Number(conv.unread_count) || 0) + 1,
     };
-    await supabase.from('inbox_conversations').update(fallback).eq('id', conv.id);
+    for (const kind of kinds) {
+      const col = kindColumn(kind);
+      patch[col] = (Number((conv as Record<string, unknown>)[col]) || 0) + 1;
+    }
+
+    const { error } = await supabase.from('inbox_conversations').update(patch).eq('id', conv.id);
+    if (error) {
+      await supabase.from('inbox_conversations').update({
+        last_message_at: now,
+        last_message_preview: preview,
+        last_direction: 'inbound',
+        unread_count: (Number(conv.unread_count) || 0) + 1,
+      }).eq('id', conv.id);
+    }
+
+    try {
+      await supabase.from('inbox_messages').insert({
+        conversation_id: conv.id,
+        lead_id: args.leadId,
+        direction: 'inbound',
+        body: preview,
+        status: 'received',
+        sent_by: 'system',
+      });
+    } catch {
+      /* ignore */
+    }
   }
 
   try {
-    await supabase.from('inbox_messages').insert({
-      conversation_id: conv.id,
-      lead_id: args.leadId,
-      direction: 'inbound',
-      body: preview,
-      status: 'received',
-      sent_by: 'system',
-    });
+    await bumpLeadUnseen(supabase, args.leadId, kinds, now);
   } catch {
-    /* ignore */
+    await supabase
+      .from('leads')
+      .update({ last_contact: now, in_pipeline: true })
+      .eq('id', args.leadId);
   }
-
-  await supabase
-    .from('leads')
-    .update({ last_contact: now, in_pipeline: true })
-    .eq('id', args.leadId);
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function countUploadUnread(supabase: any, userId: string): Promise<number> {
-  const { data, error } = await supabase
-    .from('inbox_conversations')
-    .select('unseen_application_count, unseen_documents_count')
-    .eq('user_id', userId);
-
-  if (error || !data) return 0;
-
-  let total = 0;
-  for (const row of data as { unseen_application_count?: number; unseen_documents_count?: number }[]) {
-    total += Number(row.unseen_application_count) || 0;
-    total += Number(row.unseen_documents_count) || 0;
-  }
-  return total;
 }
 
 export type UploadUnreadItem = {
@@ -131,48 +177,133 @@ export type UploadUnreadItem = {
   at: string | null;
 };
 
+type ConvRow = {
+  lead_id: string;
+  unseen_application_count?: number;
+  unseen_documents_count?: number;
+  last_message_preview?: string | null;
+  last_message_at?: string | null;
+};
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function listUploadUnread(supabase: any, userId: string): Promise<UploadUnreadItem[]> {
-  const { data, error } = await supabase
+  let convs: ConvRow[] = [];
+  const full = await supabase
     .from('inbox_conversations')
     .select('lead_id, unseen_application_count, unseen_documents_count, last_message_preview, last_message_at')
     .eq('user_id', userId)
-    .order('last_message_at', { ascending: false });
+    .order('last_message_at', { ascending: false })
+    .limit(500);
+  if (full.error) {
+    const slim = await supabase
+      .from('inbox_conversations')
+      .select('lead_id, last_message_preview, last_message_at')
+      .eq('user_id', userId)
+      .order('last_message_at', { ascending: false })
+      .limit(500);
+    convs = (slim.data ?? []) as ConvRow[];
+  } else {
+    convs = (full.data ?? []) as ConvRow[];
+  }
 
-  if (error || !data) return [];
+  const byLead = new Map<string, {
+    fromCols: UnseenUploads;
+    fromPreview: UnseenUploads;
+    preview: string | null;
+    at: string | null;
+  }>();
+  for (const row of convs) {
+    if (!row.lead_id) continue;
+    const fromCols: UnseenUploads = {
+      application: Number(row.unseen_application_count) || 0,
+      documents: Number(row.unseen_documents_count) || 0,
+    };
+    const fromPreview: UnseenUploads = isUploadPreview(row.last_message_preview)
+      ? {
+          application: /application/i.test(row.last_message_preview || '') ? 1 : 0,
+          documents: /documents? received/i.test(row.last_message_preview || '') ? 1 : 0,
+        }
+      : { application: 0, documents: 0 };
+    if (fromCols.application + fromCols.documents + fromPreview.application + fromPreview.documents <= 0) continue;
+    byLead.set(row.lead_id, {
+      fromCols,
+      fromPreview,
+      preview: row.last_message_preview || null,
+      at: row.last_message_at || null,
+    });
+  }
 
-  const rows = (data as {
-    lead_id: string;
-    unseen_application_count?: number;
-    unseen_documents_count?: number;
-    last_message_preview?: string | null;
-    last_message_at?: string | null;
-  }[]).filter(r => (Number(r.unseen_application_count) || 0) + (Number(r.unseen_documents_count) || 0) > 0);
+  const decisions = await supabase
+    .from('agent_decisions')
+    .select('lead_id, metadata, created_at')
+    .eq('user_id', userId)
+    .eq('type', 'casper_docs_received')
+    .eq('status', 'pending')
+    .limit(100);
+  for (const row of decisions.error ? [] : (decisions.data ?? [])) {
+    const leadId = String(row.lead_id || '');
+    if (!leadId) continue;
+    const kind = String((row.metadata as { kind?: string } | null)?.kind || '');
+    const fromDecision: UnseenUploads = {
+      application: kind === 'bank' ? 0 : 1,
+      documents: kind === 'bank' ? 1 : 0,
+    };
+    const prev = byLead.get(leadId);
+    byLead.set(leadId, {
+      fromCols: prev?.fromCols ?? { application: 0, documents: 0 },
+      fromPreview: mergeUnseenUploads(prev?.fromPreview ?? { application: 0, documents: 0 }, fromDecision),
+      preview: prev?.preview ?? (kind === 'bank' ? 'Documents received' : 'Application received'),
+      at: prev?.at ?? row.created_at ?? null,
+    });
+  }
 
-  if (!rows.length) return [];
+  const ids = [...byLead.keys()];
+  if (!ids.length) return [];
 
-  const ids = [...new Set(rows.map(r => r.lead_id).filter(Boolean))];
-  const { data: leads } = await supabase
+  const leadFull = await supabase
     .from('leads')
-    .select('id, name, company')
+    .select('id, name, company, underwriting_data')
     .eq('user_id', userId)
     .in('id', ids);
-  const byId = new Map(
-    ((leads ?? []) as { id: string; name?: string | null; company?: string | null }[]).map(l => [l.id, l]),
-  );
+  const leadSlim = leadFull.error
+    ? await supabase.from('leads').select('id, name, company').eq('user_id', userId).in('id', ids)
+    : null;
+  const leads = ((leadSlim ?? leadFull).data ?? []) as {
+    id: string;
+    name?: string | null;
+    company?: string | null;
+    underwriting_data?: unknown;
+  }[];
+  const leadById = new Map(leads.map(l => [l.id, l]));
 
-  return rows.map(r => {
-    const lead = byId.get(r.lead_id);
-    return {
-      leadId: r.lead_id,
+  const items: UploadUnreadItem[] = [];
+  for (const [leadId, row] of byLead) {
+    const lead = leadById.get(leadId);
+    const udUnseen = readUnseenUploads(lead?.underwriting_data);
+    const cleared = unseenUploadsCleared(lead?.underwriting_data);
+    const unseen = mergeUnseenUploads(
+      mergeUnseenUploads(row.fromCols, udUnseen),
+      cleared ? { application: 0, documents: 0 } : row.fromPreview,
+    );
+    if (unseen.application + unseen.documents <= 0) continue;
+    items.push({
+      leadId,
       name: String(lead?.name || 'Lead').trim() || 'Lead',
       company: lead?.company ? String(lead.company) : null,
-      application: Number(r.unseen_application_count) || 0,
-      documents: Number(r.unseen_documents_count) || 0,
-      preview: r.last_message_preview || null,
-      at: r.last_message_at || null,
-    };
-  });
+      application: unseen.application,
+      documents: unseen.documents,
+      preview: row.preview,
+      at: row.at,
+    });
+  }
+
+  return items;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function countUploadUnread(supabase: any, userId: string): Promise<number> {
+  const items = await listUploadUnread(supabase, userId);
+  return items.length;
 }
 
 export async function markUploadSeen(
@@ -186,5 +317,24 @@ export async function markUploadSeen(
     .update({ [col]: 0 })
     .eq('user_id', args.userId)
     .eq('lead_id', args.leadId);
-  if (error && /unseen_/i.test(error.message || '')) return;
+  if (error && !/unseen_/i.test(error.message || '')) {
+    /* ignore missing-column vs other errors */
+  }
+
+  const { data: lead } = await supabase
+    .from('leads')
+    .select('underwriting_data')
+    .eq('id', args.leadId)
+    .eq('user_id', args.userId)
+    .maybeSingle();
+  const ud = asUd(lead?.underwriting_data);
+  const cur = readUnseenUploads(ud);
+  cur[args.kind] = 0;
+  if (cur.application === 0 && cur.documents === 0) {
+    delete ud.unseenUploads;
+    ud.uploadUnreadClearedAt = new Date().toISOString();
+  } else {
+    ud.unseenUploads = cur;
+  }
+  await supabase.from('leads').update({ underwriting_data: ud }).eq('id', args.leadId).eq('user_id', args.userId);
 }

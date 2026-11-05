@@ -94,7 +94,7 @@ export default function Navbar({ userName }: NavbarProps) {
       const data = await res.json() as { count?: number; items?: UploadUnreadItem[] };
       const items = Array.isArray(data.items) ? data.items : [];
       setUploadItems(items);
-      setUploadUnread(Number(data.count) || items.reduce((n, i) => n + i.application + i.documents, 0));
+      setUploadUnread(Number(data.count) || items.length);
     } catch {
       /* ignore */
     }
