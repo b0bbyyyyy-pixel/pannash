@@ -13,6 +13,7 @@
 import {
   createContext, useContext, useCallback, useEffect, useRef, useState,
 } from 'react';
+import { createPortal } from 'react-dom';
 import type { Call, Device } from '@twilio/voice-sdk';
 import { createRingback, playPickupBeep, voiceErrorMessage } from '@/lib/telephony/ringback';
 import {
@@ -258,6 +259,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   const [dialPadOpen, setDialPadOpen] = useState(false);
   const [dialPadNumber, setDialPadNumber] = useState('');
   const [fromNumber, setFromNumber] = useState<string | null>(null);
+  const [callDock, setCallDock] = useState<HTMLElement | null>(null);
   const [callStartedAt, setCallStartedAt] = useState<number | null>(null);
   const [missedBanner, setMissedBanner] = useState<{
     from: string;
@@ -920,6 +922,17 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
 
   const inCall = status === 'connecting' || status === 'ringing' || status === 'in-call';
 
+  useEffect(() => {
+    if (!inCall) {
+      setCallDock(null);
+      return;
+    }
+    const find = () => setCallDock(document.getElementById('webphone-call-dock'));
+    find();
+    const t = window.setTimeout(find, 50);
+    return () => window.clearTimeout(t);
+  }, [inCall, pathname]);
+
   return (
     <WebPhoneContext.Provider value={value}>
       {children}
@@ -1036,98 +1049,97 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
       )}
 
       {/* ── Call bar ── */}
-      {inCall && !incomingFrom && (
-        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-[100]">
-          <div className="bg-[#1a1a1a] text-white rounded-2xl shadow-2xl px-5 py-3 flex items-center gap-4">
-            <div className="min-w-0">
-              <p className="max-w-[280px] truncate text-sm font-semibold">
-                {matchedLead?.name || activeName || fmtNumber(activeNumber)}
-              </p>
-              {matchedLead?.company && (
-                <p className="max-w-[280px] truncate text-xs text-white/80">{matchedLead.company}</p>
-              )}
-              <p className="text-xs text-white/60">
-                {status === 'connecting' && 'Connecting…'}
-                {status === 'ringing' && 'Ringing…'}
-                {status === 'in-call' && (elapsed ?? 'Connected')}
-                {(matchedLead || activeName) && activeNumber ? ` · ${fmtNumber(activeNumber)}` : ''}
-              </p>
-            </div>
+      {inCall && !incomingFrom && (() => {
+        const bar = (
+          <div className={callDock ? 'w-full' : 'fixed bottom-0 right-0 z-[100] w-80'}>
+            {showKeypad && status === 'in-call' && (
+              <div className="bg-[#1a1a1a] p-3 grid grid-cols-3 gap-1.5">
+                {KEYPAD.map(d => (
+                  <button
+                    key={d}
+                    onClick={() => sendDigits(d)}
+                    className="h-11 bg-white/10 hover:bg-white/25 text-white text-base font-medium transition-colors"
+                  >
+                    {d}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="bg-[#1a1a1a] text-white px-4 py-3 flex items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold">
+                  {matchedLead?.name || activeName || fmtNumber(activeNumber)}
+                </p>
+                {matchedLead?.company && (
+                  <p className="truncate text-xs text-white/80">{matchedLead.company}</p>
+                )}
+                <p className="text-xs text-white/60">
+                  {status === 'connecting' && 'Connecting…'}
+                  {status === 'ringing' && 'Ringing…'}
+                  {status === 'in-call' && (elapsed ?? 'Connected')}
+                  {(matchedLead || activeName) && activeNumber ? ` · ${fmtNumber(activeNumber)}` : ''}
+                </p>
+              </div>
 
-            {matchedLead && (
+              {matchedLead && (
+                <button
+                  onClick={() => setShowLeadCard(true)}
+                  title="Open lead card"
+                  className={`shrink-0 rounded-full p-2.5 transition-colors ${showLeadCard ? 'bg-white/25' : 'bg-white/10 hover:bg-white/20'}`}
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                  </svg>
+                </button>
+              )}
+
               <button
-                onClick={() => setShowLeadCard(true)}
-                title="Open lead card"
-                className={`rounded-full p-2.5 transition-colors ${showLeadCard ? 'bg-white/25' : 'bg-white/10 hover:bg-white/20'}`}
+                onClick={toggleMute}
+                disabled={status !== 'in-call'}
+                title={muted ? 'Unmute' : 'Mute'}
+                className={`shrink-0 p-2.5 rounded-full transition-colors disabled:opacity-30 ${muted ? 'bg-yellow-500 text-black' : 'bg-white/10 hover:bg-white/20'}`}
               >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  {muted ? (
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15zM17 14l4-4m0 4l-4-4" />
+                  ) : (
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                  )}
                 </svg>
               </button>
-            )}
 
-            {/* Mute */}
-            <button
-              onClick={toggleMute}
-              disabled={status !== 'in-call'}
-              title={muted ? 'Unmute' : 'Mute'}
-              className={`p-2.5 rounded-full transition-colors disabled:opacity-30 ${muted ? 'bg-yellow-500 text-black' : 'bg-white/10 hover:bg-white/20'}`}
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                {muted ? (
+              <button
+                onClick={() => setShowKeypad(v => !v)}
+                disabled={status !== 'in-call'}
+                title="Keypad"
+                className={`shrink-0 p-2.5 rounded-full transition-colors disabled:opacity-30 ${showKeypad ? 'bg-white/25' : 'bg-white/10 hover:bg-white/20'}`}
+              >
+                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                  <circle cx="6" cy="5" r="1.8" /><circle cx="12" cy="5" r="1.8" /><circle cx="18" cy="5" r="1.8" />
+                  <circle cx="6" cy="11" r="1.8" /><circle cx="12" cy="11" r="1.8" /><circle cx="18" cy="11" r="1.8" />
+                  <circle cx="6" cy="17" r="1.8" /><circle cx="12" cy="17" r="1.8" /><circle cx="18" cy="17" r="1.8" />
+                </svg>
+              </button>
+
+              <button
+                onClick={hangup}
+                title="Hang up"
+                className="shrink-0 p-2.5 rounded-full bg-red-600 hover:bg-red-700 transition-colors"
+              >
+                <svg className="w-4 h-4 rotate-[135deg]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15zM17 14l4-4m0 4l-4-4" />
-                ) : (
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                )}
-              </svg>
-            </button>
-
-            {/* Keypad toggle */}
-            <button
-              onClick={() => setShowKeypad(v => !v)}
-              disabled={status !== 'in-call'}
-              title="Keypad"
-              className={`p-2.5 rounded-full transition-colors disabled:opacity-30 ${showKeypad ? 'bg-white/25' : 'bg-white/10 hover:bg-white/20'}`}
-            >
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                <circle cx="6" cy="5" r="1.8" /><circle cx="12" cy="5" r="1.8" /><circle cx="18" cy="5" r="1.8" />
-                <circle cx="6" cy="11" r="1.8" /><circle cx="12" cy="11" r="1.8" /><circle cx="18" cy="11" r="1.8" />
-                <circle cx="6" cy="17" r="1.8" /><circle cx="12" cy="17" r="1.8" /><circle cx="18" cy="17" r="1.8" />
-              </svg>
-            </button>
-
-            {/* Hang up */}
-            <button
-              onClick={hangup}
-              title="Hang up"
-              className="p-2.5 rounded-full bg-red-600 hover:bg-red-700 transition-colors"
-            >
-              <svg className="w-4 h-4 rotate-[135deg]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498A1 1 0 0121 15.72V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 7V5z" />
-              </svg>
-            </button>
-          </div>
-
-          {/* DTMF keypad */}
-          {showKeypad && status === 'in-call' && (
-            <div className="mt-2 bg-[#1a1a1a] rounded-2xl shadow-2xl p-3 grid grid-cols-3 gap-1.5">
-              {KEYPAD.map(d => (
-                <button
-                  key={d}
-                  onClick={() => sendDigits(d)}
-                  className="w-14 h-11 rounded-xl bg-white/10 hover:bg-white/25 text-white text-base font-medium transition-colors"
-                >
-                  {d}
-                </button>
-              ))}
+                    d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498A1 1 0 0121 15.72V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 7V5z" />
+                </svg>
+              </button>
             </div>
-          )}
-        </div>
-      )}
+          </div>
+        );
+        if (callDock) return createPortal(bar, callDock);
+        return bar;
+      })()}
 
       {/* ── Error toast ── */}
       {error && !onMobileText && (
