@@ -137,6 +137,58 @@ export async function sendTwilioSms(
   };
 }
 
+const SCHEDULE_MIN_MS = 5 * 60_000;
+const SCHEDULE_MAX_MS = 7 * 24 * 60 * 60_000;
+
+/** Twilio scheduled SMS: 5 minutes to 7 days from now, Messaging Service required. */
+export function canScheduleTwilioSms(sendAt: Date, now = new Date()) {
+  const wait = sendAt.getTime() - now.getTime();
+  return wait >= SCHEDULE_MIN_MS && wait <= SCHEDULE_MAX_MS;
+}
+
+export async function scheduleTwilioSms(
+  creds: TwilioCreds,
+  toRaw: string,
+  body: string,
+  sendAt: Date,
+): Promise<SmsSendResult> {
+  const messagingServiceSid = creds.messagingServiceSid?.trim() || '';
+  if (!messagingServiceSid) {
+    throw new Error('Scheduled SMS needs a Messaging Service SID.');
+  }
+  if (!canScheduleTwilioSms(sendAt)) {
+    throw new Error('Scheduled SMS must be between 5 minutes and 7 days from now.');
+  }
+  const to = toE164(toRaw);
+  if (!to) {
+    throw new Error(`Invalid destination number: ${toRaw || '(empty)'}. Use a 10-digit US number.`);
+  }
+  const text = String(body ?? '').trim();
+  if (!text) throw new Error('Message body is empty.');
+
+  const client = twilio(creds.accountSid, creds.authToken);
+  const created = await client.messages.create({
+    body: text,
+    to,
+    messagingServiceSid,
+    scheduleType: 'fixed',
+    sendAt,
+    statusCallback: `${publicAppUrl()}/api/webhooks/twilio/status`,
+  });
+  return {
+    sid: created.sid,
+    status: mapTwilioStatus(created.status, created.errorCode),
+    error: formatError(created.errorCode, created.errorMessage),
+  };
+}
+
+export async function cancelScheduledTwilioSms(creds: TwilioCreds, sid: string) {
+  const id = String(sid || '').trim();
+  if (!id) return;
+  const client = twilio(creds.accountSid, creds.authToken);
+  await client.messages(id).update({ status: 'canceled' });
+}
+
 export async function fetchTwilioSmsBody(creds: TwilioCreds, sid: string): Promise<string> {
   const client = twilio(creds.accountSid, creds.authToken);
   const fresh = await client.messages(sid).fetch();

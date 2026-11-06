@@ -12,6 +12,7 @@ import {
   type FollowUpKind,
 } from '@/lib/lead-follow-up';
 import { atTimePingSchedule, earliestPingAt, encodePingSchedule } from '@/lib/casper/calendarPing';
+import { cancelScheduledCasperPing, scheduleCasperPing } from '@/lib/casper/ping';
 
 async function getSupabase() {
   const cookieStore = await cookies();
@@ -209,6 +210,20 @@ export async function POST(req: NextRequest) {
     followUpKind: kind,
   };
   delete ud.followUpAlarmAckedAt;
+  const prevPingSid = typeof prevUd.callbackPingSid === 'string' ? prevUd.callbackPingSid : null;
+  await cancelScheduledCasperPing(supabase, user.id, prevPingSid);
+  delete ud.callbackPingSid;
+
+  if (kind === 'callback') {
+    const who = (lead.company || lead.name || 'a lead').trim() || 'a lead';
+    const ping = await scheduleCasperPing(supabase, {
+      userId: user.id,
+      body: `Casper: Time to call ${who}.`,
+      sendAt: due,
+      kind: 'calendar',
+    });
+    if (ping.sid) ud.callbackPingSid = ping.sid;
+  }
 
   const fullPatch: Record<string, unknown> = {
     follow_up_at: dateKey,
@@ -269,10 +284,19 @@ export async function DELETE(req: NextRequest) {
 
   const { data: lead } = await supabase
     .from('leads')
-    .select('follow_up_calendar_event_id')
+    .select('follow_up_calendar_event_id, underwriting_data')
     .eq('id', leadId)
     .eq('user_id', user.id)
     .maybeSingle();
+
+  const ud = lead?.underwriting_data && typeof lead.underwriting_data === 'object'
+    ? lead.underwriting_data as Record<string, unknown>
+    : {};
+  await cancelScheduledCasperPing(
+    supabase,
+    user.id,
+    typeof ud.callbackPingSid === 'string' ? ud.callbackPingSid : null,
+  );
 
   if (lead?.follow_up_calendar_event_id) {
     await supabase

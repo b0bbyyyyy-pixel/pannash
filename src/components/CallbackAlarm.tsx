@@ -100,6 +100,15 @@ export default function CallbackAlarm() {
     } catch { /* ignore */ }
   }, [stopBeep]);
 
+  const waitTimer = useRef<number>(0);
+  const waitUntil = useCallback((dueAt: string | null | undefined, pullFn: () => void) => {
+    if (waitTimer.current) window.clearTimeout(waitTimer.current);
+    waitTimer.current = 0;
+    if (!dueAt) return;
+    const wait = new Date(dueAt).getTime() - Date.now() - 1000;
+    waitTimer.current = window.setTimeout(pullFn, Math.max(0, wait));
+  }, []);
+
   const pull = useCallback(async () => {
     try {
       const res = await fetch('/api/leads/callback-alarms', { credentials: 'include' });
@@ -107,18 +116,16 @@ export default function CallbackAlarm() {
       const data = await res.json().catch(() => ({}));
       const first = Array.isArray(data.alarms) ? data.alarms[0] as Alarm | undefined : undefined;
       if (first?.leadId) show(first);
+      else waitUntil(typeof data.nextAt === 'string' ? data.nextAt : null, () => { void pull(); });
     } catch { /* ignore */ }
-  }, [show]);
+  }, [show, waitUntil]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || isIframe() || silent) return;
     void pull();
-    const poll = window.setInterval(() => void pull(), 12_000);
     const onSet = (e: Event) => {
       const detail = (e as CustomEvent<Alarm>).detail;
-      if (!detail?.dueAt) return;
-      const wait = new Date(detail.dueAt).getTime() - Date.now();
-      window.setTimeout(() => void pull(), Math.max(0, wait - 1000));
+      if (detail?.dueAt) waitUntil(detail.dueAt, () => { void pull(); });
     };
     window.addEventListener(CALLBACK_ALARM_EVENT, onSet);
     const onVis = () => {
@@ -126,12 +133,12 @@ export default function CallbackAlarm() {
     };
     document.addEventListener('visibilitychange', onVis);
     return () => {
-      window.clearInterval(poll);
+      if (waitTimer.current) window.clearTimeout(waitTimer.current);
       window.removeEventListener(CALLBACK_ALARM_EVENT, onSet);
       document.removeEventListener('visibilitychange', onVis);
       stopBeep();
     };
-  }, [pull, show, stopBeep, silent]);
+  }, [pull, stopBeep, silent, waitUntil]);
 
   if (!alarm || silent) return null;
 

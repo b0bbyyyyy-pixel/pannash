@@ -1,5 +1,5 @@
 import { toE164 } from '@/lib/dialer/e164';
-import { sendTwilioSms } from '@/lib/telephony/sms';
+import { cancelScheduledTwilioSms, canScheduleTwilioSms, scheduleTwilioSms, sendTwilioSms } from '@/lib/telephony/sms';
 import { getTwilioCreds } from '@/lib/telephony/twilio';
 
 export type PingKind = 'chat' | 'alert' | 'calendar' | 'needs_human' | 'docs' | 'test' | 'parse';
@@ -295,5 +295,62 @@ export async function sendCasperPing(
       error: message,
     });
     return { sent: false, reason: message };
+  }
+}
+
+export async function cancelScheduledCasperPing(
+  supabase: { from: (table: string) => any },
+  userId: string,
+  sid?: string | null,
+) {
+  const id = String(sid || '').trim();
+  if (!id) return;
+  const creds = await getTwilioCreds(supabase, userId);
+  if (!creds) return;
+  try {
+    await cancelScheduledTwilioSms(creds, id);
+  } catch (err) {
+    console.warn('[ping] cancel scheduled', err);
+  }
+}
+
+/** Queue a ping SMS for a future time so Hobby (daily-only) cron is not required. */
+export async function scheduleCasperPing(
+  supabase: { from: (table: string) => any },
+  args: {
+    userId: string;
+    body: string;
+    sendAt: Date;
+    kind?: PingKind;
+    toPhone?: string | null;
+  },
+): Promise<{ scheduled: boolean; sid?: string; reason?: string }> {
+  if (!canScheduleTwilioSms(args.sendAt)) return { scheduled: false, reason: 'window' };
+  const settings = await getPingSettings(supabase, args.userId);
+  const to = toE164(args.toPhone || settings.phone);
+  if (!to) return { scheduled: false, reason: 'no_phone' };
+  const text = args.body.trim().slice(0, 480);
+  if (!text) return { scheduled: false, reason: 'empty' };
+  const creds = await getTwilioCreds(supabase, args.userId);
+  if (!creds) return { scheduled: false, reason: 'no_twilio' };
+  if (!creds.messagingServiceSid?.trim()) return { scheduled: false, reason: 'no_service' };
+
+  try {
+    const sent = await scheduleTwilioSms(creds, to, text, args.sendAt);
+    await recordPingMessage(supabase, {
+      userId: args.userId,
+      direction: 'outbound',
+      body: text,
+      kind: args.kind || 'calendar',
+      status: sent.status === 'failed' ? 'failed' : 'queued',
+      twilioSid: sent.sid,
+      error: sent.error || null,
+    });
+    if (sent.status === 'failed') return { scheduled: false, sid: sent.sid, reason: sent.error };
+    return { scheduled: true, sid: sent.sid };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'schedule failed';
+    console.warn('[ping] schedule', message);
+    return { scheduled: false, reason: message };
   }
 }

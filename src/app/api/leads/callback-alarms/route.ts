@@ -25,38 +25,42 @@ export async function GET() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const horizon = new Date(Date.now() + 8_000).toISOString();
   const { data, error } = await supabase
     .from('leads')
     .select('id, name, company, phone, follow_up_due_at, follow_up_auto_text, underwriting_data')
     .eq('user_id', user.id)
     .not('follow_up_due_at', 'is', null)
-    .lte('follow_up_due_at', horizon)
+    .or('follow_up_auto_text.eq.false,follow_up_auto_text.is.null')
     .order('follow_up_due_at', { ascending: true })
     .limit(20);
 
   if (error) {
     if ((error.message || '').toLowerCase().includes('follow_up_due_at')) {
-      return NextResponse.json({ alarms: [] as CallbackAlarm[] });
+      return NextResponse.json({ alarms: [] as CallbackAlarm[], nextAt: null });
     }
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  const now = Date.now() + 8_000;
   const alarms: CallbackAlarm[] = [];
+  let nextAt: string | null = null;
   for (const row of data ?? []) {
     if (row.follow_up_auto_text) continue;
     if (followUpKindFromUd(row.underwriting_data) !== 'callback') continue;
     if (callbackAlarmAcked(row.underwriting_data, row.follow_up_due_at)) continue;
-    alarms.push({
+    const item: CallbackAlarm = {
       leadId: row.id,
       name: String(row.company || row.name || 'Lead').trim() || 'Lead',
       company: row.company ?? null,
       phone: row.phone ?? null,
       dueAt: row.follow_up_due_at,
-    });
+    };
+    const dueMs = new Date(row.follow_up_due_at).getTime();
+    if (dueMs <= now) alarms.push(item);
+    else if (!nextAt) nextAt = row.follow_up_due_at;
   }
 
-  return NextResponse.json({ alarms });
+  return NextResponse.json({ alarms, nextAt });
 }
 
 export async function POST(req: NextRequest) {
