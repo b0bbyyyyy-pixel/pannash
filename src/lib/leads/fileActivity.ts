@@ -1,6 +1,12 @@
 type Ud = Record<string, unknown>;
 
-const ACTIVITY_KEYS = ['statusHistory', 'fileEvents'] as const;
+const ACTIVITY_KEYS = [
+  'statusHistory',
+  'fileEvents',
+  'unseenUploads',
+  'unseenUploadAt',
+  'docsFromOutside',
+] as const;
 
 function asUd(raw: unknown): Ud {
   return raw && typeof raw === 'object' ? { ...(raw as Ud) } : {};

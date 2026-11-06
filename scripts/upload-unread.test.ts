@@ -8,6 +8,7 @@ import {
   mergeUnseenUploads,
   readUnseenUploads,
   unseenUploadsCleared,
+  uploadUnreadStillOpen,
 } from '../src/lib/inbox/uploadUnread';
 
 let failed = 0;
@@ -35,6 +36,26 @@ assert(merged.application === 1 && merged.documents === 1, 'merge takes the uplo
 assert(readUnseenUploads({ unseenUploads: { application: 1, documents: 2 } }).documents === 2, 'reads ud');
 assert(!unseenUploadsCleared({ unseenUploads: { application: 1 } }), 'open unseen is not cleared');
 assert(unseenUploadsCleared({ uploadUnreadClearedAt: '2026-11-05T00:00:00Z' }), 'cleared flag');
+assert(
+  uploadUnreadStillOpen({ unseenUploads: { application: 1 }, unseenUploadAt: '2026-11-06T16:00:00Z' }),
+  'website submit stays on the badge',
+);
+assert(
+  !uploadUnreadStillOpen({
+    unseenUploads: { application: 1 },
+    unseenUploadAt: '2026-11-05T00:00:00Z',
+    uploadUnreadClearedAt: '2026-11-05T12:00:00Z',
+  }),
+  'checked lead drops off the badge',
+);
+assert(
+  uploadUnreadStillOpen({
+    unseenUploads: { application: 1 },
+    unseenUploadAt: '2026-11-06T16:00:00Z',
+    uploadUnreadClearedAt: '2026-11-05T12:00:00Z',
+  }),
+  'new website submit after checking shows again',
+);
 
 if (failed) {
   console.error(`\n${failed} failed`);

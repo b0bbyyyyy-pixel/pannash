@@ -34,6 +34,16 @@ export function unseenUploadsCleared(ud: unknown) {
   return typeof rec.uploadUnreadClearedAt === 'string' && rec.uploadUnreadClearedAt.length > 0;
 }
 
+export function uploadUnreadStillOpen(ud: unknown, signalAt?: string | null) {
+  const rec = ud && typeof ud === 'object' ? ud as Record<string, unknown> : {};
+  const counts = readUnseenUploads(ud);
+  const hasCounts = counts.application + counts.documents > 0;
+  const clearedAt = typeof rec.uploadUnreadClearedAt === 'string' ? rec.uploadUnreadClearedAt : '';
+  if (!clearedAt) return hasCounts;
+  const uploadedAt = typeof rec.unseenUploadAt === 'string' ? rec.unseenUploadAt : (signalAt || '');
+  return hasCounts && Boolean(uploadedAt && uploadedAt > clearedAt);
+}
+
 export function mergeUnseenUploads(a: UnseenUploads, b: UnseenUploads): UnseenUploads {
   return {
     application: Math.max(a.application, b.application),
@@ -65,6 +75,7 @@ async function bumpLeadUnseen(
   const cur = readUnseenUploads(ud);
   for (const kind of kinds) cur[kind] += 1;
   ud.unseenUploads = cur;
+  ud.unseenUploadAt = now;
   ud.docsFromOutside = true;
   delete ud.uploadUnreadClearedAt;
   await supabase
@@ -241,6 +252,42 @@ export async function listUploadUnread(supabase: any, userId: string): Promise<U
   const now = Date.now();
   const since = new Date(now - RECENT_UPLOAD_MS).toISOString();
   const byLead = new Map<string, UnseenRow>();
+  const leadById = new Map<string, {
+    id: string;
+    name?: string | null;
+    company?: string | null;
+    underwriting_data?: unknown;
+  }>();
+
+  const leadFull = await supabase
+    .from('leads')
+    .select('id, name, company, underwriting_data, last_contact')
+    .eq('user_id', userId)
+    .gte('last_contact', since)
+    .order('last_contact', { ascending: false })
+    .limit(200);
+  const recentLeads = (leadFull.error ? [] : (leadFull.data ?? [])) as {
+    id: string;
+    name?: string | null;
+    company?: string | null;
+    underwriting_data?: unknown;
+    last_contact?: string | null;
+  }[];
+  for (const lead of recentLeads) {
+    leadById.set(lead.id, lead);
+    const udUnseen = readUnseenUploads(lead.underwriting_data);
+    if (!uploadUnreadStillOpen(lead.underwriting_data, lead.last_contact)) continue;
+    putUnseen(
+      byLead,
+      lead.id,
+      udUnseen,
+      previewFor([
+        ...(udUnseen.application ? ['application' as const] : []),
+        ...(udUnseen.documents ? ['documents' as const] : []),
+      ]),
+      lead.last_contact || null,
+    );
+  }
 
   const full = await supabase
     .from('inbox_conversations')
@@ -260,11 +307,11 @@ export async function listUploadUnread(supabase: any, userId: string): Promise<U
   for (const row of convs as ConvRow[]) {
     if (!row.lead_id || !isRecentIso(row.last_message_at, now)) continue;
     const fromPreview = unseenFromPreview(row.last_message_preview);
+    if (fromPreview.application + fromPreview.documents <= 0) continue;
     const fromCols: UnseenUploads = {
       application: fromPreview.application ? (Number(row.unseen_application_count) || fromPreview.application) : 0,
       documents: fromPreview.documents ? (Number(row.unseen_documents_count) || fromPreview.documents) : 0,
     };
-    // Stale unseen_* leftovers don't count unless this thread's last note is the upload itself.
     putUnseen(byLead, row.lead_id, mergeUnseenUploads(fromCols, fromPreview), row.last_message_preview || null, row.last_message_at || null);
   }
 
@@ -284,32 +331,33 @@ export async function listUploadUnread(supabase: any, userId: string): Promise<U
     );
   }
 
-  const ids = [...byLead.keys()];
-  if (!ids.length) return [];
-
-  const leadFull = await supabase
-    .from('leads')
-    .select('id, name, company, underwriting_data')
-    .eq('user_id', userId)
-    .in('id', ids);
-  const leadSlim = leadFull.error
-    ? await supabase.from('leads').select('id, name, company').eq('user_id', userId).in('id', ids)
-    : null;
-  const leads = ((leadSlim ?? leadFull).data ?? []) as {
-    id: string;
-    name?: string | null;
-    company?: string | null;
-    underwriting_data?: unknown;
-  }[];
-  const leadById = new Map(leads.map(l => [l.id, l]));
+  const missing = [...byLead.keys()].filter(id => !leadById.has(id));
+  if (missing.length) {
+    const extraFull = await supabase
+      .from('leads')
+      .select('id, name, company, underwriting_data')
+      .eq('user_id', userId)
+      .in('id', missing);
+    const extra = extraFull.error
+      ? await supabase.from('leads').select('id, name, company').eq('user_id', userId).in('id', missing)
+      : extraFull;
+    for (const lead of (extra.data ?? []) as { id: string; name?: string | null; company?: string | null; underwriting_data?: unknown }[]) {
+      leadById.set(lead.id, lead);
+    }
+  }
 
   const items: UploadUnreadItem[] = [];
   for (const [leadId, row] of byLead) {
     const lead = leadById.get(leadId);
     const udUnseen = readUnseenUploads(lead?.underwriting_data);
-    if (unseenUploadsCleared(lead?.underwriting_data) && udUnseen.application + udUnseen.documents <= 0) continue;
     const unseen = mergeUnseenUploads(row.fromFlag, udUnseen);
     if (unseen.application + unseen.documents <= 0) continue;
+    const rec = lead?.underwriting_data && typeof lead.underwriting_data === 'object'
+      ? lead.underwriting_data as Record<string, unknown>
+      : {};
+    const clearedAt = typeof rec.uploadUnreadClearedAt === 'string' ? rec.uploadUnreadClearedAt : '';
+    const uploadedAt = typeof rec.unseenUploadAt === 'string' ? rec.unseenUploadAt : row.at;
+    if (clearedAt && (!uploadedAt || uploadedAt <= clearedAt)) continue;
     items.push({
       leadId,
       name: String(lead?.name || 'Lead').trim() || 'Lead',
@@ -321,6 +369,7 @@ export async function listUploadUnread(supabase: any, userId: string): Promise<U
     });
   }
 
+  items.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
   return items;
 }
 
