@@ -1,8 +1,8 @@
 import { getTwilioCreds } from '@/lib/telephony/twilio';
 import { sendTwilioSms } from '@/lib/telephony/sms';
 import { recordOutboundInboxSms } from '@/lib/inbox/recordOutboundSms';
-import { followUpTitle, localDateKey, localTimeHm, renderFollowUpSms } from '@/lib/lead-follow-up';
-import { fireDueCalendarPings } from '@/lib/casper/calendarPing';
+import { callbackTitle, followUpTitle, localDateKey, localTimeHm, renderFollowUpSms } from '@/lib/lead-follow-up';
+import { atTimePingSchedule, earliestPingAt, encodePingSchedule, fireDueCalendarPings } from '@/lib/casper/calendarPing';
 import { applySmsOptOutFromFailure, isTwilioOptOutError, smsSendBlockReason } from '@/lib/leads/dnc';
 
 interface DueLead {
@@ -56,17 +56,22 @@ export async function processDue(supabase: any, user: { id: string }): Promise<F
   for (const lead of due) {
     if (!lead.follow_up_calendar_event_id) {
       const dueDate = new Date(lead.follow_up_due_at);
+      const callback = !lead.follow_up_auto_text;
+      const schedule = callback ? atTimePingSchedule(dueDate) : null;
       const insertFull = {
         user_id: user.id,
         date: localDateKey(dueDate),
-        title: followUpTitle(lead),
-        notes: lead.follow_up_auto_text ? 'Auto-text when this follow-up is due.' : 'Follow-up from lead card.',
-        color: 'red',
-        alert_enabled: false,
+        title: callback ? callbackTitle(lead) : followUpTitle(lead),
+        notes: lead.follow_up_auto_text ? 'Auto-text when this follow-up is due.' : 'Call this lead back.',
+        color: callback ? 'amber' : 'red',
+        alert_enabled: Boolean(schedule),
         alert_sent: false,
+        alert_at: schedule ? earliestPingAt(schedule) : null,
+        alert_phone: schedule ? encodePingSchedule(schedule) : null,
+        alert_schedule: schedule,
         start_time: localTimeHm(dueDate),
         lead_id: lead.id,
-        type: 'follow_up',
+        type: callback ? 'callback' : 'follow_up',
       };
       let eventId: string | null = null;
       const first = await supabase.from('calendar_events').insert(insertFull).select('id').single();
@@ -74,7 +79,10 @@ export async function processDue(supabase: any, user: { id: string }): Promise<F
         eventId = first.data.id;
       } else {
         const { lead_id: _l, type: _t, ...insertBase } = insertFull;
-        const retry = await supabase.from('calendar_events').insert(insertBase).select('id').single();
+        const row = first.error && /alert_schedule/i.test(first.error.message || '')
+          ? (() => { const { alert_schedule: _s, ...rest } = insertBase; return rest; })()
+          : insertBase;
+        const retry = await supabase.from('calendar_events').insert(row).select('id').single();
         if (!retry.error && retry.data?.id) eventId = retry.data.id;
       }
       if (eventId) {

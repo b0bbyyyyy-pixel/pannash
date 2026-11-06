@@ -307,7 +307,8 @@ export default function InboxClient({
   const [leadOverlayKey, setLeadOverlayKey] = useState(0);
   const [docsLead, setDocsLead] = useState<{ id: string; name: string; company?: string | null } | null>(null);
   const [emailLead, setEmailLead] = useState<{ id: string; name: string; company?: string | null; phone?: string | null } | null>(null);
-  const [followLead, setFollowLead] = useState<{ id: string; name: string } | null>(null);
+  const [followLead, setFollowLead] = useState<{ id: string; name: string; intent?: 'callback' | 'followup' } | null>(null);
+  const [composerMenu, setComposerMenu] = useState(false);
   const [showPipeline, setShowPipeline] = useState(false);
   const [pipelineFrameSrc, setPipelineFrameSrc] = useState('/pipeline?modal=1');
   const pipelineFrameRef = useRef<HTMLIFrameElement>(null);
@@ -321,6 +322,7 @@ export default function InboxClient({
   const lastScrolledMsgIdRef = useRef<string | null>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const composerMenuRef = useRef<HTMLDivElement>(null);
 
   const selectedLead = leads.find(l => l.id === selectedLeadId) ?? null;
   const selectedDots = resolveMenuDots(leadMenuState, selectedLead);
@@ -643,6 +645,7 @@ export default function InboxClient({
   useEffect(() => {
     setConversationId(null);
     setShowTpls(false);
+    setComposerMenu(false);
     setAddingTpl(false);
     setEditingTplId(null);
     stickToBottomRef.current = true;
@@ -1234,6 +1237,16 @@ export default function InboxClient({
   }, []);
 
   useEffect(() => { void loadTpls(); }, [loadTpls]);
+
+  useEffect(() => {
+    if (!composerMenu) return;
+    const onDoc = (e: MouseEvent) => {
+      if (composerMenuRef.current?.contains(e.target as Node)) return;
+      setComposerMenu(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [composerMenu]);
 
   const useTpl = (body: string) => {
     if (!selectedLead) return;
@@ -1915,19 +1928,57 @@ export default function InboxClient({
                 </div>
               )}
               <div className="flex items-end gap-2 min-h-0">
-                <button
-                  type="button"
-                  onClick={() => setShowTpls(v => !v)}
-                  disabled={selectedLead.sms_opt_out ?? false}
-                  className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center border text-lg leading-none transition-colors disabled:opacity-40 ${
-                    showTpls
-                      ? 'border-[#1a1a1a] text-[#1a1a1a] bg-[#f5f5f5]'
-                      : 'border-[#e5e5e5] text-[#6b6b6b] hover:text-[#1a1a1a] hover:border-[#c4c4c4]'
-                  }`}
-                  title="Text templates"
-                >
-                  +
-                </button>
+                <div className="relative shrink-0" ref={composerMenuRef}>
+                  <button
+                    type="button"
+                    onClick={() => setComposerMenu(v => !v)}
+                    disabled={selectedLead.sms_opt_out ?? false}
+                    className={`w-9 h-9 rounded-full flex items-center justify-center border text-lg leading-none transition-colors disabled:opacity-40 ${
+                      composerMenu || showTpls
+                        ? 'border-[#1a1a1a] text-[#1a1a1a] bg-[#f5f5f5]'
+                        : 'border-[#e5e5e5] text-[#6b6b6b] hover:text-[#1a1a1a] hover:border-[#c4c4c4]'
+                    }`}
+                    title="More"
+                    aria-haspopup="menu"
+                    aria-expanded={composerMenu}
+                  >
+                    +
+                  </button>
+                  {composerMenu && (
+                    <div
+                      role="menu"
+                      className="absolute bottom-11 left-0 z-20 w-44 rounded-lg border border-[#e5e5e5] bg-white py-1 shadow-xl"
+                    >
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setComposerMenu(false);
+                          setShowTpls(v => !v);
+                        }}
+                        className="w-full px-3 py-2 text-left text-sm text-[#1a1a1a] hover:bg-[#f5f5f5]"
+                      >
+                        Text templates
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setComposerMenu(false);
+                          setShowTpls(false);
+                          setFollowLead({
+                            id: selectedLead.id,
+                            name: selectedLead.company || selectedLead.name,
+                            intent: 'callback',
+                          });
+                        }}
+                        className="w-full px-3 py-2 text-left text-sm text-[#1a1a1a] hover:bg-[#f5f5f5]"
+                      >
+                        Call back
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -2217,6 +2268,7 @@ export default function InboxClient({
       <FollowUpModal
         leadId={followLead.id}
         leadName={followLead.name}
+        intent={followLead.intent}
         onClose={() => setFollowLead(null)}
       />
     )}

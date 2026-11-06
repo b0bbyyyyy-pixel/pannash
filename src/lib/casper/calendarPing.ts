@@ -9,6 +9,7 @@ import {
 export {
   PING_BEFORE_OPTIONS,
   applyClientTimes,
+  atTimePingSchedule,
   buildPingSchedule,
   decodePingSchedule,
   earliestPingAt,
@@ -84,7 +85,7 @@ export async function fireDueCalendarPings(
         : '';
       const result = await sendCasperPing(supabase, {
         userId: event.user_id,
-        body: `Casper reminder: "${event.title}"${when} — in ${pingLeadLabel(minutes)}`,
+        body: calendarPingBody(event.title, minutes, when),
         kind: 'calendar',
         toPhone: to,
         requireEnabled: false,
@@ -107,6 +108,14 @@ export async function fireDueCalendarPings(
     }
   }
   return sentCount;
+}
+
+function calendarPingBody(title: string, minutes: number, when: string) {
+  const raw = String(title || '').trim() || 'Calendar';
+  const callback = /^call back\s*[—-]\s*(.+)$/i.exec(raw);
+  if (minutes === 0 && callback) return `Casper: Time to call ${callback[1].trim()}.`;
+  if (minutes === 0) return `Casper reminder: "${raw}" is now.`;
+  return `Casper reminder: "${raw}"${when} — in ${pingLeadLabel(minutes)}`;
 }
 
 function formatStart(startTime: string) {

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Barlow, Crimson_Text, Dancing_Script, Inter } from "next/font/google";
 import "./globals.css";
 import WebPhoneProvider from "@/components/webphone/WebPhone";
+import CallbackAlarm from "@/components/CallbackAlarm";
 import SyncProvider from "@/lib/sync/SyncProvider";
 import { ParseJobsProvider } from "@/lib/parseJobs/ParseJobsProvider";
 
@@ -50,7 +51,10 @@ export default function RootLayout({
       >
         <SyncProvider>
           <ParseJobsProvider>
-            <WebPhoneProvider>{children}</WebPhoneProvider>
+            <WebPhoneProvider>
+              <CallbackAlarm />
+              {children}
+            </WebPhoneProvider>
           </ParseJobsProvider>
         </SyncProvider>
       </body>

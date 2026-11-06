@@ -14,11 +14,17 @@ export type PingSchedule = {
 const PING_PREFIX = 'PING:';
 
 export function pingLeadLabel(minutes: number) {
+  if (minutes === 0) return 'now';
   if (minutes === 30) return '30 minutes';
   if (minutes === 60) return '1 hour';
   if (minutes === 120) return '2 hours';
   if (minutes === 180) return '3 hours';
   return `${minutes} minutes`;
+}
+
+export function atTimePingSchedule(due: Date): PingSchedule {
+  const iso = due.toISOString();
+  return { offsets: [0], times: { '0': iso }, sent: [] };
 }
 
 export function buildPingSchedule(

@@ -2,14 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import {
-  FOLLOW_UP_TIMERS,
-  followUpDueFromCustom,
-  followUpDueFromPreset,
+  callbackTitle,
   followUpTitle,
+  isCallbackTimerId,
+  isFollowUpTimerId,
   localDateKey,
   localTimeHm,
-  type FollowUpTimerId,
+  resolveFollowUpDue,
+  type FollowUpKind,
 } from '@/lib/lead-follow-up';
+import { atTimePingSchedule, earliestPingAt, encodePingSchedule } from '@/lib/casper/calendarPing';
 
 async function getSupabase() {
   const cookieStore = await cookies();
@@ -35,17 +37,26 @@ async function upsertCalendarEvent(
     due: Date;
     title: string;
     notes: string;
+    kind: FollowUpKind;
   },
 ): Promise<string | null> {
   const date = localDateKey(opts.due);
   const start_time = localTimeHm(opts.due);
-  const payload = {
+  const callback = opts.kind === 'callback';
+  const schedule = callback ? atTimePingSchedule(opts.due) : null;
+  const payload: Record<string, unknown> = {
     title: opts.title,
     date,
     notes: opts.notes,
-    color: 'red',
+    color: callback ? 'amber' : 'red',
     start_time,
     updated_at: new Date().toISOString(),
+    type: callback ? 'callback' : 'follow_up',
+    alert_enabled: Boolean(schedule),
+    alert_sent: false,
+    alert_at: schedule ? earliestPingAt(schedule) : null,
+    alert_phone: schedule ? encodePingSchedule(schedule) : null,
+    alert_schedule: schedule,
   };
 
   if (opts.existingId) {
@@ -57,6 +68,17 @@ async function upsertCalendarEvent(
       .select('id')
       .maybeSingle();
     if (!error && data?.id) return data.id as string;
+    if (error && /alert_schedule/i.test(error.message || '')) {
+      const { alert_schedule: _s, ...without } = payload;
+      const retry = await supabase
+        .from('calendar_events')
+        .update(without)
+        .eq('id', opts.existingId)
+        .eq('user_id', opts.userId)
+        .select('id')
+        .maybeSingle();
+      if (!retry.error && retry.data?.id) return retry.data.id as string;
+    }
   }
 
   const insertFull = {
@@ -64,12 +86,15 @@ async function upsertCalendarEvent(
     date,
     title: opts.title,
     notes: opts.notes,
-    color: 'red',
-    alert_enabled: false,
+    color: callback ? 'amber' : 'red',
+    alert_enabled: Boolean(schedule),
     alert_sent: false,
+    alert_at: schedule ? earliestPingAt(schedule) : null,
+    alert_phone: schedule ? encodePingSchedule(schedule) : null,
+    alert_schedule: schedule,
     start_time,
     lead_id: opts.leadId,
-    type: 'follow_up',
+    type: callback ? 'callback' : 'follow_up',
   };
 
   const { data, error } = await supabase
@@ -80,10 +105,14 @@ async function upsertCalendarEvent(
 
   if (!error && data?.id) return data.id as string;
 
+  const stripSchedule = error && /alert_schedule/i.test(error.message || '');
   const { lead_id: _l, type: _t, ...insertBase } = insertFull;
+  const row = stripSchedule
+    ? (() => { const { alert_schedule: _s, ...rest } = insertBase; return rest; })()
+    : insertBase;
   const { data: retry, error: retryErr } = await supabase
     .from('calendar_events')
-    .insert(insertBase)
+    .insert(row)
     .select('id')
     .single();
   if (retryErr) {
@@ -100,23 +129,19 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json();
   const leadId = String(body.leadId || '');
-  const timerId = String(body.timerId || '') as FollowUpTimerId;
-  const autoText = !!body.autoText;
+  const timerId = String(body.timerId || '');
+  const kind: FollowUpKind = body.kind === 'callback' ? 'callback' : 'followup';
+  const autoText = kind === 'callback' ? false : !!body.autoText;
   const smsBody = String(body.smsBody || '').trim();
   const customDate = String(body.customDate || '');
   const customTime = String(body.customTime || '10:00');
 
   if (!leadId) return NextResponse.json({ error: 'leadId required' }, { status: 400 });
-
-  const preset = FOLLOW_UP_TIMERS.find(t => t.id === timerId);
-  if (!preset) return NextResponse.json({ error: 'Invalid timer' }, { status: 400 });
-
-  let due: Date | null = null;
-  if (preset.id === 'custom') {
-    due = followUpDueFromCustom(customDate, customTime);
-  } else if (preset.days != null) {
-    due = followUpDueFromPreset(preset.days);
+  if (kind === 'callback' ? !isCallbackTimerId(timerId) : !isFollowUpTimerId(timerId)) {
+    return NextResponse.json({ error: 'Invalid timer' }, { status: 400 });
   }
+
+  const due = resolveFollowUpDue({ timerId, customDate, customTime });
   if (!due) return NextResponse.json({ error: 'Pick a date and time' }, { status: 400 });
 
   if (autoText && !smsBody) {
@@ -159,25 +184,31 @@ export async function POST(req: NextRequest) {
   if (leadErr || !lead) return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
 
   const dateKey = localDateKey(due);
-  const notes = autoText
-    ? 'Auto-text when this follow-up is due.'
-    : 'Follow-up from lead card.';
+  const notes = kind === 'callback'
+    ? 'Call this lead back.'
+    : autoText
+      ? 'Auto-text when this follow-up is due.'
+      : 'Follow-up from lead card.';
 
   const eventId = await upsertCalendarEvent(supabase, {
     userId: user.id,
     leadId,
     existingId: lead.follow_up_calendar_event_id || null,
     due,
-    title: followUpTitle(lead),
+    title: kind === 'callback' ? callbackTitle(lead) : followUpTitle(lead),
     notes,
+    kind,
   });
 
+  const prevUd = (lead.underwriting_data && typeof lead.underwriting_data === 'object')
+    ? lead.underwriting_data as Record<string, unknown>
+    : {};
   const ud = {
-    ...((lead.underwriting_data && typeof lead.underwriting_data === 'object')
-      ? lead.underwriting_data as Record<string, unknown>
-      : {}),
+    ...prevUd,
     followUpDate: dateKey,
+    followUpKind: kind,
   };
+  delete ud.followUpAlarmAckedAt;
 
   const fullPatch: Record<string, unknown> = {
     follow_up_at: dateKey,
@@ -218,6 +249,7 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     ok: true,
+    follow_up_kind: kind,
     follow_up_at: dateKey,
     follow_up_due_at: due.toISOString(),
     follow_up_auto_text: autoText,
