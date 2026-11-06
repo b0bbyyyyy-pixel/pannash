@@ -204,7 +204,7 @@ export async function POST(req: NextRequest) {
   const prevUd = (lead.underwriting_data && typeof lead.underwriting_data === 'object')
     ? lead.underwriting_data as Record<string, unknown>
     : {};
-  const ud = {
+  const ud: Record<string, unknown> = {
     ...prevUd,
     followUpDate: dateKey,
     followUpKind: kind,
