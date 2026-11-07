@@ -7,8 +7,8 @@ export const metadata: Metadata = {
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
     <>
-      <link rel="preload" as="image" href="/images/auth/trylon-perisphere-wide.png?v=14" />
-      <link rel="preload" as="image" href="/images/auth/trylon-perisphere-water.png?v=14" />
+      <link rel="preload" as="image" href="/images/auth/trylon-perisphere-wide.png?v=16" />
+      <link rel="preload" as="image" href="/images/auth/trylon-perisphere-water.png?v=16" />
       {children}
     </>
   );

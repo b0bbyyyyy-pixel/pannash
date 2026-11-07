@@ -4,8 +4,8 @@ import { useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import './auth.css';
 
-const SCENE = '/images/auth/trylon-perisphere-wide.png?v=14';
-const WATER = '/images/auth/trylon-perisphere-water.png?v=14';
+const SCENE = '/images/auth/trylon-perisphere-wide.png?v=16';
+const WATER = '/images/auth/trylon-perisphere-water.png?v=16';
 
 export default function AuthPage() {
   const [email, setEmail] = useState('');
@@ -101,13 +101,13 @@ export default function AuthPage() {
           className="auth-art"
           src={SCENE}
           alt="The Trylon and Perisphere"
-          width={2400}
-          height={1200}
+          width={4096}
+          height={2048}
           decoding="sync"
           fetchPriority="high"
         />
         <div className="auth-water" aria-hidden>
-          <img src={WATER} alt="" width={2400} height={1200} decoding="async" />
+          <img src={WATER} alt="" width={4096} height={2048} decoding="async" />
         </div>
         <div className="auth-sheen" aria-hidden />
       </div>
