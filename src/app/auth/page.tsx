@@ -4,8 +4,8 @@ import { useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import './auth.css';
 
-const SCENE = '/images/auth/trylon-perisphere-wide.png?v=9';
-const WATER = '/images/auth/trylon-perisphere-water.png?v=9';
+const SCENE = '/images/auth/trylon-perisphere-wide.png?v=14';
+const WATER = '/images/auth/trylon-perisphere-water.png?v=14';
 
 export default function AuthPage() {
   const [email, setEmail] = useState('');
