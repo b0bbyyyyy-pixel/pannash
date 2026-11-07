@@ -2,6 +2,10 @@
 
 import { useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import './auth.css';
+
+const SCENE = '/images/auth/trylon-perisphere-wide.png?v=9';
+const WATER = '/images/auth/trylon-perisphere-water.png?v=9';
 
 export default function AuthPage() {
   const [email, setEmail] = useState('');
@@ -57,89 +61,93 @@ export default function AuthPage() {
     }
   };
 
-  const inputClass = [
-    'w-full bg-transparent border-0 border-b border-[#f5f1e8]/60 pb-2',
-    'text-sm text-[#f5f1e8] focus:outline-none focus:border-[#f5f1e8]',
-    'transition-colors rounded-none',
-    // Kill browser autofill highlight
-    '[&:-webkit-autofill]:shadow-[0_0_0_1000px_rgb(13,13,13)_inset]',
-    '[&:-webkit-autofill]:[color:white]',
-    '[&:-webkit-autofill]:[-webkit-text-fill-color:#f5f1e8]',
-    '[&:-webkit-autofill]:caret-[#f5f1e8]',
-  ].join(' ');
-
   return (
-    <div className="min-h-screen bg-[rgb(13,13,13)] flex items-center justify-center px-6 py-12">
-      <div className="flex flex-col md:flex-row items-center gap-10 md:gap-20 w-full max-w-4xl justify-center">
-
-        {/* Logo */}
-        <div className="shrink-0">
-          <img
-            src="/images/logo/gostwrk-auth-logo-transparent.png"
-            alt="Gostwrk"
-            className="w-[260px] md:w-[320px] h-auto"
+    <div className="auth-page">
+      <svg className="auth-svg-defs" aria-hidden>
+        <filter
+          id="auth-water-ripple"
+          x="-8%"
+          y="0%"
+          width="116%"
+          height="120%"
+          colorInterpolationFilters="sRGB"
+        >
+          <feTurbulence
+            type="fractalNoise"
+            baseFrequency="0.006 0.018"
+            numOctaves="2"
+            seed="2"
+            result="noise"
+          >
+            <animate
+              attributeName="baseFrequency"
+              dur="22s"
+              values="0.006 0.018;0.01 0.03;0.006 0.018"
+              repeatCount="indefinite"
+            />
+          </feTurbulence>
+          <feDisplacementMap
+            in="SourceGraphic"
+            in2="noise"
+            scale="8"
+            xChannelSelector="R"
+            yChannelSelector="G"
           />
+        </filter>
+      </svg>
+
+      <div className="auth-scene">
+        <img
+          className="auth-art"
+          src={SCENE}
+          alt="The Trylon and Perisphere"
+          width={2400}
+          height={1200}
+          decoding="sync"
+          fetchPriority="high"
+        />
+        <div className="auth-water" aria-hidden>
+          <img src={WATER} alt="" width={2400} height={1200} decoding="async" />
         </div>
+        <div className="auth-sheen" aria-hidden />
+      </div>
 
-        {/* Form */}
-        <div className="w-full max-w-[300px]">
-          <form onSubmit={handleAuth} className="space-y-10">
+      <div className="auth-form-col">
+        <form onSubmit={handleAuth} className="auth-form">
+          <div>
+            <label className="auth-label">EMAIL</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              autoComplete="email"
+              className="auth-input"
+            />
+          </div>
 
-            {/* Email */}
-            <div>
-              <label className="block text-[11px] tracking-[0.3em] text-[#f5f1e8] font-medium mb-2">
-                EMAIL
-              </label>
-              <div className="relative">
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  autoComplete="email"
-                  className={inputClass}
-                />
-                {email && (
-                  <span className="absolute right-0 bottom-3 text-[#f5f1e8]/50 text-[8px] leading-none select-none">·</span>
-                )}
-              </div>
-            </div>
+          <div>
+            <label className="auth-label">PASSWORD</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              minLength={6}
+              autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+              className="auth-input"
+            />
+          </div>
 
-            {/* Password */}
-            <div>
-              <label className="block text-[11px] tracking-[0.3em] text-[#f5f1e8] font-medium mb-2">
-                PASSWORD
-              </label>
-              <div className="relative">
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  minLength={6}
-                  autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-                  className={inputClass}
-                />
-                {password && (
-                  <span className="absolute right-0 bottom-3 text-[#f5f1e8]/50 text-[8px] leading-none select-none">·</span>
-                )}
-              </div>
-            </div>
+          {error && <p className="text-xs text-red-800">{error}</p>}
+          {success && <p className="text-xs text-emerald-900">{success}</p>}
 
-            {error && <p className="text-xs text-red-400">{error}</p>}
-            {success && <p className="text-xs text-green-400">{success}</p>}
-
-            <div>
-              <button
-                type="submit"
-                disabled={loading}
-                className="bg-transparent text-[#f5f1e8] text-[12px] font-bold tracking-[0.3em] hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {loading ? '···' : 'ENTER'}
-              </button>
-            </div>
-          </form>
-        </div>
+          <div>
+            <button type="submit" disabled={loading} className="auth-enter">
+              {loading ? '···' : 'ENTER'}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
