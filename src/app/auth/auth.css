@@ -83,7 +83,9 @@
   border: 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.65);
   border-radius: 0;
+  appearance: none;
   background: transparent;
+  background-color: transparent;
   padding: 0 0 0.32rem;
   color: #fff;
   font-size: 14px;
@@ -99,11 +101,16 @@
 
 .auth-input:-webkit-autofill,
 .auth-input:-webkit-autofill:hover,
-.auth-input:-webkit-autofill:focus {
+.auth-input:-webkit-autofill:focus,
+.auth-input:-webkit-autofill:active {
   -webkit-text-fill-color: #fff;
   caret-color: #fff;
-  box-shadow: 0 0 0 1000px rgba(0, 13, 32, 0.72) inset;
-  transition: background-color 9999s ease-out;
+  background-color: transparent !important;
+  background-image: none !important;
+  -webkit-box-shadow: none !important;
+  box-shadow: none !important;
+  -webkit-background-clip: text;
+  transition: background-color 99999s ease-out;
 }
 
 .auth-enter {
