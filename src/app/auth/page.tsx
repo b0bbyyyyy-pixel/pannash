@@ -2,6 +2,9 @@
 
 import { useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import './auth.css';
+
+const SCENE = '/images/auth/trylon-perisphere-wide.png?v=4';
 
 export default function AuthPage() {
   const [email, setEmail] = useState('');
@@ -57,89 +60,143 @@ export default function AuthPage() {
     }
   };
 
-  const inputClass = [
-    'w-full bg-transparent border-0 border-b border-[#f5f1e8]/60 pb-2',
-    'text-sm text-[#f5f1e8] focus:outline-none focus:border-[#f5f1e8]',
-    'transition-colors rounded-none',
-    // Kill browser autofill highlight
-    '[&:-webkit-autofill]:shadow-[0_0_0_1000px_rgb(13,13,13)_inset]',
-    '[&:-webkit-autofill]:[color:white]',
-    '[&:-webkit-autofill]:[-webkit-text-fill-color:#f5f1e8]',
-    '[&:-webkit-autofill]:caret-[#f5f1e8]',
-  ].join(' ');
-
   return (
-    <div className="min-h-screen bg-[rgb(13,13,13)] flex items-center justify-center px-6 py-12">
-      <div className="flex flex-col md:flex-row items-center gap-10 md:gap-20 w-full max-w-4xl justify-center">
-
-        {/* Logo */}
-        <div className="shrink-0">
-          <img
-            src="/images/logo/gostwrk-auth-logo-transparent.png"
-            alt="Gostwrk"
-            className="w-[260px] md:w-[320px] h-auto"
-          />
-        </div>
-
-        {/* Form */}
-        <div className="w-full max-w-[300px]">
-          <form onSubmit={handleAuth} className="space-y-10">
-
-            {/* Email */}
-            <div>
-              <label className="block text-[11px] tracking-[0.3em] text-[#f5f1e8] font-medium mb-2">
-                EMAIL
-              </label>
-              <div className="relative">
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  autoComplete="email"
-                  className={inputClass}
-                />
-                {email && (
-                  <span className="absolute right-0 bottom-3 text-[#f5f1e8]/50 text-[8px] leading-none select-none">·</span>
-                )}
-              </div>
-            </div>
-
-            {/* Password */}
-            <div>
-              <label className="block text-[11px] tracking-[0.3em] text-[#f5f1e8] font-medium mb-2">
-                PASSWORD
-              </label>
-              <div className="relative">
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  minLength={6}
-                  autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-                  className={inputClass}
-                />
-                {password && (
-                  <span className="absolute right-0 bottom-3 text-[#f5f1e8]/50 text-[8px] leading-none select-none">·</span>
-                )}
-              </div>
-            </div>
-
-            {error && <p className="text-xs text-red-400">{error}</p>}
-            {success && <p className="text-xs text-green-400">{success}</p>}
-
-            <div>
-              <button
-                type="submit"
-                disabled={loading}
-                className="bg-transparent text-[#f5f1e8] text-[12px] font-bold tracking-[0.3em] hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+    <div className="auth-page">
+      <div className="auth-scene">
+        <img
+          className="auth-art"
+          src={SCENE}
+          alt="The Trylon and Perisphere"
+          width={4096}
+          height={2304}
+          decoding="sync"
+          fetchPriority="high"
+        />
+        <svg
+          className="auth-water"
+          viewBox="0 0 4096 2304"
+          preserveAspectRatio="none"
+          aria-hidden
+        >
+          <defs>
+            <clipPath id="auth-pool-clip">
+              <polygon points="1100,1688 2996,1688 3380,2304 720,2304" />
+            </clipPath>
+            <clipPath id="auth-fountain-clip">
+              <rect x="2190" y="1452" width="280" height="128" rx="10" />
+            </clipPath>
+            <filter
+              id="auth-water-ripple"
+              x="680"
+              y="1660"
+              width="2760"
+              height="660"
+              filterUnits="userSpaceOnUse"
+              primitiveUnits="userSpaceOnUse"
+              colorInterpolationFilters="sRGB"
+            >
+              <feTurbulence
+                type="fractalNoise"
+                baseFrequency="0.0025 0.007"
+                numOctaves="2"
+                seed="2"
+                result="noise"
               >
-                {loading ? '···' : 'ENTER'}
-              </button>
-            </div>
-          </form>
-        </div>
+                <animate
+                  attributeName="baseFrequency"
+                  dur="18s"
+                  values="0.0025 0.007;0.004 0.011;0.0025 0.007"
+                  repeatCount="indefinite"
+                />
+              </feTurbulence>
+              <feDisplacementMap
+                in="SourceGraphic"
+                in2="noise"
+                scale="14"
+                xChannelSelector="R"
+                yChannelSelector="G"
+              />
+            </filter>
+            <filter
+              id="auth-fountain-ripple"
+              x="2170"
+              y="1435"
+              width="320"
+              height="160"
+              filterUnits="userSpaceOnUse"
+              primitiveUnits="userSpaceOnUse"
+              colorInterpolationFilters="sRGB"
+            >
+              <feTurbulence
+                type="fractalNoise"
+                baseFrequency="0.03 0.12"
+                numOctaves="1"
+                seed="7"
+                result="noise"
+              >
+                <animate
+                  attributeName="baseFrequency"
+                  dur="4s"
+                  values="0.03 0.12;0.045 0.18;0.03 0.12"
+                  repeatCount="indefinite"
+                />
+              </feTurbulence>
+              <feDisplacementMap
+                in="SourceGraphic"
+                in2="noise"
+                scale="5"
+                xChannelSelector="R"
+                yChannelSelector="G"
+              />
+            </filter>
+          </defs>
+          <g filter="url(#auth-water-ripple)">
+            <g clipPath="url(#auth-pool-clip)">
+              <image href={SCENE} width="4096" height="2304" />
+            </g>
+          </g>
+          <g filter="url(#auth-fountain-ripple)">
+            <g clipPath="url(#auth-fountain-clip)">
+              <image href={SCENE} width="4096" height="2304" />
+            </g>
+          </g>
+        </svg>
+
+        <form onSubmit={handleAuth} className="auth-form">
+          <div>
+            <label className="auth-label">EMAIL</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              autoComplete="email"
+              className="auth-input"
+            />
+          </div>
+
+          <div>
+            <label className="auth-label">PASSWORD</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              minLength={6}
+              autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+              className="auth-input"
+            />
+          </div>
+
+          {error && <p className="text-xs text-red-300">{error}</p>}
+          {success && <p className="text-xs text-emerald-300">{success}</p>}
+
+          <div>
+            <button type="submit" disabled={loading} className="auth-enter">
+              {loading ? '···' : 'ENTER'}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
