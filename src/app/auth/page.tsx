@@ -62,6 +62,7 @@ export default function AuthPage() {
 
   return (
     <div className="auth-page">
+      <p className="auth-mark">Gostwrk</p>
       <div className="auth-scene">
         <img
           className="auth-art"
