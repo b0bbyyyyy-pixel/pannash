@@ -34,3 +34,14 @@ export function shouldTakeWebphoneLock(opts: {
 export function isPhoneBrowser(ua: string) {
   return /iPhone|iPad|Android.+Mobile/i.test(ua);
 }
+
+/**
+ * How long to wait after the tab is hidden before dropping the Twilio Device.
+ * `null` means stay registered — a desktop CRM tab has to keep the webphone
+ * even when it is not focused, otherwise the phone rings and nothing pops up
+ * on the computer in front of you.
+ */
+export function webphoneHideUnregisterMs(opts: { phone: boolean }): number | null {
+  if (opts.phone) return 400;
+  return null;
+}

@@ -22,6 +22,7 @@ import {
   newWebphoneTabId,
   parseWebphoneLock,
   shouldTakeWebphoneLock,
+  webphoneHideUnregisterMs,
 } from '@/lib/telephony/webphoneLock';
 import { usePathname, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
@@ -437,6 +438,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     setMissedBanner(null);
     setIncomingFrom(from);
     setIncomingTabTitle(true);
+    startRingback();
     writeLock(true);
     const paramId = customParam(call, 'leadId');
     const paramName = customParam(call, 'leadName');
@@ -449,14 +451,12 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
       status: 'ringing_agent',
     });
     try {
-      if (typeof Notification !== 'undefined') {
-        if (Notification.permission === 'default') void Notification.requestPermission();
-        if (Notification.permission === 'granted') {
-          new Notification('Incoming call', {
-            body: paramName || from,
-            tag: 'gostwrk-incoming-call',
-          });
-        }
+      if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        new Notification('Incoming call', {
+          body: paramName || from,
+          tag: 'gostwrk-incoming-call',
+          requireInteraction: true,
+        });
       }
     } catch { /* no notifications */ }
     if (paramId) {
@@ -498,6 +498,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
       incomingSessionRef.current = false;
       setIncomingFrom(null);
       setIncomingTabTitle(false);
+      stopRingback();
       writeLock(!!callRef.current);
       showMissedBanner({
         from,
@@ -515,9 +516,10 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
       writeLock(!!callRef.current);
       resetCallState();
     });
-  }, [resetCallState, showMissedBanner, writeLock]);
+  }, [resetCallState, showMissedBanner, startRingback, stopRingback, writeLock]);
 
   const startDevice = useCallback(async () => {
+    if (onMobileText) return;
     if (deviceRef.current || startingDeviceRef.current) return;
     if (typeof window !== 'undefined' && window.top && window.top !== window.self) return;
     startingDeviceRef.current = true;
@@ -539,6 +541,12 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
         allowIncomingWhileBusy: true,
       });
       deviceRef.current = device;
+
+      try {
+        if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+          void Notification.requestPermission();
+        }
+      } catch { /* no notifications */ }
 
       device.on('registered', () => setStatus('ready'));
       device.on('unregistered', () => {
@@ -568,6 +576,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
 
       await device.register();
       try { device.audio?.outgoing(false); } catch { /* older SDK */ }
+      try { device.audio?.incoming(true); } catch { /* older SDK */ }
       if (!weOwnLock()) {
         destroyDevice();
       }
@@ -576,14 +585,23 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     } finally {
       startingDeviceRef.current = false;
     }
-  }, [attachIncoming, destroyDevice, weOwnLock]);
+  }, [attachIncoming, destroyDevice, onMobileText, weOwnLock]);
 
-  // One Twilio Device per browser. Phone browsers unregister as soon as the
-  // tab is backgrounded so you don't hear a ring with no incoming card.
+  // One Twilio Device per browser. /m is texting-only so a phone left on
+  // that screen cannot steal the incoming call from the computer. Phone
+  // browsers unregister as soon as the tab is backgrounded so you don't hear
+  // a ring with no incoming card. Desktop stays registered in the background
+  // so an incoming call can pop up on the computer you are using even if this
+  // tab is not focused.
   useEffect(() => {
     if (typeof window !== 'undefined' && window.top && window.top !== window.self) return;
+    if (onMobileText) {
+      destroyDevice();
+      return;
+    }
 
     const phone = isPhoneBrowser(navigator.userAgent);
+    const hideMs = webphoneHideUnregisterMs({ phone });
 
     const goLive = (steal: boolean) => {
       if (hideTimerRef.current) {
@@ -595,28 +613,33 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     };
 
     const onHidden = () => {
+      if (hideMs == null) return;
+      if (incomingRef.current || callRef.current) return;
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-      const delay = phone ? 400 : 45_000;
       hideTimerRef.current = setTimeout(() => {
         hideTimerRef.current = null;
-        if (document.hidden) destroyDevice();
-      }, delay);
+        if (document.hidden && !incomingRef.current && !callRef.current) destroyDevice();
+      }, hideMs);
     };
 
     const onVisible = () => goLive(true);
 
-    if (document.hidden) onHidden();
-    else goLive(true);
+    if (document.hidden) {
+      if (hideMs == null) goLive(false);
+      else onHidden();
+    } else {
+      goLive(true);
+    }
 
     const heartbeat = window.setInterval(() => {
-      if (document.hidden) return;
+      if (document.hidden && hideMs != null) return;
       if (weOwnLock()) {
         writeLock(!!incomingRef.current || !!callRef.current);
         const device = deviceRef.current;
         if (device && device.state !== 'registered' && device.state !== 'registering') {
           void device.register().catch(() => {});
         }
-      } else if (takeLock(false)) {
+      } else if (!document.hidden && takeLock(false)) {
         void startDevice();
       }
     }, 3000);
@@ -624,7 +647,9 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     const onStorage = (e: StorageEvent) => {
       if (e.key !== WEBPHONE_LOCK_KEY) return;
       const lock = parseWebphoneLock(e.newValue);
-      if (lock && lock.id !== tabIdRef.current) destroyDevice();
+      if (lock && lock.id !== tabIdRef.current && !incomingRef.current && !callRef.current) {
+        destroyDevice();
+      }
     };
 
     const onPageHide = () => {
@@ -658,7 +683,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
       }
       destroyDevice();
     };
-  }, [destroyDevice, startDevice, takeLock, weOwnLock, writeLock]);
+  }, [destroyDevice, onMobileText, startDevice, takeLock, weOwnLock, writeLock]);
 
   // ── Actions ─────────────────────────────────────────────────────────────────
   const connect = useCallback(async (e164: string, meta?: { name?: string; leadId?: string; company?: string; hunt?: boolean; callDbId?: string }) => {
@@ -808,6 +833,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     }
     incomingRef.current = null;
     incomingSessionRef.current = true;
+    stopRingback();
     const from = call.parameters.From ?? null;
     setActiveNumber(from);
     setActiveName(prev => prev || customParam(call, 'leadName'));
@@ -825,7 +851,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     call.accept();
     setStatus('in-call');
     setCallStartedAt(Date.now());
-  }, [wireCall]);
+  }, [stopRingback, wireCall]);
 
   const rejectIncoming = useCallback(() => {
     const call = incomingRef.current;
@@ -836,6 +862,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     incomingSessionRef.current = false;
     setIncomingFrom(null);
     setIncomingTabTitle(false);
+    stopRingback();
     if (from) {
       showMissedBanner({
         from,
@@ -849,7 +876,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
       setMatchedLead(null);
       setActiveName(null);
     }
-  }, [incomingFrom, showMissedBanner]);
+  }, [incomingFrom, showMissedBanner, stopRingback]);
 
   const blockIncoming = useCallback(async () => {
     const call = incomingRef.current;
@@ -862,6 +889,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     setIncomingFrom(null);
     setMissedBanner(null);
     setIncomingTabTitle(false);
+    stopRingback();
     if (from) {
       reportInboundCall({ callSid: sid, from, leadId, status: 'blocked' });
       try {
@@ -877,7 +905,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
       setMatchedLead(null);
       setActiveName(null);
     }
-  }, [incomingFrom, missedBanner]);
+  }, [incomingFrom, missedBanner, stopRingback]);
 
   // Incoming caller (ring or after Answer) → Inbox so you can text and edit notes.
   useEffect(() => {
@@ -937,103 +965,109 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     <WebPhoneContext.Provider value={value}>
       {children}
 
-      {/* ── Incoming / missed call toast ── */}
-      {(incomingFrom || missedBanner) && (
-        <div className="fixed top-5 right-5 z-[110] w-80 rounded-2xl border border-[#e5e5e5] bg-white p-4 shadow-xl">
-          <p className="mb-0.5 text-xs text-[#9ca3af]">
-            {incomingFrom ? 'Incoming call' : 'Missed call'}
-          </p>
-          <p className="text-base font-semibold text-[#1a1a1a]">
-            {incomingFrom
-              ? (matchedLead?.name || activeName || fmtNumber(incomingFrom))
-              : (missedBanner?.name || fmtNumber(missedBanner?.from || ''))}
-          </p>
-          {(incomingFrom ? matchedLead?.company : missedBanner?.company) && (
-            <p className="truncate text-[13px] text-[#6b6b6b]">
-              {incomingFrom ? matchedLead?.company : missedBanner?.company}
+      {incomingFrom && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/55 p-4">
+          <div className="w-full max-w-sm rounded-2xl border border-[#e5e5e5] bg-white p-6 shadow-2xl">
+            <div className="mb-4 flex items-center gap-3">
+              <span className="relative flex h-3 w-3">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+                <span className="relative inline-flex h-3 w-3 rounded-full bg-green-500" />
+              </span>
+              <p className="text-xs font-medium uppercase tracking-wide text-[#9ca3af]">Incoming call</p>
+            </div>
+            <p className="text-2xl font-semibold text-[#1a1a1a]">
+              {matchedLead?.name || activeName || fmtNumber(incomingFrom)}
             </p>
-          )}
-          <p className="mt-0.5 text-xs text-[#9ca3af]">
-            {fmtNumber(incomingFrom || missedBanner?.from || '')}
-          </p>
-          {incomingFrom ? (
-            <>
-              <div className="mt-3 flex gap-2">
-                <button
-                  onClick={acceptIncoming}
-                  className="flex-1 rounded-xl bg-green-600 py-2 text-sm font-medium text-white transition-colors hover:bg-green-700"
-                >
-                  Answer
-                </button>
-                <button
-                  onClick={rejectIncoming}
-                  className="flex-1 rounded-xl bg-red-600 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700"
-                >
-                  Reject
-                </button>
-              </div>
+            {matchedLead?.company && (
+              <p className="mt-1 truncate text-[15px] text-[#6b6b6b]">{matchedLead.company}</p>
+            )}
+            <p className="mt-1 text-sm text-[#9ca3af]">{fmtNumber(incomingFrom)}</p>
+            <div className="mt-5 flex gap-2">
+              <button
+                onClick={acceptIncoming}
+                className="flex-1 rounded-xl bg-green-600 py-3 text-sm font-medium text-white transition-colors hover:bg-green-700"
+              >
+                Answer
+              </button>
+              <button
+                onClick={rejectIncoming}
+                className="flex-1 rounded-xl bg-red-600 py-3 text-sm font-medium text-white transition-colors hover:bg-red-700"
+              >
+                Reject
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => void blockIncoming()}
+              className="mt-2 w-full rounded-xl border border-[#e5e5e5] py-2.5 text-sm font-medium text-[#1a1a1a] transition-colors hover:bg-[#f5f5f5]"
+            >
+              Block this number
+            </button>
+            {matchedLead && (
               <button
                 type="button"
-                onClick={() => void blockIncoming()}
-                className="mt-2 w-full rounded-xl border border-[#e5e5e5] py-2 text-sm font-medium text-[#1a1a1a] transition-colors hover:bg-[#f5f5f5]"
+                onClick={() => setShowLeadCard(true)}
+                className="mt-2 w-full rounded-xl border border-[#e5e5e5] py-2.5 text-sm font-medium text-[#1a1a1a] transition-colors hover:bg-[#f5f5f5]"
               >
-                Block this number
+                Open lead card
               </button>
-              {matchedLead && (
-                <button
-                  type="button"
-                  onClick={() => setShowLeadCard(true)}
-                  className="mt-2 w-full rounded-xl border border-[#e5e5e5] py-2 text-sm font-medium text-[#1a1a1a] transition-colors hover:bg-[#f5f5f5]"
-                >
-                  Open lead card
-                </button>
-              )}
-            </>
-          ) : (
-            <>
-              <div className="mt-3 flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const n = missedBanner?.from;
-                    setMissedBanner(null);
-                    if (n) void connect(n, {
-                      name: missedBanner?.name || undefined,
-                      leadId: missedBanner?.leadId || undefined,
-                      company: missedBanner?.company || undefined,
-                    }).catch(() => {});
-                  }}
-                  className="flex-1 rounded-xl bg-[#1a1a1a] py-2 text-sm font-medium text-white hover:bg-black"
-                >
-                  Call back
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void blockIncoming()}
-                  className="flex-1 rounded-xl border border-[#e5e5e5] py-2 text-sm font-medium text-[#1a1a1a] hover:bg-[#f5f5f5]"
-                >
-                  Block
-                </button>
-              </div>
-              {missedBanner?.leadId && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowLeadCard(true);
-                    if (missedBanner.leadId) {
-                      setMatchedLead({
-                        id: missedBanner.leadId,
-                        name: missedBanner.name || missedBanner.from,
-                        company: missedBanner.company,
-                      });
-                    }
-                  }}
-                  className="mt-2 w-full rounded-xl border border-[#e5e5e5] py-2 text-sm font-medium text-[#1a1a1a] hover:bg-[#f5f5f5]"
-                >
-                  Open lead card
-                </button>
-              )}
-            </>
+            )}
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {missedBanner && !incomingFrom && (
+        <div className="fixed top-5 right-5 z-[10000] w-80 rounded-2xl border border-[#e5e5e5] bg-white p-4 shadow-xl">
+          <p className="mb-0.5 text-xs text-[#9ca3af]">Missed call</p>
+          <p className="text-base font-semibold text-[#1a1a1a]">
+            {missedBanner.name || fmtNumber(missedBanner.from)}
+          </p>
+          {missedBanner.company && (
+            <p className="truncate text-[13px] text-[#6b6b6b]">{missedBanner.company}</p>
+          )}
+          <p className="mt-0.5 text-xs text-[#9ca3af]">{fmtNumber(missedBanner.from)}</p>
+          <div className="mt-3 flex gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                const n = missedBanner.from;
+                setMissedBanner(null);
+                if (n) void connect(n, {
+                  name: missedBanner.name || undefined,
+                  leadId: missedBanner.leadId || undefined,
+                  company: missedBanner.company || undefined,
+                }).catch(() => {});
+              }}
+              className="flex-1 rounded-xl bg-[#1a1a1a] py-2 text-sm font-medium text-white hover:bg-black"
+            >
+              Call back
+            </button>
+            <button
+              type="button"
+              onClick={() => void blockIncoming()}
+              className="flex-1 rounded-xl border border-[#e5e5e5] py-2 text-sm font-medium text-[#1a1a1a] hover:bg-[#f5f5f5]"
+            >
+              Block
+            </button>
+          </div>
+          {missedBanner.leadId && (
+            <button
+              type="button"
+              onClick={() => {
+                setShowLeadCard(true);
+                if (missedBanner.leadId) {
+                  setMatchedLead({
+                    id: missedBanner.leadId,
+                    name: missedBanner.name || missedBanner.from,
+                    company: missedBanner.company,
+                  });
+                }
+              }}
+              className="mt-2 w-full rounded-xl border border-[#e5e5e5] py-2 text-sm font-medium text-[#1a1a1a] hover:bg-[#f5f5f5]"
+            >
+              Open lead card
+            </button>
           )}
         </div>
       )}

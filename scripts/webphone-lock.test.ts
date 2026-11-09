@@ -6,6 +6,7 @@ import {
   isPhoneBrowser,
   parseWebphoneLock,
   shouldTakeWebphoneLock,
+  webphoneHideUnregisterMs,
 } from '../src/lib/telephony/webphoneLock';
 
 let failed = 0;
@@ -52,6 +53,8 @@ assert(shouldTakeWebphoneLock({
 assert(isPhoneBrowser('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)'), 'iphone');
 assert(isPhoneBrowser('Mozilla/5.0 (Linux; Android 14; Pixel 8) Mobile Safari/537.36'), 'android mobile');
 assert(!isPhoneBrowser('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'), 'desktop mac');
+assert(webphoneHideUnregisterMs({ phone: true }) === 400, 'phone unregisters when backgrounded');
+assert(webphoneHideUnregisterMs({ phone: false }) === null, 'desktop stays registered in the background');
 
 if (failed) {
   console.error(`\n${failed} failed`);
