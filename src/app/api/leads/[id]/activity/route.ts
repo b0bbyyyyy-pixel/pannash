@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
+import { eventLabel } from '@/lib/merchantPortal/events';
 import { isMissedCall } from '@/lib/telephony/missed';
 
 export const dynamic = 'force-dynamic';
@@ -167,7 +168,7 @@ export async function GET(
     }
   }
 
-  const [{ data: files }, { data: runs }, { data: history }, { data: submissions }, callsRes] = await Promise.all([
+  const [{ data: files }, { data: runs }, { data: history }, { data: submissions }, callsRes, { data: merchantEvents }, { data: offerPortals }] = await Promise.all([
     supabase
       .from('lead_attachments')
       .select('file_name, column_field, created_at')
@@ -226,6 +227,23 @@ export async function GET(
       }
       return full;
     })(),
+    (async () => {
+      const res = await supabase
+        .from('merchant_portal_events')
+        .select('event_type, event_data, created_at')
+        .eq('lead_id', leadId)
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(80);
+      if (res.error) return { data: [] as Array<{ event_type: string; event_data: unknown; created_at: string }> };
+      return res;
+    })(),
+    supabase
+      .from('client_offer_portals')
+      .select('id')
+      .eq('lead_id', leadId)
+      .eq('user_id', user.id)
+      .limit(40),
   ]);
 
   for (const file of files ?? []) {
@@ -271,6 +289,35 @@ export async function GET(
       detail: sub.status ? `${lender} · ${sub.status}` : lender,
       source: 'lenders',
     });
+  }
+
+  for (const row of merchantEvents ?? []) {
+    const label = eventLabel(String(row.event_type || ''), row.event_data as Record<string, unknown> | null);
+    events.push({
+      at: row.created_at,
+      title: label.title,
+      detail: label.detail,
+      source: 'merchant-portal',
+    });
+  }
+
+  const portalIds = (offerPortals ?? []).map(p => p.id).filter(Boolean);
+  if (portalIds.length) {
+    const { data: offerLogs } = await supabase
+      .from('portal_activity_logs')
+      .select('event_type, event_data, created_at, portal_id')
+      .in('portal_id', portalIds)
+      .order('created_at', { ascending: false })
+      .limit(80);
+    for (const row of offerLogs ?? []) {
+      const label = eventLabel(String(row.event_type || ''), row.event_data as Record<string, unknown> | null);
+      events.push({
+        at: row.created_at,
+        title: label.title,
+        detail: label.detail,
+        source: 'offer-portal',
+      });
+    }
   }
 
   events.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());

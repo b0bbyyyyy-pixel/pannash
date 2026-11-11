@@ -44,6 +44,31 @@ export async function POST(
         .eq('id', portal.id);
     }
 
+    if (eventType === 'submit') {
+      try {
+        const { data: row } = await supabase
+          .from('client_offer_portals')
+          .select('user_id, lead_id, lead_name')
+          .eq('id', portal.id)
+          .maybeSingle();
+        if (row?.user_id) {
+          const amount = eventData?.amount ?? eventData?.offerAmount ?? eventData?.selectedAmount;
+          const money = typeof amount === 'number' && Number.isFinite(amount)
+            ? `$${Math.round(amount).toLocaleString('en-US')}`
+            : typeof amount === 'string' && amount ? amount : '';
+          const who = String(row.lead_name || 'a lead').trim() || 'a lead';
+          const { notifyLeadActivity } = await import('@/lib/casper/ping');
+          await notifyLeadActivity(supabase, {
+            userId: row.user_id,
+            body: `${who} clicked Accept on their offer${money ? ` – ${money}` : ''}.`,
+          });
+        }
+      } catch (pingErr) {
+        console.warn('[portal/log] accept ping failed');
+        void pingErr;
+      }
+    }
+
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error('[portal/log]', err);

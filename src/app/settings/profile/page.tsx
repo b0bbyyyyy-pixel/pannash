@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import BusinessNameRow from '@/app/settings/profile/BusinessNameRow';
 import TimezoneClient from '@/app/settings/profile/TimezoneClient';
+import MerchantPortalSettings from '@/app/settings/profile/MerchantPortalSettings';
 
 export default async function ProfilePage() {
   const cookieStore = await cookies();
@@ -87,6 +88,8 @@ export default async function ProfilePage() {
             browserTimezone="America/New_York"
             savedTimezone={settings?.timezone || null}
           />
+
+          <MerchantPortalSettings />
 
           {/* Update Profile (Coming Soon) */}
           <div className="bg-white border border-gray-200 rounded-lg p-6">

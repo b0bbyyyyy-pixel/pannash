@@ -133,6 +133,13 @@ async function fillLeadFromApplication(
   if (startupAnswer === 'yes' || startupAnswer === 'no') ud.startup = startupAnswer;
   const product = field(form, 'product');
   if (product) ud.product = product;
+  const smsOptIn = field(form, 'smsOptIn') === 'true';
+  ud.smsConsent = {
+    optIn: smsOptIn,
+    at: field(form, 'smsConsentAt') || new Date().toISOString(),
+    text: field(form, 'smsConsentText'),
+    source: 'onefundingsolution.com/apply',
+  };
 
   const update: Record<string, unknown> = { underwriting_data: ud };
   if (blank(current.company) && legalName) update.company = legalName;
@@ -237,6 +244,8 @@ export async function POST(req: NextRequest) {
     `Revenue: ${field(form, 'revenue')}`,
     `Average balance: ${field(form, 'averageBalance')}`,
     `Previous business loans: ${field(form, 'previousLoans')}`,
+    '',
+    `SMS Opt-in: ${field(form, 'smsOptIn') === 'true' ? 'Yes' : 'No'}`,
     '',
     'Signed: yes',
   ].join('\n');
@@ -439,5 +448,30 @@ export async function POST(req: NextRequest) {
     console.warn('[one-funding application] casper docs hook failed', err);
   }
 
-  return NextResponse.json({ ok: true, leadId, matched: Boolean(existing), failed });
+  let portalUrl: string | undefined;
+  try {
+    const { loadOwnerBrand } = await import('@/lib/merchantPortal/brand');
+    const brand = await loadOwnerBrand(supabase, ownerUserId);
+    if (brand.portalEnabled) {
+      const { sendPortalLink } = await import('@/lib/merchantPortal/sendLink');
+      const smsOptIn = field(form, 'smsOptIn') === 'true';
+      const sent = await sendPortalLink({
+        userId: ownerUserId,
+        leadId,
+        email: true,
+        sms: smsOptIn,
+      });
+      portalUrl = sent.url;
+    }
+  } catch (err) {
+    console.warn('[one-funding application] merchant portal failed', err instanceof Error ? err.message : 'error');
+  }
+
+  return NextResponse.json({
+    ok: true,
+    leadId,
+    matched: Boolean(existing),
+    failed,
+    ...(portalUrl ? { portalUrl } : {}),
+  });
 }

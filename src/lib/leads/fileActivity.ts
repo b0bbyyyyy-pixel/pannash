@@ -6,6 +6,8 @@ const ACTIVITY_KEYS = [
   'unseenUploads',
   'unseenUploadAt',
   'docsFromOutside',
+  'portalNeeds',
+  'smsConsent',
 ] as const;
 
 function asUd(raw: unknown): Ud {
