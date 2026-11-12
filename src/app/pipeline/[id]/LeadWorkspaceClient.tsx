@@ -19,6 +19,7 @@ import { dealStageFromLead, dealStageLabel } from '@/lib/casper/stage';
 import { useWebPhone } from '@/components/webphone/WebPhone';
 import LeadUpdatesTimeline from '@/components/LeadUpdatesTimeline';
 import MerchantPortalPanel from '@/components/MerchantPortalPanel';
+import MerchantPortalPreview from '@/components/MerchantPortalPreview';
 import MerchantPortalEvents from '@/components/MerchantPortalEvents';
 import LeadActionsMenu, { type LeadActionId } from '@/components/LeadActionsMenu';
 import { markUploadSeenClient } from '@/lib/inbox/markUploadSeenClient';
@@ -1764,6 +1765,7 @@ export default function LeadWorkspaceClient({
         {surfaceTab === 'portal' ? (
           <div className="w-full max-w-5xl mx-auto">
             <MerchantPortalPanel leadId={lead.id} onStatusChange={onPortalStatus} />
+            <MerchantPortalPreview leadId={lead.id} refreshKey={portalTick} />
             <MerchantPortalEvents leadId={lead.id} refreshKey={portalTick} />
           </div>
         ) : surfaceTab === 'offers' ? (

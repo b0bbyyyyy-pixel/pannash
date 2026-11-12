@@ -39,6 +39,9 @@ export async function POST(req: NextRequest) {
   if (!fullName || !email) {
     return NextResponse.json({ error: 'fullName and email are required' }, { status: 400 });
   }
+  if (!smsOptIn) {
+    return NextResponse.json({ error: 'SMS consent is required' }, { status: 400 });
+  }
 
   const ownerUserId = process.env.PANNASH_OWNER_USER_ID;
   if (!ownerUserId) {

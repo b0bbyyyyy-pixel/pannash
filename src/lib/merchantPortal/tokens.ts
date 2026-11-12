@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import { publicAppUrl } from '@/lib/telephony/twilio';
 import { merchantAdmin } from '@/lib/merchantPortal/admin';
+import { portalOriginForUser } from '@/lib/merchantPortal/origin';
 
 export const MP_SESSION_COOKIE = 'mp_session';
 export const MP_SESSION_DAYS = 14;
@@ -27,12 +28,14 @@ export function newRawToken() {
   return randomBytes(32).toString('base64url');
 }
 
-export function merchantPortalUrl(raw: string) {
-  return `${publicAppUrl()}/merchant/${raw}`;
+export function merchantPortalUrl(raw: string, origin?: string) {
+  const base = (origin || publicAppUrl()).replace(/\/$/, '');
+  return `${base}/merchant/${raw}`;
 }
 
-export function merchantLoginUrl() {
-  return `${publicAppUrl()}/merchant/login`;
+export function merchantLoginUrl(origin?: string) {
+  const base = (origin || publicAppUrl()).replace(/\/$/, '');
+  return `${base}/merchant/login`;
 }
 
 function sessionSecret() {
@@ -76,11 +79,10 @@ export function readPortalSession(cookie: string | undefined | null): { portalId
   }
 }
 
-export function sessionCookieOptions() {
-  const secure = !publicAppUrl().startsWith('http://localhost');
+export function sessionCookieOptions(opts?: { secure?: boolean }) {
   return {
     httpOnly: true,
-    secure,
+    secure: opts?.secure ?? true,
     sameSite: 'lax' as const,
     path: '/',
     maxAge: MP_SESSION_DAYS * 24 * 60 * 60,
@@ -91,9 +93,10 @@ export async function createPortal(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase: any,
   args: { userId: string; leadId: string },
-): Promise<{ url: string; portalId: string; raw: string }> {
+): Promise<{ url: string; portalId: string; raw: string; origin: string }> {
   const raw = newRawToken();
   const tokenHash = hashToken(raw);
+  const origin = await portalOriginForUser(supabase, args.userId);
   const now = new Date().toISOString();
   await supabase
     .from('merchant_portals')
@@ -112,7 +115,7 @@ export async function createPortal(
     .select('id')
     .single();
   if (error || !data?.id) throw new Error('Could not create portal');
-  return { url: merchantPortalUrl(raw), portalId: data.id, raw };
+  return { url: merchantPortalUrl(raw, origin), portalId: data.id, raw, origin };
 }
 
 export async function verifyToken(raw: string): Promise<MerchantPortalRow | null> {

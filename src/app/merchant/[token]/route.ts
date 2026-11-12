@@ -14,6 +14,10 @@ export async function GET(
   const signed = signPortalSession(portal.id);
   if (!signed) return NextResponse.redirect(login);
   const res = NextResponse.redirect(new URL('/merchant', req.url));
-  res.cookies.set(MP_SESSION_COOKIE, signed, sessionCookieOptions());
+  res.cookies.set(
+    MP_SESSION_COOKIE,
+    signed,
+    sessionCookieOptions({ secure: req.nextUrl.protocol === 'https:' }),
+  );
   return res;
 }

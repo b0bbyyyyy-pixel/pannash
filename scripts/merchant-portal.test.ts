@@ -3,9 +3,11 @@
  * Run: npx tsx scripts/merchant-portal.test.ts
  */
 import { createHash } from 'crypto';
-import { DEFAULT_STAGE_MAP, mapLeadStatus, resolveMerchantStage } from '../src/lib/merchantPortal/stages';
+import { isPortalHost, isPortalPublicPath, portalHostsFromEnv } from '../src/lib/merchantPortal/hosts';
 import { maskEin, maskSsn } from '../src/lib/merchantPortal/mask';
-import { equalHex, hashToken } from '../src/lib/merchantPortal/tokens';
+import { normalizePortalDomain } from '../src/lib/merchantPortal/origin';
+import { DEFAULT_STAGE_MAP, mapLeadStatus, resolveMerchantStage } from '../src/lib/merchantPortal/stages';
+import { equalHex, hashToken, merchantLoginUrl, merchantPortalUrl } from '../src/lib/merchantPortal/tokens';
 
 let failed = 0;
 function assert(cond: unknown, msg: string) {
@@ -33,6 +35,24 @@ const hashed = hashToken(raw);
 assert(hashed === createHash('sha256').update(raw, 'utf8').digest('hex'), 'sha256');
 assert(equalHex(hashed, hashed), 'timing equal');
 assert(!equalHex(hashed, hashToken('nope')), 'timing unequal');
+
+const origin = 'https://portal.example.test';
+assert(normalizePortalDomain('').ok && (normalizePortalDomain('') as { value: string | null }).value === null, 'empty domain');
+assert(normalizePortalDomain(`${origin}/`).ok && (normalizePortalDomain(`${origin}/`) as { value: string | null }).value === origin, 'strip slash');
+assert(!normalizePortalDomain('http://portal.example.test').ok, 'reject http');
+assert(!normalizePortalDomain(`${origin}/app`).ok, 'reject path');
+assert(merchantPortalUrl('tok', origin) === `${origin}/merchant/tok`, 'portal url origin');
+assert(merchantLoginUrl(origin) === `${origin}/merchant/login`, 'login url origin');
+assert(portalHostsFromEnv(` ${origin}, other.test `).includes('portal.example.test'), 'hosts env');
+assert(isPortalHost('portal.example.test:443', origin), 'host match');
+assert(!isPortalHost('app.example.test', origin), 'host miss');
+assert(isPortalPublicPath('/merchant/login'), 'allow merchant');
+assert(isPortalPublicPath('/api/merchant/login'), 'allow merchant api');
+assert(isPortalPublicPath('/portal/abc'), 'allow offer portal');
+assert(isPortalPublicPath('/api/portal/abc/log'), 'allow offer api');
+assert(!isPortalPublicPath('/dashboard'), 'block crm');
+assert(!isPortalPublicPath('/api/telephony/token'), 'block other api');
+assert(!isPortalPublicPath('/login'), 'block login');
 
 if (failed) {
   console.error(`\n${failed} failed`);

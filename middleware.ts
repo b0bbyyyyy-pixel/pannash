@@ -1,7 +1,18 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
+import { isPortalHost, isPortalPublicPath } from '@/lib/merchantPortal/hosts';
 
 export async function middleware(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+  if (isPortalHost(request.nextUrl.hostname)) {
+    if (isPortalPublicPath(pathname)) return NextResponse.next();
+    return NextResponse.redirect(new URL('/merchant/login', request.url));
+  }
+
+  if (pathname.startsWith('/api/')) {
+    return NextResponse.next();
+  }
+
   const response = NextResponse.next();
 
   // Use getSession() here — reads the JWT from the cookie locally,
@@ -30,7 +41,6 @@ export async function middleware(request: NextRequest) {
 
   const { data: { session } } = await supabase.auth.getSession();
 
-  const pathname = request.nextUrl.pathname;
   const iphone = /iPhone|iPod/i.test(request.headers.get('user-agent') ?? '');
   const landingOff = request.cookies.get('gostwrk_m_landing')?.value === '0';
   const stayOnCrm = request.cookies.get('gostwrk_full_crm')?.value === '1';
@@ -56,7 +66,11 @@ export async function middleware(request: NextRequest) {
     '/onboarding', '/agent', '/inbox', '/dialer', '/calendar',
     '/followups', '/hot-leads', '/m',
   ];
-  const isProtected = protectedPrefixes.some((p) => pathname.startsWith(p));
+  const isProtected = protectedPrefixes.some((p) => (
+    p === '/m'
+      ? pathname === '/m' || pathname.startsWith('/m/')
+      : pathname.startsWith(p)
+  ));
   if (isProtected && !session) {
     return NextResponse.redirect(new URL('/auth', request.url));
   }
@@ -65,9 +79,9 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  // Only run middleware on actual page routes — skip _next/static,
-  // _next/image, favicon, api routes (they handle auth themselves), etc.
+  // Pages as before, plus API so portal hosts can lock non-merchant routes.
+  // Non-portal hosts return next() immediately for /api/*.
   matcher: [
-    '/((?!_next/static|_next/image|favicon|api/|images/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|woff2?)$).*)',
+    '/((?!_next/static|_next/image|favicon|images/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|woff2?)$).*)',
   ],
 };

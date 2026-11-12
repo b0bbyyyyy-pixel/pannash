@@ -8,6 +8,7 @@ type Offer = { token: string; title: string; createdAt: string };
 type FileRow = { name: string; at: string };
 
 type Props = {
+  preview?: boolean;
   brand: { businessName: string; logoUrl: string | null; phone: string; email: string; disclaimer: string };
   application: {
     legalName: string;
@@ -55,6 +56,7 @@ async function logContact(channel: string) {
 }
 
 export default function MerchantPortalClient(props: Props) {
+  const preview = !!props.preview;
   const [needs, setNeeds] = useState(props.needs);
   const [files, setFiles] = useState(props.files);
   const [uploading, setUploading] = useState<string | null>(null);
@@ -79,6 +81,7 @@ export default function MerchantPortalClient(props: Props) {
   }, [props.updatedAt]);
 
   async function upload(need: PortalNeed, file: File) {
+    if (preview) return;
     setError('');
     setUploading(need.id);
     try {
@@ -123,7 +126,7 @@ export default function MerchantPortalClient(props: Props) {
   }
 
   return (
-    <div className="min-h-screen bg-[#fdfdfd] text-[#1a1a1a]">
+    <div className={`${preview ? 'min-h-full' : 'min-h-screen'} bg-[#fdfdfd] text-[#1a1a1a]`}>
       <header className="border-b border-[#e5e5e5] bg-white">
         <div className="mx-auto flex max-w-2xl flex-col gap-4 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
@@ -137,7 +140,7 @@ export default function MerchantPortalClient(props: Props) {
             {props.brand.phone && (
               <a
                 href={telHref(props.brand.phone)}
-                onClick={() => void logContact('call')}
+                onClick={() => { if (!preview) void logContact('call'); }}
                 className="rounded-lg border border-[#e5e5e5] px-3 py-1.5 text-sm hover:bg-[#f5f5f5]"
               >
                 Call
@@ -146,7 +149,7 @@ export default function MerchantPortalClient(props: Props) {
             {props.brand.phone && (
               <a
                 href={smsHref(props.brand.phone)}
-                onClick={() => void logContact('text')}
+                onClick={() => { if (!preview) void logContact('text'); }}
                 className="rounded-lg border border-[#e5e5e5] px-3 py-1.5 text-sm hover:bg-[#f5f5f5]"
               >
                 Text
@@ -155,7 +158,7 @@ export default function MerchantPortalClient(props: Props) {
             {props.brand.email && (
               <a
                 href={`mailto:${props.brand.email}`}
-                onClick={() => void logContact('email')}
+                onClick={() => { if (!preview) void logContact('email'); }}
                 className="rounded-lg border border-[#e5e5e5] px-3 py-1.5 text-sm hover:bg-[#f5f5f5]"
               >
                 Email
@@ -231,7 +234,7 @@ export default function MerchantPortalClient(props: Props) {
                     type="file"
                     accept=".pdf,.jpg,.jpeg,.png,.heic,.heif,application/pdf,image/jpeg,image/png,image/heic,image/heif"
                     className="hidden"
-                    disabled={uploading === need.id}
+                    disabled={preview || uploading === need.id}
                     onChange={e => {
                       const file = e.target.files?.[0];
                       e.target.value = '';
@@ -284,6 +287,7 @@ export default function MerchantPortalClient(props: Props) {
                     target="_blank"
                     rel="noreferrer"
                     onClick={() => {
+                      if (preview) return;
                       void fetch('/api/merchant/offer-click', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },

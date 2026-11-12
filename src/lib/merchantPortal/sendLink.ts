@@ -19,7 +19,7 @@ export function loginGenericMessage() {
   return GENERIC_LOGIN;
 }
 
-function emailHtml(businessName: string, url: string, disclaimer: string) {
+function emailHtml(businessName: string, url: string, disclaimer: string, loginUrl: string) {
   const name = businessName || 'your broker';
   return [
     `Thanks for applying with ${name}.`,
@@ -30,7 +30,7 @@ function emailHtml(businessName: string, url: string, disclaimer: string) {
     '',
     `<p><a href="${url}" style="display:inline-block;background:#1a1a1a;color:#fff;text-decoration:none;padding:10px 18px;border-radius:10px;font-size:14px">Open your portal</a></p>`,
     '',
-    `This link is private to you. Expires in 30 days. Request a new one any time at ${merchantLoginUrl()}.`,
+    `This link is private to you. Expires in 30 days. Request a new one any time at ${loginUrl}.`,
   ].join('\n');
 }
 
@@ -78,7 +78,7 @@ export async function sendPortalLink(args: {
       subject: brand.businessName
         ? `Your ${brand.businessName} application portal`
         : 'Your application portal',
-      html: emailHtml(brand.businessName, created.url, brand.disclaimer),
+      html: emailHtml(brand.businessName, created.url, brand.disclaimer, merchantLoginUrl(created.origin)),
     });
     emailed = !!sent.sent;
   }

@@ -6,6 +6,7 @@ import { MERCHANT_STAGES, type MerchantStage } from '@/lib/merchantPortal/stages
 export default function MerchantPortalSettings() {
   const [enabled, setEnabled] = useState(true);
   const [map, setMap] = useState<Record<string, MerchantStage>>({});
+  const [portalDomain, setPortalDomain] = useState('');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
 
@@ -15,11 +16,12 @@ export default function MerchantPortalSettings() {
       .then(d => {
         setEnabled(d.enabled !== false);
         setMap(d.map && typeof d.map === 'object' ? d.map : {});
+        setPortalDomain(typeof d.portalDomain === 'string' ? d.portalDomain : '');
       })
       .catch(() => {});
   }, []);
 
-  async function save(nextEnabled = enabled, nextMap = map) {
+  async function save(nextEnabled = enabled, nextMap = map, nextDomain = portalDomain) {
     setSaving(true);
     setMessage('');
     try {
@@ -27,13 +29,14 @@ export default function MerchantPortalSettings() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ enabled: nextEnabled, map: nextMap }),
+        body: JSON.stringify({ enabled: nextEnabled, map: nextMap, portalDomain: nextDomain }),
       });
+      const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const json = await res.json().catch(() => ({}));
         setMessage(json.error || 'Could not save');
         return;
       }
+      if (typeof json.portalDomain === 'string') setPortalDomain(json.portalDomain);
       setMessage('Saved');
     } finally {
       setSaving(false);
@@ -52,11 +55,24 @@ export default function MerchantPortalSettings() {
           checked={enabled}
           onChange={e => {
             setEnabled(e.target.checked);
-            void save(e.target.checked, map);
+            void save(e.target.checked, map, portalDomain);
           }}
         />
         Enabled
       </label>
+      <div className="mb-4">
+        <label className="block text-sm font-medium text-gray-700 mb-1">Portal domain</label>
+        <input
+          value={portalDomain}
+          onChange={e => setPortalDomain(e.target.value)}
+          onBlur={() => void save(enabled, map, portalDomain)}
+          placeholder="https://"
+          className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+        />
+        <p className="mt-1 text-[11px] text-gray-500">
+          Full https origin, no trailing slash. Leave blank to use the app URL.
+        </p>
+      </div>
       <div className="space-y-2 max-h-80 overflow-y-auto">
         {Object.entries(map).map(([status, stage]) => (
           <div key={status} className="flex items-center justify-between gap-3 text-sm">
@@ -66,7 +82,7 @@ export default function MerchantPortalSettings() {
               onChange={e => {
                 const next = { ...map, [status]: e.target.value as MerchantStage };
                 setMap(next);
-                void save(enabled, next);
+                void save(enabled, next, portalDomain);
               }}
               className="rounded-md border border-gray-300 px-2 py-1 text-xs"
             >

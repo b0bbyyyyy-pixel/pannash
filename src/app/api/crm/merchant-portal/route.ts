@@ -7,6 +7,7 @@ import { eventLabel, logMerchantEvent } from '@/lib/merchantPortal/events';
 import { parsePortalNeeds, type PortalNeed } from '@/lib/merchantPortal/mask';
 import { sendPortalLink } from '@/lib/merchantPortal/sendLink';
 import { createPortal } from '@/lib/merchantPortal/tokens';
+import { loadMerchantPortalView } from '@/lib/merchantPortal/view';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,10 +26,11 @@ export async function GET(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const leadId = req.nextUrl.searchParams.get('leadId') || '';
   if (!leadId) return NextResponse.json({ error: 'leadId required' }, { status: 400 });
+  const wantPreview = req.nextUrl.searchParams.get('preview') === '1';
 
   const { data: lead } = await supabase
     .from('leads')
-    .select('id, underwriting_data, sms_opt_out')
+    .select('id, name, email, phone, company, lead_status, created_at, underwriting_data, sms_opt_out')
     .eq('id', leadId)
     .eq('user_id', user.id)
     .maybeSingle();
@@ -66,7 +68,7 @@ export async function GET(req: NextRequest) {
   else if (portal?.expires_at && new Date(portal.expires_at).getTime() < Date.now()) status = 'expired';
   else if (portal) status = 'active';
 
-  return NextResponse.json({
+  const payload: Record<string, unknown> = {
     status,
     lastViewedAt: portal?.last_viewed_at || null,
     lastLinkSentAt: portal?.last_link_sent_at || null,
@@ -76,7 +78,11 @@ export async function GET(req: NextRequest) {
       const label = eventLabel(String(row.event_type || ''), row.event_data as Record<string, unknown> | null);
       return { at: row.created_at, title: label.title, detail: label.detail };
     }),
-  });
+  };
+  if (wantPreview) {
+    payload.view = await loadMerchantPortalView(admin, { userId: user.id, lead });
+  }
+  return NextResponse.json(payload);
 }
 
 export async function POST(req: NextRequest) {
