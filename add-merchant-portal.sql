@@ -1,5 +1,5 @@
 -- Merchant application portal (v1). Idempotent. Run in the Supabase SQL editor.
--- Does not change client_offer_portals or portal_activity_logs.
+-- Offer-table RLS lives in add-offer-portal-rls.sql (run that too).
 
 CREATE TABLE IF NOT EXISTS merchant_portals (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

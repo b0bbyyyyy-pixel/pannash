@@ -1,24 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { offerPortalAdmin } from '@/lib/portal/offerAdmin';
 
-// Public endpoint — no auth required, token-gated
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
-
+// Public endpoint — no auth required, token-gated via service-role lookup
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ token: string }> }
 ) {
   const { token } = await params;
+  const supabase = offerPortalAdmin();
 
   const { data, error } = await supabase
     .from('client_offer_portals')
     .select('*')
     .eq('token', token)
     .eq('is_active', true)
-    .single();
+    .maybeSingle();
 
   if (error || !data) {
     return NextResponse.json({ error: 'Offer not found or expired' }, { status: 404 });

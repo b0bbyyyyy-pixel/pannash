@@ -1,11 +1,6 @@
 import { Metadata } from 'next';
-import { createClient } from '@supabase/supabase-js';
+import { offerPortalAdmin } from '@/lib/portal/offerAdmin';
 import PortalClient from './PortalClient';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 // Dynamic OG metadata per portal
 export async function generateMetadata({
@@ -14,11 +9,12 @@ export async function generateMetadata({
   params: Promise<{ token: string }>;
 }): Promise<Metadata> {
   const { token } = await params;
+  const supabase = offerPortalAdmin();
   const { data } = await supabase
     .from('client_offer_portals')
     .select('og_title, og_description, og_image_url, og_site_name, title, lead_name')
     .eq('token', token)
-    .single();
+    .maybeSingle();
 
   const ogTitle = data?.og_title || data?.title || 'Your Funding Offer';
   const ogDesc = data?.og_description || 'View and customize your approved funding offer.';
@@ -49,13 +45,14 @@ export default async function PortalPage({
   params: Promise<{ token: string }>;
 }) {
   const { token } = await params;
+  const supabase = offerPortalAdmin();
 
   const { data, error } = await supabase
     .from('client_offer_portals')
     .select('*')
     .eq('token', token)
     .neq('is_active', false)
-    .single();
+    .maybeSingle();
 
   if (error || !data) {
     return (
