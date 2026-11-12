@@ -7,6 +7,7 @@ export default function MerchantPortalSettings() {
   const [enabled, setEnabled] = useState(true);
   const [map, setMap] = useState<Record<string, MerchantStage>>({});
   const [portalDomain, setPortalDomain] = useState('');
+  const [portalBrandName, setPortalBrandName] = useState('');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
 
@@ -17,11 +18,17 @@ export default function MerchantPortalSettings() {
         setEnabled(d.enabled !== false);
         setMap(d.map && typeof d.map === 'object' ? d.map : {});
         setPortalDomain(typeof d.portalDomain === 'string' ? d.portalDomain : '');
+        setPortalBrandName(typeof d.portalBrandName === 'string' ? d.portalBrandName : '');
       })
       .catch(() => {});
   }, []);
 
-  async function save(nextEnabled = enabled, nextMap = map, nextDomain = portalDomain) {
+  async function save(
+    nextEnabled = enabled,
+    nextMap = map,
+    nextDomain = portalDomain,
+    nextBrand = portalBrandName,
+  ) {
     setSaving(true);
     setMessage('');
     try {
@@ -29,7 +36,12 @@ export default function MerchantPortalSettings() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ enabled: nextEnabled, map: nextMap, portalDomain: nextDomain }),
+        body: JSON.stringify({
+          enabled: nextEnabled,
+          map: nextMap,
+          portalDomain: nextDomain,
+          portalBrandName: nextBrand,
+        }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -37,6 +49,7 @@ export default function MerchantPortalSettings() {
         return;
       }
       if (typeof json.portalDomain === 'string') setPortalDomain(json.portalDomain);
+      if (typeof json.portalBrandName === 'string') setPortalBrandName(json.portalBrandName);
       setMessage('Saved');
     } finally {
       setSaving(false);
@@ -55,7 +68,7 @@ export default function MerchantPortalSettings() {
           checked={enabled}
           onChange={e => {
             setEnabled(e.target.checked);
-            void save(e.target.checked, map, portalDomain);
+            void save(e.target.checked, map, portalDomain, portalBrandName);
           }}
         />
         Enabled
@@ -65,12 +78,25 @@ export default function MerchantPortalSettings() {
         <input
           value={portalDomain}
           onChange={e => setPortalDomain(e.target.value)}
-          onBlur={() => void save(enabled, map, portalDomain)}
+          onBlur={() => void save(enabled, map, portalDomain, portalBrandName)}
           placeholder="https://"
           className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
         />
         <p className="mt-1 text-[11px] text-gray-500">
           Full https origin, no trailing slash. Leave blank to use the app URL.
+        </p>
+      </div>
+      <div className="mb-4">
+        <label className="block text-sm font-medium text-gray-700 mb-1">Portal display name</label>
+        <input
+          value={portalBrandName}
+          onChange={e => setPortalBrandName(e.target.value)}
+          onBlur={() => void save(enabled, map, portalDomain, portalBrandName)}
+          placeholder="Shown on the merchant portal and in portal emails"
+          className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+        />
+        <p className="mt-1 text-[11px] text-gray-500">
+          Leave blank to use your business name.
         </p>
       </div>
       <div className="space-y-2 max-h-80 overflow-y-auto">
@@ -82,7 +108,7 @@ export default function MerchantPortalSettings() {
               onChange={e => {
                 const next = { ...map, [status]: e.target.value as MerchantStage };
                 setMap(next);
-                void save(enabled, next, portalDomain);
+                void save(enabled, next, portalDomain, portalBrandName);
               }}
               className="rounded-md border border-gray-300 px-2 py-1 text-xs"
             >

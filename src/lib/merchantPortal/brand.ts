@@ -24,15 +24,27 @@ export async function loadOwnerBrand(
   let portalEnabled = true;
   let stageMap = parseStageMap(null);
   let settingsEmail = '';
+  let portalBrandName = '';
   try {
     const full = await supabase
       .from('user_settings')
-      .select('portal_enabled, portal_stage_map, email_from_name, preferred_send_connection_id')
+      .select('portal_enabled, portal_stage_map, email_from_name, preferred_send_connection_id, portal_brand_name')
       .eq('user_id', userId)
       .maybeSingle();
-    if (!full.error) {
+    if (full.error) {
+      const fallback = await supabase
+        .from('user_settings')
+        .select('portal_enabled, portal_stage_map, email_from_name, preferred_send_connection_id')
+        .eq('user_id', userId)
+        .maybeSingle();
+      if (!fallback.error) {
+        portalEnabled = fallback.data?.portal_enabled !== false;
+        stageMap = parseStageMap(fallback.data?.portal_stage_map);
+      }
+    } else {
       portalEnabled = full.data?.portal_enabled !== false;
       stageMap = parseStageMap(full.data?.portal_stage_map);
+      portalBrandName = String(full.data?.portal_brand_name || '').replace(/\s+/g, ' ').trim();
     }
   } catch {
     /* columns may not exist until SQL is run */
@@ -69,7 +81,7 @@ export async function loadOwnerBrand(
     /* optional */
   }
 
-  const businessName = biz.name;
+  const businessName = portalBrandName || biz.name;
   return {
     businessName,
     logoUrl,

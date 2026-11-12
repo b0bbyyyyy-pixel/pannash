@@ -3,7 +3,7 @@
  * Run: npx tsx scripts/merchant-portal.test.ts
  */
 import { createHash } from 'crypto';
-import { isPortalHost, isPortalPublicPath, portalHostsFromEnv } from '../src/lib/merchantPortal/hosts';
+import { isPortalHost, isPortalPublicPath, portalHostsFromEnv, portalRequestHost } from '../src/lib/merchantPortal/hosts';
 import { maskEin, maskSsn } from '../src/lib/merchantPortal/mask';
 import { normalizePortalDomain } from '../src/lib/merchantPortal/origin';
 import { DEFAULT_STAGE_MAP, mapLeadStatus, resolveMerchantStage } from '../src/lib/merchantPortal/stages';
@@ -50,9 +50,24 @@ assert(isPortalPublicPath('/merchant/login'), 'allow merchant');
 assert(isPortalPublicPath('/api/merchant/login'), 'allow merchant api');
 assert(isPortalPublicPath('/portal/abc'), 'allow offer portal');
 assert(isPortalPublicPath('/api/portal/abc/log'), 'allow offer api');
+assert(isPortalPublicPath('/robots.txt'), 'allow robots');
 assert(!isPortalPublicPath('/dashboard'), 'block crm');
 assert(!isPortalPublicPath('/api/telephony/token'), 'block other api');
 assert(!isPortalPublicPath('/login'), 'block login');
+assert(
+  portalRequestHost({
+    headers: { get: (n) => (n === 'x-forwarded-host' ? 'Portal.Example.test:443, vercel.app' : 'ignored.host') },
+    nextUrl: { hostname: 'wrong.vercel.app' },
+  }) === 'portal.example.test',
+  'xfh host',
+);
+assert(
+  portalRequestHost({
+    headers: { get: (n) => (n === 'host' ? 'portal.example.test' : null) },
+    nextUrl: { hostname: 'wrong.vercel.app' },
+  }) === 'portal.example.test',
+  'host header',
+);
 
 if (failed) {
   console.error(`\n${failed} failed`);

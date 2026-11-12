@@ -1,11 +1,16 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
-import { isPortalHost, isPortalPublicPath } from '@/lib/merchantPortal/hosts';
+import { isPortalHost, isPortalPublicPath, portalRequestHost } from '@/lib/merchantPortal/hosts';
 
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
-  if (isPortalHost(request.nextUrl.hostname)) {
+  const host = portalRequestHost(request);
+  const portalHosts = process.env.PORTAL_HOSTS;
+  if (isPortalHost(host, portalHosts)) {
     if (isPortalPublicPath(pathname)) return NextResponse.next();
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
     return NextResponse.redirect(new URL('/merchant/login', request.url));
   }
 
