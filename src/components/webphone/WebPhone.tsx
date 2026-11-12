@@ -15,7 +15,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import type { Call, Device } from '@twilio/voice-sdk';
-import { createRingback, playPickupBeep, voiceErrorMessage } from '@/lib/telephony/ringback';
+import { createIncomingRing, createRingback, playPickupBeep, voiceErrorMessage } from '@/lib/telephony/ringback';
 import {
   WEBPHONE_LOCK_KEY,
   isPhoneBrowser,
@@ -314,6 +314,13 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     void rb.start();
   }, []);
 
+  const startIncomingAlert = useCallback(() => {
+    if (ringbackRef.current) return;
+    const rb = createIncomingRing();
+    ringbackRef.current = rb;
+    void rb.start();
+  }, []);
+
   // Re-render every second while a call is live (for the timer)
   useEffect(() => {
     if (!callStartedAt) return;
@@ -439,7 +446,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     setMissedBanner(null);
     setIncomingFrom(from);
     setIncomingTabTitle(true);
-    startRingback();
+    startIncomingAlert();
     writeLock(true);
     const paramId = customParam(call, 'leadId');
     const paramName = customParam(call, 'leadName');
@@ -517,7 +524,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
       writeLock(!!callRef.current);
       resetCallState();
     });
-  }, [resetCallState, showMissedBanner, startRingback, stopRingback, writeLock]);
+  }, [resetCallState, showMissedBanner, startIncomingAlert, stopRingback, writeLock]);
 
   const startDevice = useCallback(async () => {
     if (onMobileText) return;
@@ -577,7 +584,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
 
       await device.register();
       try { device.audio?.outgoing(false); } catch { /* older SDK */ }
-      try { device.audio?.incoming(true); } catch { /* older SDK */ }
+      try { device.audio?.incoming(false); } catch { /* older SDK */ }
       if (!weOwnLock()) {
         destroyDevice();
       }
