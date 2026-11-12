@@ -47,6 +47,7 @@ export type FundingApplicationData = {
   owner1Title: string;
   owner1HomeAddress: string;
   owner1Email: string;
+  owner1Mobile: string;
   owner1Ssn: string;
   owner1Dob: string;
   owner1Ownership: string;
@@ -202,6 +203,7 @@ export function buildFundingApplication(lead: ApplicationLeadInput): {
     owner1Title: str(ud.ownerTitle) || 'Owner',
     owner1HomeAddress: composeAddress(str(ud.homeAddress), str(ud.city), str(ud.state), str(ud.zip)),
     owner1Email: str(lead.email),
+    owner1Mobile: str(lead.phone),
     owner1Ssn: str(ud.ssn),
     owner1Dob: formatFormDate(str(ud.dob)),
     owner1Ownership: withPercent(str(ud.ownershipPercent)),

@@ -191,8 +191,9 @@ export async function buildFundingApplicationPdf(
   ]);
   row([{ label: 'Home Address', value: data.owner1HomeAddress, width: contentW }]);
   row([
-    { label: 'Email', value: data.owner1Email, width: contentW * 0.62 },
-    { label: 'SSN', value: data.owner1Ssn, width: contentW * 0.38 },
+    { label: 'Email', value: data.owner1Email, width: contentW * 0.40 },
+    { label: 'Mobile', value: data.owner1Mobile, width: contentW * 0.30 },
+    { label: 'SSN', value: data.owner1Ssn, width: contentW * 0.30 },
   ]);
   row([
     { label: 'Date of Birth', value: data.owner1Dob, width: contentW * 0.34 },

@@ -321,6 +321,7 @@ export async function POST(req: NextRequest) {
     owner1Title: 'Owner',
     owner1HomeAddress: [field(form, 'homeAddress'), field(form, 'homeCity'), field(form, 'homeState'), field(form, 'ownerZip')].filter(Boolean).join(', '),
     owner1Email: email,
+    owner1Mobile: mobile,
     owner1Ssn: field(form, 'ssn'),
     owner1Dob: field(form, 'dob'),
     owner1Ownership: field(form, 'ownership'),
