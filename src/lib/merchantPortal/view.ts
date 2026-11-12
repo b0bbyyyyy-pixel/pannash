@@ -9,9 +9,30 @@ import {
 } from '@/lib/merchantPortal/mask';
 import { resolveMerchantStage, stageUpdatedAt, type MerchantStage } from '@/lib/merchantPortal/stages';
 
+function parseApprovals(raw: unknown): { id: string; amount: string; term: string; frequency: string }[] {
+  if (!Array.isArray(raw)) return [];
+  const out: { id: string; amount: string; term: string; frequency: string }[] = [];
+  for (const row of raw) {
+    if (!row || typeof row !== 'object') continue;
+    const o = row as Record<string, unknown>;
+    const id = String(o.id || '').trim();
+    const amount = money(o.amount);
+    if (!id || !amount) continue;
+    const termLength = Number(o.termLength);
+    const frequency = String(o.paymentFrequency || '').trim();
+    const term = Number.isFinite(termLength) && termLength > 0
+      ? `${termLength}${frequency ? ` ${frequency.toLowerCase()}` : ''} payments`
+      : '';
+    out.push({ id, amount, term, frequency });
+  }
+  return out;
+}
+
 export type MerchantPortalView = {
   brand: { businessName: string; logoUrl: string | null; phone: string; email: string; disclaimer: string };
   application: {
+    id: string;
+    product: string;
     legalName: string;
     dba: string;
     ownerName: string;
@@ -27,8 +48,9 @@ export type MerchantPortalView = {
   stage: MerchantStage;
   updatedAt: string | null;
   needs: PortalNeed[];
-  files: { name: string; at: string }[];
+  files: { name: string; at: string; size?: number | null }[];
   offers: { token: string; title: string; createdAt: string }[];
+  approvals: { id: string; amount: string; term: string; frequency: string }[];
 };
 
 export type MerchantViewLead = {
@@ -69,7 +91,7 @@ export async function loadMerchantPortalView(
       .limit(40),
     supabase
       .from('lead_attachments')
-      .select('file_name, created_at, file_path')
+      .select('file_name, created_at, file_path, file_size')
       .eq('lead_id', lead.id)
       .eq('user_id', args.userId)
       .order('created_at', { ascending: false })
@@ -85,10 +107,11 @@ export async function loadMerchantPortalView(
     const status = String(row.status || '').toLowerCase();
     return status === 'sent' || status === 'awaiting response' || status.includes('awaiting');
   });
+  const approvals = parseApprovals(ud.actualOffers);
   const stage = resolveMerchantStage({
     leadStatus: lead.lead_status,
     stageMap: brand.stageMap,
-    hasActiveOffer: activeOffers.length > 0,
+    hasActiveOffer: activeOffers.length > 0 || approvals.length > 0,
     hasPartnerSubmission,
   });
 
@@ -104,12 +127,10 @@ export async function loadMerchantPortalView(
     ud.businessZip,
   ].filter(v => typeof v === 'string' && v.trim()).join(', ');
 
-  const merchantFiles = (files || []).filter((f: { file_path?: string | null }) => {
-    const path = String(f.file_path || '');
-    return path.includes(`/${lead.id}/`);
-  }).map((f: { file_name?: string | null; created_at?: string | null }) => ({
+  const merchantFiles = (files || []).map((f: { file_name?: string | null; created_at?: string | null; file_size?: number | null }) => ({
     name: String(f.file_name || 'file'),
     at: String(f.created_at || ''),
+    size: typeof f.file_size === 'number' ? f.file_size : null,
   }));
 
   return {
@@ -121,6 +142,8 @@ export async function loadMerchantPortalView(
       disclaimer: brand.disclaimer,
     },
     application: {
+      id: String(lead.id || '').replace(/-/g, '').slice(-5).toUpperCase(),
+      product: String(ud.product || ud.purposeOfFunds || ''),
       legalName: String(lead.company || ud.legalName || ''),
       dba: String(ud.dba || ''),
       ownerName: String(lead.name || ''),
@@ -142,5 +165,6 @@ export async function loadMerchantPortalView(
       title: String(o.title || 'Funding offer'),
       createdAt: String(o.created_at || ''),
     })),
+    approvals,
   };
 }

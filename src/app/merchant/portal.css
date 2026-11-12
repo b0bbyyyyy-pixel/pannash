@@ -1,0 +1,32 @@
+.merchant-portal {
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  background: #ffffff;
+  color: #111113;
+  letter-spacing: -0.01em;
+}
+
+.merchant-portal h1,
+.merchant-portal h2,
+.merchant-portal h3,
+.merchant-portal h4,
+.merchant-portal h5,
+.merchant-portal h6,
+.merchant-portal button,
+.merchant-portal input,
+.merchant-portal select,
+.merchant-portal a,
+.merchant-portal p,
+.merchant-portal span,
+.merchant-portal li,
+.merchant-portal dt,
+.merchant-portal dd {
+  font-family: inherit;
+}
+
+.merchant-portal h1,
+.merchant-portal h2,
+.merchant-portal h3 {
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+}

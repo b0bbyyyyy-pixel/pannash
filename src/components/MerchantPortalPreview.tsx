@@ -70,7 +70,7 @@ export default function MerchantPortalPreview({
             <iframe
               title="Merchant phone preview"
               src={src}
-              className="h-[680px] w-full border-0 bg-[#fdfdfd]"
+              className="h-[680px] w-full border-0 bg-white"
             />
             <div className="flex h-5 items-end justify-center bg-[#1a1a1a]">
               <div className="mb-1.5 h-1 w-28 rounded-full bg-[#3a3a3a]" />
@@ -88,7 +88,7 @@ export default function MerchantPortalPreview({
           <iframe
             title="Merchant computer preview"
             src={src}
-            className="h-[720px] w-full border-0 bg-[#fdfdfd]"
+            className="h-[720px] w-full border-0 bg-white"
           />
         </div>
       )}

@@ -34,19 +34,19 @@ export default function MerchantLoginForm() {
         value={email}
         onChange={e => setEmail(e.target.value)}
         placeholder="Email"
-        className="w-full rounded-lg border border-[#e5e5e5] px-3 py-2 text-sm"
+        className="w-full rounded-lg border border-[#e5e5e5] px-3 py-2.5 text-sm text-[#111113]"
       />
       <input
         type="tel"
         value={mobile}
         onChange={e => setMobile(e.target.value)}
         placeholder="Mobile"
-        className="w-full rounded-lg border border-[#e5e5e5] px-3 py-2 text-sm"
+        className="w-full rounded-lg border border-[#e5e5e5] px-3 py-2.5 text-sm text-[#111113]"
       />
       <button
         type="submit"
         disabled={sending}
-        className="w-full rounded-lg bg-[#1a1a1a] py-2.5 text-sm font-medium text-white disabled:opacity-50"
+        className="w-full rounded-lg bg-[#111113] py-2.5 text-sm font-medium text-white disabled:opacity-50"
       >
         {sending ? 'Sending…' : 'Email me a new link'}
       </button>
