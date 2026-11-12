@@ -26,20 +26,28 @@ export async function GET() {
     portal_domain?: string | null;
     portal_brand_name?: string | null;
   } | null = null;
-  const selects = [
-    'portal_enabled, portal_stage_map, portal_domain, portal_brand_name',
-    'portal_enabled, portal_stage_map, portal_domain',
-    'portal_enabled, portal_stage_map',
-  ];
-  for (const sel of selects) {
-    const res = await supabase
+  const full = await supabase
+    .from('user_settings')
+    .select('portal_enabled, portal_stage_map, portal_domain, portal_brand_name')
+    .eq('user_id', user.id)
+    .maybeSingle();
+  if (!full.error) {
+    settings = full.data;
+  } else {
+    const withDomain = await supabase
       .from('user_settings')
-      .select(sel)
+      .select('portal_enabled, portal_stage_map, portal_domain')
       .eq('user_id', user.id)
       .maybeSingle();
-    if (!res.error) {
-      settings = res.data;
-      break;
+    if (!withDomain.error) {
+      settings = withDomain.data;
+    } else {
+      const fallback = await supabase
+        .from('user_settings')
+        .select('portal_enabled, portal_stage_map')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      settings = fallback.data;
     }
   }
   const { data: statuses } = await supabase
