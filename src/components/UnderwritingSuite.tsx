@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef } from 'react';
 import type { BankStatementAnalysisSnapshot } from '@/lib/bankAnalyzer';
 import ClientPortalModal from '@/components/ClientPortalModal';
-import MerchantPortalPanel from '@/components/MerchantPortalPanel';
 import EmailOfferPicker, { type ParsedOfferFields } from '@/components/EmailOfferPicker';
 import { JotPad, type JotPadHandle } from '@/components/JotPad';
 import { formatEpoSummary, settleEpoOptions, type OfferEpoOption } from '@/lib/email/offerFields';
@@ -1966,7 +1965,6 @@ export default function UnderwritingSuite({
             )}
             {/* Inner wrapper adds padding when in modal mode */}
             <div className={offersAsModal ? 'p-6' : ''}>
-            {!offersOnly && <MerchantPortalPanel leadId={leadId} />}
             {/* Normal sidebar header — only shown when NOT in modal mode */}
             {(!offersAsModal || offersOnly) && <div className="flex items-start justify-between gap-3 mb-4">
               <div className="min-w-0 flex-1">

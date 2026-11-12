@@ -61,6 +61,7 @@ export type LeadStateMsg = {
   lendersComplete?: boolean;
   docsComplete?: boolean;
   offersComplete?: boolean;
+  portalComplete?: boolean;
 };
 
 export type PipelineFrameMsg =
@@ -114,7 +115,7 @@ export function postLeadState(
   section: string,
   appComplete: boolean,
   lendersComplete = false,
-  extra?: { id?: string; docsComplete?: boolean; offersComplete?: boolean },
+  extra?: { id?: string; docsComplete?: boolean; offersComplete?: boolean; portalComplete?: boolean },
 ) {
   postToParent({
     type: LEAD_STATE_MSG,
@@ -124,6 +125,7 @@ export function postLeadState(
     lendersComplete,
     docsComplete: extra?.docsComplete,
     offersComplete: extra?.offersComplete,
+    portalComplete: extra?.portalComplete,
   });
 }
 

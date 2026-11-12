@@ -557,6 +557,9 @@ export default function PipelineClient({ leads, userId, compact = false, initial
       case 'offers':
         goTo(lead.id, { tab: 'offers' });
         break;
+      case 'portal':
+        goTo(lead.id, { tab: 'portal' });
+        break;
       case 'financials':
         goTo(lead.id, { tab: 'lender' });
         break;
@@ -789,6 +792,7 @@ export default function PipelineClient({ leads, userId, compact = false, initial
                     lendersComplete={dots.lendersComplete}
                     docsComplete={dots.docsComplete}
                     offersComplete={dots.offersComplete}
+                    portalComplete={dots.portalComplete}
                   />
                 </div>
               </div>
@@ -1182,6 +1186,7 @@ export default function PipelineClient({ leads, userId, compact = false, initial
                 lendersComplete={overlayDots.lendersComplete}
                 docsComplete={overlayDots.docsComplete}
                 offersComplete={overlayDots.offersComplete}
+                portalComplete={overlayDots.portalComplete}
               />
               <div className="flex items-center gap-3">
                 <a

@@ -186,6 +186,7 @@ function LeadCardOverlay({
             lendersComplete={leadMenuState?.lendersComplete ?? false}
             docsComplete={leadMenuState?.docsComplete ?? false}
             offersComplete={leadMenuState?.offersComplete ?? false}
+            portalComplete={leadMenuState?.portalComplete}
           />
           <div className="flex items-center gap-3">
             <a

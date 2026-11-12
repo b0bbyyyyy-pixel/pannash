@@ -1,9 +1,17 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PortalNeed } from '@/lib/merchantPortal/mask';
 
-export default function MerchantPortalPanel({ leadId }: { leadId: string }) {
+export default function MerchantPortalPanel({
+  leadId,
+  onStatusChange,
+}: {
+  leadId: string;
+  onStatusChange?: (status: string) => void;
+}) {
+  const onStatusChangeRef = useRef(onStatusChange);
+  onStatusChangeRef.current = onStatusChange;
   const [status, setStatus] = useState('none');
   const [lastViewedAt, setLastViewedAt] = useState<string | null>(null);
   const [smsConsent, setSmsConsent] = useState(false);
@@ -17,10 +25,12 @@ export default function MerchantPortalPanel({ leadId }: { leadId: string }) {
     const res = await fetch(`/api/crm/merchant-portal?leadId=${encodeURIComponent(leadId)}`, { credentials: 'include' });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) return;
-    setStatus(json.status || 'none');
+    const next = json.status || 'none';
+    setStatus(next);
     setLastViewedAt(json.lastViewedAt || null);
     setSmsConsent(!!json.smsConsent);
     setNeeds(Array.isArray(json.needs) ? json.needs : []);
+    onStatusChangeRef.current?.(next);
   }, [leadId]);
 
   useEffect(() => { void load(); }, [load]);

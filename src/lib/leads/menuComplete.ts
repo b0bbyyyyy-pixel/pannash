@@ -8,6 +8,7 @@ export type MenuDotFlags = {
   lendersComplete: boolean;
   docsComplete: boolean;
   offersComplete: boolean;
+  portalComplete?: boolean;
 };
 
 export type LeadMenuState = MenuDotFlags & {
@@ -74,6 +75,7 @@ export function applyLeadStateMsg(
     lendersComplete?: boolean;
     docsComplete?: boolean;
     offersComplete?: boolean;
+    portalComplete?: boolean;
   },
 ): LeadMenuState {
   const sameLead = !incoming.id || !prev?.id || incoming.id === prev.id;
@@ -87,6 +89,9 @@ export function applyLeadStateMsg(
     lendersComplete: keep(incoming.lendersComplete, base?.lendersComplete),
     docsComplete: keep(incoming.docsComplete, base?.docsComplete),
     offersComplete: keep(incoming.offersComplete, base?.offersComplete),
+    portalComplete: incoming.portalComplete !== undefined
+      ? incoming.portalComplete
+      : base?.portalComplete,
   };
 }
 
@@ -104,5 +109,8 @@ export function resolveMenuDots(
     lendersComplete: !!(liveForLead?.lendersComplete || fromLead.lendersComplete),
     docsComplete: !!(liveForLead?.docsComplete || fromLead.docsComplete),
     offersComplete: !!(liveForLead?.offersComplete || fromLead.offersComplete),
+    portalComplete: liveForLead?.portalComplete !== undefined
+      ? !!liveForLead.portalComplete
+      : fromLead.portalComplete,
   };
 }

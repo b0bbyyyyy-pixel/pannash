@@ -18,6 +18,8 @@ import { isDocsComplete, isOffersComplete } from '@/lib/leads/menuComplete';
 import { dealStageFromLead, dealStageLabel } from '@/lib/casper/stage';
 import { useWebPhone } from '@/components/webphone/WebPhone';
 import LeadUpdatesTimeline from '@/components/LeadUpdatesTimeline';
+import MerchantPortalPanel from '@/components/MerchantPortalPanel';
+import MerchantPortalEvents from '@/components/MerchantPortalEvents';
 import LeadActionsMenu, { type LeadActionId } from '@/components/LeadActionsMenu';
 import { markUploadSeenClient } from '@/lib/inbox/markUploadSeenClient';
 
@@ -61,10 +63,10 @@ interface Lead {
   list_id?: string | null;
 }
 
-type SurfaceTab = 'application' | 'status' | 'lender' | 'offers' | 'comms';
-const SURFACE_TABS: SurfaceTab[] = ['application', 'status', 'lender', 'offers', 'comms'];
+type SurfaceTab = 'application' | 'status' | 'lender' | 'offers' | 'portal' | 'comms';
+const SURFACE_TABS: SurfaceTab[] = ['application', 'status', 'lender', 'offers', 'portal', 'comms'];
 /** Prev/Next walks these tabs on the same lead — not the next pipeline record. */
-const TAB_CYCLE: SurfaceTab[] = ['application', 'lender', 'offers', 'status'];
+const TAB_CYCLE: SurfaceTab[] = ['application', 'lender', 'offers', 'portal', 'status'];
 type ChildOverlay = 'send' | 'offers' | 'financials' | 'docs' | 'sms' | 'email' | 'followup';
 
 interface LeadWorkspaceClientProps {
@@ -497,6 +499,8 @@ export default function LeadWorkspaceClient({
   const [showManageStatuses, setShowManageStatuses] = useState(false);
   const [docCount, setDocCount]               = useState(initialDocCount);
   const [dbStatuses, setDbStatuses]           = useState<DBStatus[]>([]);
+  const [portalStatus, setPortalStatus]       = useState('none');
+  const [portalTick, setPortalTick]           = useState(0);
 
   const closeChildOverlays = useCallback(() => {
     setShowDocsModal(false);
@@ -674,7 +678,7 @@ export default function LeadWorkspaceClient({
     if (u.owner2FirstName || u.owner2LastName || u.owner2CreditScore) setShowOwner2(true);
   }, [initialLead.id, initialLead.underwriting_data]);
 
-  // Prev/Next walks Application → Lenders → Offers → Status on this lead
+  // Prev/Next walks Application → Lenders → Offers → Portal → Status on this lead
   const tabIdx = TAB_CYCLE.indexOf(surfaceTab);
   const prevTab = tabIdx > 0 ? TAB_CYCLE[tabIdx - 1] : surfaceTab === 'comms' ? 'status' : null;
   const nextTab = tabIdx >= 0 && tabIdx < TAB_CYCLE.length - 1 ? TAB_CYCLE[tabIdx + 1] : null;
@@ -1373,6 +1377,25 @@ export default function LeadWorkspaceClient({
     () => isOffersComplete({ underwriting_data: ud, lead_status: lead.lead_status, submissions }),
     [ud, lead.lead_status, submissions],
   );
+  const portalComplete = portalStatus === 'active';
+  const onPortalStatus = useCallback((status: string) => {
+    setPortalStatus(status);
+    setPortalTick(t => t + 1);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/crm/merchant-portal?leadId=${encodeURIComponent(lead.id)}`, { credentials: 'include' })
+      .then(r => (r.ok ? r.json() : {}) as Promise<{ status?: string }>)
+      .then(j => {
+        if (cancelled) return;
+        setPortalStatus(typeof j.status === 'string' ? j.status : 'none');
+      })
+      .catch(() => {
+        if (!cancelled) setPortalStatus('none');
+      });
+    return () => { cancelled = true; };
+  }, [lead.id]);
   const lendersComplete = useMemo(() => {
     const offers = Array.isArray(ud.actualOffers) ? ud.actualOffers : [];
     if (offers.length > 0) return true;
@@ -1388,9 +1411,10 @@ export default function LeadWorkspaceClient({
       id: lead.id,
       docsComplete,
       offersComplete,
+      portalComplete,
     });
     postLeadPatch(lead.id, { doc_count: docCount });
-  }, [lead.id, surfaceTab, appComplete, lendersComplete, docsComplete, offersComplete, docCount, udHydrated]);
+  }, [lead.id, surfaceTab, appComplete, lendersComplete, docsComplete, offersComplete, portalComplete, docCount, udHydrated]);
 
   const lenderCriteria = useMemo(() => ({
     timeInBusiness:    derivedTIB ?? Number(ud.timeInBusiness ?? 0),
@@ -1427,6 +1451,9 @@ export default function LeadWorkspaceClient({
         break;
       case 'offers':
         setSurfaceTab('offers');
+        break;
+      case 'portal':
+        setSurfaceTab('portal');
         break;
       case 'sms':
         setSurfaceTab('comms');
@@ -1679,6 +1706,7 @@ export default function LeadWorkspaceClient({
               lendersComplete={lendersComplete}
               docsComplete={docsComplete}
               offersComplete={offersComplete}
+              portalComplete={portalComplete}
             />
           )}
           <button
@@ -1728,12 +1756,17 @@ export default function LeadWorkspaceClient({
 
       <div className="bg-white border-b border-[#e5e5e5] px-6 py-2">
         <span className="text-[11px] font-semibold text-[#9b9b9b] uppercase tracking-wider">
-          {{ application: 'Application', status: 'Status', lender: 'Lenders', offers: 'Offers', comms: 'Comms' }[surfaceTab]}
+          {{ application: 'Application', status: 'Status', lender: 'Lenders', offers: 'Offers', portal: 'Portal', comms: 'Comms' }[surfaceTab]}
         </span>
       </div>
 
       <div className={surfaceTab === 'lender' ? 'flex-1 min-h-0 overflow-hidden bg-white' : 'bg-[#fafafa] min-h-[calc(100vh-180px)] p-4'}>
-        {surfaceTab === 'offers' ? (
+        {surfaceTab === 'portal' ? (
+          <div className="w-full max-w-5xl mx-auto">
+            <MerchantPortalPanel leadId={lead.id} onStatusChange={onPortalStatus} />
+            <MerchantPortalEvents leadId={lead.id} refreshKey={portalTick} />
+          </div>
+        ) : surfaceTab === 'offers' ? (
           <UnderwritingSuite
             leadId={lead.id}
             leadName={lead.name}

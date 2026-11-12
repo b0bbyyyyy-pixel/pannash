@@ -1336,6 +1336,9 @@ export default function InboxClient({
       case 'offers':
         openInboxLead({ tab: 'offers' });
         break;
+      case 'portal':
+        openInboxLead({ tab: 'portal' });
+        break;
       case 'financials':
         openInboxLead({ tab: 'lender' });
         break;
@@ -1597,6 +1600,7 @@ export default function InboxClient({
                     lendersComplete={selectedDots.lendersComplete}
                     docsComplete={selectedDots.docsComplete}
                     offersComplete={selectedDots.offersComplete}
+                    portalComplete={selectedDots.portalComplete}
                   />
                   <button
                     type="button"
@@ -2207,6 +2211,7 @@ export default function InboxClient({
                   lendersComplete={pipelineDots.lendersComplete}
                   docsComplete={pipelineDots.docsComplete}
                   offersComplete={pipelineDots.offersComplete}
+                  portalComplete={pipelineDots.portalComplete}
                 />
               ) : (
                 <span className="text-xs text-[#6b6b6b] font-medium">Pipeline</span>
@@ -2312,6 +2317,7 @@ export default function InboxClient({
               lendersComplete={overlayDots.lendersComplete}
               docsComplete={overlayDots.docsComplete}
               offersComplete={overlayDots.offersComplete}
+              portalComplete={overlayDots.portalComplete}
             />
             <div className="flex items-center gap-3">
               <a

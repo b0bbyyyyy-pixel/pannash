@@ -3,7 +3,7 @@ import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
 import { preserveFileActivity } from '@/lib/leads/fileActivity';
 import { merchantAdmin } from '@/lib/merchantPortal/admin';
-import { logMerchantEvent } from '@/lib/merchantPortal/events';
+import { eventLabel, logMerchantEvent } from '@/lib/merchantPortal/events';
 import { parsePortalNeeds, type PortalNeed } from '@/lib/merchantPortal/mask';
 import { sendPortalLink } from '@/lib/merchantPortal/sendLink';
 import { createPortal } from '@/lib/merchantPortal/tokens';
@@ -35,14 +35,24 @@ export async function GET(req: NextRequest) {
   if (!lead) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const admin = merchantAdmin();
-  const { data: portal } = await admin
-    .from('merchant_portals')
-    .select('id, created_at, expires_at, revoked_at, last_viewed_at, last_link_sent_at')
-    .eq('lead_id', leadId)
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const [{ data: portal }, eventsRes] = await Promise.all([
+    admin
+      .from('merchant_portals')
+      .select('id, created_at, expires_at, revoked_at, last_viewed_at, last_link_sent_at')
+      .eq('lead_id', leadId)
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    admin
+      .from('merchant_portal_events')
+      .select('event_type, event_data, created_at')
+      .eq('lead_id', leadId)
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(50),
+  ]);
+  const eventRows = eventsRes.error ? [] : (eventsRes.data || []);
 
   const ud = lead.underwriting_data && typeof lead.underwriting_data === 'object'
     ? lead.underwriting_data as Record<string, unknown>
@@ -62,6 +72,10 @@ export async function GET(req: NextRequest) {
     lastLinkSentAt: portal?.last_link_sent_at || null,
     smsConsent: smsConsent?.optIn === true && !lead.sms_opt_out,
     needs: parsePortalNeeds(ud.portalNeeds),
+    events: (eventRows || []).map(row => {
+      const label = eventLabel(String(row.event_type || ''), row.event_data as Record<string, unknown> | null);
+      return { at: row.created_at, title: label.title, detail: label.detail };
+    }),
   });
 }
 

@@ -9,6 +9,7 @@ export type LeadActionId =
   | 'lender'
   | 'send'
   | 'offers'
+  | 'portal'
   | 'financials'
   | 'docs'
   | 'comms'
@@ -26,6 +27,7 @@ const MENU: MenuEntry[] = [
   { kind: 'item', id: 'application', label: 'Application' },
   { kind: 'item', id: 'lender', label: 'Lenders' },
   { kind: 'item', id: 'offers', label: 'Offers' },
+  { kind: 'item', id: 'portal', label: 'Portal' },
   { kind: 'item', id: 'status', label: 'Status' },
   {
     kind: 'group',
@@ -50,6 +52,7 @@ export default function LeadActionsMenu({
   lendersComplete = false,
   docsComplete = false,
   offersComplete = false,
+  portalComplete,
   hiddenItems,
 }: {
   onAction: (id: LeadActionId) => void;
@@ -61,6 +64,7 @@ export default function LeadActionsMenu({
   lendersComplete?: boolean;
   docsComplete?: boolean;
   offersComplete?: boolean;
+  portalComplete?: boolean;
   hiddenItems?: LeadActionId[];
 }) {
   const [open, setOpen] = useState(false);
@@ -209,6 +213,12 @@ export default function LeadActionsMenu({
                     {entry.id === 'offers' && (
                       <span
                         className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${offersComplete ? 'bg-emerald-500' : 'bg-red-500'}`}
+                        aria-hidden
+                      />
+                    )}
+                    {entry.id === 'portal' && portalComplete !== undefined && (
+                      <span
+                        className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${portalComplete ? 'bg-emerald-500' : 'bg-red-500'}`}
                         aria-hidden
                       />
                     )}
