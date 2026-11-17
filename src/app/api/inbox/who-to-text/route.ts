@@ -130,7 +130,7 @@ function parsePeople(raw: string): { leadId: string; reason: string; action: str
 }
 
 export async function GET() {
-  return runWhoToText([]);
+  return runWhoToText(new Map());
 }
 
 export async function POST(req: NextRequest) {
