@@ -31,6 +31,7 @@ import {
   postLeadActionToFrame,
 } from '@/lib/pipeline/iframeMessages';
 import LeadActionsMenu, { type LeadActionId } from '@/components/LeadActionsMenu';
+import WhoToTextPanel, { type WhoToTextPerson } from '@/components/WhoToTextPanel';
 import { ParseJobsSpinner } from '@/lib/parseJobs/ParseJobsProvider';
 import dynamic from 'next/dynamic';
 import { isCampaignInboxLead } from '@/lib/inbox/promoteCampaignReply';
@@ -227,6 +228,14 @@ function smsSegments(text: string) {
 
 type SavedTpl = { id: string; name: string; body: string };
 
+const GROK_THINKING_DOTS = Array.from({ length: 8 }, (_, i) => {
+  const angle = (i / 8) * Math.PI * 2 - Math.PI / 2;
+  return {
+    cx: 12 + Math.cos(angle) * 8,
+    cy: 12 + Math.sin(angle) * 8,
+  };
+});
+
 function fillTpl(body: string, lead: { name?: string | null; company?: string | null }) {
   const first = (lead.name || '').trim().split(/\s+/)[0] || '';
   return body
@@ -266,6 +275,13 @@ export default function InboxClient({
   const [showStatusPicker, setShowStatusPicker] = useState(false);
   const [statusAnchor, setStatusAnchor] = useState<{ top: number; left: number } | null>(null);
   const statusPickerBtnRef = useRef<HTMLButtonElement>(null);
+  const whoBtnRef = useRef<HTMLButtonElement>(null);
+  const [showWhoToText, setShowWhoToText] = useState(false);
+  const [whoAnchor, setWhoAnchor] = useState<{ top: number; left: number } | null>(null);
+  const [whoLoading, setWhoLoading] = useState(false);
+  const [whoError, setWhoError] = useState('');
+  const [whoPeople, setWhoPeople] = useState<WhoToTextPerson[]>([]);
+  const whoHasScanRef = useRef(false);
   const activeStatusRef = useRef<string | null>(null);
 
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(initialLeadId);
@@ -1032,6 +1048,73 @@ export default function InboxClient({
     }
   };
 
+  const scanWhoToText = () => {
+    if (whoLoading) return;
+    setWhoLoading(true);
+    setWhoError('');
+    fetch('/api/inbox/who-to-text')
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        setWhoPeople(Array.isArray(data.people) ? data.people : []);
+        whoHasScanRef.current = true;
+        if (!res.ok) setWhoError(data.error || 'Could not read texts');
+      })
+      .catch(() => {
+        whoHasScanRef.current = true;
+        setWhoError('Could not read texts');
+      })
+      .finally(() => setWhoLoading(false));
+  };
+
+  const openWhoToText = () => {
+    if (showWhoToText) {
+      setShowWhoToText(false);
+      return;
+    }
+    setShowStatusPicker(false);
+    if (whoBtnRef.current) {
+      const rect = whoBtnRef.current.getBoundingClientRect();
+      setWhoAnchor({ top: rect.bottom + 6, left: rect.left });
+    }
+    setShowWhoToText(true);
+    if (!whoHasScanRef.current) scanWhoToText();
+  };
+
+  const selectWhoToText = (person: WhoToTextPerson) => {
+    setShowWhoToText(false);
+    activeListNameRef.current = null;
+    setActiveListName(null);
+    setActiveListId(null);
+    activeStatusRef.current = null;
+    setActiveStatus(null);
+    selectedLeadIdRef.current = person.leadId;
+    setSelectedLeadId(person.leadId);
+    setLeads((prev) => {
+      const exists = prev.some((l) => l.id === person.leadId);
+      const stub: InboxLead = {
+        id: person.leadId,
+        name: person.name,
+        company: person.company,
+        phone: person.phone,
+        stage: null,
+        lead_status: null,
+        month_key: null,
+        last_contact: person.lastMessageAt,
+        sms_opt_out: false,
+        notes: null,
+        conversation: {
+          id: person.leadId,
+          last_message_at: person.lastMessageAt,
+          last_message_preview: person.reason,
+          last_direction: person.lastDirection,
+          unread_count: person.action === 'reply' ? 1 : 0,
+        },
+      };
+      return sortRail(exists ? prev : [stub, ...prev], person.leadId);
+    });
+    void loadLeads();
+  };
+
   const loadStatusLeads = async (status: string) => {
     setShowStatusPicker(false);
     setLoadingListLeads(true);
@@ -1393,6 +1476,45 @@ export default function InboxClient({
                 className="w-full pl-6 pr-2 py-1.5 text-sm bg-transparent text-[#1a1a1a] placeholder:text-[#9b9b9b] focus:outline-none"
               />
             </div>
+
+            <button
+              ref={whoBtnRef}
+              type="button"
+              title="Who to text"
+              onClick={openWhoToText}
+              className={`flex-shrink-0 flex items-center bg-transparent border-0 p-0 transition-colors ${
+                showWhoToText ? 'text-[#1a1a1a]' : 'text-[#6b6b6b] hover:text-[#1a1a1a]'
+              }`}
+            >
+              <svg
+                className={`w-3.5 h-3.5 ${whoLoading ? 'animate-spin' : ''}`}
+                style={whoLoading ? { animationDuration: '1.35s' } : undefined}
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                aria-hidden
+              >
+                {GROK_THINKING_DOTS.map((dot, i) => (
+                  <circle
+                    key={i}
+                    cx={dot.cx}
+                    cy={dot.cy}
+                    r={1.5}
+                    opacity={whoLoading ? 0.2 + (i / 7) * 0.8 : 0.7}
+                  />
+                ))}
+              </svg>
+            </button>
+            {showWhoToText && whoAnchor && (
+              <WhoToTextPanel
+                anchor={whoAnchor}
+                loading={whoLoading}
+                error={whoError}
+                people={whoPeople}
+                onClose={() => setShowWhoToText(false)}
+                onSelect={selectWhoToText}
+                onRescan={scanWhoToText}
+              />
+            )}
 
             <button
               type="button"
