@@ -14,6 +14,43 @@ export type WhoToTextPerson = {
   reason: string;
 };
 
+export type WhoToTextCleared = {
+  leadId: string;
+  at: string;
+};
+
+function clearedKey(userId: string) {
+  return `who-to-text-cleared:${userId}`;
+}
+
+export function loadWhoToTextCleared(userId: string): WhoToTextCleared[] {
+  try {
+    const raw = localStorage.getItem(clearedKey(userId));
+    const parsed = raw ? JSON.parse(raw) as unknown : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((row) => {
+        if (!row || typeof row !== 'object') return null;
+        const r = row as Record<string, unknown>;
+        const leadId = String(r.leadId ?? '').trim();
+        const at = String(r.at ?? '').trim();
+        if (!leadId || !at) return null;
+        return { leadId, at };
+      })
+      .filter(Boolean) as WhoToTextCleared[];
+  } catch {
+    return [];
+  }
+}
+
+export function saveWhoToTextCleared(userId: string, rows: WhoToTextCleared[]) {
+  try {
+    localStorage.setItem(clearedKey(userId), JSON.stringify(rows.slice(-300)));
+  } catch {
+    /* ignore */
+  }
+}
+
 function relativeTime(iso: string | null) {
   if (!iso) return '';
   const diff = Date.now() - new Date(iso).getTime();
@@ -34,6 +71,7 @@ export default function WhoToTextPanel({
   people,
   onClose,
   onSelect,
+  onClear,
   onRescan,
 }: {
   anchor: { top: number; left: number };
@@ -42,6 +80,7 @@ export default function WhoToTextPanel({
   people: WhoToTextPerson[];
   onClose: () => void;
   onSelect: (person: WhoToTextPerson) => void;
+  onClear: (person: WhoToTextPerson) => void;
   onRescan: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -94,26 +133,36 @@ export default function WhoToTextPanel({
           <p className="px-3 py-8 text-xs text-[#9b9b9b] text-center">Nothing looks overdue right now.</p>
         ) : (
           people.map((person, i) => (
-            <button
+            <div
               key={person.leadId}
-              type="button"
-              onClick={() => onSelect(person)}
-              className="w-full text-left px-3 py-2.5 border-b border-[#f0f0f0] hover:bg-[#fafafa] transition-colors"
+              className="flex items-start gap-2 px-3 py-2.5 border-b border-[#f0f0f0] hover:bg-[#fafafa] transition-colors"
             >
-              <div className="flex items-start justify-between gap-2">
-                <p className="text-xs font-medium text-[#1a1a1a] truncate">
-                  {i + 1}. {person.company || person.name}
+              <button
+                type="button"
+                title="Already handled"
+                onClick={() => onClear(person)}
+                className="mt-0.5 flex-shrink-0 w-3 h-3 rounded-full border border-[#c4c4c4] bg-transparent p-0 hover:border-[#1a1a1a] hover:bg-[#f0f0f0]"
+              />
+              <button
+                type="button"
+                onClick={() => onSelect(person)}
+                className="flex-1 min-w-0 text-left bg-transparent border-0 p-0"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-xs font-medium text-[#1a1a1a] truncate">
+                    {i + 1}. {person.company || person.name}
+                  </p>
+                  <span className="text-[10px] text-gray-400 flex-shrink-0">{relativeTime(person.lastMessageAt)}</span>
+                </div>
+                {person.company ? (
+                  <p className="text-[10px] text-[#6b6b6b] truncate mt-0.5">{person.name}</p>
+                ) : null}
+                <p className="text-[11px] text-[#555] mt-1 leading-snug">{person.reason}</p>
+                <p className="text-[10px] text-[#9b9b9b] mt-1">
+                  {person.action === 'reply' ? 'Reply' : 'Follow up'}
                 </p>
-                <span className="text-[10px] text-gray-400 flex-shrink-0">{relativeTime(person.lastMessageAt)}</span>
-              </div>
-              {person.company ? (
-                <p className="text-[10px] text-[#6b6b6b] truncate mt-0.5">{person.name}</p>
-              ) : null}
-              <p className="text-[11px] text-[#555] mt-1 leading-snug">{person.reason}</p>
-              <p className="text-[10px] text-[#9b9b9b] mt-1">
-                {person.action === 'reply' ? 'Reply' : 'Follow up'}
-              </p>
-            </button>
+              </button>
+            </div>
           ))
         )}
       </div>

@@ -31,7 +31,12 @@ import {
   postLeadActionToFrame,
 } from '@/lib/pipeline/iframeMessages';
 import LeadActionsMenu, { type LeadActionId } from '@/components/LeadActionsMenu';
-import WhoToTextPanel, { type WhoToTextPerson } from '@/components/WhoToTextPanel';
+import WhoToTextPanel, {
+  loadWhoToTextCleared,
+  saveWhoToTextCleared,
+  type WhoToTextCleared,
+  type WhoToTextPerson,
+} from '@/components/WhoToTextPanel';
 import { ParseJobsSpinner } from '@/lib/parseJobs/ParseJobsProvider';
 import dynamic from 'next/dynamic';
 import { isCampaignInboxLead } from '@/lib/inbox/promoteCampaignReply';
@@ -282,6 +287,7 @@ export default function InboxClient({
   const [whoError, setWhoError] = useState('');
   const [whoPeople, setWhoPeople] = useState<WhoToTextPerson[]>([]);
   const whoHasScanRef = useRef(false);
+  const whoClearedRef = useRef<WhoToTextCleared[]>([]);
   const activeStatusRef = useRef<string | null>(null);
 
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(initialLeadId);
@@ -1048,11 +1054,19 @@ export default function InboxClient({
     }
   };
 
+  useEffect(() => {
+    whoClearedRef.current = loadWhoToTextCleared(userId);
+  }, [userId]);
+
   const scanWhoToText = () => {
     if (whoLoading) return;
     setWhoLoading(true);
     setWhoError('');
-    fetch('/api/inbox/who-to-text')
+    fetch('/api/inbox/who-to-text', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cleared: whoClearedRef.current }),
+    })
       .then(async (res) => {
         const data = await res.json().catch(() => ({}));
         setWhoPeople(Array.isArray(data.people) ? data.people : []);
@@ -1064,6 +1078,16 @@ export default function InboxClient({
         setWhoError('Could not read texts');
       })
       .finally(() => setWhoLoading(false));
+  };
+
+  const clearWhoToText = (person: WhoToTextPerson) => {
+    const next = [
+      ...whoClearedRef.current.filter((c) => c.leadId !== person.leadId),
+      { leadId: person.leadId, at: new Date().toISOString() },
+    ];
+    whoClearedRef.current = next;
+    saveWhoToTextCleared(userId, next);
+    setWhoPeople((prev) => prev.filter((p) => p.leadId !== person.leadId));
   };
 
   const openWhoToText = () => {
@@ -1512,6 +1536,7 @@ export default function InboxClient({
                 people={whoPeople}
                 onClose={() => setShowWhoToText(false)}
                 onSelect={selectWhoToText}
+                onClear={clearWhoToText}
                 onRescan={scanWhoToText}
               />
             )}

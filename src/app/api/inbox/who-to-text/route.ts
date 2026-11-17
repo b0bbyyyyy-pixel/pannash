@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { getRequestUser } from '@/lib/auth/getRequestUser';
@@ -75,6 +75,34 @@ function scoreThread(args: {
   return score;
 }
 
+function parseCleared(raw: unknown) {
+  if (!Array.isArray(raw)) return new Map<string, string>();
+  const map = new Map<string, string>();
+  for (const row of raw) {
+    if (!row || typeof row !== 'object') continue;
+    const r = row as Record<string, unknown>;
+    const leadId = String(r.leadId ?? r.lead_id ?? '').trim();
+    const at = String(r.at ?? '').trim();
+    if (leadId && at && !Number.isNaN(Date.parse(at))) map.set(leadId, at);
+  }
+  return map;
+}
+
+function isClearedLead(
+  conv: Record<string, unknown>,
+  cleared: Map<string, string>,
+) {
+  const at = cleared.get(String(conv.lead_id ?? ''));
+  if (!at) return false;
+  const inbound = String(conv.last_inbound_at ?? '')
+    || (conv.last_direction === 'inbound' ? String(conv.last_message_at ?? '') : '');
+  if (!inbound) return true;
+  const inboundMs = Date.parse(inbound);
+  const clearedMs = Date.parse(at);
+  if (Number.isNaN(inboundMs) || Number.isNaN(clearedMs)) return true;
+  return inboundMs <= clearedMs;
+}
+
 function parsePeople(raw: string): { leadId: string; reason: string; action: string }[] {
   const text = raw.trim();
   const start = text.indexOf('{');
@@ -102,6 +130,15 @@ function parsePeople(raw: string): { leadId: string; reason: string; action: str
 }
 
 export async function GET() {
+  return runWhoToText([]);
+}
+
+export async function POST(req: NextRequest) {
+  const body = await req.json().catch(() => ({}));
+  return runWhoToText(parseCleared((body as { cleared?: unknown }).cleared));
+}
+
+async function runWhoToText(cleared: Map<string, string>) {
   try {
     const cookieStore = await cookies();
     const supabase = createServerClient(
@@ -150,6 +187,7 @@ export async function GET() {
       const lead = leadsById.get(String(c.lead_id ?? ''));
       if (!lead) return false;
       if (lead.sms_opt_out) return false;
+      if (isClearedLead(c, cleared)) return false;
       const status = String(lead.lead_status ?? '').trim().toLowerCase();
       if (SKIP_STATUSES.has(status)) return false;
       if (c.last_direction !== 'inbound' && SKIP_FOLLOW_STATUSES.has(status)) return false;
