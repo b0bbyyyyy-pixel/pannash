@@ -24,6 +24,7 @@ type Person = {
 
 const SKIP_STATUSES = new Set(['dnc', 'do not contact', 'dead', 'not interested']);
 const SKIP_FOLLOW_STATUSES = new Set(['funded', 'closed']);
+const LIST_SIZE = 20;
 
 function clip(s: string, n = 160) {
   const t = s.replace(/\s+/g, ' ').trim();
@@ -212,7 +213,7 @@ async function runWhoToText(cleared: Map<string, string>) {
         };
       })
       .sort((a, b) => b.score - a.score)
-      .slice(0, 40);
+      .slice(0, 50);
 
     const msgsByLead = new Map<string, Msg[]>();
     const fetchIds = pre.map((p) => String(p.conv.lead_id));
@@ -276,14 +277,14 @@ async function runWhoToText(cleared: Map<string, string>) {
       };
     }).sort((a, b) => b.score - a.score);
 
-    const heuristicTop = ranked.filter((r) => r.score > 0).slice(0, 10);
-    const pool = heuristicTop.length ? heuristicTop : ranked.slice(0, 10);
+    const heuristicTop = ranked.filter((r) => r.score > 0).slice(0, LIST_SIZE);
+    const pool = heuristicTop.length ? heuristicTop : ranked.slice(0, LIST_SIZE);
     if (!pool.length) return NextResponse.json({ people: [] });
 
-    let people = pool.slice(0, 10).map((r) => r.person);
+    let people = pool.slice(0, LIST_SIZE).map((r) => r.person);
     try {
       const openai = getAIClient();
-      const digest = pool.slice(0, 36).map((r, i) => (
+      const digest = pool.slice(0, LIST_SIZE).map((r, i) => (
         `#${i + 1} leadId=${r.person.leadId}
 name=${r.person.name}${r.person.company ? ` (${r.person.company})` : ''}
 last=${r.person.lastDirection || 'unknown'} ${Math.round(hoursAgo(r.person.lastMessageAt))}h ago
@@ -294,12 +295,12 @@ ${r.transcript || '(no recent messages)'}`
       const completion = await openai.chat.completions.create({
         model: GROK_MINI_MODEL,
         temperature: 0.2,
-        max_tokens: 900,
+        max_tokens: 1600,
         response_format: { type: 'json_object' },
         messages: [
           {
             role: 'system',
-            content: `You help an MCA broker remember who to text. Pick the TOP 10 people who need a reply or a follow-up now.
+            content: `You help an MCA broker remember who to text. Pick the TOP ${LIST_SIZE} people who need a reply or a follow-up now.
 Prioritize:
 1. They texted last and he has not answered — especially questions, docs, rates, timing, or "did you get this"
 2. He promised to get back / send something / check and then went quiet
@@ -324,15 +325,15 @@ Use only leadIds from the digest. Reasons must be specific to that thread, not g
           action: row.action === 'follow_up' ? 'follow_up' : 'reply',
           reason: clip(row.reason || person.reason, 180),
         });
-        if (fromAi.length >= 10) break;
+        if (fromAi.length >= LIST_SIZE) break;
       }
       if (fromAi.length) {
         for (const r of pool) {
-          if (fromAi.length >= 10) break;
+          if (fromAi.length >= LIST_SIZE) break;
           if (seen.has(r.person.leadId)) continue;
           fromAi.push(r.person);
         }
-        people = fromAi.slice(0, 10);
+        people = fromAi.slice(0, LIST_SIZE);
       }
     } catch {
       // Heuristic ranking still returns a useful list if Grok is down.
