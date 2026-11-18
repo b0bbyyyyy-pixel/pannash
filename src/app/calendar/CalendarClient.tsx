@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { JotPad, type JotPadHandle } from '@/components/JotPad';
 import { PING_BEFORE_OPTIONS, buildPingSchedule, offsetsFromEvent } from '@/lib/casper/calendarPingSchedule';
+import FinanceView from './FinanceView';
 import { usePolling } from '@/lib/sync/usePolling';
 import { kickSyncWorker } from '@/lib/sync/kick';
 
@@ -52,7 +53,7 @@ interface EventFormState {
   color: string;
 }
 
-type View = 'month' | 'week' | 'trackers';
+type View = 'month' | 'week' | 'trackers' | 'finance';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const DAYS_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -491,6 +492,10 @@ export default function CalendarClient() {
               <h1 className="text-sm font-semibold tracking-wide uppercase">
                 {MONTHS[month]} {year} | Trackers
               </h1>
+            ) : view === 'finance' ? (
+              <h1 className="text-sm font-semibold tracking-wide uppercase">
+                Finance
+              </h1>
             ) : (
               <h1 className="text-sm font-semibold tracking-wide uppercase">
                 {MONTHS[month]} {year}
@@ -512,6 +517,13 @@ export default function CalendarClient() {
             </button>
             <span className="text-[#d4d4d4]">|</span>
             <button
+              onClick={() => { setView('finance'); setSelectedDate(null); }}
+              className={view === 'finance' ? 'font-semibold text-[#1a1a1a]' : 'text-[#9b9b9b] hover:text-[#1a1a1a]'}
+            >
+              Finance
+            </button>
+            <span className="text-[#d4d4d4]">|</span>
+            <button
               onClick={() => { setView('trackers'); setSelectedDate(null); }}
               className={view === 'trackers' ? 'font-semibold text-[#1a1a1a]' : 'text-[#9b9b9b] hover:text-[#1a1a1a]'}
             >
@@ -527,6 +539,8 @@ export default function CalendarClient() {
           <div className="flex-1 flex items-center justify-center">
             <div className="w-6 h-6 border-2 border-[#e5e5e5] border-t-[#1a1a1a] rounded-full animate-spin" />
           </div>
+        ) : view === 'finance' ? (
+          <FinanceView />
         ) : view === 'trackers' ? (
           <HabitTracker
             year={year}
