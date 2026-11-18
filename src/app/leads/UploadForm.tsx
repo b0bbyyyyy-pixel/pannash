@@ -77,6 +77,24 @@ function parseSheetCsv(csv: string): string[][] {
   return rows.slice(0, last);
 }
 
+/** Excel / Sheets copy-paste → grid. Prefer tabs when both delimiters appear (cells often contain commas). */
+function parsePastedGrid(text: string): string[][] {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+  const first = trimmed.split(/\r?\n/, 1)[0] ?? '';
+  const tabCount = first.split('\t').length;
+  const commaCount = first.split(',').length;
+  const delimiter = tabCount >= 2 || tabCount >= commaCount ? '\t' : ',';
+  const result = Papa.parse<string[]>(trimmed, {
+    delimiter,
+    skipEmptyLines: true,
+    header: false,
+  });
+  return ((result.data ?? []) as string[][]).filter(
+    (r): r is string[] => Array.isArray(r) && r.some(c => String(c ?? '').trim()),
+  );
+}
+
 function isImportableLead(l: ParsedLead): boolean {
   return Boolean(l.name || l.phone || l.email || l.company);
 }
@@ -742,46 +760,29 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
 
   // Parse raw pasted text (tab or comma separated) into leads
   const parsePastedText = (text: string): ParsedLead[] => {
-    if (!text.trim()) return [];
+    const rows = parsePastedGrid(text);
+    if (rows.length === 0) return [];
 
-    // Detect delimiter: if most lines have tabs, use tab; else comma
-    const lines = text.trim().split('\n');
-    const tabCount = lines[0]?.split('\t').length ?? 1;
-    const commaCount = lines[0]?.split(',').length ?? 1;
-    const delimiter = tabCount >= commaCount ? '\t' : ',';
-
-    const result = Papa.parse<string[]>(text.trim(), {
-      delimiter,
-      skipEmptyLines: true,
-      header: false,
-    });
-
-    if (!result.data || result.data.length === 0) return [];
-
-    // Check if first row looks like headers
-    const firstRow = result.data[0] as string[];
-    const headerKeywords = ['name', 'email', 'phone', 'company', 'notes', 'contact', 'first', 'last', 'organization', 'mobile'];
-    const hasHeaders = firstRow.some(v =>
-      headerKeywords.some(k => String(v).trim().toLowerCase().includes(k))
-    );
-
-    const dataRows = hasHeaders ? result.data.slice(1) : result.data;
+    const hasHeaders = looksLikeHeaderRow(rows[0]);
+    const dataRows = hasHeaders ? rows.slice(1) : rows;
 
     if (hasHeaders) {
-      // Build a header-keyed object per row
-      const headers = firstRow.map(h => String(h).trim().toLowerCase());
+      const headers = rows[0].map(h => String(h).trim().toLowerCase());
       return dataRows
         .map(row => {
           const obj: Record<string, string> = {};
-          (row as string[]).forEach((val, i) => { obj[headers[i] || `col${i}`] = String(val || '').trim(); });
-          return smartColumnMapper(obj);
+          row.forEach((val, i) => { obj[headers[i] || `col${i}`] = String(val || '').trim(); });
+          return mergeSheetLead(smartColumnMapper(obj) as ParsedLead, row);
         })
-        .filter(l => l.name || l.email || l.phone);
-    } else {
-      return dataRows
-        .map(row => positionalColumnMapper((row as string[]).map(v => String(v || '').trim())))
-        .filter(l => l.name || l.email || l.phone);
+        .filter(isImportableLead);
     }
+
+    return dataRows
+      .map(row => mergeSheetLead(
+        positionalColumnMapper(row.map(v => String(v || '').trim())) as ParsedLead,
+        row,
+      ))
+      .filter(isImportableLead);
   };
 
   const handlePasteChange = (text: string) => {
@@ -820,21 +821,15 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
     setLoading(false);
   };
 
-  const handlePasteAiParse = () => {
-    const text = pasteText.trim();
+  const handlePasteAiParse = (rawText?: string) => {
+    if (aiParsing) return;
+    const text = (typeof rawText === 'string' ? rawText : pasteText).trim();
     if (!text) {
       setAiParseError('Paste data from Excel first.');
       return;
     }
     setAiParseError('');
-    const lines = text.split('\n');
-    const tabCount = lines[0]?.split('\t').length ?? 1;
-    const commaCount = lines[0]?.split(',').length ?? 1;
-    const delimiter = tabCount >= commaCount ? '\t' : ',';
-    const parsed = Papa.parse<string[]>(text, { delimiter, skipEmptyLines: true, header: false });
-    const rows = ((parsed.data ?? []) as string[][]).filter(
-      r => Array.isArray(r) && r.some(c => String(c ?? '').trim()),
-    );
+    const rows = parsePastedGrid(text);
     if (!rows.length) {
       setAiParseError('No rows in the paste to parse.');
       return;
@@ -1771,16 +1766,16 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
         <>
           <div>
             <p className="text-xs text-gray-500 mb-2">
-              Select cells in Excel → Copy (⌘C) → Paste below. Works with or without column headers.
+              Select cells in Excel → Copy (⌘C) → Paste below. We map columns immediately, then AI cleans up names, companies, and phones.
             </p>
             <textarea
               value={pasteText}
               onChange={e => handlePasteChange(e.target.value)}
               onPaste={e => {
-                // Let the paste happen then immediately parse
                 setTimeout(() => {
                   const ta = e.target as HTMLTextAreaElement;
                   handlePasteChange(ta.value);
+                  handlePasteAiParse(ta.value);
                 }, 0);
               }}
               rows={6}
@@ -1792,7 +1787,7 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
           {pasteText.trim() && !aiParsing && (
             <button
               type="button"
-              onClick={handlePasteAiParse}
+              onClick={() => handlePasteAiParse()}
               className="w-full flex items-center justify-center gap-2 py-2.5 border border-dashed border-gray-300 rounded-lg text-sm text-gray-600 hover:border-gray-500 hover:text-gray-900 hover:bg-gray-50 transition-colors"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1831,7 +1826,7 @@ export default function UploadForm({ selectedListId, onSuccess, initialMode = 'f
                 </p>
                 <button
                   type="button"
-                  onClick={handlePasteAiParse}
+                  onClick={() => handlePasteAiParse()}
                   disabled={aiParsing || !pasteText.trim()}
                   className="text-xs font-medium text-gray-500 hover:text-gray-900 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
                 >
