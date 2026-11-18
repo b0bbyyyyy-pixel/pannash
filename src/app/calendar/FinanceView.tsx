@@ -265,7 +265,7 @@ export default function FinanceView() {
 
         <div className="p-6 bg-[#fafafa]">
           <p className="text-[10px] uppercase tracking-wider text-[#9b9b9b] mb-3">Daily leftover</p>
-          <p className={`text-3xl font-semibold tracking-tight ${totals.dailyDiscretionary < 0 ? 'text-red-700' : 'text-[#1a1a1a]'}`}>
+          <p className="text-sm font-medium text-[#9b9b9b]">
             {money(totals.dailyDiscretionary)}
           </p>
           <p className="text-[11px] text-[#9b9b9b] mt-1">after bills and debt minimums · 30.44-day month</p>
