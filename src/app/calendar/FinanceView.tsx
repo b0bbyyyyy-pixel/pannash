@@ -3,13 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   blankFinance,
-  DAYS_PER_MONTH,
   FINANCE_CADENCES,
-  daysUntil,
-  fallbackPlan,
   money,
   moneyShort,
-  monthsUntil,
+  monthlyFrom,
   newFinanceId,
   normalizeFinance,
   parseMoney,
@@ -18,26 +15,39 @@ import {
   type BusinessExpense,
   type FinanceCadence,
   type FinanceData,
-  type FinancePlan,
-  type MoneyLine,
 } from '@/lib/finance/plan';
+
+const GRAYS = ['#1a1a1a', '#525252', '#737373', '#a3a3a3', '#d4d4d4'];
+const WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 export default function FinanceView() {
   const [data, setData] = useState<FinanceData>(blankFinance());
-  const [plan, setPlan] = useState<FinancePlan | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [planning, setPlanning] = useState(false);
   const [error, setError] = useState('');
   const [setupRequired, setSetupRequired] = useState(false);
   const [openBizId, setOpenBizId] = useState<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const dataRef = useRef(data);
-  dataRef.current = data;
 
   const totals = useMemo(() => summarizeFinance(data), [data]);
-  const shownPlan = plan ?? fallbackPlan(data);
   const openBiz = data.businesses.find(b => b.id === openBizId) ?? null;
+  const spend = useMemo(() => spendingSlices(data), [data]);
+  const todayIdx = (new Date().getDay() + 6) % 7;
+  const outflow = totals.monthlyBills + totals.monthlyDebtMin;
+  const inShare = totals.monthlyIncome > 0 ? Math.min(100, (outflow / totals.monthlyIncome) * 100) : 0;
+  const leftShare = Math.max(0, 100 - inShare);
+  const upcomingSorted = [...data.upcoming].sort((a, b) => (a.date || '9').localeCompare(b.date || '9'));
+  const expenses = useMemo(() => {
+    const rows = data.businesses.flatMap(b =>
+      b.expenses.map(e => ({ ...e, account: b.name || 'Business', accountId: b.id })),
+    );
+    return rows.sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 6);
+  }, [data.businesses]);
+  const netPts = useMemo(() => {
+    const start = totals.netCash;
+    const day = totals.dailyDiscretionary;
+    return WEEK.map((_, i) => start + day * i);
+  }, [totals.netCash, totals.dailyDiscretionary]);
 
   const persist = useCallback((next: FinanceData) => {
     setSaving(true);
@@ -75,42 +85,11 @@ export default function FinanceView() {
       .then((d) => {
         if (d.setupRequired) setSetupRequired(true);
         if (d.data) setData(normalizeFinance(d.data));
-        if (d.plan && Array.isArray(d.plan.allocations)) setPlan(d.plan);
       })
       .catch(() => setError('Could not load finance'))
       .finally(() => setLoading(false));
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
   }, []);
-
-  async function runPlan() {
-    setPlanning(true);
-    setError('');
-    try {
-      if (saveTimer.current) {
-        clearTimeout(saveTimer.current);
-        saveTimer.current = null;
-      }
-      persist(dataRef.current);
-      const res = await fetch('/api/calendar/finance/advise', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: dataRef.current }),
-      });
-      const d = await res.json().catch(() => ({}));
-      if (d.setupRequired) setSetupRequired(true);
-      if (!res.ok) {
-        setError(d.error || 'Could not build a plan');
-        setPlan(fallbackPlan(dataRef.current));
-        return;
-      }
-      if (d.plan) setPlan(d.plan);
-    } catch {
-      setError('Could not build a plan');
-      setPlan(fallbackPlan(dataRef.current));
-    } finally {
-      setPlanning(false);
-    }
-  }
 
   if (loading) {
     return (
@@ -138,300 +117,365 @@ export default function FinanceView() {
     );
   }
 
-  const maxIncome = Math.max(1, ...data.incomes.map(r => monthlyFromSafe(r)));
-  const maxDebt = Math.max(1, ...data.debts.map(r => r.balance || 0));
-  const upcomingSorted = [...data.upcoming].sort((a, b) => (a.date || '9').localeCompare(b.date || '9'));
+  const accounts = [
+    ...data.checking.map(a => ({ id: a.id, name: a.name, balance: a.balance, kind: 'checking' as const })),
+    ...data.businesses.map(a => ({ id: a.id, name: a.name, balance: a.balance, kind: 'business' as const })),
+  ];
 
   return (
-    <div className="flex-1 overflow-auto">
-      <div className="px-6 py-5 max-w-[1280px]">
-        {setupRequired && (
-          <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 px-3 py-2 mb-4">
-            Run <code className="font-mono">add-personal-finance.sql</code> in Supabase, then save again.
-          </p>
-        )}
+    <div className="relative flex-1 min-h-0 overflow-hidden bg-[#f4f4f4] p-3">
+      <div className="h-full grid grid-cols-3 grid-rows-[minmax(0,0.95fr)_minmax(0,1.15fr)_minmax(0,1fr)] gap-3">
 
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-x-8 gap-y-4 pb-5 border-b border-[#e5e5e5]">
-          <Kpi label="Cash on hand" value={moneyShort(totals.cashTotal)} hint={`${moneyShort(totals.cashChecking)} personal · ${moneyShort(totals.cashBusiness)} business`} />
-          <Kpi label="Revenue / month" value={moneyShort(totals.monthlyIncome)} hint={`${data.incomes.length || 0} source${data.incomes.length === 1 ? '' : 's'}`} />
-          <Kpi label="Bills / month" value={moneyShort(totals.monthlyBills)} hint="must-pays" />
-          <Kpi label="Coming up · 90d" value={moneyShort(totals.upcomingSoon)} hint={`${moneyShort(totals.upcomingYear)} this year`} />
-          <Kpi label="Leftover / day" value={money(totals.dailyDiscretionary)} hint="after bills + debt mins" />
-        </div>
+        <Panel>
+          <RowHead
+            title="Cash"
+            right={saving ? 'Saving' : error || ''}
+            add={() => patch(d => ({ ...d, checking: [...d.checking, { id: newFinanceId(), name: '', balance: 0 }] }))}
+          />
+          <p className="text-[22px] font-semibold tracking-tight text-[#1a1a1a] mt-1 leading-none">{money(totals.cashTotal)}</p>
+          <p className="text-[11px] text-[#9b9b9b] mt-1.5">{money(totals.dailyDiscretionary)} leftover / day</p>
+          <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
+            {accounts.length === 0 ? (
+              <p className="text-[11px] text-[#b0b0b0]">Add checking or a business account</p>
+            ) : accounts.map(a => (
+              <div key={`${a.kind}-${a.id}`} className="flex items-center gap-2 py-1">
+                {a.kind === 'business' ? (
+                  <button type="button" onClick={() => setOpenBizId(a.id)} className="flex-1 min-w-0 text-left text-[11px] text-[#6b6b6b] truncate">
+                    {a.name || 'Business'}
+                  </button>
+                ) : (
+                  <LineInput
+                    value={data.checking.find(x => x.id === a.id)?.name || ''}
+                    placeholder="Checking"
+                    className="flex-1"
+                    onChange={name => patch(d => ({ ...d, checking: d.checking.map(x => x.id === a.id ? { ...x, name } : x) }))}
+                  />
+                )}
+                {a.kind === 'checking' ? (
+                  <MoneyField
+                    value={a.balance}
+                    className="w-[4.5rem] text-right"
+                    onChange={balance => patch(d => ({ ...d, checking: d.checking.map(x => x.id === a.id ? { ...x, balance } : x) }))}
+                  />
+                ) : (
+                  <MoneyField
+                    value={a.balance}
+                    className="w-[4.5rem] text-right"
+                    onChange={balance => patch(d => ({
+                      ...d,
+                      businesses: d.businesses.map(x => x.id === a.id ? { ...x, balance } : x),
+                    }))}
+                  />
+                )}
+                <Remove onClick={() => patch(d => a.kind === 'checking'
+                  ? { ...d, checking: d.checking.filter(x => x.id !== a.id) }
+                  : { ...d, businesses: d.businesses.filter(x => x.id !== a.id) })} />
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() => patch(d => ({
+                ...d,
+                businesses: [...d.businesses, { id: newFinanceId(), name: '', balance: 0, expenses: [] }],
+              }))}
+              className="mt-1 text-[11px] text-[#9b9b9b] hover:text-[#1a1a1a]"
+            >
+              + Business
+            </button>
+          </div>
+        </Panel>
 
-        <div className="mt-6 pb-5 border-b border-[#e5e5e5]">
-          <Head
+        <Panel>
+          <RowHead
+            title="Revenue"
+            add={() => patch(d => ({ ...d, incomes: [...d.incomes, { id: newFinanceId(), name: '', amount: 0, cadence: 'monthly' }] }))}
+          />
+          <p className="text-[22px] font-semibold tracking-tight text-[#1a1a1a] mt-1 leading-none">{money(totals.monthlyIncome)}</p>
+          <p className="text-[11px] text-[#9b9b9b] mt-1.5">/ month</p>
+          <div className="mt-2 min-h-0 flex-1 overflow-y-auto grid grid-cols-2 gap-x-4 content-start">
+            {data.incomes.length === 0 ? (
+              <p className="col-span-2 text-[11px] text-[#b0b0b0]">Add a source</p>
+            ) : data.incomes.map(row => (
+              <div key={row.id} className="py-1 min-w-0">
+                <LineInput value={row.name} placeholder="Source" className="w-full" onChange={name => patch(d => ({ ...d, incomes: d.incomes.map(x => x.id === row.id ? { ...x, name } : x) }))} />
+                <div className="flex items-center gap-1">
+                  <MoneyField value={row.amount} className="flex-1" onChange={amount => patch(d => ({ ...d, incomes: d.incomes.map(x => x.id === row.id ? { ...x, amount } : x) }))} />
+                  <CadenceSelect value={row.cadence} onChange={cadence => patch(d => ({ ...d, incomes: d.incomes.map(x => x.id === row.id ? { ...x, cadence } : x) }))} />
+                  <Remove onClick={() => patch(d => ({ ...d, incomes: d.incomes.filter(x => x.id !== row.id) }))} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+
+        <Panel>
+          <RowHead title="Bills" extra={`${money(totals.dailyDiscretionary)} / day`} />
+          <p className="text-[22px] font-semibold tracking-tight text-[#1a1a1a] mt-1 leading-none">{money(outflow)}</p>
+          <p className="text-[11px] text-[#9b9b9b] mt-1.5">{moneyShort(totals.monthlyBills)} bills · {moneyShort(totals.monthlyDebtMin)} debt min</p>
+          <div className="mt-auto pt-3">
+            <div className="flex h-1.5 rounded-full overflow-hidden bg-[#ececec]">
+              <div className="h-full bg-[#1a1a1a]" style={{ width: `${inShare}%` }} />
+              <div className="h-full bg-[#b0b0b0]" style={{ width: `${leftShare}%` }} />
+            </div>
+            <div className="flex justify-between mt-1.5 text-[10px] text-[#9b9b9b]">
+              <span>{Math.round(inShare)}% spoken for</span>
+              <span>{Math.round(leftShare)}% leftover</span>
+            </div>
+          </div>
+        </Panel>
+
+        <Panel>
+          <RowHead title="Spend" />
+          <SpendDonut slices={spend.slices} total={spend.total} />
+        </Panel>
+
+        <Panel>
+          <RowHead title="Leftover" extra={`${moneyShort(totals.dailyDiscretionary)} / day`} />
+          <WeekBars value={Math.max(0, totals.dailyDiscretionary)} today={todayIdx} />
+        </Panel>
+
+        <Panel>
+          <RowHead
             title="Debt"
-            total={moneyShort(totals.debtTotal)}
-            hint="Stays on this screen so you see it. Minimums are already in leftover."
-            onAdd={() => patch(d => ({
+            extra={moneyShort(totals.debtTotal)}
+            add={() => patch(d => ({
               ...d,
               debts: [...d.debts, { id: newFinanceId(), name: '', balance: 0, minPayment: 0, apr: 0, cadence: 'monthly' }],
             }))}
           />
-          {data.debts.length === 0 ? (
-            <Empty>Add the balances you want staring at you — even if you are not paying them off yet.</Empty>
-          ) : (
-            <div className="space-y-3">
-              {data.debts.map(row => (
-                <div key={row.id}>
-                  <div className="flex items-center gap-3">
-                    <LineInput value={row.name} placeholder="Loan / card / IRS" className="flex-1 min-w-0" onChange={name => patch(d => ({ ...d, debts: d.debts.map(x => x.id === row.id ? { ...x, name } : x) }))} />
-                    <span className="text-xs text-[#6b6b6b] shrink-0">$</span>
-                    <MoneyField value={row.balance} className="w-28" onChange={balance => patch(d => ({ ...d, debts: d.debts.map(x => x.id === row.id ? { ...x, balance } : x) }))} />
-                    <label className="hidden sm:flex items-center gap-1 text-[11px] text-[#9b9b9b] shrink-0">
-                      min
-                      <MoneyField value={row.minPayment} className="w-16" onChange={minPayment => patch(d => ({ ...d, debts: d.debts.map(x => x.id === row.id ? { ...x, minPayment } : x) }))} />
-                    </label>
-                    <label className="hidden sm:flex items-center gap-1 text-[11px] text-[#9b9b9b] shrink-0">
-                      apr
-                      <MoneyField value={row.apr} className="w-12" onChange={apr => patch(d => ({ ...d, debts: d.debts.map(x => x.id === row.id ? { ...x, apr } : x) }))} />
-                      %
-                    </label>
-                    <CadenceSelect value={row.cadence} onChange={cadence => patch(d => ({ ...d, debts: d.debts.map(x => x.id === row.id ? { ...x, cadence } : x) }))} />
-                    <Remove onClick={() => patch(d => ({ ...d, debts: d.debts.filter(x => x.id !== row.id) }))} />
-                  </div>
-                  <div className="mt-1.5 h-px bg-[#f0f0f0]">
-                    <div className="h-px bg-[#c4c4c4]" style={{ width: `${Math.min(100, ((row.balance || 0) / maxDebt) * 100)}%` }} />
-                  </div>
+          <div className="mt-1 min-h-0 flex-1 overflow-y-auto">
+            {data.debts.length === 0 ? (
+              <p className="text-[11px] text-[#b0b0b0] pt-2">Add a balance</p>
+            ) : data.debts.map(row => (
+              <div key={row.id} className="py-1.5 border-b border-[#f0f0f0]">
+                <div className="flex items-center gap-2">
+                  <LineInput value={row.name} placeholder="Loan / card" className="flex-1 min-w-0" onChange={name => patch(d => ({ ...d, debts: d.debts.map(x => x.id === row.id ? { ...x, name } : x) }))} />
+                  <MoneyField value={row.balance} className="w-[4.75rem] text-right" onChange={balance => patch(d => ({ ...d, debts: d.debts.map(x => x.id === row.id ? { ...x, balance } : x) }))} />
+                  <Remove onClick={() => patch(d => ({ ...d, debts: d.debts.filter(x => x.id !== row.id) }))} />
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-12 gap-y-8 mt-6 pb-6 border-b border-[#e5e5e5]">
-          <div>
-            <Head
-              title="Revenue"
-              total={moneyShort(totals.monthlyIncome)}
-              hint="Where money comes in — personal draws, commissions, W-2, side work"
-              onAdd={() => patch(d => ({
-                ...d,
-                incomes: [...d.incomes, { id: newFinanceId(), name: '', amount: 0, cadence: 'monthly' }],
-              }))}
-            />
-            {data.incomes.length === 0 ? <Empty>Add each source separately so you can see the mix.</Empty> : data.incomes.map(row => (
-              <div key={row.id} className="mb-3">
-                <MoneyRow
-                  row={row}
-                  placeholder="Gostwrk / commission"
-                  onChange={next => patch(d => ({ ...d, incomes: d.incomes.map(x => x.id === row.id ? next : x) }))}
-                  onRemove={() => patch(d => ({ ...d, incomes: d.incomes.filter(x => x.id !== row.id) }))}
-                />
-                <div className="mt-1.5 h-px bg-[#f0f0f0]">
-                  <div className="h-px bg-[#9b9b9b]" style={{ width: `${Math.min(100, (monthlyFromSafe(row) / maxIncome) * 100)}%` }} />
+                <div className="flex items-center gap-2 mt-0.5 text-[10px] text-[#9b9b9b]">
+                  <span>min</span>
+                  <MoneyField value={row.minPayment} className="w-14" onChange={minPayment => patch(d => ({ ...d, debts: d.debts.map(x => x.id === row.id ? { ...x, minPayment } : x) }))} />
+                  <span>apr</span>
+                  <MoneyField value={row.apr} className="w-10" onChange={apr => patch(d => ({ ...d, debts: d.debts.map(x => x.id === row.id ? { ...x, apr } : x) }))} />
+                  <CadenceSelect value={row.cadence} onChange={cadence => patch(d => ({ ...d, debts: d.debts.map(x => x.id === row.id ? { ...x, cadence } : x) }))} />
                 </div>
-                <p className="text-[10px] text-[#c4c4c4] mt-1">{money(monthlyFromSafe(row))} / month</p>
               </div>
             ))}
-          </div>
-
-          <div>
-            <Head
-              title="Checking"
-              total={moneyShort(totals.cashChecking)}
-              hint="Personal accounts — balances you can actually spend"
-              onAdd={() => patch(d => ({
-                ...d,
-                checking: [...d.checking, { id: newFinanceId(), name: '', balance: 0 }],
-              }))}
-            />
-            {data.checking.length === 0 ? <Empty>Add each checking / savings account you use.</Empty> : data.checking.map(row => (
-              <div key={row.id} className="flex items-center gap-3 mb-2">
-                <LineInput value={row.name} placeholder="Chase checking" className="flex-1" onChange={name => patch(d => ({ ...d, checking: d.checking.map(x => x.id === row.id ? { ...x, name } : x) }))} />
-                <span className="text-xs text-[#6b6b6b]">$</span>
-                <MoneyField value={row.balance} className="w-28" onChange={balance => patch(d => ({ ...d, checking: d.checking.map(x => x.id === row.id ? { ...x, balance } : x) }))} />
-                <Remove onClick={() => patch(d => ({ ...d, checking: d.checking.filter(x => x.id !== row.id) }))} />
+            {data.important.map(row => (
+              <div key={row.id} className="flex items-center gap-2 py-1.5 border-b border-[#f0f0f0]">
+                <LineInput value={row.name} placeholder="Goal" className="flex-1" onChange={name => patch(d => ({ ...d, important: d.important.map(x => x.id === row.id ? { ...x, name } : x) }))} />
+                <MoneyField value={row.amount} className="w-16 text-right" onChange={amount => patch(d => ({ ...d, important: d.important.map(x => x.id === row.id ? { ...x, amount } : x) }))} />
+                <Remove onClick={() => patch(d => ({ ...d, important: d.important.filter(x => x.id !== row.id) }))} />
               </div>
             ))}
+            <button
+              type="button"
+              onClick={() => patch(d => ({ ...d, important: [...d.important, { id: newFinanceId(), name: '', amount: 0, cadence: 'monthly' }] }))}
+              className="mt-1 text-[11px] text-[#9b9b9b] hover:text-[#1a1a1a]"
+            >
+              + Goal
+            </button>
           </div>
-        </div>
+        </Panel>
 
-        <div className="mt-6 pb-6 border-b border-[#e5e5e5]">
-          <Head
-            title="Business"
-            total={moneyShort(totals.cashBusiness)}
-            hint="Balances on the dashboard. Click an account for expenses you type in."
-            onAdd={() => patch(d => ({
-              ...d,
-              businesses: [...d.businesses, { id: newFinanceId(), name: '', balance: 0, expenses: [] }],
-            }))}
-          />
-          {data.businesses.length === 0 ? (
-            <Empty>Add operating, payroll, tax, or merchant accounts.</Empty>
-          ) : (
-            <div className="divide-y divide-[#f0f0f0]">
-              {data.businesses.map(row => {
-                const spent = row.expenses.reduce((s, e) => s + (e.amount || 0), 0);
-                return (
-                  <div key={row.id} className="flex items-center gap-3 py-2.5">
-                    <button
-                      type="button"
-                      onClick={() => setOpenBizId(row.id)}
-                      className="flex-1 min-w-0 text-left bg-transparent border-0 p-0"
-                    >
-                      <p className="text-xs font-medium text-[#1a1a1a] truncate">{row.name || 'Untitled account'}</p>
-                      <p className="text-[10px] text-[#9b9b9b] mt-0.5">
-                        {row.expenses.length} expense{row.expenses.length === 1 ? '' : 's'}
-                        {spent ? ` · ${moneyShort(spent)} logged` : ''}
-                        {' · open'}
-                      </p>
-                    </button>
-                    <span className="text-xs text-[#6b6b6b]">$</span>
-                    <MoneyField
-                      value={row.balance}
-                      className="w-28"
-                      onChange={balance => patch(d => ({
-                        ...d,
-                        businesses: d.businesses.map(x => x.id === row.id ? { ...x, balance } : x),
-                      }))}
-                    />
-                    <Remove onClick={() => patch(d => ({ ...d, businesses: d.businesses.filter(x => x.id !== row.id) }))} />
+        <Panel dark={false} className="!bg-[#1a1a1a] !border-[#1a1a1a]">
+          <div className="flex items-baseline justify-between">
+            <p className="text-[11px] font-medium text-white">Bills</p>
+            <button
+              type="button"
+              onClick={() => patch(d => ({ ...d, bills: [...d.bills, { id: newFinanceId(), name: '', amount: 0, cadence: 'monthly' }] }))}
+              className="text-[11px] text-white/50 hover:text-white"
+            >
+              Add
+            </button>
+          </div>
+          <p className="text-[11px] text-white/45 mt-1">{data.bills.length} monthly · {data.upcoming.length} upcoming</p>
+          <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
+            {data.bills.length === 0 && data.upcoming.length === 0 ? (
+              <p className="text-[11px] text-white/35">Add rent, utilities, Christmas</p>
+            ) : (
+              <>
+                {data.bills.map(row => (
+                  <div key={row.id} className="flex items-center gap-2 py-1.5 border-b border-white/10">
+                    <LineInput dark value={row.name} placeholder="Rent" className="flex-1" onChange={name => patch(d => ({ ...d, bills: d.bills.map(x => x.id === row.id ? { ...x, name } : x) }))} />
+                    <MoneyField dark value={row.amount} className="w-14 text-right" onChange={amount => patch(d => ({ ...d, bills: d.bills.map(x => x.id === row.id ? { ...x, amount } : x) }))} />
+                    <CadenceSelect dark value={row.cadence} onChange={cadence => patch(d => ({ ...d, bills: d.bills.map(x => x.id === row.id ? { ...x, cadence } : x) }))} />
+                    <Remove dark onClick={() => patch(d => ({ ...d, bills: d.bills.filter(x => x.id !== row.id) }))} />
                   </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-12 gap-y-8 mt-6 pb-6 border-b border-[#e5e5e5]">
-          <div>
-            <Head
-              title="Coming up"
-              total={moneyShort(totals.upcomingYear)}
-              hint="Christmas, holidays, trips — date and total cost"
-              onAdd={() => patch(d => ({
-                ...d,
-                upcoming: [...d.upcoming, { id: newFinanceId(), name: '', amount: 0, date: '', notes: '' }],
-              }))}
-            />
-            {upcomingSorted.length === 0 ? (
-              <Empty>Add Christmas, birthdays, taxes, trips — anything with a date and a price.</Empty>
-            ) : upcomingSorted.map(row => {
-              const days = row.date ? daysUntil(row.date) : null;
-              const monthly = row.date && row.amount ? row.amount / monthsUntil(row.date) : 0;
-              return (
-                <div key={row.id} className="mb-3">
-                  <div className="flex items-center gap-3">
-                    <LineInput value={row.name} placeholder="Christmas" className="flex-1 min-w-0" onChange={name => patch(d => ({ ...d, upcoming: d.upcoming.map(x => x.id === row.id ? { ...x, name } : x) }))} />
+                ))}
+                {upcomingSorted.map(row => (
+                  <div key={row.id} className="flex items-center gap-2 py-1.5 border-b border-white/10">
+                    <LineInput dark value={row.name} placeholder="Christmas" className="flex-1" onChange={name => patch(d => ({ ...d, upcoming: d.upcoming.map(x => x.id === row.id ? { ...x, name } : x) }))} />
                     <input
                       type="date"
                       value={row.date}
                       onChange={e => patch(d => ({ ...d, upcoming: d.upcoming.map(x => x.id === row.id ? { ...x, date: e.target.value } : x) }))}
-                      className="text-[11px] text-[#6b6b6b] bg-transparent border-0 border-b border-[#e5e5e5] py-1 focus:outline-none"
+                      className="w-[7.2rem] bg-transparent text-[10px] text-white/50 focus:outline-none"
                     />
-                    <span className="text-xs text-[#6b6b6b]">$</span>
-                    <MoneyField value={row.amount} className="w-24" onChange={amount => patch(d => ({ ...d, upcoming: d.upcoming.map(x => x.id === row.id ? { ...x, amount } : x) }))} />
-                    <Remove onClick={() => patch(d => ({ ...d, upcoming: d.upcoming.filter(x => x.id !== row.id) }))} />
+                    <MoneyField dark value={row.amount} className="w-14 text-right" onChange={amount => patch(d => ({ ...d, upcoming: d.upcoming.map(x => x.id === row.id ? { ...x, amount } : x) }))} />
+                    <Remove dark onClick={() => patch(d => ({ ...d, upcoming: d.upcoming.filter(x => x.id !== row.id) }))} />
                   </div>
-                  <p className="text-[10px] text-[#c4c4c4] mt-1">
-                    {days == null || !row.date
-                      ? 'Set a date'
-                      : days < 0
-                        ? `${Math.abs(days)}d ago`
-                        : days === 0
-                          ? 'Today'
-                          : `${days}d · ${money(monthly)} / month to have it`}
-                  </p>
-                </div>
-              );
-            })}
-          </div>
-
-          <div>
-            <Head
-              title="Monthly bills"
-              total={moneyShort(totals.monthlyBills)}
-              hint="Rent, utilities, insurance, subscriptions"
-              onAdd={() => patch(d => ({
-                ...d,
-                bills: [...d.bills, { id: newFinanceId(), name: '', amount: 0, cadence: 'monthly' }],
-              }))}
-            />
-            {data.bills.length === 0 ? <Empty>Add every bill you have to pay whether you like it or not.</Empty> : data.bills.map(row => (
-              <div key={row.id} className="mb-2">
-                <MoneyRow
-                  row={row}
-                  placeholder="Rent"
-                  onChange={next => patch(d => ({ ...d, bills: d.bills.map(x => x.id === row.id ? next : x) }))}
-                  onRemove={() => patch(d => ({ ...d, bills: d.bills.filter(x => x.id !== row.id) }))}
-                />
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-x-12 gap-y-8 mt-6">
-          <div>
-            <Head
-              title="Daily plan"
-              hint="AI splits leftover after bills and debt minimums"
-              action={(
-                <button
-                  type="button"
-                  onClick={runPlan}
-                  disabled={planning}
-                  className="text-[11px] font-medium text-[#6b6b6b] hover:text-[#1a1a1a] disabled:opacity-40"
-                >
-                  {planning ? 'Planning…' : 'Plan my days'}
-                </button>
-              )}
-            />
-            {error && <p className="text-xs text-red-600 mb-2">{error}</p>}
-            <div className="space-y-3">
-              {shownPlan.allocations.map((a, i) => (
-                <div key={`${a.name}-${i}`} className="flex items-start justify-between gap-4 border-b border-[#f0f0f0] pb-2.5">
-                  <div className="min-w-0">
-                    <p className="text-xs font-medium text-[#1a1a1a]">{a.name}</p>
-                    <p className="text-[11px] text-[#6b6b6b] mt-0.5">{a.why}</p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-xs text-[#9b9b9b]">{money(a.perDay)}/day</p>
-                    <p className="text-[10px] text-[#c4c4c4]">{money(a.perMonth)} / mo</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-            {shownPlan.advice && (
-              <p className="mt-4 text-xs text-[#6b6b6b] leading-relaxed">{shownPlan.advice}</p>
+                ))}
+              </>
             )}
+            <button
+              type="button"
+              onClick={() => patch(d => ({ ...d, upcoming: [...d.upcoming, { id: newFinanceId(), name: '', amount: 0, date: '', notes: '' }] }))}
+              className="mt-1.5 text-[11px] text-white/50 hover:text-white"
+            >
+              + Upcoming
+            </button>
           </div>
+        </Panel>
 
-          <div>
-            <Head
-              title="Important"
-              hint="Emergency fund, kids, anything you want funded"
-              onAdd={() => patch(d => ({
-                ...d,
-                important: [...d.important, { id: newFinanceId(), name: '', amount: 0, cadence: 'monthly' }],
-              }))}
-            />
-            {data.important.map(row => (
-              <div key={row.id} className="mb-2">
-                <MoneyRow
-                  row={row}
-                  placeholder="Emergency fund"
-                  onChange={next => patch(d => ({ ...d, important: d.important.map(x => x.id === row.id ? next : x) }))}
-                  onRemove={() => patch(d => ({ ...d, important: d.important.filter(x => x.id !== row.id) }))}
-                />
-              </div>
+        <Panel>
+          <RowHead title="Net" extra={`in ${moneyShort(totals.monthlyIncome)} · out ${moneyShort(outflow)}`} />
+          <p className="text-[13px] font-semibold text-[#1a1a1a] mt-1">{money(totals.netCash)}</p>
+          <NetLine points={netPts} />
+        </Panel>
+
+        <Panel>
+          <RowHead title="Expenses" extra="from business accounts" />
+          <div className="mt-1 min-h-0 flex-1 overflow-y-auto">
+            <div className="grid grid-cols-[1fr_auto] gap-x-3 text-[10px] text-[#b0b0b0] py-1">
+              <span>Name</span><span>Amount</span>
+            </div>
+            {expenses.length === 0 ? (
+              <p className="text-[11px] text-[#b0b0b0] pt-2">Open a business account to log spend</p>
+            ) : expenses.map(e => (
+              <button
+                key={e.id}
+                type="button"
+                onClick={() => setOpenBizId(e.accountId)}
+                className="w-full grid grid-cols-[1fr_auto] gap-x-3 items-center py-1.5 border-b border-[#f0f0f0] text-left"
+              >
+                <span className="min-w-0">
+                  <span className="block text-[11px] text-[#1a1a1a] truncate">{e.name || e.account}</span>
+                  <span className="block text-[10px] text-[#9b9b9b]">{e.date || e.account}</span>
+                </span>
+                <span className="text-[11px] text-[#1a1a1a] tabular-nums">{money(e.amount)}</span>
+              </button>
             ))}
-            <textarea
-              value={data.notes}
-              onChange={e => patch(d => ({ ...d, notes: e.target.value }))}
-              rows={3}
-              placeholder="Notes"
-              className="mt-4 w-full text-xs text-[#1a1a1a] resize-none focus:outline-none border-b border-[#e5e5e5] py-1 bg-transparent"
-            />
-            <p className="text-[10px] text-[#c4c4c4] mt-3">{saving ? 'Saving…' : 'Saved as you type'}</p>
-            <p className="text-[10px] text-[#c4c4c4] mt-1">
-              Net cash {moneyShort(totals.netCash)} · {DAYS_PER_MONTH}-day month
-            </p>
           </div>
+        </Panel>
+      </div>
+      {setupRequired && (
+        <p className="absolute bottom-2 left-4 text-[10px] text-[#9b9b9b]">
+          Run add-personal-finance.sql in Supabase
+        </p>
+      )}
+    </div>
+  );
+}
+
+function spendingSlices(data: FinanceData) {
+  const items = [
+    ...data.bills.map(b => ({ name: b.name.trim() || 'Bill', value: monthlyFrom(b.amount, b.cadence) })),
+    ...data.debts.filter(d => (d.minPayment || 0) > 0).map(d => ({
+      name: `${d.name.trim() || 'Debt'} min`,
+      value: monthlyFrom(d.minPayment, d.cadence),
+    })),
+  ].filter(x => x.value > 0).sort((a, b) => b.value - a.value);
+  const total = items.reduce((s, x) => s + x.value, 0);
+  const top = items.slice(0, 4);
+  const rest = items.slice(4).reduce((s, x) => s + x.value, 0);
+  if (rest > 0) top.push({ name: 'Other', value: rest });
+  return { total, slices: top.map((x, i) => ({ ...x, color: GRAYS[i % GRAYS.length] })) };
+}
+
+function SpendDonut({ slices, total }: { slices: { name: string; value: number; color: string }[]; total: number }) {
+  const r = 38;
+  const stroke = 14;
+  const c = 2 * Math.PI * r;
+  let offset = 0;
+  const rings = slices.map((s) => {
+    const len = total > 0 ? (s.value / total) * c : 0;
+    const item = { ...s, dash: `${len} ${c - len}`, offset };
+    offset -= len;
+    return item;
+  });
+  return (
+    <div className="mt-1 flex-1 min-h-0 flex items-center gap-3">
+      <div className="relative w-[108px] h-[108px] shrink-0">
+        <svg viewBox="0 0 108 108" className="w-full h-full -rotate-90">
+          <circle cx="54" cy="54" r={r} fill="none" stroke="#ececec" strokeWidth={stroke} />
+          {rings.map(s => (
+            <circle
+              key={s.name}
+              cx="54" cy="54" r={r}
+              fill="none"
+              stroke={s.color}
+              strokeWidth={stroke}
+              strokeDasharray={s.dash}
+              strokeDashoffset={s.offset}
+            />
+          ))}
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-3">
+          <p className="text-[9px] text-[#9b9b9b] leading-none">Total</p>
+          <p className="text-[12px] font-semibold text-[#1a1a1a] mt-0.5 leading-tight">{moneyShort(total)}</p>
         </div>
       </div>
+      <ul className="min-w-0 flex-1 space-y-1">
+        {slices.length === 0 ? (
+          <li className="text-[11px] text-[#b0b0b0]">Bills show here</li>
+        ) : slices.map(s => (
+          <li key={s.name} className="flex items-center gap-1.5 text-[11px]">
+            <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: s.color }} />
+            <span className="truncate text-[#6b6b6b] flex-1">{s.name}</span>
+          </li>
+        ))}
+      </ul>
     </div>
+  );
+}
+
+function WeekBars({ value, today }: { value: number; today: number }) {
+  const max = Math.max(1, value);
+  return (
+    <div className="flex-1 min-h-0 flex items-end gap-2 pt-2 px-1">
+      {WEEK.map((d, i) => {
+        const on = i === today;
+        const h = value > 0 ? 55 + (on ? 28 : 0) : 8;
+        return (
+          <div key={d} className="flex-1 min-w-0 flex flex-col items-center justify-end h-full">
+            {on && value > 0 && (
+              <span className="text-[9px] text-[#1a1a1a] mb-1 tabular-nums">{moneyShort(value)}</span>
+            )}
+            <div
+              className={`w-full max-w-[18px] rounded-t-[3px] ${on ? 'bg-[#1a1a1a]' : 'bg-[#d8d8d8]'}`}
+              style={{ height: `${Math.min(100, h)}%` }}
+            />
+            <span className={`text-[9px] mt-1 ${on ? 'text-[#1a1a1a]' : 'text-[#b0b0b0]'}`}>{d}</span>
+          </div>
+        );
+      })}
+      <span className="sr-only">{money(max)} leftover each day</span>
+    </div>
+  );
+}
+
+function NetLine({ points }: { points: number[] }) {
+  const w = 280;
+  const h = 88;
+  const min = Math.min(0, ...points);
+  const max = Math.max(1, ...points);
+  const span = max - min || 1;
+  const xy = points.map((v, i) => {
+    const x = (i / Math.max(1, points.length - 1)) * w;
+    const y = h - ((v - min) / span) * (h - 8) - 4;
+    return `${x},${y}`;
+  }).join(' ');
+  const last = points[points.length - 1] ?? 0;
+  const lastX = w;
+  const lastY = h - ((last - min) / span) * (h - 8) - 4;
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} className="w-full flex-1 min-h-0 mt-1" preserveAspectRatio="none">
+      <polyline fill="none" stroke="#d4d4d4" strokeWidth="1.5" points={`0,${h} ${w},${h}`} />
+      <polyline fill="none" stroke="#1a1a1a" strokeWidth="1.8" points={xy} />
+      <circle cx={lastX} cy={lastY} r="2.5" fill="#1a1a1a" />
+    </svg>
   );
 }
 
@@ -456,47 +500,28 @@ function BusinessDetail({
     .reduce((s, e) => s + (e.amount || 0), 0);
 
   function patchExp(id: string, next: Partial<BusinessExpense>) {
-    onChange({
-      ...account,
-      expenses: account.expenses.map(e => e.id === id ? { ...e, ...next } : e),
-    });
+    onChange({ ...account, expenses: account.expenses.map(e => e.id === id ? { ...e, ...next } : e) });
   }
 
   return (
-    <div className="flex-1 overflow-auto">
-      <div className="px-6 py-5 max-w-[860px]">
-        <div className="flex items-center justify-between gap-3 mb-6">
-          <button type="button" onClick={onBack} className="text-[11px] font-medium text-[#6b6b6b] hover:text-[#1a1a1a]">
-            ← Finance
-          </button>
-          <button type="button" onClick={onRemove} className="text-[11px] text-[#c4c4c4] hover:text-[#1a1a1a]">
-            Remove account
-          </button>
+    <div className="flex-1 min-h-0 overflow-hidden bg-[#f4f4f4] p-3 flex flex-col">
+      <div className="flex items-center justify-between mb-2">
+        <button type="button" onClick={onBack} className="text-[11px] text-[#6b6b6b] hover:text-[#1a1a1a]">Back</button>
+        <button type="button" onClick={onRemove} className="text-[11px] text-[#9b9b9b] hover:text-[#1a1a1a]">Remove</button>
+      </div>
+      <Panel className="flex-1 min-h-0">
+        <LineInput value={account.name} placeholder="Operating account" className="w-full text-[13px] font-medium" onChange={name => onChange({ ...account, name })} />
+        <div className="grid grid-cols-3 gap-3 mt-3 text-[11px]">
+          <div><p className="text-[#9b9b9b]">Balance</p><p className="text-[15px] font-semibold">{money(account.balance)}</p></div>
+          <div><p className="text-[#9b9b9b]">Logged</p><p className="text-[15px] font-semibold">{money(spent)}</p></div>
+          <div><p className="text-[#9b9b9b]">This month</p><p className="text-[15px] font-semibold">{money(spentMonth)}</p></div>
         </div>
-
-        <LineInput
-          value={account.name}
-          placeholder="Operating account"
-          className="w-full text-sm font-medium"
-          onChange={name => onChange({ ...account, name })}
-        />
-
-        <div className="grid grid-cols-3 gap-6 mt-5 pb-5 border-b border-[#e5e5e5]">
-          <Kpi label="In this account" value={money(account.balance)} />
-          <Kpi label="Logged expenses" value={money(spent)} hint="all time" />
-          <Kpi label="This month" value={money(spentMonth)} />
-        </div>
-
-        <div className="mt-6 flex items-center gap-3">
-          <span className="text-[11px] text-[#9b9b9b]">Balance $</span>
-          <MoneyField value={account.balance} className="w-32" onChange={balance => onChange({ ...account, balance })} />
-        </div>
-
-        <div className="mt-8">
-          <Head
-            title="Expenses"
-            hint="What you actually spent from this account — you type it in"
-            onAdd={() => onChange({
+        <div className="mt-2 flex items-center gap-2">
+          <span className="text-[11px] text-[#9b9b9b]">Balance</span>
+          <MoneyField value={account.balance} className="w-28" onChange={balance => onChange({ ...account, balance })} />
+          <button
+            type="button"
+            onClick={() => onChange({
               ...account,
               expenses: [{
                 id: newFinanceId(),
@@ -506,118 +531,83 @@ function BusinessDetail({
                 notes: '',
               }, ...account.expenses],
             })}
-          />
+            className="ml-auto text-[11px] text-[#6b6b6b] hover:text-[#1a1a1a]"
+          >
+            Add
+          </button>
+        </div>
+        <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
           {expenses.length === 0 ? (
-            <Empty>No expenses yet. Add payroll, software, ads, owner draws.</Empty>
+            <p className="text-[11px] text-[#b0b0b0]">No expenses</p>
           ) : expenses.map(row => (
-            <div key={row.id} className="flex flex-wrap items-center gap-3 mb-2.5">
-              <input
-                type="date"
-                value={row.date}
-                onChange={e => patchExp(row.id, { date: e.target.value })}
-                className="text-[11px] text-[#6b6b6b] bg-transparent border-0 border-b border-[#e5e5e5] py-1 focus:outline-none"
-              />
-              <LineInput
-                value={row.name}
-                placeholder="Payroll"
-                className="flex-1 min-w-[140px]"
-                onChange={name => patchExp(row.id, { name })}
-              />
-              <span className="text-xs text-[#6b6b6b]">$</span>
-              <MoneyField value={row.amount} className="w-24" onChange={amount => patchExp(row.id, { amount })} />
-              <LineInput
-                value={row.notes}
-                placeholder="note"
-                className="w-36"
-                onChange={notes => patchExp(row.id, { notes })}
-              />
+            <div key={row.id} className="flex items-center gap-2 py-1 border-b border-[#f0f0f0]">
+              <input type="date" value={row.date} onChange={e => patchExp(row.id, { date: e.target.value })} className="text-[11px] text-[#6b6b6b] bg-transparent focus:outline-none" />
+              <LineInput value={row.name} placeholder="Payroll" className="flex-1" onChange={name => patchExp(row.id, { name })} />
+              <MoneyField value={row.amount} className="w-20 text-right" onChange={amount => patchExp(row.id, { amount })} />
+              <LineInput value={row.notes} placeholder="note" className="w-28" onChange={notes => patchExp(row.id, { notes })} />
               <Remove onClick={() => onChange({ ...account, expenses: account.expenses.filter(e => e.id !== row.id) })} />
             </div>
           ))}
         </div>
-        <p className="text-[10px] text-[#c4c4c4] mt-4">{saving ? 'Saving…' : 'Saved as you type'}</p>
-      </div>
+        <p className="text-[10px] text-[#c4c4c4] mt-2">{saving ? 'Saving…' : ''}</p>
+      </Panel>
     </div>
   );
 }
 
-function monthlyFromSafe(row: MoneyLine) {
-  const found = FINANCE_CADENCES.find(c => c.id === row.cadence);
-  return (row.amount || 0) * (found?.perMonth ?? 1);
-}
-
-function Kpi({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function Panel({ children, className = '' }: { children: React.ReactNode; className?: string; dark?: boolean }) {
   return (
-    <div>
-      <p className="text-[10px] uppercase tracking-wider text-[#9b9b9b]">{label}</p>
-      <p className="text-sm font-medium text-[#9b9b9b] mt-1">{value}</p>
-      {hint ? <p className="text-[10px] text-[#c4c4c4] mt-0.5">{hint}</p> : null}
+    <div className={`min-h-0 h-full rounded-2xl border border-[#e8e8e8] bg-white px-4 py-3 flex flex-col overflow-hidden ${className}`}>
+      {children}
     </div>
   );
 }
 
-function Head({
+function RowHead({
   title,
-  total,
-  hint,
-  onAdd,
-  action,
+  extra,
+  right,
+  add,
 }: {
   title: string;
-  total?: string;
-  hint?: string;
-  onAdd?: () => void;
-  action?: React.ReactNode;
+  extra?: string;
+  right?: string;
+  add?: () => void;
 }) {
   return (
-    <div className="mb-3">
-      <div className="flex items-baseline justify-between gap-3">
-        <div className="flex items-baseline gap-2 min-w-0">
-          <p className="text-[10px] uppercase tracking-wider text-[#9b9b9b]">{title}</p>
-          {total ? <p className="text-[11px] text-[#c4c4c4]">{total}</p> : null}
-        </div>
-        {onAdd ? (
-          <button type="button" onClick={onAdd} className="text-[11px] text-[#6b6b6b] hover:text-[#1a1a1a]">+ Add</button>
-        ) : action}
+    <div className="flex items-baseline justify-between gap-2 shrink-0">
+      <div className="flex items-baseline gap-2 min-w-0">
+        <p className="text-[11px] font-medium text-[#1a1a1a]">{title}</p>
+        {extra ? <p className="text-[10px] text-[#9b9b9b] truncate">{extra}</p> : null}
       </div>
-      {hint ? <p className="text-[11px] text-[#c4c4c4] mt-0.5">{hint}</p> : null}
+      {add ? (
+        <button type="button" onClick={add} className="text-[11px] text-[#9b9b9b] hover:text-[#1a1a1a]">Add</button>
+      ) : right ? (
+        <p className="text-[10px] text-[#9b9b9b]">{right}</p>
+      ) : null}
     </div>
   );
-}
-
-function Empty({ children }: { children: React.ReactNode }) {
-  return <p className="text-[11px] text-[#c4c4c4]">{children}</p>;
 }
 
 function LineInput({
-  value,
-  onChange,
-  placeholder,
-  className = '',
+  value, onChange, placeholder, className = '', dark,
 }: {
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-  className?: string;
+  value: string; onChange: (v: string) => void; placeholder?: string; className?: string; dark?: boolean;
 }) {
   return (
     <input
       value={value}
       placeholder={placeholder}
       onChange={e => onChange(e.target.value)}
-      className={`text-xs text-[#1a1a1a] bg-transparent border-0 border-b border-[#e5e5e5] py-1 focus:outline-none ${className}`}
+      className={`text-[11px] bg-transparent border-0 py-0.5 focus:outline-none ${dark ? 'text-white placeholder:text-white/30' : 'text-[#1a1a1a] placeholder:text-[#d0d0d0]'} ${className}`}
     />
   );
 }
 
 function MoneyField({
-  value,
-  onChange,
-  className = 'w-24',
+  value, onChange, className = 'w-20', dark,
 }: {
-  value: number;
-  onChange: (n: number) => void;
-  className?: string;
+  value: number; onChange: (n: number) => void; className?: string; dark?: boolean;
 }) {
   return (
     <input
@@ -625,23 +615,21 @@ function MoneyField({
       value={value ? String(value) : ''}
       placeholder="0"
       onChange={e => onChange(parseMoney(e.target.value))}
-      className={`${className} text-xs text-[#1a1a1a] bg-transparent border-0 border-b border-[#e5e5e5] py-1 focus:outline-none`}
+      className={`${className} text-[11px] bg-transparent border-0 py-0.5 focus:outline-none ${dark ? 'text-white placeholder:text-white/30' : 'text-[#1a1a1a] placeholder:text-[#d0d0d0]'}`}
     />
   );
 }
 
 function CadenceSelect({
-  value,
-  onChange,
+  value, onChange, dark,
 }: {
-  value: FinanceCadence;
-  onChange: (v: FinanceCadence) => void;
+  value: FinanceCadence; onChange: (v: FinanceCadence) => void; dark?: boolean;
 }) {
   return (
     <select
       value={value}
       onChange={e => onChange(e.target.value as FinanceCadence)}
-      className="text-[11px] text-[#6b6b6b] bg-transparent border-0 border-b border-[#e5e5e5] py-1 pr-1 focus:outline-none"
+      className={`text-[10px] bg-transparent border-0 py-0.5 pr-0 focus:outline-none ${dark ? 'text-white/60' : 'text-[#9b9b9b]'}`}
     >
       {FINANCE_CADENCES.map(c => (
         <option key={c.id} value={c.id}>{c.label}</option>
@@ -650,30 +638,8 @@ function CadenceSelect({
   );
 }
 
-function MoneyRow({
-  row,
-  placeholder,
-  onChange,
-  onRemove,
-}: {
-  row: MoneyLine;
-  placeholder: string;
-  onChange: (row: MoneyLine) => void;
-  onRemove: () => void;
-}) {
+function Remove({ onClick, dark }: { onClick: () => void; dark?: boolean }) {
   return (
-    <div className="flex items-center gap-3">
-      <LineInput value={row.name} placeholder={placeholder} className="flex-1 min-w-0" onChange={name => onChange({ ...row, name })} />
-      <span className="text-xs text-[#6b6b6b]">$</span>
-      <MoneyField value={row.amount} onChange={amount => onChange({ ...row, amount })} />
-      <CadenceSelect value={row.cadence} onChange={cadence => onChange({ ...row, cadence })} />
-      <Remove onClick={onRemove} />
-    </div>
-  );
-}
-
-function Remove({ onClick }: { onClick: () => void }) {
-  return (
-    <button type="button" onClick={onClick} className="text-[#c4c4c4] hover:text-[#1a1a1a] text-sm">×</button>
+    <button type="button" onClick={onClick} className={`text-sm leading-none ${dark ? 'text-white/30 hover:text-white' : 'text-[#d0d0d0] hover:text-[#1a1a1a]'}`}>×</button>
   );
 }
