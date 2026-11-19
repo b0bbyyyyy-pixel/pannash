@@ -9,6 +9,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { toE164, formatDisplay } from '@/lib/dialer/e164';
 import { useWebPhone } from '@/components/webphone/WebPhone';
+import CallLeadTools, { type CallLead } from '@/components/webphone/CallLeadTools';
 import { isMissedCall, markMissedCallsSeen, missedClockLabel } from '@/lib/telephony/missed';
 import { formatBookPhone, type BookContact } from '@/lib/phoneBook';
 
@@ -88,6 +89,9 @@ export default function ManualDialPanel({
   const [draftPhones, setDraftPhones] = useState<string[]>(['']);
   const [savingContact, setSavingContact] = useState(false);
   const [copied, setCopied] = useState('');
+  const [padLead, setPadLead] = useState<CallLead | null>(null);
+  const [showLeadForm, setShowLeadForm] = useState(false);
+  const createdLeadRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (initialNumber) setNumber(initialNumber);
@@ -128,6 +132,44 @@ export default function ManualDialPanel({
 
   const e164 = toE164(number);
   const busy = webphone.status === 'connecting' || webphone.status === 'ringing' || webphone.status === 'in-call';
+  const liveLead = (busy && webphone.activeLead) ? webphone.activeLead : padLead;
+
+  useEffect(() => {
+    if (!e164) {
+      createdLeadRef.current = null;
+      setPadLead(null);
+      setShowLeadForm(false);
+      return;
+    }
+    createdLeadRef.current = null;
+    let cancelled = false;
+    const t = setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await fetch(`/api/telephony/lookup?phone=${encodeURIComponent(e164)}`);
+          if (!res.ok || cancelled) return;
+          const data = await res.json();
+          if (cancelled) return;
+          if (data.lead?.id) {
+            setPadLead({
+              id: data.lead.id,
+              name: data.lead.name || formatDisplay(e164),
+              company: data.lead.company,
+              notes: data.lead.notes ?? null,
+            });
+          } else if (!createdLeadRef.current) {
+            setPadLead(null);
+          }
+        } catch {
+          if (!cancelled && !createdLeadRef.current) setPadLead(null);
+        }
+      })();
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [e164]);
 
   const press = (d: string) => {
     if (busy) return;
@@ -144,7 +186,11 @@ export default function ManualDialPanel({
     setView('pad');
     if (raw) setNumber(raw.replace(/[^\d+*#]/g, ''));
     try {
-      await webphone.connect(dest);
+      await webphone.connect(dest, liveLead ? {
+        name: liveLead.name,
+        leadId: liveLead.id,
+        company: liveLead.company ?? undefined,
+      } : undefined);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Call failed');
     }
@@ -513,6 +559,8 @@ export default function ManualDialPanel({
 
           {error && <p className="text-xs text-red-600 text-center mb-3 shrink-0">{error}</p>}
 
+          <div className="flex-1 min-h-0 overflow-y-auto">
+          {!busy && (
           <div className="grid grid-cols-3 gap-2 mb-4">
             {KEYPAD.map(({ d, letters }) => (
               <button
@@ -525,6 +573,30 @@ export default function ManualDialPanel({
                 <span className="block text-[8px] text-[#b0b0b0] tracking-widest mt-0.5 h-2">{letters}</span>
               </button>
             ))}
+          </div>
+          )}
+
+          {e164 && (busy || showLeadForm) ? (
+            <div className={`${busy ? 'mb-4' : 'mb-3 pt-1 border-t border-[#f0f0f0]'}`}>
+              <CallLeadTools
+                phone={e164}
+                lead={liveLead}
+                onCreated={(created) => {
+                  createdLeadRef.current = created.id;
+                  setPadLead(created);
+                  webphone.attachLead(created);
+                }}
+              />
+            </div>
+          ) : e164 ? (
+            <button
+              type="button"
+              onClick={() => setShowLeadForm(true)}
+              className="mb-3 w-full text-center text-[11px] font-medium text-[#6b6b6b] hover:text-[#1a1a1a]"
+            >
+              {liveLead ? `${liveLead.name} · Notes` : 'Save as lead'}
+            </button>
+          ) : null}
           </div>
 
           <div className="flex items-center gap-2 shrink-0">

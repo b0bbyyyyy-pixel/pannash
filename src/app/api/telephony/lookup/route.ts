@@ -29,6 +29,7 @@ export async function GET(req: NextRequest) {
             company: lead.company,
             email: lead.email,
             phone: lead.phone_e164 || lead.phone,
+            notes: lead.notes ?? null,
           }
         : null,
     });

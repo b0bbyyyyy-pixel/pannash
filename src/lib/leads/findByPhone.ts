@@ -16,9 +16,10 @@ export type LeadByPhone = {
   last_contact?: string | null;
   sms_opt_out?: boolean | null;
   dnc?: boolean | null;
+  notes?: string | null;
 };
 
-const LEAD_COLS = 'id, name, company, email, phone, phone_e164, in_pipeline, lead_status, last_contact, sms_opt_out';
+const LEAD_COLS = 'id, name, company, email, phone, phone_e164, in_pipeline, lead_status, last_contact, sms_opt_out, notes';
 const LEAD_COLS_SLIM = 'id, name, company, email, phone, phone_e164';
 
 function asLeads(data: unknown): LeadByPhone[] {

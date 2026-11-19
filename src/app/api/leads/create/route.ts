@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { getRandomDelay } from '@/lib/queue';
+import { toE164 } from '@/lib/dialer/e164';
 
 export async function POST(req: NextRequest) {
   try {
@@ -31,13 +32,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Name is required' }, { status: 400 });
     }
 
+    const e164 = toE164(phone) || null;
+
     const { data, error } = await supabase
       .from('leads')
       .insert({
         user_id: user.id,
         name,
         email,
-        phone: phone || null,
+        phone: phone || e164 || null,
+        phone_e164: e164,
         company: company || null,
         notes: notes || null,
         list_id: list_id || null,

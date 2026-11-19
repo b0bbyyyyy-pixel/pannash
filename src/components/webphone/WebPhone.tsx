@@ -29,6 +29,7 @@ import dynamic from 'next/dynamic';
 import { BACK_TO_PIPELINE_MSG, CALL_MSG, LEAD_DELETED_MSG, LEAD_STATE_MSG, postLeadActionToFrame } from '@/lib/pipeline/iframeMessages';
 import LeadActionsMenu from '@/components/LeadActionsMenu';
 import { applyLeadStateMsg, type LeadMenuState } from '@/lib/leads/menuComplete';
+import CallLeadTools, { type CallLead } from '@/components/webphone/CallLeadTools';
 
 const DocumentsModal = dynamic(() => import('@/components/DocumentsModal'), { ssr: false });
 const ScheduleEmailModal = dynamic(() => import('@/components/ScheduleEmailModal'), { ssr: false });
@@ -52,7 +53,8 @@ interface WebPhoneContextValue {
   sendDigits: (digits: string) => void;
   acceptIncoming: () => void;
   rejectIncoming: () => void;
-  activeLead: { id: string; name: string; company?: string | null } | null;
+  attachLead: (lead: CallLead) => void;
+  activeLead: CallLead | null;
   dialPadOpen: boolean;
   dialPadNumber: string;
   fromNumber: string | null;
@@ -109,7 +111,7 @@ function setIncomingTabTitle(on: boolean) {
   document.title = 'Incoming call…';
 }
 
-type MatchedLead = { id: string; name: string; company?: string | null };
+type MatchedLead = CallLead;
 
 function customParam(call: Call, key: string): string | null {
   const cp = call.customParameters as Map<string, string> | Record<string, string> | undefined;
@@ -258,6 +260,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   const [waitingForHuman, setWaitingForHuman] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showKeypad, setShowKeypad] = useState(false);
+  const [showCallNotes, setShowCallNotes] = useState(false);
   const [dialPadOpen, setDialPadOpen] = useState(false);
   const [dialPadNumber, setDialPadNumber] = useState('');
   const [fromNumber, setFromNumber] = useState<string | null>(null);
@@ -286,6 +289,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   const ringWaitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const missedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const huntRef = useRef(false);
+  const lookupSeq = useRef(0);
 
   const showMissedBanner = useCallback((row: {
     from: string;
@@ -329,6 +333,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   }, [callStartedAt]);
 
   const resetCallState = useCallback(() => {
+    lookupSeq.current += 1;
     stopRingback();
     huntRef.current = false;
     setWaitingForHuman(false);
@@ -488,6 +493,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
               id: data.lead.id,
               name: data.lead.name || from,
               company: data.lead.company,
+              notes: data.lead.notes ?? null,
             });
             setActiveName(data.lead.name || null);
             reportInboundCall({
@@ -719,6 +725,26 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     setActiveName(meta?.name ?? null);
     setMatchedLead(meta?.leadId ? { id: meta.leadId, name: meta.name || e164, company: meta.company } : null);
     setStatus('connecting');
+    const seq = ++lookupSeq.current;
+    if (!meta?.leadId) {
+      void (async () => {
+        try {
+          const res = await fetch(`/api/telephony/lookup?phone=${encodeURIComponent(e164)}`);
+          if (!res.ok || seq !== lookupSeq.current) return;
+          const data = await res.json();
+          if (seq !== lookupSeq.current) return;
+          if (data.lead?.id) {
+            setMatchedLead({
+              id: data.lead.id,
+              name: data.lead.name || meta?.name || e164,
+              company: data.lead.company,
+              notes: data.lead.notes ?? null,
+            });
+            setActiveName(prev => prev || data.lead.name || null);
+          }
+        } catch { /* unknown number */ }
+      })();
+    }
 
     try {
       if (navigator.mediaDevices?.getUserMedia) {
@@ -792,6 +818,16 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     callRef.current?.disconnect();
     deviceRef.current?.disconnectAll();
   }, [stopRingback]);
+
+  const attachLead = useCallback((lead: CallLead) => {
+    setMatchedLead({
+      id: lead.id,
+      name: lead.name,
+      company: lead.company,
+      notes: lead.notes ?? null,
+    });
+    if (lead.name) setActiveName(lead.name);
+  }, []);
 
   const handOffLive = useCallback(() => {
     huntRef.current = false;
@@ -952,11 +988,21 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     ready: status !== 'offline',
     activeNumber, activeName, incomingFrom, muted, waitingForHuman, error,
     connect, hangup, handOffLive, toggleMute, sendDigits, acceptIncoming, rejectIncoming,
+    attachLead,
     activeLead: matchedLead,
     dialPadOpen, dialPadNumber, fromNumber, openDialPad, closeDialPad,
   };
 
   const inCall = status === 'connecting' || status === 'ringing' || status === 'in-call';
+  const padVisible = dialPadOpen || pathname.startsWith('/dialer');
+
+  useEffect(() => {
+    if (!inCall) {
+      setShowCallNotes(false);
+      return;
+    }
+    if (!matchedLead) setShowCallNotes(true);
+  }, [inCall, matchedLead?.id]);
 
   useEffect(() => {
     if (!inCall) {
@@ -1094,6 +1140,16 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
       {inCall && !incomingFrom && (() => {
         const bar = (
           <div className={callDock ? 'w-full' : 'fixed bottom-0 right-0 z-[100] w-80'}>
+            {showCallNotes && !padVisible && (
+              <div className="bg-[#1a1a1a] border-b border-white/10 px-4 py-3">
+                <CallLeadTools
+                  phone={activeNumber}
+                  lead={matchedLead}
+                  onCreated={attachLead}
+                  dark
+                />
+              </div>
+            )}
             {showKeypad && status === 'in-call' && (
               <div className="bg-[#1a1a1a] p-3 grid grid-cols-3 gap-1.5">
                 {KEYPAD.map(d => (
@@ -1122,6 +1178,19 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
                   {(matchedLead || activeName) && activeNumber ? ` · ${fmtNumber(activeNumber)}` : ''}
                 </p>
               </div>
+
+              {!padVisible && (
+                <button
+                  onClick={() => setShowCallNotes(v => !v)}
+                  title={matchedLead ? 'Call notes' : 'Save as lead'}
+                  className={`shrink-0 rounded-full p-2.5 transition-colors ${showCallNotes ? 'bg-white/25' : 'bg-white/10 hover:bg-white/20'}`}
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5M18.5 2.5a2.121 2.121 0 113 3L12 15l-4 1 1-4 9.5-9.5z" />
+                  </svg>
+                </button>
+              )}
 
               {matchedLead && (
                 <button

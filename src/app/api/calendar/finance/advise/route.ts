@@ -74,15 +74,28 @@ export async function POST(req: NextRequest) {
         `Monthly debt minimums: $${totals.monthlyDebtMin.toFixed(2)}`,
         `Left after must-pays: $${totals.leftoverMonthly.toFixed(2)}`,
         `Daily leftover (÷ 30.44): $${totals.dailyDiscretionary.toFixed(2)}`,
+        `Personal checking cash: $${totals.cashChecking.toFixed(2)}`,
+        `Business cash: $${totals.cashBusiness.toFixed(2)}`,
+        `Total debt balances: $${totals.debtTotal.toFixed(2)}`,
+        `Coming up in 90 days: $${totals.upcomingSoon.toFixed(2)}`,
         '',
-        'Income:',
+        'Income sources:',
         ...finance.incomes.map(r => `- ${r.name || 'Income'}: $${r.amount} ${r.cadence}`),
         '',
         'Bills:',
         ...finance.bills.map(r => `- ${r.name || 'Bill'}: $${r.amount} ${r.cadence}`),
         '',
+        'Checking:',
+        ...finance.checking.map(r => `- ${r.name || 'Account'}: $${r.balance}`),
+        '',
+        'Business accounts (balances only):',
+        ...finance.businesses.map(r => `- ${r.name || 'Account'}: $${r.balance}`),
+        '',
         'Debts:',
         ...finance.debts.map(r => `- ${r.name || 'Debt'}: balance $${r.balance}, min $${r.minPayment} ${r.cadence}, APR ${r.apr}%`),
+        '',
+        'Coming up:',
+        ...finance.upcoming.map(r => `- ${r.name || 'Event'} on ${r.date || '?'}: $${r.amount}`),
         '',
         'Important:',
         ...finance.important.map(r => `- ${r.name || 'Goal'}: $${r.amount} ${r.cadence}`),
@@ -99,8 +112,10 @@ export async function POST(req: NextRequest) {
             role: 'system',
             content: `You are a practical money coach for one person trying to get his life on track.
 Must-pays (bills + debt minimums) are already subtracted. Daily leftover is ${totals.dailyDiscretionary.toFixed(2)}.
-Split that leftover into a daily plan: extra debt (highest APR first), important goals, a small buffer if he has none, and true daily spend.
-Do not spend more per day than the leftover. If leftover is negative, say what to cut and set daily spend to 0.
+He has ${totals.debtTotal.toFixed(2)} in debt he wants in his face every day, ${totals.upcomingSoon.toFixed(2)} coming due in 90 days, and ${totals.cashChecking.toFixed(2)} in personal checking.
+Split leftover into a daily plan: extra to highest-APR debt, sinking funds for near holidays/events, important goals, a small buffer, and true daily spend.
+Do not spend more per day than leftover. If leftover is negative, say what to cut and set daily spend to 0.
+Business cash is separate — do not treat it as personal spending money.
 Be direct, specific, dollar amounts, no lectures.
 Return JSON: {"advice":"2-4 sentences","allocations":[{"name":"...","perDay":0,"perMonth":0,"why":"short"}]}`,
           },
