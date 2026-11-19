@@ -46,7 +46,7 @@ interface WebPhoneContextValue {
   muted: boolean;
   waitingForHuman: boolean;
   error: string | null;
-  connect: (e164: string, meta?: { name?: string; leadId?: string; company?: string; hunt?: boolean; callDbId?: string }) => Promise<void>;
+  connect: (e164: string, meta?: { name?: string; leadId?: string; company?: string; hunt?: boolean; callDbId?: string; openInbox?: boolean }) => Promise<void>;
   hangup: () => void;
   handOffLive: () => void;
   toggleMute: () => void;
@@ -55,6 +55,7 @@ interface WebPhoneContextValue {
   rejectIncoming: () => void;
   attachLead: (lead: CallLead) => void;
   activeLead: CallLead | null;
+  leadResolved: boolean;
   dialPadOpen: boolean;
   dialPadNumber: string;
   fromNumber: string | null;
@@ -261,6 +262,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   const [error, setError] = useState<string | null>(null);
   const [showKeypad, setShowKeypad] = useState(false);
   const [showCallNotes, setShowCallNotes] = useState(false);
+  const [leadResolved, setLeadResolved] = useState(true);
   const [dialPadOpen, setDialPadOpen] = useState(false);
   const [dialPadNumber, setDialPadNumber] = useState('');
   const [fromNumber, setFromNumber] = useState<string | null>(null);
@@ -290,6 +292,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   const missedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const huntRef = useRef(false);
   const lookupSeq = useRef(0);
+  const openInboxOnMatchRef = useRef(false);
 
   const showMissedBanner = useCallback((row: {
     from: string;
@@ -334,6 +337,8 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
 
   const resetCallState = useCallback(() => {
     lookupSeq.current += 1;
+    openInboxOnMatchRef.current = false;
+    setLeadResolved(true);
     stopRingback();
     huntRef.current = false;
     setWaitingForHuman(false);
@@ -473,6 +478,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
       }
     } catch { /* no notifications */ }
     if (paramId) {
+      setLeadResolved(true);
       setMatchedLead({
         id: paramId,
         name: paramName || from,
@@ -482,29 +488,31 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     } else {
       setMatchedLead(null);
       setActiveName(null);
+      setLeadResolved(false);
       void (async () => {
         try {
           const res = await fetch(`/api/telephony/lookup?phone=${encodeURIComponent(from)}`);
-          if (!res.ok) return;
-          const data = await res.json();
-          if (!incomingRef.current && !callRef.current) return;
-          if (data.lead?.id) {
-            setMatchedLead({
-              id: data.lead.id,
-              name: data.lead.name || from,
-              company: data.lead.company,
-              notes: data.lead.notes ?? null,
-            });
-            setActiveName(data.lead.name || null);
-            reportInboundCall({
-              callSid,
-              from,
-              leadId: data.lead.id,
-              leadName: data.lead.name,
-              status: 'ringing_agent',
-            });
+          if (res.ok && (incomingRef.current || callRef.current)) {
+            const data = await res.json();
+            if (data.lead?.id && (incomingRef.current || callRef.current)) {
+              setMatchedLead({
+                id: data.lead.id,
+                name: data.lead.name || from,
+                company: data.lead.company,
+                notes: data.lead.notes ?? null,
+              });
+              setActiveName(data.lead.name || null);
+              reportInboundCall({
+                callSid,
+                from,
+                leadId: data.lead.id,
+                leadName: data.lead.name,
+                status: 'ringing_agent',
+              });
+            }
           }
         } catch { /* unknown caller */ }
+        if (incomingRef.current || callRef.current) setLeadResolved(true);
       })();
     }
     call.on('cancel', () => {
@@ -725,24 +733,29 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     setActiveName(meta?.name ?? null);
     setMatchedLead(meta?.leadId ? { id: meta.leadId, name: meta.name || e164, company: meta.company } : null);
     setStatus('connecting');
+    openInboxOnMatchRef.current = !!meta?.openInbox;
     const seq = ++lookupSeq.current;
-    if (!meta?.leadId) {
+    if (meta?.leadId) {
+      setLeadResolved(true);
+    } else {
+      setLeadResolved(false);
       void (async () => {
         try {
           const res = await fetch(`/api/telephony/lookup?phone=${encodeURIComponent(e164)}`);
-          if (!res.ok || seq !== lookupSeq.current) return;
-          const data = await res.json();
-          if (seq !== lookupSeq.current) return;
-          if (data.lead?.id) {
-            setMatchedLead({
-              id: data.lead.id,
-              name: data.lead.name || meta?.name || e164,
-              company: data.lead.company,
-              notes: data.lead.notes ?? null,
-            });
-            setActiveName(prev => prev || data.lead.name || null);
+          if (res.ok && seq === lookupSeq.current) {
+            const data = await res.json();
+            if (seq === lookupSeq.current && data.lead?.id) {
+              setMatchedLead({
+                id: data.lead.id,
+                name: data.lead.name || meta?.name || e164,
+                company: data.lead.company,
+                notes: data.lead.notes ?? null,
+              });
+              setActiveName(prev => prev || data.lead.name || null);
+            }
           }
         } catch { /* unknown number */ }
+        if (seq === lookupSeq.current) setLeadResolved(true);
       })();
     }
 
@@ -826,6 +839,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
       company: lead.company,
       notes: lead.notes ?? null,
     });
+    setLeadResolved(true);
     if (lead.name) setActiveName(lead.name);
   }, []);
 
@@ -951,18 +965,23 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     }
   }, [incomingFrom, missedBanner, stopRingback]);
 
-  // Incoming caller (ring or after Answer) → Inbox so you can text and edit notes.
+  // Known CRM lead on a call → Inbox so you can text and open their file.
   useEffect(() => {
     if (onMobileText || !matchedLead?.id) return;
     const ringing = !!incomingFrom;
     const liveIncoming = status === 'in-call' && incomingSessionRef.current;
-    if (!ringing && !liveIncoming) return;
+    const keypadOutbound = openInboxOnMatchRef.current
+      && (status === 'connecting' || status === 'ringing' || status === 'in-call');
+    if (!ringing && !liveIncoming && !keypadOutbound) return;
     const target = `/inbox?leadId=${encodeURIComponent(matchedLead.id)}`;
     if (typeof window !== 'undefined') {
       const here = window.location.pathname === '/inbox'
         && new URLSearchParams(window.location.search).get('leadId') === matchedLead.id;
       if (here) return;
     }
+    setDialPadOpen(false);
+    setDialPadNumber('');
+    setShowCallNotes(false);
     router.push(target);
   }, [matchedLead?.id, incomingFrom, status, onMobileText, router]);
 
@@ -990,6 +1009,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
     connect, hangup, handOffLive, toggleMute, sendDigits, acceptIncoming, rejectIncoming,
     attachLead,
     activeLead: matchedLead,
+    leadResolved,
     dialPadOpen, dialPadNumber, fromNumber, openDialPad, closeDialPad,
   };
 
@@ -1001,8 +1021,9 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
       setShowCallNotes(false);
       return;
     }
-    if (!matchedLead) setShowCallNotes(true);
-  }, [inCall, matchedLead?.id]);
+    if (leadResolved && !matchedLead) setShowCallNotes(true);
+    if (matchedLead) setShowCallNotes(false);
+  }, [inCall, matchedLead?.id, leadResolved]);
 
   useEffect(() => {
     if (!inCall) {
@@ -1140,11 +1161,11 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
       {inCall && !incomingFrom && (() => {
         const bar = (
           <div className={callDock ? 'w-full' : 'fixed bottom-0 right-0 z-[100] w-80'}>
-            {showCallNotes && !padVisible && (
+            {showCallNotes && !matchedLead && !padVisible && (
               <div className="bg-[#1a1a1a] border-b border-white/10 px-4 py-3">
                 <CallLeadTools
                   phone={activeNumber}
-                  lead={matchedLead}
+                  lead={null}
                   onCreated={attachLead}
                   dark
                 />
@@ -1179,10 +1200,10 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
                 </p>
               </div>
 
-              {!padVisible && (
+              {!padVisible && !matchedLead && (
                 <button
                   onClick={() => setShowCallNotes(v => !v)}
-                  title={matchedLead ? 'Call notes' : 'Save as lead'}
+                  title="Save as lead"
                   className={`shrink-0 rounded-full p-2.5 transition-colors ${showCallNotes ? 'bg-white/25' : 'bg-white/10 hover:bg-white/20'}`}
                 >
                   <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

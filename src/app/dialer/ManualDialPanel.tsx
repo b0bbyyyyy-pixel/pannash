@@ -186,11 +186,14 @@ export default function ManualDialPanel({
     setView('pad');
     if (raw) setNumber(raw.replace(/[^\d+*#]/g, ''));
     try {
-      await webphone.connect(dest, liveLead ? {
-        name: liveLead.name,
-        leadId: liveLead.id,
-        company: liveLead.company ?? undefined,
-      } : undefined);
+      await webphone.connect(dest, {
+        openInbox: true,
+        ...(liveLead ? {
+          name: liveLead.name,
+          leadId: liveLead.id,
+          company: liveLead.company ?? undefined,
+        } : {}),
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Call failed');
     }
@@ -560,7 +563,7 @@ export default function ManualDialPanel({
           {error && <p className="text-xs text-red-600 text-center mb-3 shrink-0">{error}</p>}
 
           <div className="flex-1 min-h-0 overflow-y-auto">
-          {!busy && (
+          {!(busy && !liveLead && webphone.leadResolved) && (
           <div className="grid grid-cols-3 gap-2 mb-4">
             {KEYPAD.map(({ d, letters }) => (
               <button
@@ -576,11 +579,11 @@ export default function ManualDialPanel({
           </div>
           )}
 
-          {e164 && (busy || showLeadForm) ? (
+          {e164 && !liveLead && (showLeadForm || (busy && webphone.leadResolved)) ? (
             <div className={`${busy ? 'mb-4' : 'mb-3 pt-1 border-t border-[#f0f0f0]'}`}>
               <CallLeadTools
                 phone={e164}
-                lead={liveLead}
+                lead={null}
                 onCreated={(created) => {
                   createdLeadRef.current = created.id;
                   setPadLead(created);
@@ -588,14 +591,18 @@ export default function ManualDialPanel({
                 }}
               />
             </div>
-          ) : e164 ? (
+          ) : e164 && !busy && !liveLead ? (
             <button
               type="button"
               onClick={() => setShowLeadForm(true)}
               className="mb-3 w-full text-center text-[11px] font-medium text-[#6b6b6b] hover:text-[#1a1a1a]"
             >
-              {liveLead ? `${liveLead.name} · Notes` : 'Save as lead'}
+              Save as lead
             </button>
+          ) : e164 && liveLead && !busy ? (
+            <p className="mb-3 w-full text-center text-[11px] text-[#6b6b6b] truncate">
+              {liveLead.name}
+            </p>
           ) : null}
           </div>
 

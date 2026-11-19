@@ -380,7 +380,8 @@ export default function InboxClient({
   })() : null;
   const webphone = useWebPhone();
   const liveCallPin =
-    (webphone.status === 'in-call' || !!webphone.incomingFrom)
+    (webphone.status === 'connecting' || webphone.status === 'ringing'
+      || webphone.status === 'in-call' || !!webphone.incomingFrom)
       ? webphone.activeLead?.id ?? null
       : null;
   const liveCallPinRef = useRef<string | null>(null);
