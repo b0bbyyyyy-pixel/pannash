@@ -36,6 +36,7 @@ const ScheduleEmailModal = dynamic(() => import('@/components/ScheduleEmailModal
 const FollowUpModal = dynamic(() => import('@/components/FollowUpModal'), { ssr: false });
 
 type PhoneStatus = 'offline' | 'ready' | 'connecting' | 'ringing' | 'in-call';
+type ConnectMeta = { name?: string; leadId?: string; company?: string; hunt?: boolean; callDbId?: string; openInbox?: boolean };
 
 interface WebPhoneContextValue {
   status: PhoneStatus;
@@ -46,7 +47,7 @@ interface WebPhoneContextValue {
   muted: boolean;
   waitingForHuman: boolean;
   error: string | null;
-  connect: (e164: string, meta?: { name?: string; leadId?: string; company?: string; hunt?: boolean; callDbId?: string; openInbox?: boolean }) => Promise<void>;
+  connect: (e164: string, meta?: ConnectMeta) => Promise<void>;
   hangup: () => void;
   handOffLive: () => void;
   toggleMute: () => void;
@@ -708,7 +709,7 @@ export default function WebPhoneProvider({ children }: { children: React.ReactNo
   }, [destroyDevice, onMobileText, startDevice, takeLock, weOwnLock, writeLock]);
 
   // ── Actions ─────────────────────────────────────────────────────────────────
-  const connect = useCallback(async (e164: string, meta?: { name?: string; leadId?: string; company?: string; hunt?: boolean; callDbId?: string }) => {
+  const connect = useCallback(async (e164: string, meta?: ConnectMeta) => {
     if (!deviceRef.current) {
       if (!takeLock(true)) {
         const msg = 'Phone is active in another tab — click that window, then dial.';
