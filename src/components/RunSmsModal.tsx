@@ -14,6 +14,7 @@ import {
   upsertOptimizedPack,
 } from '@/lib/smsDrip/optimizeTemplates';
 import { guessLeadSource, optimizedPackId } from '@/lib/smsDrip/leadSources';
+import { parsePickCount, type PickMode } from '@/lib/smsDrip/pickBatch';
 
 const PACE_PRESETS = [
   { label: '0 sec', min: 0, max: 0 },
@@ -23,6 +24,7 @@ const PACE_PRESETS = [
 ];
 
 const WINDOW_PRESETS = [3, 5, 8];
+const PICK_COUNTS = [100, 200, 300, 400];
 
 const DEFAULT_TEMPLATES = ['', '', '', '', ''];
 
@@ -106,6 +108,8 @@ export default function RunSmsModal({ listId, campaignName, sourceKey, sourceLab
   const [skipStates, setSkipStates] = useState<string[]>(existingJob?.skip_states ?? []);
   const [showSkipPicker, setShowSkipPicker] = useState(false);
   const [includeAlreadyTexted, setIncludeAlreadyTexted] = useState(false);
+  const [pickMode, setPickMode] = useState<PickMode>('all');
+  const [pickCount, setPickCount] = useState(() => Math.min(300, Math.max(1, leadCount || 1)));
   const [starting, setStarting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
@@ -263,9 +267,9 @@ export default function RunSmsModal({ listId, campaignName, sourceKey, sourceLab
 
   const filledTemplates = templates.map(t => t.trim()).filter(Boolean);
 
-  // Pace-vs-window estimate (spec #6)
+  const selectedCount = pickMode === 'all' ? leadCount : parsePickCount(pickCount, leadCount);
   const avgPaceSec = (paceMin + paceMax) / 2;
-  const neededHours = (leadCount * avgPaceSec) / 3600;
+  const neededHours = (selectedCount * avgPaceSec) / 3600;
   const paceTooSlow = effectiveWindow > 0 && neededHours > effectiveWindow;
 
   const start = async () => {
@@ -290,6 +294,8 @@ export default function RunSmsModal({ listId, campaignName, sourceKey, sourceLab
               listId,
               ...jobPayload(),
               includeAlreadyTexted,
+              pickMode,
+              pickCount: selectedCount,
             }),
           });
       const data = await res.json();
@@ -415,6 +421,68 @@ export default function RunSmsModal({ listId, campaignName, sourceKey, sourceLab
                 At {paceMin}–{paceMax}s this list needs ~{neededHours.toFixed(1)} hours.
                 Stretch will be {neededHours.toFixed(1)} hours unless you raise pace.
               </p>
+            )}
+          </div>
+
+          <div>
+            <p className="text-xs font-bold text-[#6b6b6b] uppercase tracking-wider mb-2">Leads</p>
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
+              {([
+                { id: 'all' as const, label: 'All' },
+                { id: 'first' as const, label: 'First' },
+                { id: 'last' as const, label: 'Last' },
+                { id: 'random' as const, label: 'Random' },
+              ]).map(p => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setPickMode(p.id)}
+                  className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${
+                    pickMode === p.id
+                      ? 'bg-[#1a1a1a] text-white border-[#1a1a1a]'
+                      : 'border-[#e5e5e5] text-[#6b6b6b] hover:bg-[#f5f5f5]'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            {pickMode !== 'all' && (
+              <>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {PICK_COUNTS.filter(n => n < leadCount).map(n => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setPickCount(n)}
+                      className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${
+                        pickCount === n
+                          ? 'bg-[#1a1a1a] text-white border-[#1a1a1a]'
+                          : 'border-[#e5e5e5] text-[#6b6b6b] hover:bg-[#f5f5f5]'
+                      }`}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                  <input
+                    type="number"
+                    min={1}
+                    max={leadCount || 1}
+                    value={pickCount}
+                    onChange={e => setPickCount(parsePickCount(e.target.value, leadCount))}
+                    className="w-20 px-2 py-1.5 text-sm border border-[#e5e5e5] rounded-lg focus:outline-none focus:border-[#1a1a1a]"
+                  />
+                  <span className="text-sm text-[#6b6b6b]">of {leadCount}</span>
+                </div>
+                <p className="text-[11px] text-[#9b9b9b] mt-1.5">
+                  {pickMode === 'first' && `Texts the newest ${selectedCount} in this campaign.`}
+                  {pickMode === 'last' && `Texts the oldest ${selectedCount} in this campaign.`}
+                  {pickMode === 'random' && `Picks ${selectedCount} at random. The rest stay for a later run.`}
+                </p>
+              </>
+            )}
+            {pickMode === 'all' && (
+              <p className="text-[11px] text-[#9b9b9b]">All {leadCount} leads in this campaign.</p>
             )}
           </div>
 
@@ -628,7 +696,11 @@ export default function RunSmsModal({ listId, campaignName, sourceKey, sourceLab
             disabled={starting || filledTemplates.length < 1}
             className="px-5 py-2 text-sm font-medium text-white bg-[#1a1a1a] hover:bg-[#333] rounded-lg disabled:opacity-50 transition-colors"
           >
-            {starting ? (existingJob ? 'Resuming…' : 'Starting…') : (existingJob ? 'Resume' : 'Start')}
+            {starting
+              ? (existingJob ? 'Resuming…' : 'Starting…')
+              : existingJob
+                ? 'Resume'
+                : `Start · ${selectedCount}`}
           </button>
         </div>
       </div>

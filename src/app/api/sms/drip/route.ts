@@ -5,6 +5,7 @@ import { toE164 } from '@/lib/dialer/e164';
 import { normalizeState } from '@/lib/smsDrip/timezones';
 import { isCampaignInboxLead } from '@/lib/inbox/promoteCampaignReply';
 import { tallyDripSends } from '@/lib/smsDrip/tally';
+import { parsePickCount, parsePickMode, pickBatch } from '@/lib/smsDrip/pickBatch';
 import { asRows, hydrateTzUd, selectFirst } from '@/lib/leads/listColumns';
 
 export const dynamic = 'force-dynamic';
@@ -104,6 +105,8 @@ export async function POST(req: NextRequest) {
       quietEnd = '20:00',
       skipStates = [],
       includeAlreadyTexted = false,
+      pickMode = 'all',
+      pickCount,
     } = await req.json();
 
     if (!listId) return NextResponse.json({ error: 'listId required' }, { status: 400 });
@@ -152,6 +155,9 @@ export async function POST(req: NextRequest) {
     }>;
     for (const row of leads) hydrateTzUd(row as Record<string, unknown>);
 
+    const mode = parsePickMode(pickMode);
+    const batch = pickBatch(leads ?? [], mode, parsePickCount(pickCount, (leads ?? []).length));
+
     const skip = new Set((skipStates as string[]).map(s => normalizeState(s)).filter(Boolean));
     const seenPhones = new Set<string>();
     const now = new Date().toISOString();
@@ -166,7 +172,7 @@ export async function POST(req: NextRequest) {
       (priorSends ?? []).map(s => (s.phone || '').replace(/\D/g, '').slice(-10)).filter(d => d.length === 10)
     );
 
-    const rows = (leads ?? []).map((l, i) => {
+    const rows = batch.map((l, i) => {
       const e164 = toE164(l.phone ?? '');
       const digits = (e164 || l.phone || '').replace(/\D/g, '').slice(-10);
       const ud = (l.underwriting_data ?? {}) as Record<string, unknown>;
