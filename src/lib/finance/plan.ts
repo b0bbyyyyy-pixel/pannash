@@ -71,6 +71,7 @@ export type BudgetGroup = {
   name: string;
   items: BudgetLine[];
   subs: BudgetGroup[];
+  skipTotal?: boolean;
 };
 
 export const BUDGET_SECTIONS = [
@@ -154,7 +155,7 @@ export function flattenUpcoming(groups: UpcomingGroup[]): UpcomingCost[] {
 }
 
 export function blankBudgetGroup(name = ''): BudgetGroup {
-  return { id: newFinanceId(), name, items: [blankLine()], subs: [] };
+  return { id: newFinanceId(), name, items: [blankLine()], subs: [], skipTotal: false };
 }
 
 export function lineAmount(r: BudgetLine) {
@@ -166,8 +167,15 @@ export function groupTotal(g: BudgetGroup): number {
     + (g.subs ?? []).reduce((s, sub) => s + groupTotal(sub), 0);
 }
 
-export function flattenBudgetGroups(groups: BudgetGroup[]): BudgetLine[] {
-  return groups.flatMap(g => [...(g.items ?? []), ...flattenBudgetGroups(g.subs ?? [])]);
+export function flattenBudgetGroups(groups: BudgetGroup[], countedOnly = false): BudgetLine[] {
+  return groups.flatMap(g => {
+    if (countedOnly && g.skipTotal) return [];
+    return [...(g.items ?? []), ...flattenBudgetGroups(g.subs ?? [], countedOnly)];
+  });
+}
+
+export function countedExpenseTotal(groups: BudgetGroup[]): number {
+  return groups.reduce((s, g) => g.skipTotal ? s : s + groupTotal(g), 0);
 }
 
 export function withExpenseGroups(sheet: MonthSheet, groups: BudgetGroup[]): MonthSheet {
@@ -175,7 +183,7 @@ export function withExpenseGroups(sheet: MonthSheet, groups: BudgetGroup[]): Mon
   return {
     ...sheet,
     expenseGroups,
-    sections: { ...sheet.sections, expenses: flattenBudgetGroups(expenseGroups) },
+    sections: { ...sheet.sections, expenses: flattenBudgetGroups(expenseGroups, true) },
   };
 }
 
@@ -438,6 +446,7 @@ function asExpenseGroups(raw: unknown, fallback: BudgetLine[]): BudgetGroup[] {
     name: '',
     items: filled.length ? filled : [blankLine()],
     subs: [],
+    skipTotal: false,
   }];
 }
 
@@ -450,6 +459,7 @@ function asBudgetGroup(row: unknown): BudgetGroup {
     name: String(r.name ?? ''),
     items: items.length ? items : (subs.length ? [] : [blankLine()]),
     subs,
+    skipTotal: Boolean(r.skipTotal),
   };
 }
 

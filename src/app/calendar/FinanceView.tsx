@@ -9,6 +9,7 @@ import {
   blankSheet,
   blankUpcoming,
   blankUpcomingGroup,
+  countedExpenseTotal,
   groupTotal,
   monthKey,
   normalizeFinance,
@@ -121,7 +122,7 @@ function ExpenseList({
   onChange: (groups: BudgetGroup[]) => void;
   hideTotal?: boolean;
 }) {
-  const total = groups.reduce((sum, g) => sum + groupTotal(g), 0);
+  const total = countedExpenseTotal(groups);
 
   function patchGroup(i: number, next: Partial<BudgetGroup>) {
     onChange(groups.map((g, n) => n === i ? { ...g, subs: g.subs ?? [], ...next } : g));
@@ -153,14 +154,25 @@ function ExpenseList({
         const catTotal = groupTotal(group);
         return (
           <div key={group.id} className={gi === 0 ? '' : 'mt-4'}>
-            <div className="grid grid-cols-[1fr_72px_18px] items-center">
+            <div className="grid grid-cols-[1fr_18px_72px_18px] items-center">
               <input
                 value={group.name}
                 onChange={e => patchGroup(gi, { name: e.target.value })}
                 placeholder="Category"
                 className="w-full px-2 py-1.5 text-[10px] font-semibold tracking-[0.14em] uppercase text-[#1a1a1a] bg-transparent placeholder:text-[#c8c8c8] focus:outline-none"
               />
-              <span className="px-1 text-[12px] text-right tabular-nums text-[#1a1a1a]">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={!group.skipTotal}
+                onClick={() => patchGroup(gi, { skipTotal: !group.skipTotal })}
+                className={`relative h-[10px] w-[16px] shrink-0 rounded-full ${group.skipTotal ? 'bg-[#d8d8d8]' : 'bg-[#1a1a1a]'}`}
+                aria-label={group.skipTotal ? 'Leave out of expenses total' : 'Count in expenses total'}
+                title={group.skipTotal ? 'Not in running total' : 'In running total'}
+              >
+                <span className={`absolute top-[1px] h-2 w-2 rounded-full bg-white transition-[left] ${group.skipTotal ? 'left-[1px]' : 'left-[7px]'}`} />
+              </button>
+              <span className={`px-1 text-[12px] text-right tabular-nums ${group.skipTotal ? 'text-[#9b9b9b]' : 'text-[#1a1a1a]'}`}>
                 {hideTotal || !catTotal ? '' : fmt(catTotal)}
               </span>
               <button
