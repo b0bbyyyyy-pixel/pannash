@@ -50,6 +50,45 @@ export type UpcomingCost = {
   amount: number;
   date: string;
   notes: string;
+  done: boolean;
+};
+
+export type UpcomingGroup = {
+  id: string;
+  name: string;
+  items: UpcomingCost[];
+};
+
+export type BudgetLine = {
+  id: string;
+  name: string;
+  estimate: number;
+  actual: number;
+};
+
+export type BudgetGroup = {
+  id: string;
+  name: string;
+  items: BudgetLine[];
+};
+
+export const BUDGET_SECTIONS = [
+  { id: 'networth', label: 'Net worth', left: 'Estimate', right: 'Actual', rows: 6, skipExpense: true },
+  { id: 'income', label: 'Income', left: 'Planned', right: 'Received', rows: 6, income: true },
+  { id: 'assets', label: 'Assets', left: 'Estimate', right: 'Actual', rows: 8, skipExpense: true },
+  { id: 'cortland', label: 'The Cortland', left: 'Estimate', right: 'Actual', rows: 8, skipExpense: true },
+  { id: 'expenses', label: 'Expenses', left: 'Estimate', right: 'Actual', rows: 12 },
+  { id: 'debt', label: 'Debt', left: 'Estimate', right: 'Actual', rows: 8 },
+] as const;
+
+const LEGACY_EXPENSE_IDS = ['housing', 'transportation', 'food', 'health', 'personal', 'savings', 'giving', 'misc'];
+
+export type BudgetSectionId = (typeof BUDGET_SECTIONS)[number]['id'];
+
+export type MonthSheet = {
+  notes: string;
+  sections: Record<BudgetSectionId, BudgetLine[]>;
+  expenseGroups: BudgetGroup[];
 };
 
 export type FinanceData = {
@@ -59,8 +98,9 @@ export type FinanceData = {
   important: MoneyLine[];
   checking: CheckingAccount[];
   businesses: BusinessAccount[];
-  upcoming: UpcomingCost[];
+  upcoming: UpcomingGroup[];
   notes: string;
+  sheets: Record<string, MonthSheet>;
 };
 
 export type FinanceAllocation = {
@@ -86,6 +126,102 @@ export function newFinanceId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+export function blankLine(): BudgetLine {
+  return { id: newFinanceId(), name: '', estimate: 0, actual: 0 };
+}
+
+export function blankUpcoming(): UpcomingCost {
+  return { id: newFinanceId(), name: '', amount: 0, date: '', notes: '', done: false };
+}
+
+export function padUpcoming(lines: UpcomingCost[], min = 0): UpcomingCost[] {
+  const next = lines.length ? [...lines] : [];
+  while (next.length < min) next.push(blankUpcoming());
+  return next;
+}
+
+export function blankUpcomingGroup(name = ''): UpcomingGroup {
+  return { id: newFinanceId(), name, items: [blankUpcoming()] };
+}
+
+export function padUpcomingGroups(groups: UpcomingGroup[]): UpcomingGroup[] {
+  return groups.length ? groups : [blankUpcomingGroup()];
+}
+
+export function flattenUpcoming(groups: UpcomingGroup[]): UpcomingCost[] {
+  return groups.flatMap(g => g.items);
+}
+
+export function blankBudgetGroup(name = ''): BudgetGroup {
+  return { id: newFinanceId(), name, items: [blankLine()] };
+}
+
+export function flattenBudgetGroups(groups: BudgetGroup[]): BudgetLine[] {
+  return groups.flatMap(g => g.items);
+}
+
+export function withExpenseGroups(sheet: MonthSheet, groups: BudgetGroup[]): MonthSheet {
+  const expenseGroups = groups.length ? groups : [blankBudgetGroup()];
+  return {
+    ...sheet,
+    expenseGroups,
+    sections: { ...sheet.sections, expenses: flattenBudgetGroups(expenseGroups) },
+  };
+}
+
+export function blankSheet(): MonthSheet {
+  const sections = {} as MonthSheet['sections'];
+  for (const s of BUDGET_SECTIONS) {
+    sections[s.id] = Array.from({ length: s.id === 'expenses' ? 0 : s.rows }, blankLine);
+  }
+  const expenseGroups = [blankBudgetGroup()];
+  sections.expenses = flattenBudgetGroups(expenseGroups);
+  return { notes: '', sections, expenseGroups };
+}
+
+export function monthKey(year: number, month: number) {
+  return `${year}-${String(month + 1).padStart(2, '0')}`;
+}
+
+export function padSection(lines: BudgetLine[], min: number): BudgetLine[] {
+  const next = lines.length ? [...lines] : [];
+  while (next.length < min) next.push(blankLine());
+  const last = next[next.length - 1];
+  if (last && (last.name.trim() || last.estimate || last.actual)) next.push(blankLine());
+  while (next.length > min) {
+    const a = next[next.length - 1];
+    const b = next[next.length - 2];
+    if (a && b && !a.name.trim() && !a.estimate && !a.actual && !b.name.trim() && !b.estimate && !b.actual) {
+      next.pop();
+      continue;
+    }
+    break;
+  }
+  return next;
+}
+
+export function sheetTotals(sheet: MonthSheet) {
+  const sum = (id: BudgetSectionId, field: 'estimate' | 'actual') =>
+    (sheet.sections[id] ?? []).reduce((s, r) => s + (r[field] || 0), 0);
+  const incomeEst = sum('income', 'estimate');
+  const incomeAct = sum('income', 'actual');
+  let expEst = 0;
+  let expAct = 0;
+  for (const s of BUDGET_SECTIONS) {
+    if (s.id === 'income' || 'skipExpense' in s) continue;
+    expEst += sum(s.id, 'estimate');
+    expAct += sum(s.id, 'actual');
+  }
+  return {
+    incomeEst,
+    incomeAct,
+    expEst,
+    expAct,
+    balEst: incomeEst - expEst,
+    balAct: incomeAct - expAct,
+  };
+}
+
 export function blankFinance(): FinanceData {
   return {
     incomes: [],
@@ -94,8 +230,9 @@ export function blankFinance(): FinanceData {
     important: [],
     checking: [],
     businesses: [],
-    upcoming: [],
+    upcoming: padUpcomingGroups([]),
     notes: '',
+    sheets: {},
   };
 }
 
@@ -144,11 +281,12 @@ export function summarizeFinance(data: FinanceData) {
   const cashBusiness = data.businesses.reduce((s, r) => s + (r.balance || 0), 0);
   const cashTotal = cashChecking + cashBusiness;
   const debtTotal = data.debts.reduce((s, r) => s + (r.balance || 0), 0);
-  const upcomingSoon = data.upcoming
-    .filter(u => daysUntil(u.date) >= 0 && daysUntil(u.date) <= 90)
+  const upcomingItems = flattenUpcoming(data.upcoming);
+  const upcomingSoon = upcomingItems
+    .filter(u => !u.done && daysUntil(u.date) >= 0 && daysUntil(u.date) <= 90)
     .reduce((s, r) => s + (r.amount || 0), 0);
-  const upcomingYear = data.upcoming
-    .filter(u => daysUntil(u.date) >= 0 && daysUntil(u.date) <= 365)
+  const upcomingYear = upcomingItems
+    .filter(u => !u.done && daysUntil(u.date) >= 0 && daysUntil(u.date) <= 365)
     .reduce((s, r) => s + (r.amount || 0), 0);
   return {
     monthlyIncome,
@@ -186,8 +324,8 @@ export function fallbackPlan(data: FinanceData): FinancePlan {
     left -= extra;
   }
 
-  const nextUp = [...data.upcoming]
-    .filter(u => daysUntil(u.date) >= 0)
+  const nextUp = [...flattenUpcoming(data.upcoming)]
+    .filter(u => !u.done && daysUntil(u.date) >= 0)
     .sort((a, b) => daysUntil(a.date) - daysUntil(b.date))[0];
   if (nextUp && left > 0) {
     const need = round2(Math.min(left * 0.25, nextUp.amount / monthsUntil(nextUp.date) / DAYS_PER_MONTH));
@@ -242,7 +380,75 @@ export function normalizeFinance(raw: unknown): FinanceData {
     businesses: asBusinesses(obj.businesses),
     upcoming: asUpcoming(obj.upcoming),
     notes: typeof obj.notes === 'string' ? obj.notes : '',
+    sheets: asSheets(obj.sheets),
   };
+}
+
+function asSheets(raw: unknown): Record<string, MonthSheet> {
+  if (!raw || typeof raw !== 'object') return {};
+  const out: Record<string, MonthSheet> = {};
+  for (const [key, val] of Object.entries(raw as Record<string, unknown>)) {
+    if (!/^\d{4}-\d{2}$/.test(key) || !val || typeof val !== 'object') continue;
+    const v = val as Record<string, unknown>;
+    const sections = {} as MonthSheet['sections'];
+    const rawSections = (v.sections && typeof v.sections === 'object' ? v.sections : v) as Record<string, unknown>;
+    for (const s of BUDGET_SECTIONS) {
+      if (s.id === 'expenses') continue;
+      const rows = Array.isArray(rawSections[s.id]) ? rawSections[s.id] : [];
+      sections[s.id] = asBudgetLines(rows, s.rows);
+    }
+    let expenseRaw: unknown = Array.isArray(rawSections.expenses) ? rawSections.expenses : [];
+    const filledExpense = asBudgetLines(expenseRaw, 0).filter(r => r.name.trim() || r.estimate || r.actual);
+    if (!filledExpense.length) {
+      const merged: unknown[] = [];
+      for (const id of LEGACY_EXPENSE_IDS) {
+        if (Array.isArray(rawSections[id])) merged.push(...(rawSections[id] as unknown[]));
+      }
+      expenseRaw = merged;
+    }
+    const expenseGroups = asExpenseGroups(v.expenseGroups, asBudgetLines(expenseRaw, 0));
+    sections.expenses = flattenBudgetGroups(expenseGroups);
+    out[key] = {
+      notes: typeof v.notes === 'string' ? v.notes : '',
+      sections,
+      expenseGroups,
+    };
+  }
+  return out;
+}
+
+function asExpenseGroups(raw: unknown, fallback: BudgetLine[]): BudgetGroup[] {
+  if (Array.isArray(raw) && raw.some(row => row && typeof row === 'object' && Array.isArray((row as Record<string, unknown>).items))) {
+    const groups = raw.map((row) => {
+      const r = row && typeof row === 'object' ? row as Record<string, unknown> : {};
+      const items = asBudgetLines(r.items, 0).filter(line => line.name.trim() || line.estimate || line.actual);
+      return {
+        id: String(r.id || newFinanceId()),
+        name: String(r.name ?? ''),
+        items: items.length ? items : [blankLine()],
+      };
+    });
+    return groups.length ? groups : [blankBudgetGroup()];
+  }
+  const filled = fallback.filter(r => r.name.trim() || r.estimate || r.actual);
+  return [{
+    id: newFinanceId(),
+    name: '',
+    items: filled.length ? filled : [blankLine()],
+  }];
+}
+
+function asBudgetLines(raw: unknown, min: number): BudgetLine[] {
+  const rows = Array.isArray(raw) ? raw.map((row) => {
+    const r = row && typeof row === 'object' ? row as Record<string, unknown> : {};
+    return {
+      id: String(r.id || newFinanceId()),
+      name: String(r.name ?? ''),
+      estimate: Number(r.estimate ?? r.left ?? r.planned) || 0,
+      actual: Number(r.actual ?? r.right ?? r.received) || 0,
+    };
+  }) : [];
+  return padSection(rows, min);
 }
 
 function asMoneyLines(raw: unknown): MoneyLine[] {
@@ -308,9 +514,8 @@ function asBusinesses(raw: unknown): BusinessAccount[] {
   });
 }
 
-function asUpcoming(raw: unknown): UpcomingCost[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.map((row) => {
+function asUpcomingItems(raw: unknown): UpcomingCost[] {
+  const rows = Array.isArray(raw) ? raw.map((row) => {
     const r = row && typeof row === 'object' ? row as Record<string, unknown> : {};
     return {
       id: String(r.id || newFinanceId()),
@@ -318,8 +523,30 @@ function asUpcoming(raw: unknown): UpcomingCost[] {
       amount: Number(r.amount) || 0,
       date: String(r.date ?? '').slice(0, 10),
       notes: String(r.notes ?? ''),
+      done: Boolean(r.done),
     };
-  });
+  }) : [];
+  return rows;
+}
+
+function asUpcoming(raw: unknown): UpcomingGroup[] {
+  if (!Array.isArray(raw) || raw.length === 0) return padUpcomingGroups([]);
+  const looksLikeGroups = raw.some(row => row && typeof row === 'object' && Array.isArray((row as Record<string, unknown>).items));
+  if (looksLikeGroups) {
+    return padUpcomingGroups(raw.map((row) => {
+      const r = row && typeof row === 'object' ? row as Record<string, unknown> : {};
+      return {
+        id: String(r.id || newFinanceId()),
+        name: String(r.name ?? ''),
+        items: asUpcomingItems(r.items),
+      };
+    }));
+  }
+  return padUpcomingGroups([{
+    id: newFinanceId(),
+    name: '',
+    items: asUpcomingItems(raw),
+  }]);
 }
 
 function cadenceOf(v: unknown): FinanceCadence {

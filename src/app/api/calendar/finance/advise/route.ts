@@ -95,7 +95,11 @@ export async function POST(req: NextRequest) {
         ...finance.debts.map(r => `- ${r.name || 'Debt'}: balance $${r.balance}, min $${r.minPayment} ${r.cadence}, APR ${r.apr}%`),
         '',
         'Coming up:',
-        ...finance.upcoming.map(r => `- ${r.name || 'Event'} on ${r.date || '?'}: $${r.amount}`),
+        ...finance.upcoming.flatMap(g =>
+          g.items
+            .filter(r => r.name.trim() || r.date)
+            .map(r => `- ${g.name || 'Upcoming'}: ${r.name || 'Item'} on ${r.date || '?'}${r.amount ? `: $${r.amount}` : ''}`),
+        ),
         '',
         'Important:',
         ...finance.important.map(r => `- ${r.name || 'Goal'}: $${r.amount} ${r.cadence}`),

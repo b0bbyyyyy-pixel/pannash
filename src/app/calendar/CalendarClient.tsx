@@ -540,7 +540,7 @@ export default function CalendarClient() {
             <div className="w-6 h-6 border-2 border-[#e5e5e5] border-t-[#1a1a1a] rounded-full animate-spin" />
           </div>
         ) : view === 'finance' ? (
-          <FinanceView />
+          <FinanceView year={year} month={month} onMonth={setMonth} />
         ) : view === 'trackers' ? (
           <HabitTracker
             year={year}
