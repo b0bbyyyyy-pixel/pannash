@@ -9,6 +9,7 @@ import {
   blankSheet,
   blankUpcoming,
   blankUpcomingGroup,
+  groupTotal,
   monthKey,
   normalizeFinance,
   padSection,
@@ -120,13 +121,10 @@ function ExpenseList({
   onChange: (groups: BudgetGroup[]) => void;
   hideTotal?: boolean;
 }) {
-  const total = groups.reduce(
-    (sum, g) => sum + g.items.reduce((s, r) => s + (r.actual || r.estimate || 0), 0),
-    0,
-  );
+  const total = groups.reduce((sum, g) => sum + groupTotal(g), 0);
 
   function patchGroup(i: number, next: Partial<BudgetGroup>) {
-    onChange(groups.map((g, n) => n === i ? { ...g, ...next } : g));
+    onChange(groups.map((g, n) => n === i ? { ...g, subs: g.subs ?? [], ...next } : g));
   }
 
   function patchItem(gi: number, ii: number, next: Partial<BudgetLine>) {
@@ -134,8 +132,15 @@ function ExpenseList({
     patchGroup(gi, { items: group.items.map((row, n) => n === ii ? { ...row, ...next } : row) });
   }
 
-  function setAmount(gi: number, ii: number, amount: number) {
-    patchItem(gi, ii, { estimate: amount, actual: amount });
+  function patchSub(gi: number, si: number, next: Partial<BudgetGroup>) {
+    const group = groups[gi];
+    const subs = (group.subs ?? []).map((sub, n) => n === si ? { ...sub, ...next } : sub);
+    patchGroup(gi, { subs });
+  }
+
+  function patchSubItem(gi: number, si: number, ii: number, next: Partial<BudgetLine>) {
+    const sub = groups[gi].subs[si];
+    patchSub(gi, si, { items: sub.items.map((row, n) => n === ii ? { ...row, ...next } : row) });
   }
 
   return (
@@ -144,52 +149,125 @@ function ExpenseList({
         <span className="text-[10px] font-semibold tracking-[0.14em] uppercase text-[#1a1a1a]">Expenses</span>
         <span className="text-[12px] tabular-nums text-[#1a1a1a]">{hideTotal || !total ? '' : fmt(total)}</span>
       </div>
-      {groups.map((group, gi) => (
-        <div key={group.id} className={gi === 0 ? '' : 'mt-4'}>
-          <div className="grid grid-cols-[1fr_18px] items-center">
-            <input
-              value={group.name}
-              onChange={e => patchGroup(gi, { name: e.target.value })}
-              placeholder="Category"
-              className="w-full px-2 py-1.5 text-[10px] font-semibold tracking-[0.14em] uppercase text-[#1a1a1a] bg-transparent placeholder:text-[#c8c8c8] focus:outline-none"
-            />
-            <button
-              type="button"
-              onClick={() => onChange(groups.filter((_, n) => n !== gi))}
-              className="text-[14px] leading-none text-[#c8c8c8] hover:text-[#1a1a1a]"
-              aria-label={group.name ? `Delete ${group.name}` : 'Delete category'}
-            >
-              ×
-            </button>
-          </div>
-          {group.items.map((row, ii) => (
-            <div key={row.id} className="grid grid-cols-[1fr_72px_18px] items-center border-b border-dotted border-[#d0d0d0]">
+      {groups.map((group, gi) => {
+        const catTotal = groupTotal(group);
+        return (
+          <div key={group.id} className={gi === 0 ? '' : 'mt-4'}>
+            <div className="grid grid-cols-[1fr_72px_18px] items-center">
               <input
-                value={row.name}
-                onChange={e => patchItem(gi, ii, { name: e.target.value })}
-                placeholder="Item"
-                className="px-2 py-1.5 text-[12px] text-[#1a1a1a] bg-transparent placeholder:text-[#d8d8d8] focus:outline-none"
+                value={group.name}
+                onChange={e => patchGroup(gi, { name: e.target.value })}
+                placeholder="Category"
+                className="w-full px-2 py-1.5 text-[10px] font-semibold tracking-[0.14em] uppercase text-[#1a1a1a] bg-transparent placeholder:text-[#c8c8c8] focus:outline-none"
               />
-              <MoneyCell value={row.actual || row.estimate} onChange={amount => setAmount(gi, ii, amount)} />
+              <span className="px-1 text-[12px] text-right tabular-nums text-[#1a1a1a]">
+                {hideTotal || !catTotal ? '' : fmt(catTotal)}
+              </span>
               <button
                 type="button"
-                onClick={() => patchGroup(gi, { items: group.items.filter((_, n) => n !== ii) })}
+                onClick={() => onChange(groups.filter((_, n) => n !== gi))}
                 className="text-[14px] leading-none text-[#c8c8c8] hover:text-[#1a1a1a]"
-                aria-label={row.name ? `Delete ${row.name}` : 'Delete item'}
+                aria-label={group.name ? `Delete ${group.name}` : 'Delete category'}
               >
                 ×
               </button>
             </div>
-          ))}
-          <button
-            type="button"
-            onClick={() => patchGroup(gi, { items: [...group.items, blankLine()] })}
-            className="mt-0.5 px-2 py-1 text-[11px] text-[#9b9b9b] hover:text-[#1a1a1a]"
-          >
-            + Add item
-          </button>
-        </div>
-      ))}
+            {group.items.map((row, ii) => (
+              <div key={row.id} className="grid grid-cols-[1fr_72px_18px] items-center border-b border-dotted border-[#d0d0d0]">
+                <input
+                  value={row.name}
+                  onChange={e => patchItem(gi, ii, { name: e.target.value })}
+                  placeholder="Item"
+                  className="px-2 py-1.5 text-[12px] text-[#1a1a1a] bg-transparent placeholder:text-[#d8d8d8] focus:outline-none"
+                />
+                <MoneyCell
+                  value={row.actual || row.estimate}
+                  onChange={amount => patchItem(gi, ii, { estimate: amount, actual: amount })}
+                />
+                <button
+                  type="button"
+                  onClick={() => patchGroup(gi, { items: group.items.filter((_, n) => n !== ii) })}
+                  className="text-[14px] leading-none text-[#c8c8c8] hover:text-[#1a1a1a]"
+                  aria-label={row.name ? `Delete ${row.name}` : 'Delete item'}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            {(group.subs ?? []).map((sub, si) => {
+              const subTotal = groupTotal(sub);
+              return (
+                <div key={sub.id} className="mt-2 pl-3">
+                  <div className="grid grid-cols-[1fr_72px_18px] items-center">
+                    <input
+                      value={sub.name}
+                      onChange={e => patchSub(gi, si, { name: e.target.value })}
+                      placeholder="Subcategory"
+                      className="w-full px-2 py-1 text-[10px] font-semibold tracking-[0.12em] uppercase text-[#6b6b6b] bg-transparent placeholder:text-[#c8c8c8] focus:outline-none"
+                    />
+                    <span className="px-1 text-[12px] text-right tabular-nums text-[#1a1a1a]">
+                      {hideTotal || !subTotal ? '' : fmt(subTotal)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => patchGroup(gi, { subs: (group.subs ?? []).filter((_, n) => n !== si) })}
+                      className="text-[14px] leading-none text-[#c8c8c8] hover:text-[#1a1a1a]"
+                      aria-label={sub.name ? `Delete ${sub.name}` : 'Delete subcategory'}
+                    >
+                      ×
+                    </button>
+                  </div>
+                  {sub.items.map((row, ii) => (
+                    <div key={row.id} className="grid grid-cols-[1fr_72px_18px] items-center border-b border-dotted border-[#d0d0d0]">
+                      <input
+                        value={row.name}
+                        onChange={e => patchSubItem(gi, si, ii, { name: e.target.value })}
+                        placeholder="Item"
+                        className="px-2 py-1.5 text-[12px] text-[#1a1a1a] bg-transparent placeholder:text-[#d8d8d8] focus:outline-none"
+                      />
+                      <MoneyCell
+                        value={row.actual || row.estimate}
+                        onChange={amount => patchSubItem(gi, si, ii, { estimate: amount, actual: amount })}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => patchSub(gi, si, { items: sub.items.filter((_, n) => n !== ii) })}
+                        className="text-[14px] leading-none text-[#c8c8c8] hover:text-[#1a1a1a]"
+                        aria-label={row.name ? `Delete ${row.name}` : 'Delete item'}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => patchSub(gi, si, { items: [...sub.items, blankLine()] })}
+                    className="mt-0.5 px-2 py-1 text-[11px] text-[#9b9b9b] hover:text-[#1a1a1a]"
+                  >
+                    + Add item
+                  </button>
+                </div>
+              );
+            })}
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => patchGroup(gi, { items: [...group.items, blankLine()] })}
+                className="mt-0.5 px-2 py-1 text-[11px] text-[#9b9b9b] hover:text-[#1a1a1a]"
+              >
+                + Add item
+              </button>
+              <button
+                type="button"
+                onClick={() => patchGroup(gi, { subs: [...(group.subs ?? []), blankBudgetGroup()] })}
+                className="mt-0.5 px-2 py-1 text-[11px] text-[#9b9b9b] hover:text-[#1a1a1a]"
+              >
+                + Add subcategory
+              </button>
+            </div>
+          </div>
+        );
+      })}
       <button
         type="button"
         onClick={() => onChange([...groups, blankBudgetGroup()])}

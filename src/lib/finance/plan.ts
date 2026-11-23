@@ -70,6 +70,7 @@ export type BudgetGroup = {
   id: string;
   name: string;
   items: BudgetLine[];
+  subs: BudgetGroup[];
 };
 
 export const BUDGET_SECTIONS = [
@@ -153,11 +154,20 @@ export function flattenUpcoming(groups: UpcomingGroup[]): UpcomingCost[] {
 }
 
 export function blankBudgetGroup(name = ''): BudgetGroup {
-  return { id: newFinanceId(), name, items: [blankLine()] };
+  return { id: newFinanceId(), name, items: [blankLine()], subs: [] };
+}
+
+export function lineAmount(r: BudgetLine) {
+  return r.actual || r.estimate || 0;
+}
+
+export function groupTotal(g: BudgetGroup): number {
+  return (g.items ?? []).reduce((s, r) => s + lineAmount(r), 0)
+    + (g.subs ?? []).reduce((s, sub) => s + groupTotal(sub), 0);
 }
 
 export function flattenBudgetGroups(groups: BudgetGroup[]): BudgetLine[] {
-  return groups.flatMap(g => g.items);
+  return groups.flatMap(g => [...(g.items ?? []), ...flattenBudgetGroups(g.subs ?? [])]);
 }
 
 export function withExpenseGroups(sheet: MonthSheet, groups: BudgetGroup[]): MonthSheet {
@@ -418,16 +428,8 @@ function asSheets(raw: unknown): Record<string, MonthSheet> {
 }
 
 function asExpenseGroups(raw: unknown, fallback: BudgetLine[]): BudgetGroup[] {
-  if (Array.isArray(raw) && raw.some(row => row && typeof row === 'object' && Array.isArray((row as Record<string, unknown>).items))) {
-    const groups = raw.map((row) => {
-      const r = row && typeof row === 'object' ? row as Record<string, unknown> : {};
-      const items = asBudgetLines(r.items, 0).filter(line => line.name.trim() || line.estimate || line.actual);
-      return {
-        id: String(r.id || newFinanceId()),
-        name: String(r.name ?? ''),
-        items: items.length ? items : [blankLine()],
-      };
-    });
+  if (Array.isArray(raw) && raw.some(row => row && typeof row === 'object' && (Array.isArray((row as Record<string, unknown>).items) || Array.isArray((row as Record<string, unknown>).subs)))) {
+    const groups = raw.map(asBudgetGroup);
     return groups.length ? groups : [blankBudgetGroup()];
   }
   const filled = fallback.filter(r => r.name.trim() || r.estimate || r.actual);
@@ -435,7 +437,20 @@ function asExpenseGroups(raw: unknown, fallback: BudgetLine[]): BudgetGroup[] {
     id: newFinanceId(),
     name: '',
     items: filled.length ? filled : [blankLine()],
+    subs: [],
   }];
+}
+
+function asBudgetGroup(row: unknown): BudgetGroup {
+  const r = row && typeof row === 'object' ? row as Record<string, unknown> : {};
+  const items = asBudgetLines(r.items, 0).filter(line => line.name.trim() || line.estimate || line.actual);
+  const subs = Array.isArray(r.subs) ? r.subs.map(asBudgetGroup) : [];
+  return {
+    id: String(r.id || newFinanceId()),
+    name: String(r.name ?? ''),
+    items: items.length ? items : (subs.length ? [] : [blankLine()]),
+    subs,
+  };
 }
 
 function asBudgetLines(raw: unknown, min: number): BudgetLine[] {
